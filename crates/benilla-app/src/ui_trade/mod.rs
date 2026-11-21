@@ -3,9 +3,11 @@
 //! [`answer_trade_request`] answers an incoming request.
 
 use benilla_protocol::messages::{TradeItem, TradeStatusExtended, TRADE_SLOT_COUNT};
+#[cfg(test)]
+use benilla_ui::script::UiScript;
 use bevy::prelude::*;
 
-use benilla_ui::script::{ScriptValue, TradeSideState, TradeSlotItem, TradeState, UiScript};
+use benilla_ui::script::{ScriptValue, TradeSideState, TradeSlotItem, TradeState};
 
 use crate::entities::ItemDisplays;
 use crate::items::Items;
@@ -413,7 +415,7 @@ pub(crate) fn leave_world(world: &mut World) {
         .get_resource::<TradeSession>()
         .and_then(|trade| trade.npc());
     if let Some(mut ui) = world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
-        ui.write(UiScript::unlock_trade_items);
+        ui.write(benilla_ui::script::UiScript::unlock_trade_items);
         if let Some(partner) = partner {
             ui.write(|script| script.close_trade_partner(false));
             ui.world(move |w| crate::ui_session::clear_interact_target(w, partner));
@@ -534,7 +536,7 @@ impl Plugin for UiTradePlugin {
                     trim_offer_to_purse
                         .after(crate::ui_unit::UnitFeed)
                         .before(feed_trade),
-                    drain_trade.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_trade).in_set(UiDrain),
                 ),
             );
     }
@@ -754,7 +756,7 @@ fn snapshot(
 /// Push the trade into the VM and fire its events on a change, diffed against `Local` memory;
 /// `TRADE_ACCEPT_UPDATE` fires after `TRADE_SHOW`, whose handler hides the highlights.
 fn feed_trade(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut trade: ResMut<TradeSession>,
     items: Res<Items>,
     icons: Option<Res<ItemDisplays>>,
@@ -769,7 +771,7 @@ fn feed_trade(
     mut last_player_gold: Local<crate::ui_script::VmMemo<u32>>,
     mut last_their_gold: Local<crate::ui_script::VmMemo<u32>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let last = last.get(&script);
@@ -869,7 +871,7 @@ fn feed_trade(
 /// Drain the Lua intents into the trade `CMSG`s. `CloseTrade` clears the session and sends
 /// `CMSG_CANCEL_TRADE`.
 fn drain_trade(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut trade: ResMut<TradeSession>,
     commands: Res<NetCommands>,
     selection: Res<Selection>,
@@ -879,7 +881,7 @@ fn drain_trade(
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     mut queue: Commands,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     // Our bag contents, for the own-column item resolve.

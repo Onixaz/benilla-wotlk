@@ -686,6 +686,12 @@ impl ObjectFields {
         self.get_u32(FIELD_GAMEOBJECT_BYTES_1)
             .map_or(0, |b| i32::from((b >> 8) as u8))
     }
+    /// `GAMEOBJECT_BYTES_1` byte 2, the art kit: a signed byte, so `0xff` is `-1` and names no
+    /// `GameObjectArtKit` row; absent is 0.
+    pub fn gameobject_art_kit(&self) -> i8 {
+        self.get_u32(FIELD_GAMEOBJECT_BYTES_1)
+            .map_or(0, |b| (b >> 16) as u8 as i8)
+    }
     /// `GAMEOBJECT_FLAGS`: `0x1` in use, `0x4` needs the quest activate bit, `0x10` no interact.
     pub fn gameobject_flags(&self) -> u32 {
         self.get_u32(FIELD_GAMEOBJECT_FLAGS).unwrap_or(0)
@@ -704,6 +710,14 @@ impl ObjectFields {
     /// `GAMEOBJECT_LEVEL`: a lock with `Skill[0]` 0 asks for `level * 5`.
     pub fn gameobject_level(&self) -> u32 {
         self.get_u32(FIELD_GAMEOBJECT_LEVEL).unwrap_or(0)
+    }
+    /// `GAMEOBJECT_PARENTROTATION` `(x, y, z, w)`: the basis a type-11 transport's path offsets
+    /// and orientation keys turn by (`0x70daa0`, `0x70dc10`); an absent field reads 0.
+    pub fn gameobject_parent_rotation(&self) -> [f32; 4] {
+        std::array::from_fn(|i| {
+            self.get_f32(FIELD_GAMEOBJECT_PARENTROTATION + i as u16)
+                .unwrap_or(0.0)
+        })
     }
 
     /// `OBJECT_FIELD_TYPE & TYPEMASK_CONTAINER`: a bag, whose mask carries the item bit too; the

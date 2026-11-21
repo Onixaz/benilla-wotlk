@@ -870,7 +870,9 @@ impl Plugin for UiGuildPlugin {
                     event_log::feed_guild_event_log
                         .in_set(UiFeed)
                         .after(feed::feed_guild),
-                    feed::drain_guild.in_set(UiDrain).in_set(GuildDrain),
+                    crate::ui_script::raises::then_fire(feed::drain_guild)
+                        .in_set(UiDrain)
+                        .in_set(GuildDrain),
                 )
                     // Never against the boot VM: the feed's edge memo survives the entry load, so
                     // an edge spent on a VM with no frames, such as the login MOTD, is lost.

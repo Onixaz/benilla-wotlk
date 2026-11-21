@@ -33,7 +33,6 @@
 use benilla_protocol::{messages, CharAction, CharCreateReq};
 use bevy::prelude::*;
 
-use super::probes::ProbeClock;
 use crate::net::{CharActionResultMessage, EnteredWorldMessage, ObjectStore, SelfPlayer};
 
 /// Grace after world entry before the first GM line, while the descriptor and the UI VM come up;
@@ -234,19 +233,58 @@ struct Rig {
 
 /// The whole rig: find-or-create the body at select, enter as it, then apply the state batch.
 fn drive_rig(
-    mut rig: ResMut<Rig>,
-    time: ProbeClock,
-    mut results: MessageReader<CharActionResultMessage>,
-    mut entered: MessageReader<EnteredWorldMessage>,
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
-    catalog: Option<Res<crate::entities::CharCreate>>,
-    classes: Option<Res<crate::chr_classes::ChrClassTable>>,
-    self_q: Query<&ObjectStore, With<SelfPlayer>>,
+    world: &mut World,
+    messages: &mut bevy::ecs::system::SystemState<(
+        MessageReader<CharActionResultMessage>,
+        MessageReader<EnteredWorldMessage>,
+    )>,
 ) {
+    let (mut results, mut entered) = messages.get_mut(world);
+    let results: Vec<(CharAction, u8)> = results.read().map(|r| (r.action, r.code)).collect();
     let entered_world = entered.read().next().is_some();
+    let Some(mut rig) = world.remove_resource::<Rig>() else {
+        return;
+    };
+    let files = rig.spec.body.map_or((None, None), |(race, class, _)| {
+        (
+            world
+                .get_resource::<crate::entities::CharCreate>()
+                .and_then(|c| c.0.race_file(race).map(str::to_owned)),
+            world
+                .get_resource::<crate::chr_classes::ChrClassTable>()
+                .and_then(|c| c.0.file(u32::from(class)).map(str::to_owned)),
+        )
+    });
+    let me = world
+        .query_filtered::<&ObjectStore, With<SelfPlayer>>()
+        .iter(world)
+        .next()
+        .cloned();
+    let now = super::probes::probe_secs(world);
+    super::probes::with_vm(world, |script| {
+        rig_step(
+            &mut rig,
+            script,
+            now,
+            &results,
+            entered_world,
+            &files,
+            me.as_ref(),
+        );
+    });
+    world.insert_resource(rig);
+}
+
+/// One frame of the rig on the VM, with the frame's results, entry edge and our store.
+fn rig_step(
+    rig: &mut Rig,
+    script: Option<&mut benilla_ui::script::UiScript>,
+    now: f32,
+    results: &[(CharAction, u8)],
+    entered_world: bool,
+    files: &(Option<String>, Option<String>),
+    me: Option<&ObjectStore>,
+) {
     let glue = super::glue_press::glue(script.as_deref());
 
     match rig.phase {
@@ -283,10 +321,6 @@ fn drive_rig(
                 return;
             };
             let (race, class, gender) = rig.spec.body.expect("a create implies a body");
-            let files = (
-                catalog.as_deref().and_then(|c| c.0.race_file(race)),
-                classes.as_deref().and_then(|c| c.0.file(u32::from(class))),
-            );
             let (Some(race_file), Some(class_file)) = files else {
                 error!("rig: no race or class file string for {race}/{class} — nothing rigged");
                 rig.phase = RigPhase::Done;
@@ -315,10 +349,10 @@ fn drive_rig(
             }
         }
         RigPhase::Creating => {
-            let Some(r) = results.read().find(|r| r.action == CharAction::Create) else {
+            let Some(&(_, code)) = results.iter().find(|r| r.0 == CharAction::Create) else {
                 return;
             };
-            match r.code {
+            match code {
                 // The stock flow returns to character select, which lists the new body.
                 messages::CHAR_CREATE_SUCCESS => rig.phase = RigPhase::AwaitRoster,
                 messages::CHAR_CREATE_SERVER_LIMIT if !rig.evicted => {
@@ -361,20 +395,20 @@ fn drive_rig(
             }
         }
         RigPhase::Deleting => {
-            if results.read().any(|r| r.action == CharAction::Delete) {
+            if results.iter().any(|r| r.0 == CharAction::Delete) {
                 rig.phase = RigPhase::AwaitRoster;
             }
         }
         RigPhase::Entering => {
             if entered_world {
-                rig.phase = RigPhase::Settling(time.elapsed_secs() + SETTLE_SECS);
+                rig.phase = RigPhase::Settling(now + SETTLE_SECS);
             }
         }
         RigPhase::Settling(at) => {
-            if time.elapsed_secs() < at {
+            if now < at {
                 return;
             }
-            let Ok(store) = self_q.single() else { return };
+            let Some(store) = me else { return };
             let dead = store.0.unit_is_dead() || store.0.player_is_ghost();
             rig.steps = build_steps(&rig.spec, dead);
             if rig.steps.is_empty() {
@@ -382,27 +416,27 @@ fn drive_rig(
                 rig.phase = RigPhase::Done;
                 return;
             }
-            rig.next_at = time.elapsed_secs();
+            rig.next_at = now;
             rig.phase = RigPhase::Commanding;
         }
         RigPhase::Commanding => {
-            let Some(mut script) = script else { return };
-            while rig.sent < rig.steps.len() && time.elapsed_secs() >= rig.next_at {
+            let Some(script) = script else { return };
+            while rig.sent < rig.steps.len() && now >= rig.next_at {
                 let line = rig.steps[rig.sent].clone();
                 info!("rig: {line}");
                 script.push_chat_input(line);
                 rig.sent += 1;
-                rig.next_at = time.elapsed_secs() + STEP_SECS;
+                rig.next_at = now + STEP_SECS;
             }
             if rig.sent == rig.steps.len() {
-                rig.phase = RigPhase::Verifying(time.elapsed_secs() + VERIFY_SECS);
+                rig.phase = RigPhase::Verifying(now + VERIFY_SECS);
             }
         }
         RigPhase::Verifying(at) => {
-            if time.elapsed_secs() < at {
+            if now < at {
                 return;
             }
-            let Ok(store) = self_q.single() else { return };
+            let Some(store) = me else { return };
             let equipped = (0..19)
                 .filter(|&i| store.0.player_visible_item_entry(i).is_some())
                 .count();

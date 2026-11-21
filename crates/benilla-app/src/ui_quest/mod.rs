@@ -1,6 +1,8 @@
 //! The questgiver window's app side: the handlers fill [`QuestGiver`] and publish it with its event ([`publish_panel`]),
 //! and the panel's buttons send and close inside their call ([`act`], [`select`]).
 
+#[cfg(test)]
+use benilla_ui::script::UiScript;
 use std::collections::HashMap;
 
 use benilla_protocol::messages::{
@@ -11,7 +13,7 @@ use bevy::prelude::*;
 
 use benilla_ui::script::{
     QuestActOutcome, QuestAction, QuestItemView, QuestPanel, QuestRewardSpell, QuestSelect,
-    QuestState, UiScript,
+    QuestState,
 };
 
 use crate::entities::ItemDisplays;
@@ -32,7 +34,7 @@ pub(crate) enum QuestView {
     Reward(QuestOfferReward),
 }
 
-/// The open questgiver window: main-thread state the panel's buttons write inside their call, lent to it ([`crate::ui_script::live::Lent`]).
+/// The open questgiver window: main-thread state the panel's buttons write inside their call, lent to it ([`crate::ui_script::live::MainState`]).
 #[derive(Default)]
 pub(crate) struct QuestGiver {
     /// The panel's source: an NPC, a GameObject, a quest-starter item or a sharing player.
@@ -243,10 +245,10 @@ pub(crate) struct TrivialQuestTracking(pub(crate) bool);
 
 /// Read the tracking choice a `SetTracking` in the tick made.
 pub(crate) fn read_trivial_tracking(
-    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut tracking: ResMut<TrivialQuestTracking>,
 ) {
-    let on = script.is_some_and(|s| s.tracking_trivial_quests());
+    let on = script.turn().is_some_and(|s| s.tracking_trivial_quests());
     tracking.set_if_neq(TrivialQuestTracking(on));
 }
 

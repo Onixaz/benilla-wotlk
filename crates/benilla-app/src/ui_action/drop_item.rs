@@ -6,11 +6,16 @@
 
 use bevy::prelude::*;
 
-use benilla_ui::script::{CursorPayload, UiScript};
+use benilla_ui::script::CursorPayload;
 use benilla_world::interact::WorldClick;
 
 use crate::spell::{CastCommit, TargetedBind};
 use crate::target::WorldDropClick;
+
+/// The two payload legs of a press, each with the step that fires what it raised: the world
+/// click's select reads the cursor they leave.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct DropSet;
 
 /// The feed validator's three gates, in order: is this a pet I can feed? The food is not checked
 /// here; the server judges the diet (`Spell.cpp:5912`, `SPELL_FAILED_WRONG_PET_FOOD`).
@@ -31,25 +36,22 @@ fn feedable_pet(
 /// `PetFrame_OnClick`'s `DropItemOnUnit("pet")`, and a left click on the pet's model with an item
 /// held (in the world click's object leg, where the click still selects).
 pub(crate) fn drop_item_on_unit(
-    (script, mut live): (
-        Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsCooldowns>,
-    ),
+    mut vm: crate::ui_script::InTurn,
     self_q: Query<(&crate::net::Guid, &crate::net::ObjectStore), With<crate::net::SelfPlayer>>,
     stores: Query<&crate::net::ObjectStore>,
     index: Res<crate::net::GuidIndex>,
-    pet_bar: crate::ui_script::LentRef<crate::ui_pet::PetBar>,
+    pet_bar: Option<Res<crate::ui_pet::PetBar>>,
     learned: Res<super::LearnedAbilities>,
     press: Res<crate::target::PressPick>,
     mut clicks: MessageReader<benilla_world::interact::WorldClick>,
     mut ladder: crate::spell::CastLadder,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = vm.turn() else {
         clicks.clear();
         return;
     };
     let hovered = press.hovered;
-    let pet_guid = pet_bar.get().map_or(0, |b| b.spells.pet_guid);
+    let pet_guid = pet_bar.as_ref().map_or(0, |b| b.spells.pet_guid);
     let mut tokens = script.take_drop_item_on_unit();
     // The world entry: a click whose press-time pick is the pet. That is the pick the click
     // selects from; the live hover can differ after a drag.
@@ -95,16 +97,16 @@ pub(crate) fn drop_item_on_unit(
         };
         debug!("DropItemOnUnit(\"pet\") — Feed Pet {spell_id} at item {item_guid:#x}");
         ladder.commit_targeted(spell_id, CastCommit::Spell, TargetedBind::Item(item_guid));
-        // The send's cast-bar edges, fired as it returns (`0x80b556`).
-        ladder.press.fire(&mut script, &mut live);
-        // `ClearCursor(1,1)`, on success only.
-        script.clear_cursor_payload();
+        // The send's cast-bar edges, in turn as it returns (`0x80b556`).
+        ladder.press.defer_in_turn(&mut script);
+        // `ClearCursor(1,1)`, on success only, after the send's events.
+        benilla_ui::script::world_loan::in_turn_or_now(&mut script, |s| s.clear_cursor_payload());
     }
 }
 
 /// The left click's payload legs on the press pick, at the settled click (`0x4f7880`).
 pub(crate) fn drop_on_world_click(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     press: Res<crate::target::PressPick>,
     mut clicks: MessageReader<WorldClick>,
     mut drops: MessageReader<WorldDropClick>,
@@ -113,7 +115,7 @@ pub(crate) fn drop_on_world_click(
     if !clicked {
         return;
     }
-    if let Some(mut script) = script {
+    if let Some(mut script) = script.turn() {
         script.world_drop_click(press.world_pick());
     }
 }

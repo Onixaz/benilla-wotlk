@@ -331,7 +331,9 @@ impl StableView<'_, '_> {
 /// anything else, or a failed live resolve, shows the row's creature display, whose late cache
 /// answer re-points the pane.
 fn feed_stable_booth(
-    (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    script: Option<NonSendMut<UiScript>>,
+    stable: Option<Res<StableOpen>>,
+    pet_bar: Option<Res<crate::ui_pet::PetBar>>,
     pet: crate::ui_pet::PetUnit,
     names: Res<NameCache>,
     mut booth: ResMut<crate::portrait::StableBooth>,
@@ -346,9 +348,8 @@ fn feed_stable_booth(
     // pet the latest list no longer holds.
     let slot = script.stable_selection();
 
-    let view = live.view();
-    let live_pet = view.pet_bar.get().map_or(0, |bar| bar.spells.pet_guid);
-    let Some(open) = view.stable.open() else {
+    let live_pet = pet_bar.as_ref().map_or(0, |bar| bar.spells.pet_guid);
+    let Some(open) = stable.as_deref() else {
         return;
     };
     let (unit, display_id) = stable_subject(

@@ -147,7 +147,8 @@ impl Plugin for SpellPlugin {
                         .before(crate::ui_script::UiPress),
                     // The item-target commit: after the input pass so a bag click binds the same
                     // frame; outside the target chain, as its clicks never reach the world.
-                    targeting::commit_item_cast_on_pick.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(targeting::commit_item_cast_on_pick)
+                        .in_set(UiDrain),
                 ),
             )
             .add_systems(OnEnter(ClientState::InWorld), mods::clear_on_world_enter)

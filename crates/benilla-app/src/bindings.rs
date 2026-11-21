@@ -186,14 +186,18 @@ impl Plugin for BindingsPlugin {
                     // The key sets are seeded at the VM's birth, not here: `seed_bindings_for_vm`
                     // runs in `load_ingame_ui_on_world_entry`, before FrameXML and every addon;
                     // the commands come with the load.
-                    (sync_dispatch, latch_and_dispatch)
+                    (
+                        crate::ui_script::raises::then_fire(sync_dispatch),
+                        latch_and_dispatch,
+                    )
                         .chain()
                         .in_set(crate::ui_script::UiPress)
                         .in_set(BindingSet)
                         .in_set(InWorldGated),
                     // After the tick: the requests are Lua's own (`SaveBindings`), queued by
                     // handlers the tick dispatched, and a save must not wait a frame.
-                    drain_binding_requests.in_set(crate::ui_script::UiDrain),
+                    crate::ui_script::raises::then_fire(drain_binding_requests)
+                        .in_set(crate::ui_script::UiDrain),
                 ),
             );
     }
@@ -240,11 +244,10 @@ pub(crate) fn seed_bindings_for_vm(world: &mut World, script: &mut UiScript) {
 
 /// Drain the VM's binding requests: `SaveBindings` copies the live table into its set in the VM
 /// and owes the files at the UI shutdown.
-fn drain_binding_requests(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut files: ResMut<BindingFiles>,
-) {
-    let Some(mut script) = script else { return };
+fn drain_binding_requests(mut script: crate::ui_script::InTurn, mut files: ResMut<BindingFiles>) {
+    let Some(mut script) = script.turn() else {
+        return;
+    };
     for req in script.take_keybind_requests() {
         let KeybindRequest::Save(which) = req;
         files.dirty |= match which {
@@ -302,10 +305,12 @@ pub(crate) fn save_to_account_data(world: &mut World) {
 /// load), and fire `UPDATE_BINDINGS` so the Lua consumers (the action bar's hotkey corners)
 /// repaint.
 pub(crate) fn sync_dispatch(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut dispatch: ResMut<BindingDispatch>,
 ) {
-    let Some(mut script) = script else { return };
+    let Some(mut script) = script.turn() else {
+        return;
+    };
     // No `UPDATE_BINDINGS` for an override (`0x563480`).
     let overrides = script.override_generation();
     if *dispatch.seen_overrides.get(&script) != Some(overrides) {

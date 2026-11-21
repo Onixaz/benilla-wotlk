@@ -97,7 +97,7 @@ pub(crate) struct Patch {
 }
 
 /// One of the three lists.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(crate) struct AuctionListSlot {
     pub(crate) entries: Vec<AuctionEntry>,
     /// The match count before the page cap.
@@ -129,7 +129,7 @@ pub(crate) struct MultiSell {
 }
 
 /// What the live probe reads to tell an empty answer from none; the client never reads it.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct AuctionWireLog {
     /// List results landed, per list, in [`LIST`]/[`BIDDER`]/[`OWNER`] order.
     pub(crate) list_results: [u32; 3],
@@ -148,7 +148,7 @@ pub(crate) struct AuctionWireLog {
 }
 
 /// The open auctioneer session; cleared on a client-side close, on walking away and on disconnect.
-#[derive(Resource, Default)]
+#[derive(Resource, Default, Clone)]
 pub(crate) struct AuctionOpen {
     pub(crate) auctioneer: Option<u64>,
     /// The `AuctionHouse.dbc` row, which keys the deposit rate.
@@ -425,7 +425,7 @@ impl Plugin for UiAuctionPlugin {
                     .after(crate::ui_unit::UnitFeed)
                     .in_set(UiFeed)
                     .run_if(crate::ui_script::ingame_ui_up),
-                drain_auction.in_set(UiDrain),
+                crate::ui_script::raises::then_fire(drain_auction).in_set(UiDrain),
             ),
         );
     }
@@ -594,7 +594,7 @@ type AuctionCatalogs<'w> = (
 
 /// Push the auction house into the VM and fire its events on a change, diffed against `VmMemo`s.
 fn feed_auction(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut auction: ResMut<AuctionOpen>,
     items: Res<Items>,
     icons: Option<Res<ItemDisplays>>,
@@ -611,7 +611,7 @@ fn feed_auction(
     mut last_sell: Local<crate::ui_script::VmMemo<Option<(i64, u32)>>>,
     mut last_classes: Local<crate::ui_script::VmMemo<Vec<AuctionCategory>>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let last = last.get(&script);
@@ -723,8 +723,10 @@ fn feed_auction(
     let owed: [bool; 3] = std::array::from_fn(|i| {
         landed[i] || fresh.as_ref().map(|s| &s.lists[i]) != last.as_ref().map(|s| &s.lists[i])
     });
+    // Each write after a raise lands once that raise's listeners have run.
     if changed {
-        script.set_auction(fresh.clone());
+        let state = fresh.clone();
+        script.after_raises(move |s| s.set_auction(state));
     }
     if std::mem::take(&mut auction.disabled_requested) {
         script.fire_event("AUCTION_HOUSE_DISABLED", vec![]);
@@ -758,8 +760,9 @@ fn feed_auction(
             _ => script.fire_event("AUCTION_MULTISELL_FAILURE", args),
         }
     }
-    if std::mem::take(&mut auction.sell_slot_clear) {
-        script.clear_auction_sell_item();
+    let cleared = std::mem::take(&mut auction.sell_slot_clear);
+    if cleared {
+        script.after_raises(|s| s.clear_auction_sell_item());
     }
     let locked: Vec<(i64, u32)> = auction
         .multisell
@@ -767,9 +770,14 @@ fn feed_auction(
         .filter(|ms| ms.pending)
         .map(|ms| ms.items.iter().map(|&(b, s, _)| (b, s)).collect())
         .unwrap_or_default();
-    script.set_auction_locked(locked);
+    script.after_raises(move |s| s.set_auction_locked(locked));
 
-    let sell = script.auction_sell_item();
+    // The slot as the clear leaves it.
+    let sell = if cleared {
+        None
+    } else {
+        script.auction_sell_item()
+    };
     if sell != *last_sell {
         *last_sell = sell;
         script.fire_event("NEW_AUCTION_UPDATE", vec![]);
@@ -782,7 +790,7 @@ fn feed_auction(
         auction.can_get_all(now),
     );
     if gate != *last_gate || std::mem::take(&mut auction.gate_dirty) {
-        script.set_auction_can_query(gate.0, gate.1);
+        script.after_raises(move |s| s.set_auction_can_query(gate.0, gate.1));
         *last_gate = gate;
     }
 }
@@ -845,7 +853,7 @@ impl Sender<'_> {
 
 /// Drain the Lua intents into the auction `CMSG`s.
 fn drain_auction(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut auction: ResMut<AuctionOpen>,
     commands: Res<NetCommands>,
     time: Res<Time>,
@@ -853,7 +861,7 @@ fn drain_auction(
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     mut queue: Commands,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let Some(auctioneer) = auction.auctioneer else {
@@ -1122,5 +1130,43 @@ mod tests {
             (12, false),
             "Quest offers no subclass rows"
         );
+    }
+
+    /// A listener reads the model as of its raise (`0x81b530` runs it in the caller): the
+    /// house-disabled event's listener reads the query gate the feed writes after it unchanged.
+    #[test]
+    fn a_disabled_listener_does_not_see_the_feeds_later_gate_write() {
+        let mut app = App::new();
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        app.insert_resource(NetCommands(tx))
+            .init_resource::<AuctionOpen>()
+            .init_resource::<Items>()
+            .init_resource::<NameCache>()
+            .init_resource::<Time>()
+            .init_resource::<crate::ui_chat::ChatLog>()
+            .init_resource::<crate::sound::MessageSounds>()
+            .init_resource::<crate::ui_script::live::UiEvents>()
+            .add_systems(Update, feed_auction);
+        {
+            let mut auction = app.world_mut().resource_mut::<AuctionOpen>();
+            auction.disabled_requested = true;
+            // A browse query in flight closes its gate.
+            auction.pending[LIST] = 1;
+        }
+        let script = UiScript::new().expect("VM");
+        script
+            .run(
+                "SEEN = {} local f = CreateFrame('Frame') f:RegisterEvent('AUCTION_HOUSE_DISABLED')
+                 f:SetScript('OnEvent', function() SEEN[#SEEN + 1] = tostring(CanSendAuctionQuery()) end)",
+            )
+            .unwrap();
+        app.insert_non_send_resource(script);
+        app.update();
+        crate::ui_script::raises::fire_raises(app.world_mut());
+        let vm = app.world().non_send_resource::<UiScript>();
+        let seen: String = vm.eval("return table.concat(SEEN, ',')").unwrap();
+        let after: String = vm.eval("return tostring(CanSendAuctionQuery())").unwrap();
+        assert_eq!(seen, "1", "the listener ran before the gate closed");
+        assert_eq!(after, "nil", "the gate closes after the listener");
     }
 }

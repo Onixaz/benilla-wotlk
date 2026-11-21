@@ -247,40 +247,39 @@ fn the_stock_map_places_and_opens_a_quest_poi() {
             priority: 0,
         }],
     }]);
-    // SAFETY: the test drops its loan on its own thread.
-    let _lines = unsafe {
-        benilla_ui::script::LiveLoan::new(PoiLines(QuestPoiLines {
-            top_area: 12,
-            ..Default::default()
-        }))
-    };
-    s.run("ToggleFrame(WorldMapFrame) WorldMapFrame_UpdateQuests()")
-        .unwrap();
-    let errors = map_errors(s.take_errors());
-    assert!(errors.is_empty(), "quest pass errors: {errors:#?}");
-    let (complete, u, v, objective) = s
-        .eval::<(bool, f64, f64, i64)>(&format!("return QuestPOIGetIconInfo({QUEST})"))
-        .unwrap();
-    assert!(complete, "an all-ones mask is the turn-in icon");
-    assert!(
-        u > 0.0 && u < 1.0 && v > 0.0 && v < 1.0,
-        "on Elwynn: {u} {v}"
-    );
-    assert_eq!(objective, -1);
-    assert_eq!(
-        s.eval::<(i64, i64)>(&format!("return GetQuestWorldMapAreaID({QUEST})"))
-            .unwrap(),
-        (30, 0),
-        "the turn-in region's own row"
-    );
-    s.run(&format!("WorldMap_OpenToQuest({QUEST})")).unwrap();
-    let errors = map_errors(s.take_errors());
-    assert!(errors.is_empty(), "open-to-quest errors: {errors:#?}");
-    assert!(
-        s.eval::<bool>("return WorldMapFrame.blockWorldMapUpdate == nil")
-            .unwrap(),
-        "the open finished, so later map updates are not dropped"
-    );
+    let mut lines_v = PoiLines(QuestPoiLines {
+        top_area: 12,
+        ..Default::default()
+    });
+    crate::ui_script::test_live::lending(&mut lines_v, || {
+        s.run("ToggleFrame(WorldMapFrame) WorldMapFrame_UpdateQuests()")
+            .unwrap();
+        let errors = map_errors(s.take_errors());
+        assert!(errors.is_empty(), "quest pass errors: {errors:#?}");
+        let (complete, u, v, objective) = s
+            .eval::<(bool, f64, f64, i64)>(&format!("return QuestPOIGetIconInfo({QUEST})"))
+            .unwrap();
+        assert!(complete, "an all-ones mask is the turn-in icon");
+        assert!(
+            u > 0.0 && u < 1.0 && v > 0.0 && v < 1.0,
+            "on Elwynn: {u} {v}"
+        );
+        assert_eq!(objective, -1);
+        assert_eq!(
+            s.eval::<(i64, i64)>(&format!("return GetQuestWorldMapAreaID({QUEST})"))
+                .unwrap(),
+            (30, 0),
+            "the turn-in region's own row"
+        );
+        s.run(&format!("WorldMap_OpenToQuest({QUEST})")).unwrap();
+        let errors = map_errors(s.take_errors());
+        assert!(errors.is_empty(), "open-to-quest errors: {errors:#?}");
+        assert!(
+            s.eval::<bool>("return WorldMapFrame.blockWorldMapUpdate == nil")
+                .unwrap(),
+            "the open finished, so later map updates are not dropped"
+        );
+    });
 }
 
 /// A selected quest's blob draws from its cached mesh, the cursor over it answers its quest and

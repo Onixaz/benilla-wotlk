@@ -553,7 +553,7 @@ pub(crate) fn install_tooltip_methods(lua: &Lua, m: &Table) -> mlua::Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::script::live::{LiveLoan, TestView};
+    use crate::script::live::{lending, test_view, TestView};
     use crate::script::UiScript;
 
     fn catalog() -> CurrencyCatalogView {
@@ -626,18 +626,18 @@ mod tests {
         }
     }
 
-    /// Lend the tables and `holdings` for the rest of the test.
-    fn lend(catalog: CurrencyCatalogView, holdings: CurrencyHoldings) -> LiveLoan<TestView> {
-        crate::script::live::lend_test(TestView {
+    /// A view answering the tables and `holdings`.
+    fn lend(catalog: CurrencyCatalogView, holdings: CurrencyHoldings) -> TestView {
+        TestView {
             currency_catalog: Some(catalog),
             currency_holdings: Some(holdings),
             ..Default::default()
-        })
+        }
     }
 
-    /// The test VM with the tables and our currencies lent, its list built as a trigger builds it.
-    fn script() -> (UiScript, LiveLoan<TestView>) {
-        let loan = lend(catalog(), holdings());
+    /// The test VM and the view of the tables and our currencies, its list built under it as a trigger builds it.
+    fn script() -> (UiScript, TestView) {
+        let mut loan = lend(catalog(), holdings());
         let mut s = UiScript::new().unwrap();
         s.register_cvars([
             ("currencyTokensUnused1", "0"),
@@ -645,7 +645,7 @@ mod tests {
             ("currencyTokensBackpack1", "0"),
             ("currencyTokensBackpack2", "0"),
         ]);
-        s.rebuild_currency_list();
+        lending(&mut loan, || s.rebuild_currency_list());
         (s, loan)
     }
 
@@ -660,157 +660,171 @@ mod tests {
     /// last, the honor count from the field and a token's from its slot.
     #[test]
     fn the_list_groups_known_rows_under_sorted_headers() {
-        let (s, _loan) = script();
-        assert_eq!(s.eval::<i64>("return GetCurrencyListSize()").unwrap(), 6);
-        assert_eq!(row(&s, 1).0.as_deref(), Some("Dungeon"));
-        assert!(row(&s, 1).1, "a header");
-        assert_eq!(row(&s, 2).0.as_deref(), Some("Badge of Justice"));
-        assert_eq!(row(&s, 2).5, 12.0);
-        assert_eq!(row(&s, 3).0, None, "uncached sorts last");
-        assert_eq!(row(&s, 4).0.as_deref(), Some("Player vs. Player"));
-        assert_eq!(
-            row(&s, 5).0.as_deref(),
-            Some("Alterac Valley Mark of Honor")
-        );
-        assert_eq!(row(&s, 5).5, 3.0);
-        assert_eq!(row(&s, 6).0.as_deref(), Some("Honor Points"));
-        assert_eq!(row(&s, 6).5, 1500.0, "honor reads the field");
-        assert_eq!(
-            s.eval::<i64>("return select('#', GetCurrencyListInfo(7))")
-                .unwrap(),
-            9,
-            "nine nils past the list"
-        );
-        assert!(s
-            .eval::<bool>("return GetCurrencyListInfo(7) == nil")
-            .unwrap());
-        assert!(s.run("GetCurrencyListInfo()").is_err());
+        let (s, mut loan_v) = script();
+        crate::script::live::lending(&mut loan_v, || {
+            assert_eq!(s.eval::<i64>("return GetCurrencyListSize()").unwrap(), 6);
+            assert_eq!(row(&s, 1).0.as_deref(), Some("Dungeon"));
+            assert!(row(&s, 1).1, "a header");
+            assert_eq!(row(&s, 2).0.as_deref(), Some("Badge of Justice"));
+            assert_eq!(row(&s, 2).5, 12.0);
+            assert_eq!(row(&s, 3).0, None, "uncached sorts last");
+            assert_eq!(row(&s, 4).0.as_deref(), Some("Player vs. Player"));
+            assert_eq!(
+                row(&s, 5).0.as_deref(),
+                Some("Alterac Valley Mark of Honor")
+            );
+            assert_eq!(row(&s, 5).5, 3.0);
+            assert_eq!(row(&s, 6).0.as_deref(), Some("Honor Points"));
+            assert_eq!(row(&s, 6).5, 1500.0, "honor reads the field");
+            assert_eq!(
+                s.eval::<i64>("return select('#', GetCurrencyListInfo(7))")
+                    .unwrap(),
+                9,
+                "nine nils past the list"
+            );
+            assert!(s
+                .eval::<bool>("return GetCurrencyListInfo(7) == nil")
+                .unwrap());
+            assert!(s.run("GetCurrencyListInfo()").is_err());
+        });
     }
 
     /// The build asks only a listed row's uncached record (`0x5b01ef`); its landing rebuilds once (`0x5b01d7` -> `0x5b0660`), a later landing of it nothing.
     #[test]
     fn the_build_asks_a_listed_rows_record_and_its_landing_rebuilds() {
-        let (mut s, loan) = script();
-        assert_eq!(
-            loan.with_view(|v| v.item_asks.borrow().clone()),
-            [40752],
-            "the uncached Dungeon row"
-        );
-        loan.with_view(|v| v.item_asks.borrow_mut().clear());
-        s.run("ExpandCurrencyList(1, 0)").unwrap();
-        assert!(
-            loan.with_view(|v| v.item_asks.borrow().is_empty()),
-            "a folded row is not listed, so not asked"
-        );
-        s.run("ExpandCurrencyList(1, 1)").unwrap();
-        let mut named = holdings();
-        named
-            .items
-            .insert(40752, (Some("Emblem of Heroism".into()), None));
-        let _named = lend(catalog(), named);
-        assert_eq!(row(&s, 3).0, None, "the list holds what its build read");
-        assert!(s.currency_record_landed(40752), "a build waited on it");
-        assert_eq!(row(&s, 2).0.as_deref(), Some("Badge of Justice"));
-        assert_eq!(row(&s, 3).0.as_deref(), Some("Emblem of Heroism"));
-        assert!(!s.currency_record_landed(40752), "its wait is over");
-        assert!(!s.currency_record_landed(2589), "never asked");
+        let (mut s, mut loan_v) = script();
+        crate::script::live::lending(&mut loan_v, || {
+            assert_eq!(
+                test_view(|v| v.item_asks.borrow().clone()),
+                [40752],
+                "the uncached Dungeon row"
+            );
+            test_view(|v| v.item_asks.borrow_mut().clear());
+            s.run("ExpandCurrencyList(1, 0)").unwrap();
+            assert!(
+                test_view(|v| v.item_asks.borrow().is_empty()),
+                "a folded row is not listed, so not asked"
+            );
+            s.run("ExpandCurrencyList(1, 1)").unwrap();
+            let mut named = holdings();
+            named
+                .items
+                .insert(40752, (Some("Emblem of Heroism".into()), None));
+            let mut named_v = lend(catalog(), named);
+            crate::script::live::lending(&mut named_v, || {
+                assert_eq!(row(&s, 3).0, None, "the list holds what its build read");
+                assert!(s.currency_record_landed(40752), "a build waited on it");
+                assert_eq!(row(&s, 2).0.as_deref(), Some("Badge of Justice"));
+                assert_eq!(row(&s, 3).0.as_deref(), Some("Emblem of Heroism"));
+                assert!(!s.currency_record_landed(40752), "its wait is over");
+                assert!(!s.currency_record_landed(2589), "never asked");
+            });
+        });
     }
 
     /// A count reads our currencies at the call, the list's names at its build.
     #[test]
     fn a_count_reads_the_call_and_a_name_the_build() {
-        let (s, _loan) = script();
-        let mut more = holdings();
-        more.tokens = vec![(29434, 40)];
-        more.items.insert(29434, (Some("Renamed".into()), None));
-        let _more = lend(catalog(), more);
-        assert_eq!(row(&s, 2).5, 40.0, "the count is live");
-        assert_eq!(
-            row(&s, 2).0.as_deref(),
-            Some("Badge of Justice"),
-            "the name is the build's"
-        );
+        let (s, mut loan_v) = script();
+        crate::script::live::lending(&mut loan_v, || {
+            let mut more = holdings();
+            more.tokens = vec![(29434, 40)];
+            more.items.insert(29434, (Some("Renamed".into()), None));
+            let mut more_v = lend(catalog(), more);
+            crate::script::live::lending(&mut more_v, || {
+                assert_eq!(row(&s, 2).5, 40.0, "the count is live");
+                assert_eq!(
+                    row(&s, 2).0.as_deref(),
+                    Some("Badge of Justice"),
+                    "the name is the build's"
+                );
+            });
+        });
     }
 
     /// Collapsing hides a header's rows; marking a row unused moves it under the last category
     /// and writes the CVar bit; a watched row reaches the backpack verbs.
     #[test]
     fn collapse_unused_and_backpack_marks() {
-        let (s, _loan) = script();
-        s.run("ExpandCurrencyList(1, 0)").unwrap();
-        assert_eq!(s.eval::<i64>("return GetCurrencyListSize()").unwrap(), 4);
-        assert!(!row(&s, 1).2, "collapsed");
-        s.run("ExpandCurrencyList(1, 1)").unwrap();
-        // The badge (bit 2) moves under the last category, whose header now shows.
-        s.run("SetCurrencyUnused(2, 1)").unwrap();
-        assert_eq!(
-            s.eval::<String>("return GetCVar('currencyTokensUnused1')")
-                .unwrap(),
-            "2"
-        );
-        assert_eq!(s.eval::<i64>("return GetCurrencyListSize()").unwrap(), 7);
-        assert_eq!(row(&s, 6).0.as_deref(), Some("Unused"));
-        assert_eq!(row(&s, 7).0.as_deref(), Some("Badge of Justice"));
-        assert!(row(&s, 7).3, "unused");
-        // Row 4 is now the Alterac Valley mark (bit 40, the second CVar's bit 7).
-        s.run("SetCurrencyBackpack(4, 1)").unwrap();
-        let (name, count, kind, _icon, id): (String, f64, f64, Option<String>, i64) =
-            s.eval("return GetBackpackCurrencyInfo(1)").unwrap();
-        assert_eq!(
-            (name.as_str(), count, kind, id),
-            ("Alterac Valley Mark of Honor", 3.0, 0.0, 20560)
-        );
-        assert_eq!(
-            s.eval::<String>("return GetCVar('currencyTokensBackpack2')")
-                .unwrap(),
-            "128"
-        );
-        assert!(s
-            .eval::<bool>("return GetBackpackCurrencyInfo(2) == nil")
-            .unwrap());
+        let (s, mut loan_v) = script();
+        crate::script::live::lending(&mut loan_v, || {
+            s.run("ExpandCurrencyList(1, 0)").unwrap();
+            assert_eq!(s.eval::<i64>("return GetCurrencyListSize()").unwrap(), 4);
+            assert!(!row(&s, 1).2, "collapsed");
+            s.run("ExpandCurrencyList(1, 1)").unwrap();
+            // The badge (bit 2) moves under the last category, whose header now shows.
+            s.run("SetCurrencyUnused(2, 1)").unwrap();
+            assert_eq!(
+                s.eval::<String>("return GetCVar('currencyTokensUnused1')")
+                    .unwrap(),
+                "2"
+            );
+            assert_eq!(s.eval::<i64>("return GetCurrencyListSize()").unwrap(), 7);
+            assert_eq!(row(&s, 6).0.as_deref(), Some("Unused"));
+            assert_eq!(row(&s, 7).0.as_deref(), Some("Badge of Justice"));
+            assert!(row(&s, 7).3, "unused");
+            // Row 4 is now the Alterac Valley mark (bit 40, the second CVar's bit 7).
+            s.run("SetCurrencyBackpack(4, 1)").unwrap();
+            let (name, count, kind, _icon, id): (String, f64, f64, Option<String>, i64) =
+                s.eval("return GetBackpackCurrencyInfo(1)").unwrap();
+            assert_eq!(
+                (name.as_str(), count, kind, id),
+                ("Alterac Valley Mark of Honor", 3.0, 0.0, 20560)
+            );
+            assert_eq!(
+                s.eval::<String>("return GetCVar('currencyTokensBackpack2')")
+                    .unwrap(),
+                "128"
+            );
+            assert!(s
+                .eval::<bool>("return GetBackpackCurrencyInfo(2) == nil")
+                .unwrap());
+        });
     }
 
     /// The three setters take two numbers or raise their usage, and a flag truncates: `true`, nil
     /// and a word raise, `0.5` is off, a numeric string passes.
     #[test]
     fn the_setters_take_two_numbers_and_truncate_the_flag() {
-        let (s, _loan) = script();
-        for (call, usage) in [
-            (
-                "ExpandCurrencyList",
-                "Usage: ExpandCurrencyList(index,expand)",
-            ),
-            (
-                "SetCurrencyUnused",
-                "Usage: SetCurrencyUnused(index,unused)",
-            ),
-            (
-                "SetCurrencyBackpack",
-                "Usage: SetCurrencyBackpack(index,backpack)",
-            ),
-        ] {
-            for args in ["1, true", "1, nil", "1", "1, 'on'", "nil, 1", "'x', 1"] {
-                let err = s.run(&format!("{call}({args})")).unwrap_err().to_string();
-                assert!(err.contains(usage), "{call}({args}): {err}");
+        let (s, mut loan_v) = script();
+        crate::script::live::lending(&mut loan_v, || {
+            for (call, usage) in [
+                (
+                    "ExpandCurrencyList",
+                    "Usage: ExpandCurrencyList(index,expand)",
+                ),
+                (
+                    "SetCurrencyUnused",
+                    "Usage: SetCurrencyUnused(index,unused)",
+                ),
+                (
+                    "SetCurrencyBackpack",
+                    "Usage: SetCurrencyBackpack(index,backpack)",
+                ),
+            ] {
+                for args in ["1, true", "1, nil", "1", "1, 'on'", "nil, 1", "'x', 1"] {
+                    let err = s.run(&format!("{call}({args})")).unwrap_err().to_string();
+                    assert!(err.contains(usage), "{call}({args}): {err}");
+                }
             }
-        }
-        s.run("ExpandCurrencyList(1, 0.5)").unwrap();
-        assert!(!row(&s, 1).2, "0.5 truncates to 0: collapsed");
-        s.run("ExpandCurrencyList('1', '1')").unwrap();
-        assert!(row(&s, 1).2, "numeric strings pass");
-        s.run("SetCurrencyUnused(2, 0.9)").unwrap();
-        assert_eq!(
-            s.eval::<String>("return GetCVar('currencyTokensUnused1')")
-                .unwrap(),
-            "0"
-        );
-        s.run("SetCurrencyUnused(2.7, -1)").unwrap();
-        assert_eq!(
-            s.eval::<String>("return GetCVar('currencyTokensUnused1')")
-                .unwrap(),
-            "2",
-            "2.7 truncates to row 2, -1 is on"
-        );
+            s.run("ExpandCurrencyList(1, 0.5)").unwrap();
+            assert!(!row(&s, 1).2, "0.5 truncates to 0: collapsed");
+            s.run("ExpandCurrencyList('1', '1')").unwrap();
+            assert!(row(&s, 1).2, "numeric strings pass");
+            s.run("SetCurrencyUnused(2, 0.9)").unwrap();
+            assert_eq!(
+                s.eval::<String>("return GetCVar('currencyTokensUnused1')")
+                    .unwrap(),
+                "0"
+            );
+            s.run("SetCurrencyUnused(2.7, -1)").unwrap();
+            assert_eq!(
+                s.eval::<String>("return GetCVar('currencyTokensUnused1')")
+                    .unwrap(),
+                "2",
+                "2.7 truncates to row 2, -1 is on"
+            );
+        });
     }
 
     /// A Badge of Justice template, class 10 and bind on pickup, and a tooltip `TT` whose lines and
@@ -852,192 +866,214 @@ mod tests {
     /// bind line, and only `SetBackpackToken` prices the stack (`0x63097d`).
     #[test]
     fn a_held_token_builds_from_its_slot_without_the_bind_line() {
-        let (mut s, _loan) = script();
-        with_token_tip(&mut s);
-        s.run("SetCurrencyBackpack(2, 1)").unwrap();
-        let mut slots = crate::script::ContainerState {
-            num_slots: 32,
-            ..Default::default()
-        };
-        slots.slots.insert(
-            4,
-            crate::script::ContainerSlot {
-                guid: 0x4000_0000_0000_0099,
-                item_id: 29434,
-                count: 12,
-                link: Some(
-                    "|cffffffff|Hitem:29434:0:0:0:0:0:0:0:80|h[Badge of Justice]|h|r".into(),
-                ),
+        let (mut s, mut loan_v) = script();
+        crate::script::live::lending(&mut loan_v, || {
+            with_token_tip(&mut s);
+            s.run("SetCurrencyBackpack(2, 1)").unwrap();
+            let mut slots = crate::script::ContainerState {
+                num_slots: 32,
                 ..Default::default()
-            },
-        );
-        s.set_token_slots(Some(slots));
-        assert_eq!(
-            token_tip(&s, "SetCurrencyToken(2)"),
-            ("Badge of Justice".into(), None)
-        );
-        assert_eq!(
-            token_tip(&s, "SetBackpackToken(1)"),
-            ("Badge of Justice".into(), Some(60.0)),
-            "the held stack of 12 at 5 each"
-        );
-        // With loot open the player is still not its source.
-        s.set_loot_source(0xF130_0000_0000_0001);
-        assert_eq!(token_tip(&s, "SetCurrencyToken(2)").0, "Badge of Justice");
+            };
+            slots.slots.insert(
+                4,
+                crate::script::ContainerSlot {
+                    guid: 0x4000_0000_0000_0099,
+                    item_id: 29434,
+                    count: 12,
+                    link: Some(
+                        "|cffffffff|Hitem:29434:0:0:0:0:0:0:0:80|h[Badge of Justice]|h|r".into(),
+                    ),
+                    ..Default::default()
+                },
+            );
+            s.set_token_slots(Some(slots));
+            assert_eq!(
+                token_tip(&s, "SetCurrencyToken(2)"),
+                ("Badge of Justice".into(), None)
+            );
+            assert_eq!(
+                token_tip(&s, "SetBackpackToken(1)"),
+                ("Badge of Justice".into(), Some(60.0)),
+                "the held stack of 12 at 5 each"
+            );
+            // With loot open the player is still not its source.
+            s.set_loot_source(0xF130_0000_0000_0001);
+            assert_eq!(token_tip(&s, "SetCurrencyToken(2)").0, "Badge of Justice");
+        });
     }
 
     /// An unheld token builds by id with a zero requester (`0x630750`), which equals the loot
     /// source `[0xbfa8d8]` only while no loot is open (`0x627efd`); neither binding prices it.
     #[test]
     fn an_unheld_token_shows_the_bind_line_only_with_no_loot_open() {
-        let (mut s, _loan) = script();
-        with_token_tip(&mut s);
-        s.run("SetCurrencyBackpack(2, 1)").unwrap();
-        s.set_token_slots(Some(crate::script::ContainerState {
-            num_slots: 32,
-            ..Default::default()
-        }));
-        for call in ["SetCurrencyToken(2)", "SetBackpackToken(1)"] {
+        let (mut s, mut loan_v) = script();
+        crate::script::live::lending(&mut loan_v, || {
+            with_token_tip(&mut s);
+            s.run("SetCurrencyBackpack(2, 1)").unwrap();
+            s.set_token_slots(Some(crate::script::ContainerState {
+                num_slots: 32,
+                ..Default::default()
+            }));
+            for call in ["SetCurrencyToken(2)", "SetBackpackToken(1)"] {
+                assert_eq!(
+                    token_tip(&s, call),
+                    ("Badge of Justice|[BOP]".into(), None),
+                    "{call}"
+                );
+            }
+            s.set_loot_source(0xF130_0000_0000_0001);
             assert_eq!(
-                token_tip(&s, call),
-                ("Badge of Justice|[BOP]".into(), None),
-                "{call}"
+                token_tip(&s, "SetCurrencyToken(2)").0,
+                "Badge of Justice",
+                "a zero requester is not an open loot's source"
             );
-        }
-        s.set_loot_source(0xF130_0000_0000_0001);
-        assert_eq!(
-            token_tip(&s, "SetCurrencyToken(2)").0,
-            "Badge of Justice",
-            "a zero requester is not an open loot's source"
-        );
+        });
     }
 
     /// The tooltip methods' usage names the tooltip they were called on (`0xa26b00`, `0xa26b24`).
     #[test]
     fn a_tooltip_usage_names_its_own_frame() {
-        let (s, _loan) = script();
-        s.run(r#"CreateFrame("GameTooltip", "CurrencyTip") Unnamed = CreateFrame("GameTooltip")"#)
+        let (s, mut loan_v) = script();
+        crate::script::live::lending(&mut loan_v, || {
+            s.run(
+                r#"CreateFrame("GameTooltip", "CurrencyTip") Unnamed = CreateFrame("GameTooltip")"#,
+            )
             .unwrap();
-        for (call, want) in [
-            (
-                "CurrencyTip:SetCurrencyToken()",
-                "Usage: CurrencyTip:SetCurrencyToken(index)",
-            ),
-            (
-                "CurrencyTip:SetBackpackToken('x')",
-                "Usage: CurrencyTip:SetBackpackToken(index)",
-            ),
-            (
-                "Unnamed:SetCurrencyToken(nil)",
-                "Usage: <unnamed>:SetCurrencyToken(index)",
-            ),
-        ] {
-            let err = s.run(call).unwrap_err().to_string();
-            assert!(err.contains(want), "{call}: {err}");
-        }
-        s.run("CurrencyTip:SetCurrencyToken(99) CurrencyTip:SetBackpackToken(99)")
-            .unwrap();
+            for (call, want) in [
+                (
+                    "CurrencyTip:SetCurrencyToken()",
+                    "Usage: CurrencyTip:SetCurrencyToken(index)",
+                ),
+                (
+                    "CurrencyTip:SetBackpackToken('x')",
+                    "Usage: CurrencyTip:SetBackpackToken(index)",
+                ),
+                (
+                    "Unnamed:SetCurrencyToken(nil)",
+                    "Usage: <unnamed>:SetCurrencyToken(index)",
+                ),
+            ] {
+                let err = s.run(call).unwrap_err().to_string();
+                assert!(err.contains(want), "{call}: {err}");
+            }
+            s.run("CurrencyTip:SetCurrencyToken(99) CurrencyTip:SetBackpackToken(99)")
+                .unwrap();
+        });
     }
 
     /// Marking a row writes the CVar pair without calling Lua's `SetCVar`, hooked or replaced.
     #[test]
     fn a_mark_writes_the_cvar_without_the_lua_setcvar() {
-        let (s, _loan) = script();
-        s.run("Calls = 0 hooksecurefunc('SetCVar', function() Calls = Calls + 1 end)")
-            .unwrap();
-        s.run("SetCurrencyBackpack(2, 1) SetCurrencyUnused(2, 1)")
-            .unwrap();
-        assert_eq!(
-            s.eval::<String>("return GetCVar('currencyTokensUnused1')")
-                .unwrap(),
-            "2"
-        );
-        // The badge now sits last, under the unused header.
-        s.run("SetCVar = function() error('replaced') end SetCurrencyUnused(7, 0)")
-            .unwrap();
-        assert_eq!(s.eval::<i64>("return Calls").unwrap(), 0);
-        let (unused, watched): (String, String) = s
-            .eval("return GetCVar('currencyTokensUnused1'), GetCVar('currencyTokensBackpack1')")
-            .unwrap();
-        assert_eq!((unused.as_str(), watched.as_str()), ("0", "2"));
+        let (s, mut loan_v) = script();
+        crate::script::live::lending(&mut loan_v, || {
+            s.run("Calls = 0 hooksecurefunc('SetCVar', function() Calls = Calls + 1 end)")
+                .unwrap();
+            s.run("SetCurrencyBackpack(2, 1) SetCurrencyUnused(2, 1)")
+                .unwrap();
+            assert_eq!(
+                s.eval::<String>("return GetCVar('currencyTokensUnused1')")
+                    .unwrap(),
+                "2"
+            );
+            // The badge now sits last, under the unused header.
+            s.run("SetCVar = function() error('replaced') end SetCurrencyUnused(7, 0)")
+                .unwrap();
+            assert_eq!(s.eval::<i64>("return Calls").unwrap(), 0);
+            let (unused, watched): (String, String) = s
+                .eval("return GetCVar('currencyTokensUnused1'), GetCVar('currencyTokensBackpack1')")
+                .unwrap();
+            assert_eq!((unused.as_str(), watched.as_str()), ("0", "2"));
+        });
     }
 
     /// A header reports unused only for the category that sorts last.
     #[test]
     fn only_the_last_category_header_is_unused() {
-        let (s, _loan) = script();
-        s.run("SetCurrencyUnused(2, 1)").unwrap();
-        let headers: Vec<(String, bool)> = (1..=7)
-            .map(|i| row(&s, i))
-            .filter(|r| r.1)
-            .map(|r| (r.0.unwrap(), r.3))
-            .collect();
-        assert_eq!(
-            headers,
-            [
-                ("Dungeon".to_string(), false),
-                ("Player vs. Player".to_string(), false),
-                ("Unused".to_string(), true),
-            ]
-        );
+        let (s, mut loan_v) = script();
+        crate::script::live::lending(&mut loan_v, || {
+            s.run("SetCurrencyUnused(2, 1)").unwrap();
+            let headers: Vec<(String, bool)> = (1..=7)
+                .map(|i| row(&s, i))
+                .filter(|r| r.1)
+                .map(|r| (r.0.unwrap(), r.3))
+                .collect();
+            assert_eq!(
+                headers,
+                [
+                    ("Dungeon".to_string(), false),
+                    ("Player vs. Player".to_string(), false),
+                    ("Unused".to_string(), true),
+                ]
+            );
+        });
     }
 
     /// A watched token whose item record has not arrived answers five nils.
     #[test]
     fn an_uncached_watched_token_answers_nothing() {
-        let (s, _loan) = script();
-        // Row 3 is the uncached token (bit 5).
-        s.run("SetCurrencyBackpack(3, 1)").unwrap();
-        assert_eq!(
-            s.eval::<String>("return GetCVar('currencyTokensBackpack1')")
-                .unwrap(),
-            "16"
-        );
-        let (n, all_nil): (i64, bool) = s
+        let (s, mut loan_v) = script();
+        crate::script::live::lending(&mut loan_v, || {
+            // Row 3 is the uncached token (bit 5).
+            s.run("SetCurrencyBackpack(3, 1)").unwrap();
+            assert_eq!(
+                s.eval::<String>("return GetCVar('currencyTokensBackpack1')")
+                    .unwrap(),
+                "16"
+            );
+            let (n, all_nil): (i64, bool) = s
             .eval(
                 "local a, b, c, d, e = GetBackpackCurrencyInfo(1)                  return select('#', GetBackpackCurrencyInfo(1)),                  a == nil and b == nil and c == nil and d == nil and e == nil",
             )
             .unwrap();
-        assert_eq!((n, all_nil), (5, true));
+            assert_eq!((n, all_nil), (5, true));
+        });
     }
 
     /// Categories and the rows within one sort with accents folded: `É` sorts as `E`, before `Z`.
     #[test]
     fn categories_and_rows_fold_accents_when_sorting() {
-        let (mut s, _loan) = script();
-        let mut catalog = catalog();
-        catalog.categories[1].name = "Zone".into();
-        catalog.categories[2].name = "Événements".into();
-        let mut holdings = holdings();
-        holdings.items.get_mut(&43308).unwrap().0 = Some("Points".into());
-        holdings.items.get_mut(&20560).unwrap().0 = Some("Écusson".into());
-        let _renamed = lend(catalog, holdings);
-        s.rebuild_currency_list();
-        let names: Vec<Option<String>> = (1..=6).map(|i| row(&s, i).0).collect();
-        let want = [
-            "Événements",
-            "Écusson",
-            "Points",
-            "Zone",
-            "Badge of Justice",
-        ];
-        assert_eq!(names[..5], want.map(|n| Some(n.to_string())), "{names:?}");
+        let (mut s, mut loan_v) = script();
+        crate::script::live::lending(&mut loan_v, || {
+            let mut catalog = catalog();
+            catalog.categories[1].name = "Zone".into();
+            catalog.categories[2].name = "Événements".into();
+            let mut holdings = holdings();
+            holdings.items.get_mut(&43308).unwrap().0 = Some("Points".into());
+            holdings.items.get_mut(&20560).unwrap().0 = Some("Écusson".into());
+            let mut renamed_v = lend(catalog, holdings);
+            crate::script::live::lending(&mut renamed_v, || {
+                s.rebuild_currency_list();
+                let names: Vec<Option<String>> = (1..=6).map(|i| row(&s, i).0).collect();
+                let want = [
+                    "Événements",
+                    "Écusson",
+                    "Points",
+                    "Zone",
+                    "Badge of Justice",
+                ];
+                assert_eq!(names[..5], want.map(|n| Some(n.to_string())), "{names:?}");
+            });
+        });
     }
 
     /// A `ReloadUI` carries the closed categories into the new VM; a fresh VM, as a world entry from
     /// the character screen builds, has every category open.
     #[test]
     fn closed_categories_survive_a_reload_and_open_on_a_new_vm() {
-        let (mut s, _loan) = script();
-        s.run("ExpandCurrencyList(1, 0)").unwrap();
-        let carried = s.take_currency_folds();
-        let (mut fresh, _fresh_loan) = script();
-        assert!(row(&fresh, 1).2, "a new VM starts open");
-        fresh.restore_currency_folds(carried);
-        assert!(!row(&fresh, 1).2, "the reload kept it closed");
-        assert_eq!(
-            fresh.eval::<i64>("return GetCurrencyListSize()").unwrap(),
-            4
-        );
+        let (mut s, mut loan_v) = script();
+        crate::script::live::lending(&mut loan_v, || {
+            s.run("ExpandCurrencyList(1, 0)").unwrap();
+            let carried = s.take_currency_folds();
+            let (mut fresh, mut fresh_loan_v) = script();
+            crate::script::live::lending(&mut fresh_loan_v, || {
+                assert!(row(&fresh, 1).2, "a new VM starts open");
+                fresh.restore_currency_folds(carried);
+                assert!(!row(&fresh, 1).2, "the reload kept it closed");
+                assert_eq!(
+                    fresh.eval::<i64>("return GetCurrencyListSize()").unwrap(),
+                    4
+                );
+            });
+        });
     }
 }

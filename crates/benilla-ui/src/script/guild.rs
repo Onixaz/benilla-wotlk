@@ -1186,44 +1186,46 @@ mod tests {
         );
 
         // Both values read the bank at the call (`0xc1dc20`, `0xc1dc34`).
-        let _bank = crate::script::live::lend_test(crate::script::live::TestView {
+        let mut bank_v = crate::script::live::TestView {
             guild_bank_money: 12_345_678,
             guild_bank_withdraw_money: -1,
             ..Default::default()
-        });
-        s.set_guild(GuildState {
-            in_guild: true,
-            rights: 0x0004_0003,
-            ..Default::default()
-        });
-        assert!(s.eval::<bool>("return CanGuildBankRepair() == 1").unwrap());
-        assert_eq!(
-            s.eval::<i64>("return GetGuildBankMoney()").unwrap(),
-            12_345_678
-        );
-        assert_eq!(
-            s.eval::<i64>("return GetGuildBankWithdrawMoney()").unwrap(),
-            -1,
-            "the guild master's unlimited"
-        );
+        };
+        crate::script::live::lending(&mut bank_v, || {
+            s.set_guild(GuildState {
+                in_guild: true,
+                rights: 0x0004_0003,
+                ..Default::default()
+            });
+            assert!(s.eval::<bool>("return CanGuildBankRepair() == 1").unwrap());
+            assert_eq!(
+                s.eval::<i64>("return GetGuildBankMoney()").unwrap(),
+                12_345_678
+            );
+            assert_eq!(
+                s.eval::<i64>("return GetGuildBankWithdrawMoney()").unwrap(),
+                -1,
+                "the guild master's unlimited"
+            );
 
-        s.set_guild(GuildState {
-            in_guild: true,
-            rights: 0x0000_0003,
-            ..Default::default()
+            s.set_guild(GuildState {
+                in_guild: true,
+                rights: 0x0000_0003,
+                ..Default::default()
+            });
+            assert!(s
+                .eval::<bool>("return CanGuildBankRepair() == nil")
+                .unwrap());
+            s.set_guild(GuildState {
+                rights: 0x0004_0000,
+                ..Default::default()
+            });
+            assert!(
+                s.eval::<bool>("return CanGuildBankRepair() == nil")
+                    .unwrap(),
+                "guildless"
+            );
         });
-        assert!(s
-            .eval::<bool>("return CanGuildBankRepair() == nil")
-            .unwrap());
-        s.set_guild(GuildState {
-            rights: 0x0004_0000,
-            ..Default::default()
-        });
-        assert!(
-            s.eval::<bool>("return CanGuildBankRepair() == nil")
-                .unwrap(),
-            "guildless"
-        );
     }
 
     #[test]

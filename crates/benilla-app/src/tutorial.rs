@@ -14,11 +14,13 @@
 //! The reference has fifty-one trigger sites and seven acknowledge sites; the ones this app can
 //! produce reach here through [`TutorialEvent`] or the self-descriptor edges below.
 
+#[cfg(test)]
+use benilla_ui::script::UiScript;
 use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
 
-use benilla_ui::script::{ScriptValue, UiScript};
+use benilla_ui::script::ScriptValue;
 
 use crate::char_select::ClientState;
 use crate::net::{ClientCommand, EnteredWorldMessage, NetCommands, ObjectStore, SelfPlayer};
@@ -312,7 +314,7 @@ const KEYRING_SLOTS: std::ops::RangeInclusive<u32> = 0x56..=0x75;
 /// Before the script tick: the sites' asks, the descriptor edges, the timers, the cue and the
 /// event, and the acknowledged bank's push to whichever VM is live.
 fn feed_tutorials(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut tutorials: ResMut<Tutorials>,
     mut asks: MessageReader<TutorialEvent>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
@@ -358,7 +360,7 @@ fn feed_tutorials(
 
     tutorials.tick(now);
 
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     for published in std::mem::take(&mut tutorials.fired) {
@@ -370,15 +372,18 @@ fn feed_tutorials(
     }
     // The bank is owed to every VM: what it has been told is per VM, so a `/reload`'s fresh VM
     // is told again.
+    // Written after the triggers' listeners, which read the bank as of their raise.
     let told = told.get(&script);
     if *told != tutorials.acknowledged {
         told.clone_from(&tutorials.acknowledged);
-        script.set_tutorial_bank(tutorials.acknowledged.clone());
+        let bank = tutorials.acknowledged.clone();
+        script.after_raises(move |s| s.set_tutorial_bank(bank));
     }
     let told_completed = told_completed.get(&script);
     if *told_completed != tutorials.completed {
         told_completed.clone_from(&tutorials.completed);
-        script.set_tutorials_completed(tutorials.completed.clone());
+        let completed = tutorials.completed.clone();
+        script.after_raises(move |s| s.set_tutorials_completed(completed));
     }
 }
 
@@ -433,11 +438,11 @@ fn watch_self(
 
 /// After the script tick: the verbs' writes, then every send.
 fn drain_tutorials(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut tutorials: ResMut<Tutorials>,
     commands: Res<NetCommands>,
 ) {
-    if let Some(mut script) = script {
+    if let Some(mut script) = script.turn() {
         // `TriggerTutorial(n)` calls the client's trigger with no delay (`0x5308f7`).
         let now = Instant::now();
         for id in script.take_tutorial_triggers() {
@@ -611,7 +616,7 @@ impl Plugin for TutorialPlugin {
                     feed_tutorials
                         .in_set(UiFeed)
                         .run_if(crate::ui_script::ingame_ui_up),
-                    drain_tutorials.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_tutorials).in_set(UiDrain),
                 ),
             )
             .add_systems(OnExit(ClientState::InWorld), on_world_leave);
@@ -828,6 +833,36 @@ mod tests {
         );
         app.update();
         assert!(enabled(&mut app), "…and must be told it again");
+    }
+
+    /// A trigger's listener reads the bank as of its raise: the feed's later bank write lands
+    /// once the listener has run.
+    #[test]
+    fn a_triggers_listener_does_not_see_the_feeds_later_bank_write() {
+        let mut app = feeder();
+        app.init_resource::<crate::ui_script::live::UiEvents>();
+        {
+            let mut t = app.world_mut().resource_mut::<Tutorials>();
+            t.apply_flags(&[0u8; 32]);
+            t.trigger(id::WELCOME, 0, Instant::now());
+        }
+        let script = UiScript::new().expect("VM");
+        script
+            .run(
+                "SEEN = {} local f = CreateFrame('Frame') f:RegisterEvent('TUTORIAL_TRIGGER')
+                 f:SetScript('OnEvent', function() SEEN[#SEEN + 1] = tostring(TutorialsEnabled()) end)",
+            )
+            .unwrap();
+        app.insert_non_send_resource(script);
+        app.update();
+        crate::ui_script::raises::fire_raises(app.world_mut());
+        let seen: String = app
+            .world()
+            .non_send_resource::<UiScript>()
+            .eval("return table.concat(SEEN, ',')")
+            .unwrap();
+        assert_eq!(seen, "nil", "the listener ran before the bank was told");
+        assert!(enabled(&mut app), "the bank is told after the listener");
     }
 
     /// The bag-full line's display raises tutorial `0x39` once; another message raises none.

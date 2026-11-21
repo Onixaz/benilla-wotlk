@@ -119,14 +119,15 @@ pub(crate) fn idle_action(idle: Duration, gates: IdleGates) -> IdleAction {
     }
 }
 
+/// [`idle_handler`] and the step that fires what it raised.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct IdleStep;
+
 /// The handler, in-world only: the reference runs it in the world frame's render.
 pub(crate) fn idle_handler(
     time: Res<Time<Real>>,
     last: Res<LastInput>,
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
+    mut script: crate::ui_script::InTurn,
     self_q: Query<&crate::net::ObjectStore, With<crate::net::SelfPlayer>>,
     mut mirror: ResMut<AfkMirror>,
     mut chat: ResMut<ChatLog>,
@@ -140,7 +141,7 @@ pub(crate) fn idle_handler(
     if idle < AUTO_AFK_AFTER {
         return;
     }
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let gates = self_q.iter().next().map(|store| {

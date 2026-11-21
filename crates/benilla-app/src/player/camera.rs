@@ -840,16 +840,13 @@ pub(super) fn latch_world_mouse(
     mut rig: ResMut<CameraControl>,
     cameras: Query<&Camera, With<FlyCam>>,
     window: Single<&Window, With<PrimaryWindow>>,
-    (mut script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
+    mut script: crate::ui_script::InTurn,
     cover: Option<Res<crate::loading_screen::LoadingScreen>>,
     mut settle: ClickSettle,
 ) {
     let calls = script
-        .as_mut()
-        .map(|s| s.take_mouselook_calls())
+        .turn()
+        .map(|mut s| s.take_mouselook_calls())
         .unwrap_or_default();
     let Ok(camera) = cameras.single() else {
         return;
@@ -886,7 +883,7 @@ pub(super) fn latch_world_mouse(
         &mut settle.clicks,
     );
     // `IsMouselooking` reads `[input+4] & 1`, the TurnOrAction channel.
-    if let Some(mut script) = script {
+    if let Some(mut script) = script.turn() {
         script.set_turn_or_action_held(rig.world_mouse.turn());
     }
 }

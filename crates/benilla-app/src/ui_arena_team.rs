@@ -12,7 +12,7 @@ use benilla_protocol::messages::{
     ArenaTeamCommandResult, ArenaTeamEvent, ArenaTeamMember, ArenaTeamRecord,
 };
 use benilla_protocol::ObjectFields;
-use benilla_ui::script::{ArenaTeamMemberRef, ArenaTeamRecordView, ArenaTeamRequest, UiScript};
+use benilla_ui::script::{ArenaTeamMemberRef, ArenaTeamRecordView, ArenaTeamRequest};
 
 use crate::net::{ArenaTeamCommand, ClientCommand, NetCommands, ObjectStore, SelfPlayer};
 use crate::query_cache::QueryCache;
@@ -344,12 +344,12 @@ fn event_line(e: ArenaTeamEvent, my_name: Option<&str>) -> (&'static str, Vec<St
 
 /// The VM's sends; the roster ask goes through the throttle.
 fn drain_arena_teams(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut throttle: ResMut<RosterThrottle>,
     me: Query<&ObjectStore, With<SelfPlayer>>,
     commands: Res<NetCommands>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let now = Instant::now();
@@ -520,7 +520,7 @@ impl Plugin for UiArenaTeamPlugin {
                         .in_set(crate::ui_script::UiFeed)
                         .after(crate::ui_lfg::lfg_enter_world)
                         .after(crate::query_cache::release_on_enter::<ArenaTeams>),
-                    drain_arena_teams.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_arena_teams).in_set(UiDrain),
                 ),
             );
     }

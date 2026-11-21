@@ -2071,7 +2071,7 @@ fn parse_server_body(
                 for _ in 0..6 {
                     let _quest_item = read_u32_le(&mut r)?;
                 }
-                let _movement_id = read_u32_le(&mut r)?;
+                let movement_id = read_u32_le(&mut r)?;
                 ServerPacket::CreatureQueryResponse {
                     entry,
                     info: Some(CreatureQueryInfo {
@@ -2088,6 +2088,7 @@ fn parse_server_body(
                         // The 3.3.5a record has no civilian byte.
                         civilian: false,
                         racial_leader,
+                        movement_id,
                     }),
                 }
             }

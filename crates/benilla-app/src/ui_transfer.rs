@@ -9,7 +9,6 @@ use benilla_assets::{AssetSet, LockRecover, WorldAssets};
 use benilla_formats::MapDifficulty;
 use benilla_protocol::messages::DifficultyChangeResult;
 use benilla_protocol::{SessionEvent, SessionEventKind};
-use benilla_ui::script::UiScript;
 
 use crate::net::NetHandlerApp;
 use crate::ui_action::{FillArg, UiError, UiErrorKeys};
@@ -78,22 +77,16 @@ fn load_map_difficulties(mut commands: Commands, assets: Option<Res<WorldAssets>
 /// [`crate::loading_screen`]'s, off the same latch.
 fn on_transfer_pending(
     In(ev): In<SessionEvent>,
-    (script, mut live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
     mut cancel: crate::spell::SelfCancel,
 ) {
     if !matches!(ev, SessionEvent::TransferPending { .. }) {
         return;
     }
-    let mut script = script;
-    if let Some(script) = script.as_deref_mut() {
-        script.clear_cursor_payload();
-    }
+    ui.clear_cursor();
     cancel.cancel_player_spells();
-    // The cancel's cast-bar end, inside the handler (`0x806200`).
-    match script.as_deref_mut() {
-        Some(script) => cancel.press.fire(script, &mut live),
-        None => cancel.press.flush(&mut cancel.ecs),
-    }
+    // The cancel's cast-bar end, in the handler's turn (`0x806200`).
+    cancel.press.defer(&mut ui);
 }
 
 /// `SMSG_CHANGEPLAYER_DIFFICULTY_RESULT` by its jump table (`0x52c484`). Not kept: result 6's next
@@ -166,12 +159,14 @@ fn difficulty_refusal(result: DifficultyChangeResult) -> Option<UiError> {
 /// with `PLAYER_DIFFICULTYn`, one past the stored difficulty (`0x52c5d7`); result 8's line is
 /// system chat.
 fn feed_difficulty_notices(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut notices: ResMut<DifficultyNotices>,
     mut errors: ResMut<UiErrorKeys>,
     mut chat: ResMut<ChatLog>,
 ) {
-    let Some(mut script) = script else { return };
+    let Some(mut script) = script.turn() else {
+        return;
+    };
     for notice in std::mem::take(&mut notices.0) {
         match notice {
             DifficultyNotice::Line(text) => {
@@ -235,13 +230,13 @@ fn abort_text(
 /// (`[map+0x14]`, `0x403acc`). A map with no row, or text that resolves empty, shows nothing
 /// (`0x40395e`, `0x403ac5`-`0x403aca`).
 fn feed_transfer_aborts(
-    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut aborts: ResMut<TransferAborts>,
     mut chat: ResMut<ChatLog>,
     maps: Option<Res<benilla_assets::MapCatalogRes>>,
     difficulties: Res<MapDifficulties>,
 ) {
-    let Some(script) = script else { return };
+    let Some(script) = script.turn() else { return };
     if aborts.0.is_empty() {
         return;
     }

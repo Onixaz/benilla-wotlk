@@ -14,8 +14,6 @@ use benilla_world::schedule::WorldStage;
 
 /// The addon folder: discovery, manifests, the enable file and the load walk.
 pub(crate) mod addons;
-#[cfg(test)]
-mod borrow_census;
 mod content;
 pub(crate) mod extract;
 /// The stock glue screens.
@@ -25,11 +23,9 @@ pub(crate) mod glue_mgr;
 pub(crate) mod glue_scene;
 mod input;
 pub(crate) mod live;
+pub(crate) mod raises;
 pub(crate) mod safe_world;
-pub(crate) use live::{
-    LendLive, LentRef, OwnedMut, OwnsActions, OwnsCooldowns, OwnsMacros, OwnsPlace,
-    OwnsScriptCalls, OwnsSelection, OwnsSpirit, OwnsTradeSkill,
-};
+pub(crate) use raises::{InTurn, VmTurn};
 #[cfg(test)]
 pub(crate) mod live_tests;
 // The press-frame tests run the input pass as a system of their own.
@@ -43,6 +39,8 @@ mod feed_census_tests;
 mod layer_tests;
 mod load_log;
 mod manifest;
+#[cfg(test)]
+mod raise_census_tests;
 /// The server alert's fetch and `LaunchURL`'s browser, for the stock glue screens.
 pub(crate) mod server_alert;
 #[cfg(test)]
@@ -519,6 +517,8 @@ impl Plugin for UiScriptPlugin {
                 )
                     .chain(),
             )
+            // The raise steps between the phases.
+            .add_plugins(raises::schedule)
             // The area resolves after the input's calls drain and before the paint (`0x47f15b`, `0x47f163`).
             .configure_sets(
                 Update,
@@ -620,11 +620,11 @@ pub(crate) use lifecycle::{
 /// `GetFramerate()`'s host half: FPS on `Time<Real>`, smoothed by a one-second pole; how the
 /// reference averages it is untraced.
 fn feed_framerate(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     time: Res<Time<bevy::time::Real>>,
     mut smoothed: Local<f64>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let dt = time.delta_secs_f64();
@@ -643,18 +643,17 @@ fn feed_framerate(
 }
 
 /// Synthetic player and target snapshots for a server-less UI capture, and its first events once.
-fn demo_unit_feed(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut fired: Local<VmMemo<bool>>,
-) {
+fn demo_unit_feed(world: &mut World, mut fired: Local<VmMemo<bool>>) {
+    safe_world::lend(world, |script| demo_units(script, &mut fired));
+}
+
+/// [`demo_unit_feed`]'s body on the VM, with the `World` lent.
+fn demo_units(script: &mut UiScript, fired: &mut VmMemo<bool>) {
     /// The synthetic target's guid: a creature high part; only its distinctness matters.
     const DEMO_TARGET_GUID: u64 = 0xF130_0000_0000_0001;
 
-    let Some(mut script) = script else {
-        return;
-    };
     // Session-keyed: a fresh VM needs the one-shot events and bar seeds again.
-    let fired = fired.get(&script);
+    let fired = fired.get(script);
     // Debug (`WOW_CAPTURE_REHOVER=1`): re-fire the world hover every frame, a flapping raycast.
     if std::env::var("WOW_CAPTURE_REHOVER").as_deref() == Ok("1") {
         script.world_tooltip_unit("mouseover");
@@ -713,7 +712,7 @@ fn demo_unit_feed(
     // The combo dots need a rogue and banked points, seeded only for `ui-combopoints`.
     if std::env::var("WOW_CAPTURE").as_deref() == Ok("ui-combopoints") {
         crate::dev::set_fixture_player(
-            &mut script,
+            script,
             benilla_ui::script::PlayerReqState {
                 level: 12,
                 class_id: 4, // rogue
@@ -729,7 +728,7 @@ fn demo_unit_feed(
     if !*fired {
         // Battle-stance page slots (actions 73..); slot 80 is a consumable stack of 5, since stock
         // `ActionButton_UpdateCount` shows only a consumable's count (`ActionButton.lua:287`).
-        script.set_bonus_bar_offset(1);
+        crate::dev::set_fixture_bonus_bar_offset(script, 1);
         // A macro on button 4; a capture has no character for `ui_macro::load_macros` to read.
         script.set_macros(benilla_ui::script::MacroState {
             account: vec![benilla_ui::script::MacroView {
@@ -783,7 +782,8 @@ fn demo_unit_feed(
             (49, "Interface\\Icons\\Spell_Fire_FlameBolt", 0x00, 107, 0),
             (60, "Interface\\Icons\\Spell_Holy_Heal", 0x00, 108, 0),
         ] {
-            script.set_action(
+            crate::dev::set_fixture_action(
+                script,
                 action,
                 Some(ActionSlot {
                     texture: Some(icon.into()),
@@ -806,32 +806,35 @@ fn demo_unit_feed(
             );
         }
         // The stance bar: battle active (bonus offset 1), defensive uncastable, berserker cooling.
-        script.set_shapeshift_forms(vec![
-            benilla_ui::script::ShapeshiftFormView {
-                spell_id: 2457,
-                texture: Some("Interface\\Icons\\Ability_Warrior_OffensiveStance".into()),
-                name: "Battle Stance".into(),
-                active: true,
-                castable: true,
-                cooldown: None,
-            },
-            benilla_ui::script::ShapeshiftFormView {
-                spell_id: 71,
-                texture: Some("Interface\\Icons\\Ability_Warrior_DefensiveStance".into()),
-                name: "Defensive Stance".into(),
-                active: false,
-                castable: false,
-                cooldown: None,
-            },
-            benilla_ui::script::ShapeshiftFormView {
-                spell_id: 2458,
-                texture: Some("Interface\\Icons\\Ability_Racial_Avatar".into()),
-                name: "Berserker Stance".into(),
-                active: false,
-                castable: true,
-                cooldown: Some((900, 1500, true)),
-            },
-        ]);
+        crate::dev::set_fixture_shapeshift_forms(
+            script,
+            vec![
+                benilla_ui::script::ShapeshiftFormView {
+                    spell_id: 2457,
+                    texture: Some("Interface\\Icons\\Ability_Warrior_OffensiveStance".into()),
+                    name: "Battle Stance".into(),
+                    active: true,
+                    castable: true,
+                    cooldown: None,
+                },
+                benilla_ui::script::ShapeshiftFormView {
+                    spell_id: 71,
+                    texture: Some("Interface\\Icons\\Ability_Warrior_DefensiveStance".into()),
+                    name: "Defensive Stance".into(),
+                    active: false,
+                    castable: false,
+                    cooldown: None,
+                },
+                benilla_ui::script::ShapeshiftFormView {
+                    spell_id: 2458,
+                    texture: Some("Interface\\Icons\\Ability_Racial_Avatar".into()),
+                    name: "Berserker Stance".into(),
+                    active: false,
+                    castable: true,
+                    cooldown: Some((900, 1500, true)),
+                },
+            ],
+        );
         script.fire_event("UPDATE_SHAPESHIFT_FORMS", vec![]);
         // 70% XP, set before `PLAYER_ENTERING_WORLD` so the bar's first update reads it.
         script.set_player_xp(4200, 6000);

@@ -586,7 +586,7 @@ fn name_and_creature_query_roundtrip() {
         "0000803f0000803f",         // health and power modifiers
         "01",                       // racial_leader
         "000000000000000000000000000000000000000000000000", // six quest items
-        "00000000"                  // movement id
+        "41010000"                  // movement id = 321
     ));
     let (packet, tail) =
         messages::parse_server_with_tail(messages::opcode::SMSG_CREATURE_QUERY_RESPONSE, &body)
@@ -610,6 +610,7 @@ fn name_and_creature_query_roundtrip() {
                     display_id: 533,
                     health_modifier: 1.0,
                     power_modifier: 1.0,
+                    movement_id: 321,
                 })
             );
         }

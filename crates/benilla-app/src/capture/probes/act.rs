@@ -42,24 +42,24 @@ struct ProbeChat {
 
 /// Submits due lines once a self player exists (the server drops a `.go` sent before world entry),
 /// through the chat box so client-side slash commands parse as typed ones do.
-fn fire_probe_chat(
-    mut probe: ResMut<ProbeChat>,
-    time: ProbeClock,
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
-    self_player: Query<(), With<crate::net::SelfPlayer>>,
-) {
-    if probe.lines.is_empty() {
-        return;
+fn fire_probe_chat(world: &mut World) {
+    if world.resource::<ProbeChat>().lines.is_empty() || !super::in_world(world) {
+        return; // nothing to send, or not in-world yet
     }
-    if self_player.is_empty() {
-        return; // not in-world yet
-    }
-    let Some(mut script) = script else {
+    let now = super::probe_secs(world);
+    let Some(mut probe) = world.remove_resource::<ProbeChat>() else {
         return;
     };
+    super::with_vm(world, |script| {
+        if let Some(script) = script {
+            send_probe_chat(&mut probe, script, now);
+        }
+    });
+    world.insert_resource(probe);
+}
+
+/// The chat lines due by `now`, pushed through the chat input.
+fn send_probe_chat(probe: &mut ProbeChat, script: &mut benilla_ui::script::UiScript, now: f32) {
     // Line N is due at `at + N·every`.
     loop {
         let Some(line) = probe
@@ -72,7 +72,7 @@ fn fire_probe_chat(
             return; // all sent
         };
         let due = probe.at + probe.every * probe.sent as f32;
-        if time.elapsed_secs() < due {
+        if now < due {
             return;
         }
         info!("probe-chat: sending {line:?}");
@@ -521,33 +521,47 @@ fn install_probe_log(script: &benilla_ui::script::UiScript) {
 }
 
 /// Runs the chunk once per world entry, on [`probe_lua_due`]'s schedule.
-fn fire_probe_lua(
-    mut probe: ResMut<ProbeLua>,
-    time: ProbeClock,
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
-    self_player: Query<(), With<crate::net::SelfPlayer>>,
-    state: Res<State<crate::char_select::ClientState>>,
-    entry_ui_pending: Option<Res<crate::ui_script::PendingEntryUiLoad>>,
-    windows: Query<&Window>,
-) {
-    if probe.chunk.is_empty() {
+fn fire_probe_lua(world: &mut World) {
+    if world.resource::<ProbeLua>().chunk.is_empty() {
         return;
     }
-    let Some(mut script) = script else {
-        // Between the world-entry edge and the entry load the boot VM is parked
-        // (`ui_script::ParkedBootVm`): not an entry yet.
-        probe.was_ready = false;
+    let in_world = *world
+        .resource::<State<crate::char_select::ClientState>>()
+        .get()
+        == crate::char_select::ClientState::InWorld;
+    let entry_ui_pending = world.contains_resource::<crate::ui_script::PendingEntryUiLoad>();
+    let self_player = super::in_world(world);
+    let window = world.query::<&Window>().iter(world).any(|w| w.focused);
+    let now = super::probe_secs(world);
+    let Some(mut probe) = world.remove_resource::<ProbeLua>() else {
         return;
     };
+    super::with_vm(world, |script| match script {
+        Some(script) => run_probe_lua(
+            &mut probe,
+            script,
+            in_world && !entry_ui_pending && self_player,
+            window,
+            now,
+        ),
+        // Between the world-entry edge and the entry load the boot VM is parked
+        // (`ui_script::ParkedBootVm`): not an entry yet.
+        None => probe.was_ready = false,
+    });
+    world.insert_resource(probe);
+}
+
+/// The probe's frame on the VM, the `World` lent.
+fn run_probe_lua(
+    probe: &mut ProbeLua,
+    script: &mut benilla_ui::script::UiScript,
+    ready: bool,
+    window: bool,
+    now: f32,
+) {
     // Ready means the in-game VM, not the boot one: `InWorld` (the entered-world message and the
     // first object update can share a drain a frame before the VM is parked), the entry UI load
     // done, and a self player for `UnitName("player")`.
-    let in_world = *state.get() == crate::char_select::ClientState::InWorld;
-    let ready = in_world && entry_ui_pending.is_none() && !self_player.is_empty();
-    let now = time.elapsed_secs();
     if ready && !probe.was_ready {
         probe.entries += 1;
         probe.ready_at = now;
@@ -558,7 +572,7 @@ fn fire_probe_lua(
         return;
     }
     if probe.logged_vm != script.session() {
-        install_probe_log(&script);
+        install_probe_log(script);
         probe.logged_vm = script.session();
     }
     let pastes = PROBE_PASTES
@@ -598,7 +612,6 @@ fn fire_probe_lua(
         info!("probe-click: {target} {button} {mods} at ({x:.1}, {y:.1})");
     }
     // The caret no chunk can read, one line per change, with the window's focus beside it.
-    let window = windows.iter().any(|w| w.focused);
     let caret = (
         window,
         script.focused_editbox_text_ui().map(|ui| ui.caret_on),
@@ -610,7 +623,7 @@ fn fire_probe_lua(
             caret.1
         );
     }
-    if !probe_lua_due(&probe, now) {
+    if !probe_lua_due(probe, now) {
         return;
     }
     probe.fired = probe.entries;
@@ -681,37 +694,32 @@ fn glue_chunk_failure(e: &dyn std::fmt::Display) -> String {
 }
 
 /// Runs the chunk once the glue VM stands and its time has come, then the one shot.
-fn fire_probe_glue_lua(
-    mut probe: ResMut<ProbeGlueLua>,
-    time: ProbeClock,
-    (script, _live): (
-        Option<NonSend<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
-    mut commands: Commands,
-) {
-    let now = time.elapsed_secs();
+fn fire_probe_glue_lua(world: &mut World) {
+    let now = super::probe_secs(world);
+    let Some(mut probe) = world.remove_resource::<ProbeGlueLua>() else {
+        return;
+    };
     match probe.ran_at {
-        None => {
-            let Some(script) = script.filter(|s| s.vm_kind() == benilla_ui::script::VmKind::Glue)
-            else {
-                return;
-            };
-            if now < probe.at {
-                return;
-            }
-            probe.ran_at = Some(now);
-            install_probe_log(&script);
-            info!("probe-glue-lua: running the chunk at {now:.1}s");
-            if let Err(e) = script.run(&probe.chunk) {
-                error!("{}", glue_chunk_failure(&e));
-            }
+        None if now >= probe.at => {
+            super::with_vm(world, |script| {
+                let Some(script) =
+                    script.filter(|s| s.vm_kind() == benilla_ui::script::VmKind::Glue)
+                else {
+                    return;
+                };
+                probe.ran_at = Some(now);
+                install_probe_log(script);
+                info!("probe-glue-lua: running the chunk at {now:.1}s");
+                if let Err(e) = script.run(&probe.chunk) {
+                    error!("{}", glue_chunk_failure(&e));
+                }
+            });
         }
         Some(ran) if !probe.shot_done && now >= ran + probe.shot_after => {
             probe.shot_done = true;
             if let Some(out) = probe.shot.clone() {
                 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
-                commands
+                world
                     .spawn(Screenshot::primary_window())
                     .observe(save_to_disk(out.clone()));
                 info!("probe-glue-lua: shot writing {out}");
@@ -719,6 +727,7 @@ fn fire_probe_glue_lua(
         }
         _ => {}
     }
+    world.insert_resource(probe);
 }
 
 /// `WOW_PROBE_HOVER="Frame1;Frame2;…"`: moves the pointer across each named frame's centre
@@ -789,25 +798,31 @@ struct ProbeHover {
 const HOVER_PARK_AT: (f32, f32) = (2.0, 2.0);
 
 /// Moves the pointer onto the next named frame's centre, looping forever.
-fn fire_probe_hover(
-    mut probe: ResMut<ProbeHover>,
-    mut synthetic: ResMut<crate::ui_script::SyntheticPointer>,
-    time: ProbeClock,
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
-    self_player: Query<(), With<crate::net::SelfPlayer>>,
-) {
-    if probe.names.is_empty() {
+fn fire_probe_hover(world: &mut World) {
+    let now = super::probe_secs(world);
+    {
+        let probe = world.resource::<ProbeHover>();
+        if probe.names.is_empty() || now < probe.at || now < probe.next {
+            return;
+        }
+    }
+    if !super::in_world(world) || !world.contains_non_send::<benilla_ui::script::UiScript>() {
         return;
     }
-    let now = time.elapsed_secs();
-    if now < probe.at || self_player.is_empty() || now < probe.next {
+    world.resource_mut::<crate::ui_script::SyntheticPointer>().0 = true;
+    let Some(mut probe) = world.remove_resource::<ProbeHover>() else {
         return;
-    }
-    let Some(mut script) = script else { return };
-    synthetic.0 = true;
+    };
+    super::with_vm(world, |script| {
+        if let Some(script) = script {
+            hover_step(&mut probe, script, now);
+        }
+    });
+    world.insert_resource(probe);
+}
+
+/// One sweep step on the VM, the `World` lent.
+fn hover_step(probe: &mut ProbeHover, script: &mut benilla_ui::script::UiScript, now: f32) {
     // Which half of the duty period this is, and whether it just flipped.
     if let Some((on, off)) = probe.duty {
         let period = (on + off).max(1e-3);
@@ -825,7 +840,7 @@ fn fire_probe_hover(
     probe.next = now + probe.step;
     let name = probe.names[probe.i % probe.names.len()].clone();
     probe.i += 1;
-    match frame_centre(&script, &name) {
+    match frame_centre(script, &name) {
         Some((x, y)) => {
             if !probe.announced {
                 probe.announced = true;
@@ -928,34 +943,42 @@ fn frame_centre(script: &benilla_ui::script::UiScript, name: &str) -> Option<(f3
 
 /// Advances the drag at most one step per `probe.step` seconds, each on its own frame: a press
 /// and release in one frame is a click.
-fn fire_probe_drag(
-    mut probe: ResMut<ProbeDrag>,
-    mut synthetic: ResMut<crate::ui_script::SyntheticPointer>,
-    time: ProbeClock,
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
-    self_player: Query<(), With<crate::net::SelfPlayer>>,
-) {
-    if probe.pairs.is_empty() || probe.pair >= probe.pairs.len() {
+fn fire_probe_drag(world: &mut World) {
+    let done = {
+        let probe = world.resource::<ProbeDrag>();
+        probe.pairs.is_empty() || probe.pair >= probe.pairs.len()
+    };
+    if done {
+        let mut synthetic = world.resource_mut::<crate::ui_script::SyntheticPointer>();
         if synthetic.0 {
             synthetic.0 = false;
         }
         return;
     }
-    let now = time.elapsed_secs();
-    if now < probe.at || self_player.is_empty() {
+    let now = super::probe_secs(world);
+    if now < world.resource::<ProbeDrag>().at
+        || !super::in_world(world)
+        || !world.contains_non_send::<benilla_ui::script::UiScript>()
+        || now < world.resource::<ProbeDrag>().next
+    {
         return;
     }
-    let Some(mut script) = script else { return };
-    if now < probe.next {
-        return;
-    }
-    probe.next = now + probe.step;
+    world.resource_mut::<ProbeDrag>().next = now + world.resource::<ProbeDrag>().step;
     // The probe owns the pointer from the first step of a gesture to the last, never longer.
-    synthetic.0 = true;
+    world.resource_mut::<crate::ui_script::SyntheticPointer>().0 = true;
+    let Some(mut probe) = world.remove_resource::<ProbeDrag>() else {
+        return;
+    };
+    super::with_vm(world, |script| {
+        if let Some(script) = script {
+            drag_step(&mut probe, script);
+        }
+    });
+    world.insert_resource(probe);
+}
 
+/// One gesture step on the VM, the `World` lent.
+fn drag_step(probe: &mut ProbeDrag, script: &mut benilla_ui::script::UiScript) {
     let (from_name, to_name) = probe.pairs[probe.pair].clone();
     let (button, from_name) = match from_name.strip_prefix('!') {
         Some(name) => ("RightButton", name.to_string()),
@@ -964,8 +987,8 @@ fn fire_probe_drag(
     match probe.phase {
         0 => {
             let (Some(from), Some(to)) = (
-                frame_centre(&script, &from_name),
-                frame_centre(&script, &to_name),
+                frame_centre(script, &from_name),
+                frame_centre(script, &to_name),
             ) else {
                 warn!("probe-drag: {from_name} > {to_name} — no resolved rect, skipping");
                 probe.pair += 1;
@@ -1008,7 +1031,7 @@ fn fire_probe_drag(
         // Self-check: hover the source where it now draws and ask the hit test who is there, to
         // catch a hit rect that has parted from the drawn one.
         7 => {
-            if let Some((x, y)) = frame_centre(&script, &from_name) {
+            if let Some((x, y)) = frame_centre(script, &from_name) {
                 script.mouse_move(x, y);
                 let focus = script
                     .eval::<String>(
@@ -1038,7 +1061,7 @@ fn fire_probe_drag(
             probe.pair += 1;
             probe.phase = 0;
             // Hand the pointer back for a frame between gestures, where a stale hover shows.
-            synthetic.0 = false;
+            super::read(|w| w.resource_mut::<crate::ui_script::SyntheticPointer>().0 = false);
             return;
         }
     }

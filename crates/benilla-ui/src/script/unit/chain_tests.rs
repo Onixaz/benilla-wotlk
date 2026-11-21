@@ -283,37 +283,39 @@ fn unit_in_party_judges_the_unit_a_party_chain_ends_on() {
 /// the unit it ends on, and two tokens naming one unit answer alike.
 #[test]
 fn spell_can_target_unit_answers_the_verdict_of_the_unit_the_token_names() {
-    let mut s = world();
-    s.set_spell_targeting(true);
-    s.set_spell_targetable_units([BOSS, P1]);
-    let can = |s: &UiScript, token: &str| {
-        s.eval::<bool>(&format!("return SpellCanTargetUnit({token:?}) == 1"))
-            .unwrap()
-    };
-    let refused = |s: &UiScript, token: &str| {
-        s.eval::<bool>(&format!("return SpellCanTargetUnit({token:?}) == nil"))
-            .unwrap()
-    };
-    assert!(can(&s, "party1target"), "the boss");
-    assert!(can(&s, "raid2target"), "the boss by another base");
-    assert!(can(&s, "PARTY1TARGET"), "case folds");
-    assert!(can(&s, "targettarget"), "party1, by a hop off the target");
-    assert!(can(&s, "party1"), "a base, by its guid");
-    assert!(can(&s, "raid2"), "another token, one unit");
-    assert!(refused(&s, "raid3target"), "the add is not cleared");
-    assert!(refused(&s, "pettarget"));
-    assert!(refused(&s, "target"), "the mob is not cleared");
-    assert!(refused(&s, "party1targettarget"), "a unit nobody holds");
-    assert!(refused(&s, "party2target"), "a hop off a unit not held");
-    assert!(refused(&s, "party1targetfoo"), "junk after a hop");
-    assert!(refused(&s, ""), "no token names nobody");
+    crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+        let mut s = world();
+        s.set_spell_targeting(true);
+        s.set_spell_targetable_units([BOSS, P1]);
+        let can = |s: &UiScript, token: &str| {
+            s.eval::<bool>(&format!("return SpellCanTargetUnit({token:?}) == 1"))
+                .unwrap()
+        };
+        let refused = |s: &UiScript, token: &str| {
+            s.eval::<bool>(&format!("return SpellCanTargetUnit({token:?}) == nil"))
+                .unwrap()
+        };
+        assert!(can(&s, "party1target"), "the boss");
+        assert!(can(&s, "raid2target"), "the boss by another base");
+        assert!(can(&s, "PARTY1TARGET"), "case folds");
+        assert!(can(&s, "targettarget"), "party1, by a hop off the target");
+        assert!(can(&s, "party1"), "a base, by its guid");
+        assert!(can(&s, "raid2"), "another token, one unit");
+        assert!(refused(&s, "raid3target"), "the add is not cleared");
+        assert!(refused(&s, "pettarget"));
+        assert!(refused(&s, "target"), "the mob is not cleared");
+        assert!(refused(&s, "party1targettarget"), "a unit nobody holds");
+        assert!(refused(&s, "party2target"), "a hop off a unit not held");
+        assert!(refused(&s, "party1targetfoo"), "junk after a hop");
+        assert!(refused(&s, ""), "no token names nobody");
 
-    // The set moves with the push, and clearing it clears every token.
-    s.set_spell_targetable_units([ADD]);
-    assert!(can(&s, "raid3target"));
-    assert!(refused(&s, "party1target"));
-    s.set_spell_targetable_units([]);
-    assert!(refused(&s, "raid3target"));
+        // The set moves with the push, and clearing it clears every token.
+        s.set_spell_targetable_units([ADD]);
+        assert!(can(&s, "raid3target"));
+        assert!(refused(&s, "party1target"));
+        s.set_spell_targetable_units([]);
+        assert!(refused(&s, "raid3target"));
+    });
 }
 
 /// The reference gates the argument; a token the resolver does not know names nobody.

@@ -6,9 +6,11 @@ use benilla_protocol::messages::{
     member_status, GroupLootInfo, GroupMemberEntry, PartyMemberStatsInfo, GROUP_MEMBER_ASSISTANT,
     GROUP_MEMBER_MAIN_ASSIST, GROUP_MEMBER_MAIN_TANK,
 };
+#[cfg(test)]
+use benilla_ui::script::UiScript;
 use benilla_ui::script::{
     PartyMemberInfo, PartyRequest, PartyState, RaidMemberInfo, SavedInstanceInfo, ScriptValue,
-    UiScript, UnitState,
+    UnitState,
 };
 use bevy::prelude::*;
 
@@ -133,7 +135,7 @@ pub(super) fn feed_party(
     // `ChrClasses.dbc` field 16, `UnitHasRelicSlot`'s input, and the form table the creature type
     // reads.
     tables: crate::ui_unit::SnapshotTables,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     group: Res<GroupState>,
     index: Res<GuidIndex>,
     stores: Query<&ObjectStore>,
@@ -157,7 +159,7 @@ pub(super) fn feed_party(
     mut fed: Local<crate::ui_script::VmMemo<FedParty>>,
     mut chat: ResMut<crate::ui_chat::ChatLog>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let (fed, vm_reset) = fed.get_reset(&script);
@@ -367,7 +369,9 @@ pub(super) fn feed_party(
     };
     if fed.pushed_party.as_ref() != Some(&fresh) {
         gate.audit("feed_party", "the roster snapshot");
-        script.set_party(fresh.clone());
+        // Each write after a raise lands once that raise's listeners have run.
+        let party = fresh.clone();
+        script.after_raises(move |s| s.set_party(party));
         fed.pushed_party = Some(fresh);
     }
 
@@ -388,7 +392,8 @@ pub(super) fn feed_party(
         });
         if fed.units[i] != snap {
             gate.audit("feed_party", "a party-token snapshot");
-            script.set_unit(token, snap.clone());
+            let unit = snap.clone();
+            script.after_raises(move |s| s.set_unit(token, unit));
             if let Some(cur) = &snap {
                 crate::ui_unit::fire_transitions(
                     &mut script,
@@ -478,7 +483,8 @@ pub(super) fn feed_party(
         });
         if fed.raid_units[i] != snap {
             gate.audit("feed_party", "a raid-token snapshot");
-            script.set_unit(token, snap.clone());
+            let unit = snap.clone();
+            script.after_raises(move |s| s.set_unit(token, unit));
             if let Some(cur) = &snap {
                 crate::ui_unit::fire_transitions(
                     &mut script,
@@ -636,7 +642,7 @@ pub(super) fn feed_party(
         gate.audit("feed_party", "the saved-instance edge");
         fed.saved = saved.clone();
         fed.saved_answers = group.saved_instances_answers;
-        script.set_saved_instances(saved);
+        script.after_raises(move |s| s.set_saved_instances(saved));
         if !vm_reset {
             script.fire_event("UPDATE_INSTANCE_INFO", vec![]);
         }
@@ -665,13 +671,13 @@ pub(super) fn feed_party(
 /// setter's name twice, the icon's number and the target's name, `UNKNOWNOBJECT` while it
 /// resolves.
 pub(super) fn feed_marks(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     group: Res<GroupState>,
     mut notices: ResMut<super::GroupNotices>,
     mut chat: ResMut<crate::ui_chat::ChatLog>,
     mut fed: Local<crate::ui_script::VmMemo<FedMarks>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         notices.target_icons.clear();
         return;
     };
@@ -1077,11 +1083,8 @@ pub(crate) struct PartyDrain<'w, 's> {
 }
 
 /// Drain the Lua party intents into sends, through the command queue, since the lent view reads the group.
-pub(crate) fn drain_party(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut deferred: Commands,
-) {
-    let Some(mut script) = script else {
+pub(crate) fn drain_party(mut script: crate::ui_script::InTurn, mut deferred: Commands) {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let requests = script.take_party_requests();

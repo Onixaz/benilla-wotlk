@@ -435,7 +435,7 @@ fn get_item_info_finds_a_held_name_and_a_negative_suffix() {
             slots,
         }),
     );
-    let _tables = crate::script::live::lend_test(crate::script::live::TestView {
+    let mut tables_v = crate::script::live::TestView {
         item_tables: Some(ItemTables {
             random_suffixes: HashMap::from([(
                 5,
@@ -447,26 +447,28 @@ fn get_item_info_finds_a_held_name_and_a_negative_suffix() {
             ..Default::default()
         }),
         ..Default::default()
+    };
+    crate::script::live::lending(&mut tables_v, || {
+        s.run(r#"ITEM_SUFFIX_TEMPLATE = "%s %s""#).unwrap();
+        let (name, link): (Option<String>, Option<String>) = s
+            .eval(r#"local n, l = GetItemInfo("socketed helm"); return n, l"#)
+            .unwrap();
+        assert_eq!(name.as_deref(), Some("Socketed Helm"));
+        assert!(link.is_some_and(|l| l.contains("|Hitem:4000:")));
+        let none: Option<String> = s.eval(r#"return (GetItemInfo("Unheld Helm"))"#).unwrap();
+        assert_eq!(none, None);
+        let suffixed: String = s
+            .eval(r#"return (GetItemInfo("item:4000:0:0:0:0:0:-5:0"))"#)
+            .unwrap();
+        assert_eq!(suffixed, "Socketed Helm of the Monkey");
+        let missing: String = s
+            .eval(r#"return (GetItemInfo("item:4000:0:0:0:0:0:-9:0"))"#)
+            .unwrap();
+        assert_eq!(
+            missing, "Socketed Helm ",
+            "a missing row still takes the suffix form"
+        );
     });
-    s.run(r#"ITEM_SUFFIX_TEMPLATE = "%s %s""#).unwrap();
-    let (name, link): (Option<String>, Option<String>) = s
-        .eval(r#"local n, l = GetItemInfo("socketed helm"); return n, l"#)
-        .unwrap();
-    assert_eq!(name.as_deref(), Some("Socketed Helm"));
-    assert!(link.is_some_and(|l| l.contains("|Hitem:4000:")));
-    let none: Option<String> = s.eval(r#"return (GetItemInfo("Unheld Helm"))"#).unwrap();
-    assert_eq!(none, None);
-    let suffixed: String = s
-        .eval(r#"return (GetItemInfo("item:4000:0:0:0:0:0:-5:0"))"#)
-        .unwrap();
-    assert_eq!(suffixed, "Socketed Helm of the Monkey");
-    let missing: String = s
-        .eval(r#"return (GetItemInfo("item:4000:0:0:0:0:0:-9:0"))"#)
-        .unwrap();
-    assert_eq!(
-        missing, "Socketed Helm ",
-        "a missing row still takes the suffix form"
-    );
 }
 
 /// A druid reads a main-hand weapon's feral attack power: `(dps - 54.81) * 14`, rounded.

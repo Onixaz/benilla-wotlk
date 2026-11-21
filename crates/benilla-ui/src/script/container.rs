@@ -1369,16 +1369,18 @@ mod tests {
         assert!(s.cursor_payload().is_none() && !slot_locked(&s, 1));
 
         let mut s = swap_rig();
-        s.set_spell_targeting(true);
-        s.run("PickupContainerItem(0, 1)").unwrap();
-        assert!(s.take_stop_targeting(), "the targeting cursor stops");
-        assert!(s.cursor_item().is_some());
-        // The split stops it too, after its clear (`0x5d85f4`).
-        s.run("ClearCursor() SplitContainerItem(0, 2, 1)").unwrap();
-        assert!(s.take_stop_targeting());
-        s.set_spell_targeting(false);
-        s.run("ClearCursor() SplitContainerItem(0, 2, 1)").unwrap();
-        assert!(!s.take_stop_targeting());
+        crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+            s.set_spell_targeting(true);
+            s.run("PickupContainerItem(0, 1)").unwrap();
+            assert!(s.take_stop_targeting(), "the targeting cursor stops");
+            assert!(s.cursor_item().is_some());
+            // The split stops it too, after its clear (`0x5d85f4`).
+            s.run("ClearCursor() SplitContainerItem(0, 2, 1)").unwrap();
+            assert!(s.take_stop_targeting());
+            s.set_spell_targeting(false);
+            s.run("ClearCursor() SplitContainerItem(0, 2, 1)").unwrap();
+            assert!(!s.take_stop_targeting());
+        });
     }
 
     /// A held guild bank item dropped on a bag slot with no banker open moves nothing and stays held (`0x5d837c`).
@@ -2172,20 +2174,22 @@ mod tests {
         );
         assert_eq!(free(&s, "2"), (0, None));
         assert_eq!(free(&s, "-1"), (0, None), "the bank, closed");
-        let _bank = crate::script::live::lend_test(crate::script::live::TestView {
+        let mut bank_v = crate::script::live::TestView {
             banker: Some(0x42),
             ..Default::default()
+        };
+        crate::script::live::lending(&mut bank_v, || {
+            assert_eq!(free(&s, "-1"), (27, Some(0)), "the bank, open");
+            assert_eq!(free(&s, "-2"), (0, None), "the keyring is not a case");
+            assert_eq!(free(&s, "12"), (0, None));
+            let err = s
+                .eval::<mlua::Value>("return GetContainerNumFreeSlots()")
+                .unwrap_err();
+            assert!(
+                format!("{err}").contains("Usage: GetContainerFreeSlots(index)"),
+                "the reference's own usage name, got {err}"
+            );
         });
-        assert_eq!(free(&s, "-1"), (27, Some(0)), "the bank, open");
-        assert_eq!(free(&s, "-2"), (0, None), "the keyring is not a case");
-        assert_eq!(free(&s, "12"), (0, None));
-        let err = s
-            .eval::<mlua::Value>("return GetContainerNumFreeSlots()")
-            .unwrap_err();
-        assert!(
-            format!("{err}").contains("Usage: GetContainerFreeSlots(index)"),
-            "the reference's own usage name, got {err}"
-        );
     }
 
     /// `0x5d9400`: always three values; `true` or nil, the quest id or nil, then whether the

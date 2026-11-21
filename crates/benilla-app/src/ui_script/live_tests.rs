@@ -191,6 +191,37 @@ fn takes_vm(params: &str) -> bool {
 /// Holders that call no Lua, argued: (file, item, why).
 const CALLS_NO_LUA: &[(&str, &str, &str)] = &[
     (
+        "ui_lfg.rs",
+        "show_step",
+        "reads the money line's global strings off the VM",
+    ),
+    (
+        "target/click.rs",
+        "act_on_right_click",
+        "reads and takes the cursor's sale off the model; its talks run as steps with the `World`",
+    ),
+    (
+        "target/click.rs",
+        "act_on_interact",
+        "reads and takes the cursor's sale off the model; its talks run as steps with the `World`",
+    ),
+    (
+        "target/click.rs",
+        "act_on_arrival",
+        "reads and takes the cursor's sale off the model; its talks run as steps with the `World`",
+    ),
+    (
+        "target/by_name.rs",
+        "follow_requests",
+        "reads the focus and the names a token resolves through off the model",
+    ),
+    (
+        "script_calls.rs",
+        "apply_one",
+        "applies one script call with its raises queued in turn; its caller fires them with the \
+         `World` lent",
+    ),
+    (
         "spell/net.rs",
         "SpellGoLoot",
         "reads the modified-click table on the Rust side, and its handler writes the object stores      the view would read",
@@ -245,6 +276,86 @@ const CALLS_NO_LUA: &[(&str, &str, &str)] = &[
         "end_repair_mode_on_right_press",
         "clears the repair-mode field",
     ),
+    (
+        "combat_log/producers.rs",
+        "LogCtx",
+        "reads the combat-text unit and the focus off the model",
+    ),
+    (
+        "minimap/mod.rs",
+        "emit_minimap",
+        "takes the ping click and reads the town filter off the model",
+    ),
+    (
+        "ui_dressup.rs",
+        "sync_dressup_booth",
+        "reads the shown pane and its facing off the model",
+    ),
+    (
+        "ui_stable/mod.rs",
+        "feed_stable_booth",
+        "reads the pane's facing and the stable selection off the model",
+    ),
+    (
+        "ui_loot/net.rs",
+        "on_money_notify",
+        "reads the money line's global strings off the VM",
+    ),
+    (
+        "ui_macro/mod.rs",
+        "rebind_macro_spells",
+        "reads the macro bodies and writes their bound spells into the model",
+    ),
+    (
+        "combat_log/mod.rs",
+        "log_deaths",
+        "reads the combat-text unit and the focus off the model through `LogCtx`",
+    ),
+    (
+        "combat_log/mod.rs",
+        "log_missile_misses",
+        "reads the combat-text unit and the focus off the model through `LogCtx`",
+    ),
+    (
+        "combat_log/mod.rs",
+        "log_cast_failures",
+        "reads the combat-text unit and the focus off the model through `LogCtx`",
+    ),
+    (
+        "cursor.rs",
+        "drive",
+        "reads the cursor payload and mode off the model and takes its cursor writes",
+    ),
+    (
+        "cursor.rs",
+        "drive_displayed_cursor",
+        "reads the cursor mode off the model and takes its cursor writes",
+    ),
+    (
+        "cursor/other.rs",
+        "drive",
+        "the inline module's cursor driver: reads the payload's icon off the model",
+    ),
+    (
+        "cursor/macos.rs",
+        "drive",
+        "the inline module's cursor driver: reads the payload's icon off the model",
+    ),
+    (
+        "ui_script/extract/mod.rs",
+        "paint_measure",
+        "measures the strings written since the tick; the resolve runs with the `World` lent",
+    ),
+    (
+        "ui_script/extract/mod.rs",
+        "paint_remeasure",
+        "measures the strings the resolve rewrote",
+    ),
+    (
+        "ui_script/extract/mod.rs",
+        "paint_extract",
+        "walks the resolved frames into the draw list",
+    ),
 ];
 
 /// Whether `CALLS_NO_LUA` argues the scheduled system `name` (`crate::module::item`).
@@ -266,10 +377,8 @@ fn argued(rel: &str, item: &str) -> bool {
 }
 
 /// A system that calls into Lua is exclusive and lends the `World` ([`super::safe_world`]), so no
-/// parameter list or `SystemParam` struct holds the VM: the ones that still do, beside the borrowed
-/// view ([`super::LendLive`]), are counted per file in [`super::borrow_census::STILL_BORROWS`], which
-/// only falls, and one that holds it with no view is argued in [`CALLS_NO_LUA`]. Read off the
-/// source, as no schedule lists handlers.
+/// parameter list or `SystemParam` struct holds the VM but one argued in [`CALLS_NO_LUA`] or the
+/// raise queue's own. Read off the source, as no schedule lists handlers.
 #[test]
 fn every_holder_of_the_vm_lends_the_world() {
     use crate::test_support::{fn_items, rel_path, rust_files, src_dir};
@@ -277,11 +386,14 @@ fn every_holder_of_the_vm_lends_the_world() {
     let test_module =
         regex::Regex::new(r"\r?\n#\[cfg\(test\)\]\r?\n(?:#\[[^\n]*\]\r?\n)*mod \w+ \{")
             .expect("a valid pattern");
-    let mut borrowing = std::collections::BTreeMap::<String, usize>::new();
     let mut offenders = Vec::new();
     for file in rust_files(&src_dir()) {
         let rel = rel_path(&file);
-        if rel.ends_with("tests.rs") || rel.starts_with("ui_script/live") {
+        // The raise queue's own param holds the VM to queue the raises it opens.
+        if rel.ends_with("tests.rs")
+            || rel.starts_with("ui_script/live")
+            || rel == "ui_script/raises.rs"
+        {
             continue;
         }
         let source = std::fs::read_to_string(&file).expect("readable source");
@@ -310,12 +422,8 @@ fn every_holder_of_the_vm_lends_the_world() {
             continue;
         }
         for f in fn_items(text) {
-            if takes_vm(f.params) {
-                if f.params.contains("LendLive") {
-                    *borrowing.entry(rel.clone()).or_default() += 1;
-                } else if !argued(&rel, f.name) {
-                    offenders.push(format!("{rel}: fn {}", f.name));
-                }
+            if takes_vm(f.params) && !argued(&rel, f.name) {
+                offenders.push(format!("{rel}: fn {}", f.name));
             }
         }
         for (at, _) in text.match_indices("#[derive(SystemParam)]") {
@@ -325,12 +433,8 @@ fn every_holder_of_the_vm_lends_the_world() {
             };
             let body = &rest[open..close];
             let name = rest[..open].trim();
-            if takes_vm(body) {
-                if body.contains("LendLive") {
-                    *borrowing.entry(rel.clone()).or_default() += 1;
-                } else if !argued(&rel, name) {
-                    offenders.push(format!("{rel}: {name}"));
-                }
+            if takes_vm(body) && !argued(&rel, name) {
+                offenders.push(format!("{rel}: {name}"));
             }
         }
     }
@@ -340,24 +444,51 @@ fn every_holder_of_the_vm_lends_the_world() {
          into Lua is exclusive and lends the `World` (`safe_world::lend`):\n{}",
         offenders.join("\n")
     );
-    let listed: std::collections::BTreeMap<String, usize> = super::borrow_census::STILL_BORROWS
-        .iter()
-        .map(|&(file, n)| (file.to_string(), n))
-        .collect();
-    let rows: String = borrowing
-        .iter()
-        .map(|(file, n)| format!("    (\"{file}\", {n}),\n"))
-        .collect();
+}
+
+/// No borrowed view is left anywhere in the app or the VM, tests included: every call into Lua
+/// reaches the state through the `World` (or a test's view) lent to it for the call alone
+/// ([`super::safe_world`]), never a view, a write handle, a read handle or a standing loan.
+#[test]
+fn no_borrowed_view_is_left_in_the_tree() {
+    use crate::test_support::{rel_path, rust_files, src_dir};
+    let names = [
+        ["Lend", "Live"].concat(),
+        ["Owned", "Mut"].concat(),
+        ["Lent", "Ref"].concat(),
+        ["Owns", "ScriptCalls"].concat(),
+        ["Live", "Loan"].concat(),
+        ["push", "_view"].concat(),
+        ["pop", "_view"].concat(),
+    ];
+    let word =
+        regex::Regex::new(&format!(r"\b(?:{})\b", names.join("|"))).expect("a valid pattern");
+    let vm_src = src_dir().join("../../benilla-ui/src");
+    let mut offenders = Vec::new();
+    let mut scanned = 0;
+    for file in rust_files(&src_dir())
+        .into_iter()
+        .chain(rust_files(&vm_src))
+    {
+        let source = std::fs::read_to_string(&file).expect("readable source");
+        scanned += usize::from(file.starts_with(&vm_src));
+        for (n, line) in source.lines().enumerate() {
+            if word.is_match(line) {
+                offenders.push(format!("{}:{}: {}", rel_path(&file), n + 1, line.trim()));
+            }
+        }
+    }
+    assert!(scanned > 0, "the VM's sources are read");
     assert!(
-        borrowing == listed,
-        "the holders of the VM that still borrow their view (`LendLive`) moved; the list only \
-         falls, a new system that calls into Lua is exclusive. The tree's rows:\n{rows}"
+        offenders.is_empty(),
+        "a borrowed view is back; lend the `World` instead:\n{}",
+        offenders.join("\n")
     );
 }
 
 /// The same off the built schedules, which also sees a VM held inside a tuple alias: every
-/// non-exclusive system whose access holds the VM reads [`super::live::LendsLive`], the mark only
-/// [`super::live::LiveView`] reads.
+/// non-exclusive system whose access holds the VM raises in turn ([`super::raises::RaisesInTurn`])
+/// or is argued in [`CALLS_NO_LUA`].
 #[test]
 fn every_scheduled_holder_of_the_vm_lends_the_world() {
     use std::any::TypeId;
@@ -374,12 +505,10 @@ fn every_scheduled_holder_of_the_vm_lends_the_world() {
         world.schedule_scope(label, |world, schedule| {
             schedule.graph_mut().systems.initialize(world);
             let components = world.components();
-            let (Some(vm), Some(mark)) = (
-                components.get_resource_id(TypeId::of::<UiScript>()),
-                components.get_resource_id(TypeId::of::<super::live::LendsLive>()),
-            ) else {
+            let Some(vm) = components.get_resource_id(TypeId::of::<UiScript>()) else {
                 return;
             };
+            let in_turn = components.get_resource_id(TypeId::of::<super::raises::RaisesInTurn>());
             let graph = schedule.graph();
             for (key, system, _) in graph.systems.iter() {
                 if system.is_exclusive() {
@@ -391,7 +520,8 @@ fn every_scheduled_holder_of_the_vm_lends_the_world() {
                 let access = with_access.access.combined_access();
                 if access.has_resource_read(vm) || access.has_resource_write(vm) {
                     holders += 1;
-                    if !access.has_resource_read(mark) && !argued_system(&system.name()) {
+                    let raises_in_turn = in_turn.is_some_and(|t| access.has_resource_read(t));
+                    if !raises_in_turn && !argued_system(&system.name()) {
                         offenders.push(format!("{label:?}: {}", system.name()));
                     }
                 }
@@ -403,6 +533,113 @@ fn every_scheduled_holder_of_the_vm_lends_the_world() {
     assert!(
         offenders.is_empty(),
         "these scheduled systems hold the VM and lend nothing:\n{}",
+        offenders.join("\n")
+    );
+}
+
+/// Every scheduled [`super::raises::InTurn`] holder has a raise step right after it: it sits in a
+/// UI phase a step follows ([`super::raises::phases`]), or is ordered directly before a step of
+/// its own schedule. Otherwise its raises wait for whichever step or handler fires next.
+#[test]
+fn every_scheduled_holder_in_turn_has_its_raise_step() {
+    use bevy::ecs::schedule::NodeId;
+    use std::any::TypeId;
+    let mut app = crate::game_plugins::schedule_tests::headless_client();
+    let world = app.world_mut();
+    let labels: Vec<_> = world
+        .resource::<bevy::ecs::schedule::Schedules>()
+        .iter()
+        .map(|(_, schedule)| schedule.label())
+        .collect();
+    let mut holders = 0;
+    let mut offenders = Vec::new();
+    for label in labels {
+        world.schedule_scope(label, |world, schedule| {
+            schedule.graph_mut().systems.initialize(world);
+            let Some(mark) = world
+                .components()
+                .get_resource_id(TypeId::of::<super::raises::RaisesInTurn>())
+            else {
+                return;
+            };
+            let graph = schedule.graph();
+            let phases: Vec<NodeId> = super::raises::phases()
+                .into_iter()
+                .filter_map(|set| graph.system_sets.get_key(set).map(NodeId::Set))
+                .collect();
+            let steps: Vec<NodeId> = graph
+                .systems
+                .iter()
+                .filter(|(_, system, _)| system.name().to_string().contains("raises::fire_raises"))
+                .map(|(key, _, _)| NodeId::System(key))
+                .collect();
+            let hierarchy = graph.hierarchy().graph();
+            // The sets a node sits in, directly or through a parent set.
+            let in_phase = |node: NodeId| {
+                let mut stack = vec![node];
+                let mut seen = std::collections::HashSet::new();
+                while let Some(n) = stack.pop() {
+                    if phases.contains(&n) {
+                        return true;
+                    }
+                    if seen.insert(n) {
+                        stack.extend(hierarchy.neighbors_directed(
+                            n,
+                            bevy::ecs::schedule::graph::Direction::Incoming,
+                        ));
+                    }
+                }
+                false
+            };
+            let dependency = graph.dependency().graph();
+            let in_turn: Vec<(NodeId, String)> = graph
+                .systems
+                .iter()
+                .filter(|(key, _, _)| {
+                    graph
+                        .systems
+                        .get(*key)
+                        .is_some_and(|s| s.access.combined_access().has_resource_read(mark))
+                })
+                .map(|(key, system, _)| (NodeId::System(key), system.name().to_string()))
+                .collect();
+            holders += in_turn.len();
+            // Covered: in a phase, or ordered directly before a step or a covered holder in turn,
+            // which runs no Lua between.
+            let mut covered: Vec<NodeId> = Vec::new();
+            loop {
+                let before = covered.len();
+                for (node, _) in &in_turn {
+                    if covered.contains(node) {
+                        continue;
+                    }
+                    let next = dependency
+                        .neighbors_directed(*node, bevy::ecs::schedule::graph::Direction::Outgoing)
+                        .any(|n| steps.contains(&n) || covered.contains(&n));
+                    if in_phase(*node) || next {
+                        covered.push(*node);
+                    }
+                }
+                if covered.len() == before {
+                    break;
+                }
+            }
+            offenders.extend(
+                in_turn
+                    .iter()
+                    .filter(|(node, _)| !covered.contains(node))
+                    .map(|(_, name)| format!("{label:?}: {name}")),
+            );
+        });
+    }
+    assert!(
+        holders > 100,
+        "the census found only {holders} holders in turn"
+    );
+    assert!(
+        offenders.is_empty(),
+        "these hold the VM in turn with no raise step after them; put them in a UI phase or chain \
+         `raises::then_fire` after them:\n{}",
         offenders.join("\n")
     );
 }
@@ -527,129 +764,22 @@ fn a_verbs_unique_signal_shares_the_queue_and_a_disconnect_empties_it() {
     assert_eq!(seen(&app), "", "the shutdown emptied the queue");
 }
 
-/// The owner of a piece of [`super::live::Lent`] state lends its own borrow for one call: a verb inside it writes the owner's state, the loan is gone once the call returns or unwinds, and Bevy saw the write through the owner's `NonSendMut`.
+/// A verb's write through the `World` lent to its call lands in the world's state and shows as a
+/// change to the next system; with nothing lent the write finds no state.
 #[test]
-fn an_owners_loan_lasts_one_call_and_bevy_sees_the_write() {
+fn a_verbs_write_through_the_world_loan_lands_and_shows_as_a_change() {
     use super::live::UniqueSignals;
-    use super::LendLive;
-    use benilla_ui::script::write_live;
-
-    #[derive(Resource, Default)]
-    struct Seen(Vec<(&'static str, bool, bool)>);
-
-    fn owner(
-        (script, mut live): (
-            Option<NonSendMut<UiScript>>,
-            LendLive<'_, '_, super::live::OwnsSignals>,
-        ),
-        mut signals: NonSendMut<UniqueSignals>,
-        mut seen: ResMut<Seen>,
-    ) {
-        let _vm = script;
-        // Outside a loan the owned state is no verb's: the write finds no queue.
-        let outside = write_live(|l| l.unique_signal("BEFORE")) == Some(true);
-        let inside = live.lending(&mut *signals, || {
-            write_live(|l| l.unique_signal("INSIDE")) == Some(true)
-        });
-        seen.0.push(("call", outside, inside));
-        seen.0
-            .push(("after", live.overlay::<UniqueSignals>(), false));
-        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            live.lending(&mut *signals, || panic!("a call that unwinds"))
-        }));
-        seen.0
-            .push(("unwound", unwound.is_err(), live.overlay::<UniqueSignals>()));
-    }
-
-    fn reader(signals: NonSend<UniqueSignals>, mut seen: ResMut<Seen>) {
-        seen.0.push(("changed", signals.is_changed(), false));
-    }
-
-    let mut app = App::new();
-    app.init_non_send_resource::<UniqueSignals>()
-        .init_resource::<Seen>()
-        .add_systems(Update, (owner, reader).chain());
-    app.insert_non_send_resource(UiScript::new().unwrap());
-    app.update();
-    // A later frame: the reader saw the first frame's write, and none since.
-    app.world_mut().resource_mut::<Seen>().0.clear();
-    app.update();
-    let seen = &app.world().resource::<Seen>().0;
-    assert_eq!(
-        seen[..3],
-        [
-            ("call", false, true),
-            ("after", false, false),
-            ("unwound", true, false)
-        ]
-    );
-    assert_eq!(
-        app.world().non_send_resource::<UniqueSignals>().names(),
-        ["INSIDE"]
-    );
-    // The owner reborrows mutably every run, so its write shows as a change each frame.
-    assert_eq!(seen[3], ("changed", true, false));
-}
-
-/// The quest window a system reads or writes through its `LendLive` is out of every verb's reach for as long as the system holds it: a call into Lua made inside, whose button would write the window (`0x58cd20`), panics instead of aliasing it; outside, the verb writes as usual.
-#[test]
-fn a_held_quest_window_shuts_the_verbs_out() {
-    use super::LendLive;
-    use benilla_ui::script::write_live;
-
-    #[derive(Resource, Default)]
-    struct Seen(Vec<(&'static str, bool)>);
-
-    fn holder(
-        (script, mut live): (Option<NonSendMut<UiScript>>, LendLive),
-        mut seen: ResMut<Seen>,
-    ) {
-        let _vm = script;
-        let verb = || std::panic::catch_unwind(|| write_live(|_| ()).is_some()).unwrap_or(false);
-        let read = live.with_giver(|g| g.is_some() && verb());
-        let written = live.with_giver_mut(|g| {
-            g.expect("the window").npc = Some(7);
-            verb()
-        });
-        seen.0.push(("read", read));
-        seen.0.push(("written", written));
-        seen.0.push(("outside", verb()));
-        seen.0.push((
-            "kept",
-            live.with_giver(|g| g.and_then(|g| g.npc)) == Some(7),
-        ));
-    }
-
-    let mut app = App::new();
-    app.init_non_send_resource::<crate::ui_quest::QuestGiver>()
-        .init_resource::<Seen>()
-        .add_systems(Update, holder);
-    app.insert_non_send_resource(UiScript::new().unwrap());
-    app.update();
-    assert_eq!(
-        app.world().resource::<Seen>().0,
-        [
-            ("read", false),
-            ("written", false),
-            ("outside", true),
-            ("kept", true)
-        ]
-    );
-}
-
-/// A system that writes none of the [`super::live::Lent`] state lends `LendLive`'s own borrow: a verb's write lands in the world's state and shows as a change, and a view lending no queue takes nothing.
-#[test]
-fn a_verbs_write_through_lend_live_lands_and_shows_as_a_change() {
-    use super::live::UniqueSignals;
-    use super::LendLive;
     use benilla_ui::script::write_live;
 
     #[derive(Resource, Default)]
     struct Changed(Vec<bool>);
 
-    fn verb((script, _live): (Option<NonSendMut<UiScript>>, LendLive)) {
-        let _vm = script;
-        assert_eq!(write_live(|l| l.unique_signal("VERB")), Some(true));
+    fn verb(world: &mut World) {
+        assert_eq!(write_live(|l| l.unique_signal("OUTSIDE")), None);
+        let wrote = super::live::with_live_world(world, |_| {
+            write_live(|l| l.unique_signal("VERB")) == Some(true)
+        });
+        assert_eq!(wrote, Some(true));
     }
 
     fn reader(signals: NonSend<UniqueSignals>, mut changed: ResMut<Changed>) {
@@ -667,28 +797,4 @@ fn a_verbs_write_through_lend_live_lands_and_shows_as_a_change() {
         ["VERB"]
     );
     assert_eq!(app.world().resource::<Changed>().0, [true]);
-    // A read-only loan, as a test view lends, refuses the write.
-    struct Bare;
-    impl benilla_ui::script::LiveState for Bare {
-        fn unit_flags(&self, _: u64) -> Option<u32> {
-            None
-        }
-        fn unit_health(&self, _: u64) -> Option<u32> {
-            None
-        }
-        fn active_player(&self) -> Option<u64> {
-            None
-        }
-        fn has_control(&self) -> bool {
-            true
-        }
-        fn far_sight(&self) -> bool {
-            false
-        }
-    }
-    let mut s = UiScript::new().unwrap();
-    assert_eq!(
-        s.with_live(&mut Bare, |_| write_live(|l| l.unique_signal("X"))),
-        Some(false)
-    );
 }

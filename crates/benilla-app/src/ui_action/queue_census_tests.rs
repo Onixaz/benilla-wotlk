@@ -20,7 +20,7 @@ const HOLDERS: &[(&str, usize)] = &[
     ("ui_chat/input/mod.rs", 3),
     ("ui_chat/net.rs", 9),
     ("ui_guild/mod.rs", 10),
-    ("ui_lfg.rs", 3),
+    ("ui_lfg.rs", 2),
     ("ui_loot/mod.rs", 3),
     ("ui_loot/net.rs", 6),
     ("ui_notices.rs", 5),

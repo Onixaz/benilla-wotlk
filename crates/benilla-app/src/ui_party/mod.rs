@@ -16,7 +16,7 @@ use crate::ui_script::{UiDrain, UiFeed};
 
 pub(crate) mod difficulty;
 mod feed;
-pub(crate) use feed::{drain_party, unheld_group_state};
+pub(crate) use feed::unheld_group_state;
 pub(crate) mod net;
 mod pets;
 mod records;
@@ -24,6 +24,10 @@ pub(crate) use feed::{
     raid_row_guid, raid_row_guids, synthetic_raid, synthetic_roster, GROUPTYPE_RAID,
     GROUP_MEMBER_SUBGROUP, PARTY_PET_TOKENS, PARTY_TOKENS, RAID_PET_TOKENS, RAID_TOKENS,
 };
+
+/// The group drain and the step that fires what it raised.
+#[derive(bevy::ecs::schedule::SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct PartyDrain;
 
 pub(crate) struct UiPartyPlugin;
 
@@ -48,7 +52,9 @@ impl Plugin for UiPartyPlugin {
                         .run_if(crate::ui_script::ingame_ui_up),
                     difficulty::feed_menu_gates.in_set(UiFeed),
                     difficulty::feed_instance_difficulty.in_set(UiFeed),
-                    feed::drain_party.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(feed::drain_party)
+                        .in_set(UiDrain)
+                        .in_set(PartyDrain),
                 ),
             );
     }

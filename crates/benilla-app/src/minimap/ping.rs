@@ -27,7 +27,7 @@
 use bevy::prelude::*;
 
 use benilla_assets::coords::bevy_to_wow;
-use benilla_ui::script::{ScriptValue, UiScript};
+use benilla_ui::script::ScriptValue;
 
 use super::blips::BlipCtx;
 use crate::net::{ClientCommand, Guid, NetCommands, SelfPlayer};
@@ -89,10 +89,7 @@ pub(super) fn seat_click(ctx: &BlipCtx, ping: &mut MinimapPing, click: Option<(f
 /// Republish the ping's normalized position and announce a fresh ping. Runs before the script
 /// tick, so the `MINIMAP_PING` event and `Minimap:GetPingPosition()` land in the same tick.
 pub(super) fn drive_minimap_ping(
-    (script, _live): (
-        Option<bevy::ecs::system::NonSendMut<UiScript>>,
-        crate::ui_script::LendLive,
-    ),
+    mut vm: crate::ui_script::InTurn,
     mut ping: ResMut<MinimapPing>,
     player: Res<Player>,
     widget: Res<super::MinimapWidget>,
@@ -102,7 +99,7 @@ pub(super) fn drive_minimap_ping(
     self_q: Query<&Guid, With<SelfPlayer>>,
     commands: Res<NetCommands>,
 ) {
-    let Some(mut script) = script else { return };
+    let Some(mut script) = vm.turn() else { return };
     let Some(live) = ping.live.as_ref() else {
         return;
     };

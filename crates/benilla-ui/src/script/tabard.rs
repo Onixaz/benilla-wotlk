@@ -326,16 +326,13 @@ mod tests {
     use super::*;
     use crate::script::{UiScript, UnitState};
 
-    /// Lend a view with our player object `player` and our guild's record `record`.
-    fn lend(
-        player: Option<u64>,
-        record: Option<[i32; 5]>,
-    ) -> crate::script::live::LiveLoan<crate::script::live::TestView> {
-        crate::script::live::lend_test(crate::script::live::TestView {
+    /// A view with our player object `player` and our guild's record `record`.
+    fn lend(player: Option<u64>, record: Option<[i32; 5]>) -> crate::script::live::TestView {
+        crate::script::live::TestView {
             player,
             tabard_record: record,
             ..Default::default()
-        })
+        }
     }
 
     fn vm() -> UiScript {
@@ -379,156 +376,176 @@ mod tests {
     #[test]
     fn the_seed_takes_the_guild_record_or_draws_in_range() {
         let s = vm();
-        let _loan = lend(Some(1), Some([7, 3, 2, 12, 5]));
-        s.run("t:InitializeTabardColors()").unwrap();
-        assert_eq!(s.tabard_design(), Some([7, 3, 2, 12, 5]));
-        assert_eq!(
-            s.eval::<String>("return t:GetUpperEmblemFileName()")
-                .unwrap(),
-            r"Textures\GuildEmblems\Emblem_07_03_TU_U"
-        );
-        assert_eq!(
-            s.eval::<String>("return t:GetLowerBackgroundFileName()")
-                .unwrap(),
-            r"Textures\GuildEmblems\Background_05_TL_U"
-        );
-        // An undesigned record (a -1 anywhere) and no record both draw at random, in range.
-        for rec in [Some([7, 3, 2, -1, 5]), None] {
-            let _loan = lend(Some(1), rec);
+        let mut loan_v = lend(Some(1), Some([7, 3, 2, 12, 5]));
+        crate::script::live::lending(&mut loan_v, || {
             s.run("t:InitializeTabardColors()").unwrap();
-            let five = s.tabard_design().unwrap();
-            for (v, count) in five.iter().zip(TABARD_COUNTS) {
-                assert!((0..count).contains(v), "{five:?} within {TABARD_COUNTS:?}");
+            assert_eq!(s.tabard_design(), Some([7, 3, 2, 12, 5]));
+            assert_eq!(
+                s.eval::<String>("return t:GetUpperEmblemFileName()")
+                    .unwrap(),
+                r"Textures\GuildEmblems\Emblem_07_03_TU_U"
+            );
+            assert_eq!(
+                s.eval::<String>("return t:GetLowerBackgroundFileName()")
+                    .unwrap(),
+                r"Textures\GuildEmblems\Background_05_TL_U"
+            );
+            // An undesigned record (a -1 anywhere) and no record both draw at random, in range.
+            for rec in [Some([7, 3, 2, -1, 5]), None] {
+                let mut loan_v = lend(Some(1), rec);
+                crate::script::live::lending(&mut loan_v, || {
+                    s.run("t:InitializeTabardColors()").unwrap();
+                    let five = s.tabard_design().unwrap();
+                    for (v, count) in five.iter().zip(TABARD_COUNTS) {
+                        assert!((0..count).contains(v), "{five:?} within {TABARD_COUNTS:?}");
+                    }
+                });
             }
-        }
-        // No player object: nothing is seeded (the design keeps its last value).
-        let _loan = lend(None, Some([1, 1, 1, 1, 1]));
-        s.run("t:InitializeTabardColors()").unwrap();
-        assert_ne!(s.tabard_design(), Some([1, 1, 1, 1, 1]));
+            // No player object: nothing is seeded (the design keeps its last value).
+            let mut loan_v = lend(None, Some([1, 1, 1, 1, 1]));
+            crate::script::live::lending(&mut loan_v, || {
+                s.run("t:InitializeTabardColors()").unwrap();
+                assert_ne!(s.tabard_design(), Some([1, 1, 1, 1, 1]));
+            });
+        });
     }
 
     #[test]
     fn cycle_variation_wraps_both_ways_and_ignores_a_delta_past_the_count() {
         let s = vm();
-        let _loan = lend(Some(1), Some([0, 0, 0, 0, 0]));
-        s.run("t:InitializeTabardColors()").unwrap();
-        s.run("t:CycleVariation(1, -1)").unwrap();
-        assert_eq!(s.tabard_design().unwrap()[0], 169, "wraps down");
-        s.run("t:CycleVariation(1, 1) t:CycleVariation(3, 5) t:CycleVariation(3, 1)")
-            .unwrap();
-        assert_eq!(s.tabard_design().unwrap()[0], 0);
-        assert_eq!(
-            s.tabard_design().unwrap()[2],
-            0,
-            "5 then 1 over a count of 6 wraps to 0"
-        );
-        s.run("t:CycleVariation(5, 6) t:CycleVariation('2.9', '1.9')")
-            .unwrap();
-        assert_eq!(
-            s.tabard_design().unwrap()[4],
-            6,
-            "truncation: (2.9, 1.9) is (2, 1)"
-        );
-        assert_eq!(s.tabard_design().unwrap()[1], 1);
-        s.run("t:CycleVariation(2, 17)").unwrap();
-        assert_eq!(
-            s.tabard_design().unwrap()[1],
-            1,
-            "|delta| >= count is a silent no-op"
-        );
-        for (call, needle) in [
-            (
-                "t:CycleVariation(0, 1)",
-                "Invalid variationIndex in CycleVariation",
-            ),
-            (
-                "t:CycleVariation(6, 1)",
-                "Invalid variationIndex in CycleVariation",
-            ),
-            (
-                "t:CycleVariation(1)",
-                "Usage: CycleVariation(variationIndex, delta)",
-            ),
-            (
-                "t:CycleVariation('x', 1)",
-                "Usage: CycleVariation(variationIndex, delta)",
-            ),
-            ("t.CycleVariation(1, 1)", "used '.' instead of ':'"),
-            ("t.CycleVariation({}, 1, 1)", "non-framescript object"),
-            (
-                "t.CycleVariation(f, 1, 1)",
-                "Wrong object type for member function",
-            ),
-        ] {
-            let err = s.run(call).unwrap_err().to_string();
-            assert!(err.contains(needle), "{call}: {err}");
-        }
+        let mut loan_v = lend(Some(1), Some([0, 0, 0, 0, 0]));
+        crate::script::live::lending(&mut loan_v, || {
+            s.run("t:InitializeTabardColors()").unwrap();
+            s.run("t:CycleVariation(1, -1)").unwrap();
+            assert_eq!(s.tabard_design().unwrap()[0], 169, "wraps down");
+            s.run("t:CycleVariation(1, 1) t:CycleVariation(3, 5) t:CycleVariation(3, 1)")
+                .unwrap();
+            assert_eq!(s.tabard_design().unwrap()[0], 0);
+            assert_eq!(
+                s.tabard_design().unwrap()[2],
+                0,
+                "5 then 1 over a count of 6 wraps to 0"
+            );
+            s.run("t:CycleVariation(5, 6) t:CycleVariation('2.9', '1.9')")
+                .unwrap();
+            assert_eq!(
+                s.tabard_design().unwrap()[4],
+                6,
+                "truncation: (2.9, 1.9) is (2, 1)"
+            );
+            assert_eq!(s.tabard_design().unwrap()[1], 1);
+            s.run("t:CycleVariation(2, 17)").unwrap();
+            assert_eq!(
+                s.tabard_design().unwrap()[1],
+                1,
+                "|delta| >= count is a silent no-op"
+            );
+            for (call, needle) in [
+                (
+                    "t:CycleVariation(0, 1)",
+                    "Invalid variationIndex in CycleVariation",
+                ),
+                (
+                    "t:CycleVariation(6, 1)",
+                    "Invalid variationIndex in CycleVariation",
+                ),
+                (
+                    "t:CycleVariation(1)",
+                    "Usage: CycleVariation(variationIndex, delta)",
+                ),
+                (
+                    "t:CycleVariation('x', 1)",
+                    "Usage: CycleVariation(variationIndex, delta)",
+                ),
+                ("t.CycleVariation(1, 1)", "used '.' instead of ':'"),
+                ("t.CycleVariation({}, 1, 1)", "non-framescript object"),
+                (
+                    "t.CycleVariation(f, 1, 1)",
+                    "Wrong object type for member function",
+                ),
+            ] {
+                let err = s.run(call).unwrap_err().to_string();
+                assert!(err.contains(needle), "{call}: {err}");
+            }
+        });
     }
 
     #[test]
     fn the_texture_setters_install_the_mask_token_and_raise_on_a_non_texture() {
         let s = vm();
-        let _loan = lend(Some(1), Some([12, 4, 0, 0, 0]));
-        s.run("t:InitializeTabardColors() t:GetUpperEmblemTexture(tex)")
-            .unwrap();
-        let got = s.eval::<String>("return tex:GetTexture()").unwrap();
-        assert_eq!(
-            emblem_mask_path(&got),
-            Some(r"Textures\GuildEmblems\Emblem_12_04_TU_U")
-        );
-        s.run("t:GetLowerEmblemTexture(tex)").unwrap();
-        let got = s.eval::<String>("return tex:GetTexture()").unwrap();
-        assert!(got.ends_with("Emblem_12_04_TL_U"), "{got}");
-        for (call, needle) in [
-            (
-                "t:GetUpperEmblemTexture()",
-                "Usage: TabardModel:GetUpperEmblemTexture(texture)",
-            ),
-            (
-                "t:GetUpperEmblemTexture({})",
-                "Couldn't find 'this' in texture object",
-            ),
-            (
-                "t:GetLowerEmblemTexture(f)",
-                "Wrong object type, expected texture",
-            ),
-        ] {
-            let err = s.run(call).unwrap_err().to_string();
-            assert!(err.contains(needle), "{call}: {err}");
-        }
+        let mut loan_v = lend(Some(1), Some([12, 4, 0, 0, 0]));
+        crate::script::live::lending(&mut loan_v, || {
+            s.run("t:InitializeTabardColors() t:GetUpperEmblemTexture(tex)")
+                .unwrap();
+            let got = s.eval::<String>("return tex:GetTexture()").unwrap();
+            assert_eq!(
+                emblem_mask_path(&got),
+                Some(r"Textures\GuildEmblems\Emblem_12_04_TU_U")
+            );
+            s.run("t:GetLowerEmblemTexture(tex)").unwrap();
+            let got = s.eval::<String>("return tex:GetTexture()").unwrap();
+            assert!(got.ends_with("Emblem_12_04_TL_U"), "{got}");
+            for (call, needle) in [
+                (
+                    "t:GetUpperEmblemTexture()",
+                    "Usage: TabardModel:GetUpperEmblemTexture(texture)",
+                ),
+                (
+                    "t:GetUpperEmblemTexture({})",
+                    "Couldn't find 'this' in texture object",
+                ),
+                (
+                    "t:GetLowerEmblemTexture(f)",
+                    "Wrong object type, expected texture",
+                ),
+            ] {
+                let err = s.run(call).unwrap_err().to_string();
+                assert!(err.contains(needle), "{call}: {err}");
+            }
+        });
     }
 
     #[test]
     fn can_save_is_one_or_nil_over_the_three_conjuncts_read_at_the_call() {
         let s = vm();
-        let _loan = lend(Some(1), None);
-        assert!(s
-            .eval::<bool>("return t:CanSaveTabardNow() == nil")
-            .unwrap());
-        let _loan = lend(Some(1), Some([-1; 5]));
-        assert!(
-            s.eval::<bool>("return t:CanSaveTabardNow() == 1").unwrap(),
-            "a cached record counts even undesigned; the number 1, not true"
-        );
-        let _loan = crate::script::live::lend_test(crate::script::live::TestView {
-            player: Some(1),
-            tabard_record: Some([-1; 5]),
-            tabard_pending: true,
-            ..Default::default()
+        let mut loan_v = lend(Some(1), None);
+        crate::script::live::lending(&mut loan_v, || {
+            assert!(s
+                .eval::<bool>("return t:CanSaveTabardNow() == nil")
+                .unwrap());
+            let mut loan_v = lend(Some(1), Some([-1; 5]));
+            crate::script::live::lending(&mut loan_v, || {
+                assert!(
+                    s.eval::<bool>("return t:CanSaveTabardNow() == 1").unwrap(),
+                    "a cached record counts even undesigned; the number 1, not true"
+                );
+                let mut loan_v = crate::script::live::TestView {
+                    player: Some(1),
+                    tabard_record: Some([-1; 5]),
+                    tabard_pending: true,
+                    ..Default::default()
+                };
+                crate::script::live::lending(&mut loan_v, || {
+                    assert!(s
+                        .eval::<bool>("return t:CanSaveTabardNow() == nil")
+                        .unwrap());
+                    let mut loan_v = lend(None, Some([-1; 5]));
+                    crate::script::live::lending(&mut loan_v, || {
+                        assert!(
+                            s.eval::<bool>("return t:CanSaveTabardNow() == nil")
+                                .unwrap(),
+                            "no player object"
+                        );
+                        let mut loan_v = lend(Some(1), Some([-1; 5]));
+                        crate::script::live::lending(&mut loan_v, || {
+                            assert!(
+                                s.eval::<bool>("return t.CanSaveTabardNow() == 1").unwrap(),
+                                "never resolves this: a dot-call answers too"
+                            );
+                        });
+                    });
+                });
+            });
         });
-        assert!(s
-            .eval::<bool>("return t:CanSaveTabardNow() == nil")
-            .unwrap());
-        let _loan = lend(None, Some([-1; 5]));
-        assert!(
-            s.eval::<bool>("return t:CanSaveTabardNow() == nil")
-                .unwrap(),
-            "no player object"
-        );
-        let _loan = lend(Some(1), Some([-1; 5]));
-        assert!(
-            s.eval::<bool>("return t.CanSaveTabardNow() == 1").unwrap(),
-            "never resolves this: a dot-call answers too"
-        );
     }
 }

@@ -1,7 +1,7 @@
 //! The guild bank's app side, after 12340's guild bank info: the banker, the six tabs' names,
 //! slots and locks, the money, the logs and texts, the wire, and the item gates and stack
 //! arithmetic of the swap senders. Main-thread state the verbs read and write at the call
-//! ([`crate::ui_script::live::Lent`]); its handlers fire their events in turn.
+//! ([`crate::ui_script::live::MainState`]); its handlers fire their events in turn.
 
 use benilla_protocol::messages::{
     GuildBankLogEntry, GuildBankSend, GuildBankSlot, GuildBankSwap, BAG_PLAYER_INVENTORY,
@@ -10,7 +10,7 @@ use bevy::prelude::*;
 
 use benilla_ui::script::{
     GuildBankLogView, GuildBankRequest, GuildBankSlotView, GuildBankTabView, GuildBankVerdict,
-    UiScript, GUILD_BANK_TABS,
+    GUILD_BANK_TABS,
 };
 
 use crate::entities::ItemDisplays;
@@ -257,7 +257,7 @@ impl Plugin for UiGuildBankPlugin {
         net::register(app);
         app.init_non_send_resource::<GuildBankState>().add_systems(
             Update,
-            drain_guild_bank
+            crate::ui_script::raises::then_fire(drain_guild_bank)
                 .in_set(UiDrain)
                 .after(crate::ui_guild::GuildDrain),
         );
@@ -410,19 +410,18 @@ pub(crate) struct SwapInputs<'w, 's> {
 
 /// Drain the engine's sends: each gated on the open banker as the reference's senders are.
 fn drain_guild_bank(
-    (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut vm: crate::ui_script::InTurn,
+    bank: Option<NonSend<GuildBankState>>,
     net: Res<NetCommands>,
     inputs: SwapInputs,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = vm.turn() else {
         return;
     };
     for request in script.take_guild_bank_requests() {
-        // The bank is read between calls into Lua, and the VM does what the gates left after.
-        let verdict = live.with_guild_bank(|state| {
-            state.map_or(GuildBankVerdict::Nothing, |state| {
-                handle(state, &net, &inputs, request)
-            })
+        // The VM does what the gates left after.
+        let verdict = bank.as_deref().map_or(GuildBankVerdict::Nothing, |state| {
+            handle(state, &net, &inputs, request)
         });
         script.settle_guild_bank(verdict);
     }
@@ -795,6 +794,7 @@ fn withdraw_item(
 mod swap_tests {
     use super::*;
     use benilla_protocol::messages::ObjectFields;
+    use benilla_ui::script::UiScript;
 
     const ITEM: u64 = 0x4000_0000_0000_0871;
     const ENTRY: u32 = 871;

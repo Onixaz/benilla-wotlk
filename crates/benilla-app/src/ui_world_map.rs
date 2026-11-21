@@ -10,7 +10,7 @@
 //!   selection (`0x5204f9` into `0x547170`).
 //! - [`dev_map_jump`]: Alt+click the map to go there.
 
-use bevy::ecs::system::NonSendMut;
+use benilla_ui::script::world_loan::in_turn_or_now;
 use bevy::prelude::*;
 
 use benilla_assets::coords::bevy_to_wow;
@@ -346,7 +346,7 @@ fn marker_view(poi: &AreaPoi) -> WorldMapPoiView {
 }
 
 fn feed_world_map(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     catalog: Option<Res<WorldMapCatalogRes>>,
     player: Res<Player>,
     map: Option<Res<CurrentMap>>,
@@ -360,7 +360,8 @@ fn feed_world_map(
     unit_pos: Query<&GlobalTransform, With<crate::net::NetEntity>>,
     mut memo: Local<crate::ui_script::VmMemo<FeedMemos>>,
 ) {
-    let (Some(mut script), Some(catalog), Some(map), Some(areas)) = (script, catalog, map, areas)
+    let (Some(mut script), Some(catalog), Some(map), Some(areas)) =
+        (script.turn(), catalog, map, areas)
     else {
         return;
     };
@@ -377,7 +378,8 @@ fn feed_world_map(
         let memo = memo.get(&script);
         if !explored.is_empty() && memo.explored.as_ref() != Some(&explored) {
             memo.explored = Some(explored.clone());
-            script.set_world_map_explored(explored);
+            // The landmark rebuild reads the world states through the lent `World`, in turn.
+            in_turn_or_now(&mut script, move |s| s.set_world_map_explored(explored));
         }
     }
     {
@@ -385,7 +387,7 @@ fn feed_world_map(
         let memo = memo.get(&script);
         if memo.marker.as_ref() != Some(&marker) {
             memo.marker = Some(marker.clone());
-            script.set_world_map_gossip_poi(marker);
+            in_turn_or_now(&mut script, move |s| s.set_world_map_gossip_poi(marker));
         }
     }
 
@@ -429,7 +431,7 @@ fn feed_world_map(
     } else {
         Vec::new()
     };
-    script.set_world_map_feed(WorldMapFeed {
+    let feed = WorldMapFeed {
         player: Some(WorldMapPlayer {
             pos: me,
             facing: player.facing(),
@@ -446,14 +448,15 @@ fn feed_world_map(
         release: death_net.release.map(|r| point(r.map, r.position)),
         party: group.party_slots().map(member).collect(),
         raid,
-    });
+    };
+    in_turn_or_now(&mut script, move |s| s.set_world_map_feed(feed));
 
     // First world entry: the zone updater (`0x5204f9`), finding no cached zone, selects the
     // player's map itself before any Lua asks. Once per VM, each login being a first entry.
     let memo = memo.get(&script);
     if !memo.map_synced && top_zone.is_some() {
         memo.map_synced = true;
-        script.sync_world_map_to_player_zone();
+        in_turn_or_now(&mut script, |s| s.sync_world_map_to_player_zone());
     }
 }
 
@@ -465,7 +468,7 @@ fn dev_map_jump(
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     net: Res<crate::net::NetCommands>,
 ) {
     // A dev affordance compiled into every build, so gated at run time.
@@ -476,7 +479,7 @@ fn dev_map_jump(
     if !alt || !buttons.just_pressed(MouseButton::Left) {
         return;
     }
-    let (Some(script), Ok(window)) = (script, windows.single()) else {
+    let (Some(script), Ok(window)) = (script.turn(), windows.single()) else {
         return;
     };
     let Some(cursor) = window.cursor_position() else {
@@ -514,7 +517,7 @@ impl Plugin for WorldMapUiPlugin {
             (
                 feed_world_map.in_set(UiDrain),
                 // After the script tick, so the jump hit-tests this tick's frame rects.
-                dev_map_jump.in_set(UiDrain),
+                crate::ui_script::raises::then_fire(dev_map_jump).in_set(UiDrain),
             ),
         );
     }

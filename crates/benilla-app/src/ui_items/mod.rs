@@ -34,6 +34,8 @@ pub(crate) use container_live::{BagRead, ContainerLent, ContainerLive};
 pub(crate) mod feed;
 mod net;
 
+#[cfg(test)]
+pub(crate) use drain::drain_bind_confirm_answers;
 pub(crate) use drain::{auto_equip_gate, send_auto_equip, swap_gate};
 use drain::{
     drain_bag_autostores, drain_container_autoequips, drain_container_destroys,
@@ -625,19 +627,37 @@ pub(crate) struct ItemUse {
     pub(crate) is_charter: bool,
 }
 
+/// The requirement check's reads at the use: the item's refusal key (`0x6dc3f0`) and our value in a
+/// skill, `None` before our level is pushed.
+pub(crate) trait UseRefusal {
+    fn refusal(&self, entry: u32) -> Option<&'static str>;
+    fn skill_value(&self, skill: u32) -> Option<u32>;
+}
+
+/// The VM's own fixtures, for the check's tests.
+#[cfg(test)]
+impl UseRefusal for benilla_ui::script::UiScript {
+    fn refusal(&self, entry: u32) -> Option<&'static str> {
+        self.item_use_refusal(entry)
+    }
+    fn skill_value(&self, skill: u32) -> Option<u32> {
+        benilla_ui::script::UiScript::skill_value(self, skill)
+    }
+}
+
 /// The item use's requirement check (`0x6dc3f0` at `0x708eb9`): a refused item shows the check's
 /// message and sends nothing (`0x708ec2`-`0x708ef6`). Then the use enchant's skill, `enchant_skill`
 /// as [`crate::items::use_enchant_skill`] reads it: under its rank shows inventory result 2's line
 /// (`0x708f2c`-`0x708f39`).
 pub(crate) fn refuse_item_use(
-    script: &benilla_ui::script::UiScript,
+    reqs: &impl UseRefusal,
     entry: u32,
     enchant_skill: Option<(u32, u32)>,
     sink: &mut dyn crate::ui_action::signals::SignalSink,
 ) -> bool {
-    let refusal = script.item_use_refusal(entry).or_else(|| {
+    let refusal = reqs.refusal(entry).or_else(|| {
         let (skill, rank) = enchant_skill?;
-        (script.skill_value(skill)? < rank).then(|| equip_error_key(2))
+        (reqs.skill_value(skill)? < rank).then(|| equip_error_key(2))
     });
     let Some(key) = refusal else {
         return false;
@@ -732,7 +752,9 @@ pub(crate) fn send_item_use(
         .guid
         .and_then(|guid| ladder.objects.object(guid))
         .and_then(|f| crate::items::use_enchant_skill(f, ladder.trade_window.1.as_deref()));
-    if it.start_quest == 0 && refuse_item_use(script, it.entry, enchant_skill, &mut ladder.press) {
+    if it.start_quest == 0
+        && refuse_item_use(&ladder.use_reqs, it.entry, enchant_skill, &mut ladder.press)
+    {
         return false;
     }
     // The toggle predicate over the caster's live aura slots.
@@ -1092,20 +1114,21 @@ impl Plugin for UiItemsPlugin {
                     track_link_level.before(UnitFeed),
                     // After the input pass, so a repair-mode click goes out the same frame; a
                     // plain `UseContainerItem` is a script call.
-                    drain_container_repairs.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_container_repairs).in_set(UiDrain),
                     // Pick, place and split: `CMSG_SWAP_INV_ITEM`, `CMSG_SWAP_ITEM` or
                     // `CMSG_SPLIT_ITEM`.
                     drain_container_moves.in_set(UiDrain),
                     // The delete-confirm popup's accept: `CMSG_DESTROYITEM`.
                     drain_container_destroys.in_set(UiDrain),
                     // `AutoEquipCursorItem`: `CMSG_AUTOEQUIP_ITEM`.
-                    drain_container_autoequips.in_set(UiDrain),
-                    drain_bag_autostores.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_container_autoequips).in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_bag_autostores).in_set(UiDrain),
                     // The soulbind confirmations' answers (`EquipPendingItem`,
                     // `CancelPendingEquip`, `ConfirmBindOnUse`). A dialog is answered in a later
                     // frame than it was raised, so no order against the other drains is needed.
                     drain::drain_bind_confirm_answers.in_set(UiDrain),
-                    drain::drain_bind_on_use_confirms.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain::drain_bind_on_use_confirms)
+                        .in_set(UiDrain),
                 ),
             );
     }

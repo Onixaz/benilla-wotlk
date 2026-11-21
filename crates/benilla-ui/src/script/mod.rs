@@ -204,10 +204,7 @@ mod level_grant;
 mod lfg;
 pub(crate) mod live;
 pub mod world_loan;
-pub use live::{
-    owner_write, read_live, shared_read, write_live, GlobalStrings, LiveLoan, LiveState,
-    OwnerWrite, SharedRead, ViewRef,
-};
+pub use live::{read_live, write_live, GlobalStrings, LiveState};
 mod loot;
 mod loot_roll;
 mod lua51;
@@ -1614,6 +1611,7 @@ impl UiScript {
 
     /// Run a chunk under the name the 1.12 client gives it ([`addon_chunk_name`] for addon files).
     pub fn run_chunk_named(&self, chunk: &[u8], name: &str) -> mlua::Result<()> {
+        world_loan::assert_not_quiet(&self.lua);
         self.lua
             .load(crate::source::chunk(chunk))
             .set_name(name)
@@ -1625,6 +1623,7 @@ impl UiScript {
     /// the chunk compiles as `?` and runs as secure code; a compile or run error goes to the error
     /// handler, never to the caller.
     pub fn execute_secure(&self, chunk: &str) {
+        world_loan::assert_not_quiet(&self.lua);
         let lua = &self.lua;
         let run = taint::run_as(0, || {
             lua.load(chunk)
@@ -1639,6 +1638,7 @@ impl UiScript {
 
     /// Load and evaluate a Lua chunk, returning its result: for tests and one-shot queries.
     pub fn eval<T: mlua::FromLuaMulti>(&self, chunk: &str) -> mlua::Result<T> {
+        world_loan::assert_not_quiet(&self.lua);
         self.lua.load(chunk).set_mode(mlua::ChunkMode::Text).eval()
     }
 

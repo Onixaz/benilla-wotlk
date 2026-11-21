@@ -8,21 +8,22 @@ use crate::script::*;
 
 #[test]
 fn a_known_higher_rank_clears_the_spell_requirement_and_marks_a_taught_spell() {
-    let mut s = script();
-    s.set_screen_size(800.0, 600.0);
-    s.set_item_template(
-        9,
-        ItemTemplateView {
-            name: "Reins".into(),
-            quality: 1,
-            required_spell: 100,
-            required_spell_name: Some("Riding".into()),
-            taught: Some((100, false)),
-            ..Default::default()
-        },
-    );
-    let read = |s: &mut UiScript| {
-        s.run(
+    crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+        let mut s = script();
+        s.set_screen_size(800.0, 600.0);
+        s.set_item_template(
+            9,
+            ItemTemplateView {
+                name: "Reins".into(),
+                quality: 1,
+                required_spell: 100,
+                required_spell_name: Some("Riding".into()),
+                taught: Some((100, false)),
+                ..Default::default()
+            },
+        );
+        let read = |s: &mut UiScript| {
+            s.run(
             r#"
             local a = Slot9 or CreateFrame("Button", "Slot9"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
             local tt = TT or CreateFrame("GameTooltip", "TT")
@@ -31,28 +32,29 @@ fn a_known_higher_rank_clears_the_spell_requirement_and_marks_a_taught_spell() {
         "#,
         )
         .unwrap();
-        lines_of(s)
-    };
-    let red = [1.0, 32.0 / 255.0, 32.0 / 255.0, 1.0];
-    s.set_next_ranks(HashMap::from([(100, 101)]));
-    s.set_known_spells([500]);
-    let lines = read(&mut s);
-    let color = |lines: &[(String, [f32; 4])]| {
-        lines
-            .iter()
-            .find(|(t, _)| t == "[REQ_SKILL Riding]")
-            .unwrap()
-            .1
-    };
-    assert_eq!(color(&lines), red, "no rank known");
-    assert!(!lines.iter().any(|(t, _)| t == "[ITEM_SPELL_KNOWN]"));
-    s.set_known_spells([101]);
-    let lines = read(&mut s);
-    assert_ne!(color(&lines), red, "the higher rank clears the red");
-    assert!(
-        lines.iter().any(|(t, _)| t == "[ITEM_SPELL_KNOWN]"),
-        "a higher rank of a taught spell reads known"
-    );
+            lines_of(s)
+        };
+        let red = [1.0, 32.0 / 255.0, 32.0 / 255.0, 1.0];
+        s.set_next_ranks(HashMap::from([(100, 101)]));
+        s.set_known_spells([500]);
+        let lines = read(&mut s);
+        let color = |lines: &[(String, [f32; 4])]| {
+            lines
+                .iter()
+                .find(|(t, _)| t == "[REQ_SKILL Riding]")
+                .unwrap()
+                .1
+        };
+        assert_eq!(color(&lines), red, "no rank known");
+        assert!(!lines.iter().any(|(t, _)| t == "[ITEM_SPELL_KNOWN]"));
+        s.set_known_spells([101]);
+        let lines = read(&mut s);
+        assert_ne!(color(&lines), red, "the higher rank clears the red");
+        assert!(
+            lines.iter().any(|(t, _)| t == "[ITEM_SPELL_KNOWN]"),
+            "a higher rank of a taught spell reads known"
+        );
+    });
 }
 
 #[test]
@@ -167,26 +169,27 @@ fn red_lines_track_player_state() {
 /// needs an item object, and a template has none.
 #[test]
 fn verified_families_signable_locked_resists_known() {
-    let mut s = script();
-    s.set_screen_size(800.0, 600.0);
-    s.set_item_template(
-        5518,
-        ItemTemplateView {
-            name: "Sealed Charter".into(),
-            quality: 1,
-            flags: 0x2000 | 0x4, // signable + openable
-            max_count: 1,
-            start_quest: 42,
-            lock_id: 7,
-            resistances: [5, 5, 5, 5, 5, 5],
-            spell_triggers: vec![(6, 2020, "Recipe: Stew".into())],
-            taught: Some((2020, false)),
-            description: "Sign here.".into(),
-            ..Default::default()
-        },
-    );
-    s.set_known_spells([2020]);
-    s.run(
+    crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+        let mut s = script();
+        s.set_screen_size(800.0, 600.0);
+        s.set_item_template(
+            5518,
+            ItemTemplateView {
+                name: "Sealed Charter".into(),
+                quality: 1,
+                flags: 0x2000 | 0x4, // signable + openable
+                max_count: 1,
+                start_quest: 42,
+                lock_id: 7,
+                resistances: [5, 5, 5, 5, 5, 5],
+                spell_triggers: vec![(6, 2020, "Recipe: Stew".into())],
+                taught: Some((2020, false)),
+                description: "Sign here.".into(),
+                ..Default::default()
+            },
+        );
+        s.set_known_spells([2020]);
+        s.run(
         r#"
         local a = CreateFrame("Button", "Slot5"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
         local tt = CreateFrame("GameTooltip", "TT")
@@ -195,84 +198,85 @@ fn verified_families_signable_locked_resists_known() {
     "#,
     )
     .unwrap();
-    let lines = lines_of(&mut s);
-    let texts: Vec<&str> = lines.iter().map(|(t, _)| t.as_str()).collect();
-    assert_eq!(
-        texts,
-        vec![
-            "Sealed Charter",
-            "[ITEM_SIGNABLE]",
-            "[ITEM_UNIQUE]",
-            "[ITEM_STARTS_QUEST]",
-            "[LOCKED]",
-            "[RESIST_ALL +5]",
-            "[ITEM_SPELL_KNOWN]",
-            "\"Sign here.\"",
-        ],
-        "the verified gated families in the verified order"
-    );
-    let color = |needle: &str| lines.iter().find(|(t, _)| t == needle).unwrap().1;
-    let red = [1.0, 32.0 / 255.0, 32.0 / 255.0, 1.0];
-    assert_eq!(color("[LOCKED]"), red, "LOCKED is red");
-    assert_eq!(
-        color("[ITEM_SPELL_KNOWN]"),
-        red,
-        "SPELL_KNOWN is unconditional red"
-    );
-    assert_eq!(
-        color("[ITEM_SIGNABLE]"),
-        [0.0, 1.0, 0.0, 1.0],
-        "SIGNABLE is green"
-    );
-    assert_eq!(
-        color("\"Sign here.\""),
-        [1.0, 210.0 / 255.0, 0.0, 1.0],
-        "the description is the byte-verified gold"
-    );
-    s.set_item_template(
-        5519,
-        ItemTemplateView {
-            name: "Blessed Trinket".into(),
-            quality: 1,
-            resistances: [10, 0, 0, 0, 0, 0],
-            ..Default::default()
-        },
-    );
-    s.run(
-        r#"
+        let lines = lines_of(&mut s);
+        let texts: Vec<&str> = lines.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(
+            texts,
+            vec![
+                "Sealed Charter",
+                "[ITEM_SIGNABLE]",
+                "[ITEM_UNIQUE]",
+                "[ITEM_STARTS_QUEST]",
+                "[LOCKED]",
+                "[RESIST_ALL +5]",
+                "[ITEM_SPELL_KNOWN]",
+                "\"Sign here.\"",
+            ],
+            "the verified gated families in the verified order"
+        );
+        let color = |needle: &str| lines.iter().find(|(t, _)| t == needle).unwrap().1;
+        let red = [1.0, 32.0 / 255.0, 32.0 / 255.0, 1.0];
+        assert_eq!(color("[LOCKED]"), red, "LOCKED is red");
+        assert_eq!(
+            color("[ITEM_SPELL_KNOWN]"),
+            red,
+            "SPELL_KNOWN is unconditional red"
+        );
+        assert_eq!(
+            color("[ITEM_SIGNABLE]"),
+            [0.0, 1.0, 0.0, 1.0],
+            "SIGNABLE is green"
+        );
+        assert_eq!(
+            color("\"Sign here.\""),
+            [1.0, 210.0 / 255.0, 0.0, 1.0],
+            "the description is the byte-verified gold"
+        );
+        s.set_item_template(
+            5519,
+            ItemTemplateView {
+                name: "Blessed Trinket".into(),
+                quality: 1,
+                resistances: [10, 0, 0, 0, 0, 0],
+                ..Default::default()
+            },
+        );
+        s.run(
+            r#"
         TT:SetOwner(Slot5, "ANCHOR_RIGHT")
         SetItemByIdForTest(TT, 5519)
         assert(TT:NumLines() == 1, "a lone Holy resist prints no line, got " .. TT:NumLines())
     "#,
-    )
-    .unwrap();
-    // The five that print follow the builder, not the fields: its loop runs `edi` 1..5 reading
-    // school `(edi == 1) ? 6 : edi`, so Arcane leads.
-    s.set_item_template(
-        5520,
-        ItemTemplateView {
-            name: "Prismatic Band".into(),
-            quality: 1,
-            resistances: [9, 1, 2, 3, 4, 5],
-            ..Default::default()
-        },
-    );
-    s.run(r#"TT:SetOwner(Slot5, "ANCHOR_RIGHT"); SetItemByIdForTest(TT, 5520)"#)
+        )
         .unwrap();
-    let lines = lines_of(&mut s);
-    let texts: Vec<&str> = lines.iter().map(|(t, _)| t.as_str()).collect();
-    assert_eq!(
-        &texts[1..],
-        [
-            "[RESIST_SINGLE +5 [SCHOOL6]]",
-            "[RESIST_SINGLE +1 [SCHOOL2]]",
-            "[RESIST_SINGLE +2 [SCHOOL3]]",
-            "[RESIST_SINGLE +3 [SCHOOL4]]",
-            "[RESIST_SINGLE +4 [SCHOOL5]]",
-        ],
-        "Arcane, Fire, Nature, Frost, Shadow — and the +9 Holy never prints"
-    );
-    assert!(s.take_errors().is_empty());
+        // The five that print follow the builder, not the fields: its loop runs `edi` 1..5 reading
+        // school `(edi == 1) ? 6 : edi`, so Arcane leads.
+        s.set_item_template(
+            5520,
+            ItemTemplateView {
+                name: "Prismatic Band".into(),
+                quality: 1,
+                resistances: [9, 1, 2, 3, 4, 5],
+                ..Default::default()
+            },
+        );
+        s.run(r#"TT:SetOwner(Slot5, "ANCHOR_RIGHT"); SetItemByIdForTest(TT, 5520)"#)
+            .unwrap();
+        let lines = lines_of(&mut s);
+        let texts: Vec<&str> = lines.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(
+            &texts[1..],
+            [
+                "[RESIST_SINGLE +5 [SCHOOL6]]",
+                "[RESIST_SINGLE +1 [SCHOOL2]]",
+                "[RESIST_SINGLE +2 [SCHOOL3]]",
+                "[RESIST_SINGLE +3 [SCHOOL4]]",
+                "[RESIST_SINGLE +4 [SCHOOL5]]",
+            ],
+            "Arcane, Fire, Nature, Frost, Shadow — and the +9 Holy never prints"
+        );
+        assert!(s.take_errors().is_empty());
+    });
 }
 
 /// The slot and type cells red separately: a hard proficiency miss (the class's proficiency mask,
@@ -1270,45 +1274,47 @@ fn rated_merchant(item_id: u32, bracket: i32) -> MerchantState {
 /// merchant's arena rating, medal, reputation.
 #[test]
 fn requirement_lines_come_out_in_the_reference_order() {
-    let mut s = script();
-    s.set_screen_size(800.0, 600.0);
-    seed_requirement_strings(&mut s);
-    s.set_item_template(9, all_requirements());
-    s.set_known_spells([2020]);
-    s.set_unit(
-        "player",
-        Some(UnitState {
-            exists: true,
-            pvp_team: 1,
-            sex: 3,
-            ..Default::default()
-        }),
-    );
-    s.set_merchant(Some(rated_merchant(9, 1)));
-    s.run("TT:SetOwner(Slot9, 'ANCHOR_RIGHT'); TT:SetMerchantItem(1)")
-        .unwrap();
-    let lines = lines_of(&mut s);
-    let texts: Vec<&str> = lines.iter().map(|(t, _)| t.as_str()).collect();
-    assert_eq!(
-        texts,
-        vec![
-            "Pattern",
-            "[MIN_SKILL Tailoring 300]",
-            "[ITEM_SPELL_KNOWN]",
-            "[REQ_SKILL Riding]",
-            "[REQ_SKILL [RANK5F]]",
-            "[ARENA3 1800]",
-            "[REQ_SKILL [MEDAL2]]",
-            "Requires Stormwind - Honored",
-        ],
-    );
+    crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+        let mut s = script();
+        s.set_screen_size(800.0, 600.0);
+        seed_requirement_strings(&mut s);
+        s.set_item_template(9, all_requirements());
+        s.set_known_spells([2020]);
+        s.set_unit(
+            "player",
+            Some(UnitState {
+                exists: true,
+                pvp_team: 1,
+                sex: 3,
+                ..Default::default()
+            }),
+        );
+        s.set_merchant(Some(rated_merchant(9, 1)));
+        s.run("TT:SetOwner(Slot9, 'ANCHOR_RIGHT'); TT:SetMerchantItem(1)")
+            .unwrap();
+        let lines = lines_of(&mut s);
+        let texts: Vec<&str> = lines.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(
+            texts,
+            vec![
+                "Pattern",
+                "[MIN_SKILL Tailoring 300]",
+                "[ITEM_SPELL_KNOWN]",
+                "[REQ_SKILL Riding]",
+                "[REQ_SKILL [RANK5F]]",
+                "[ARENA3 1800]",
+                "[REQ_SKILL [MEDAL2]]",
+                "Requires Stormwind - Honored",
+            ],
+        );
 
-    // Off the merchant the arena line is gone; the rest keep their order.
-    s.run("TT:SetOwner(Slot9, 'ANCHOR_RIGHT'); SetItemByIdForTest(TT, 9)")
-        .unwrap();
-    let lines = lines_of(&mut s);
-    assert!(!lines.iter().any(|(t, _)| t.starts_with("[ARENA")));
-    assert_eq!(lines.len(), 7);
+        // Off the merchant the arena line is gone; the rest keep their order.
+        s.run("TT:SetOwner(Slot9, 'ANCHOR_RIGHT'); SetItemByIdForTest(TT, 9)")
+            .unwrap();
+        let lines = lines_of(&mut s);
+        assert!(!lines.iter().any(|(t, _)| t.starts_with("[ARENA")));
+        assert_eq!(lines.len(), 7);
+    });
 }
 
 /// The arena line's key follows the bracket, and it reads white once a team of the bracket's size
@@ -1352,25 +1358,30 @@ fn the_arena_rating_and_medal_lines_turn_white_when_met() {
         roster_type: 3,
         members: Vec::new(),
     };
-    let lend =
-        |a| crate::script::live::lend_arena_teams([a, Default::default(), Default::default()]);
-    let live = lend(team(1799, 1900));
-    assert_eq!(read(&mut s, "[ARENA3 1800]"), red, "personal rating short");
-    drop(live);
-    let live = lend(team(1800, 1799));
-    assert_eq!(read(&mut s, "[ARENA3 1800]"), red, "team rating short");
-    drop(live);
-    let _live = lend(team(1800, 1800));
-    assert_eq!(read(&mut s, "[ARENA3 1800]"), white);
-    // A 3v3 team does not meet a 5v5 demand.
-    s.set_merchant(Some(rated_merchant(9, 2)));
-    assert_eq!(read(&mut s, "[ARENA5 1800]"), red);
-
-    s.set_player_req_state(PlayerReqState {
-        pvp_medals: 0b10,
-        ..Default::default()
+    let lend = |a| crate::script::live::arena_teams([a, Default::default(), Default::default()]);
+    let mut live_v = lend(team(1799, 1900));
+    crate::script::live::lending(&mut live_v, || {
+        assert_eq!(read(&mut s, "[ARENA3 1800]"), red, "personal rating short");
     });
-    assert_eq!(read(&mut s, "[REQ_SKILL [MEDAL2]]"), white);
+
+    let mut live_v = lend(team(1800, 1799));
+    crate::script::live::lending(&mut live_v, || {
+        assert_eq!(read(&mut s, "[ARENA3 1800]"), red, "team rating short");
+    });
+
+    let mut live_v = lend(team(1800, 1800));
+    crate::script::live::lending(&mut live_v, || {
+        assert_eq!(read(&mut s, "[ARENA3 1800]"), white);
+        // A 3v3 team does not meet a 5v5 demand.
+        s.set_merchant(Some(rated_merchant(9, 2)));
+        assert_eq!(read(&mut s, "[ARENA5 1800]"), red);
+
+        s.set_player_req_state(PlayerReqState {
+            pvp_medals: 0b10,
+            ..Default::default()
+        });
+        assert_eq!(read(&mut s, "[REQ_SKILL [MEDAL2]]"), white);
+    });
 }
 
 /// A prospectable or millable item draws its gathering line instead of the skill line, and only

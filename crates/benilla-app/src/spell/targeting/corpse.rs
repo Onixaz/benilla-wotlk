@@ -128,7 +128,7 @@ pub(super) fn bind_target_corpse(
     entity: Entity,
     guid: u64,
 ) {
-    let held = ladder.ground.read().pending();
+    let held = ladder.ground.pending();
     let Some((spell_id, commit, word)) = held else {
         return;
     };

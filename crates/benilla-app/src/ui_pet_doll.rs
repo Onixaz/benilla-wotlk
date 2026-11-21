@@ -2,7 +2,7 @@
 
 use bevy::prelude::*;
 
-use benilla_ui::script::{UiScript, UnitCombatStats};
+use benilla_ui::script::UnitCombatStats;
 
 use crate::portrait::PetDollBooth;
 use crate::ui_char::{fire_stat_transitions, unit_combat_stats};
@@ -20,11 +20,11 @@ impl Plugin for UiPetDollPlugin {
 
 /// The booth `PetModelFrame` draws, read each frame as the model frame renders (`0x960240`): its facing, which the rotate buttons write (`0x9606e0`), and the pet's model.
 fn sync_pet_booth(
-    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     pet: PetUnit,
     mut booth: ResMut<PetDollBooth>,
 ) {
-    let Some(script) = script else {
+    let Some(script) = script.turn() else {
         return;
     };
     // Written every frame, pet or not, so a new pet does not snap to a stale yaw.
@@ -37,14 +37,14 @@ fn sync_pet_booth(
 
 /// The pet page's stats pushed under `"pet"` and their `UNIT_*` fan-out, the units' (#1289).
 fn feed_pet_doll(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     pet: PetUnit,
     mut last: Local<crate::ui_script::VmMemo<Option<UnitCombatStats>>>,
     tables: Option<Res<crate::ui_char::SheetTables>>,
     names: Res<crate::names::NameCache>,
     self_q: Query<&crate::net::ObjectStore, With<crate::net::SelfPlayer>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let last = last.get(&script);

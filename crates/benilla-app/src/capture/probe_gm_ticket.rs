@@ -32,8 +32,6 @@ use bevy::prelude::*;
 use benilla_assets::coords::bevy_to_wow;
 use benilla_ui::script::UiScript;
 
-use super::probes::ProbeClock;
-use crate::net::SelfPlayer;
 use crate::player::Player;
 
 /// `SMSG_GMTICKETSYSTEMSTATUS`'s `GMTICKET_QUEUE_STATUS_ENABLED`.
@@ -195,22 +193,40 @@ fn unique_text(suffix: &str) -> String {
     format!("benilla probe {secs}{suffix}")
 }
 
-fn gm_ticket_probe(
-    time: ProbeClock,
-    mut probe: ResMut<GmTicketProbe>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    self_player: Query<(), With<SelfPlayer>>,
-    player: Res<Player>,
-    map: Option<Res<benilla_world::world_map::CurrentMap>>,
-    mut exit: MessageWriter<AppExit>,
-) {
-    if self_player.is_empty() {
+fn gm_ticket_probe(world: &mut World) {
+    if !super::probes::in_world(world) {
         return; // not in-world yet
     }
-    let Some(script) = script else {
-        return; // no UI VM in a headless build
+    let now = f64::from(super::probes::probe_secs(world));
+    let pos = world.resource::<Player>().pos;
+    let map = world
+        .get_resource::<benilla_world::world_map::CurrentMap>()
+        .map(|m| m.0);
+    let Some(mut probe) = world.remove_resource::<GmTicketProbe>() else {
+        return;
     };
-    let now = time.elapsed_secs_f64();
+    let mut exit = Vec::new();
+    super::probes::with_vm(world, |script| {
+        // No UI VM in a headless build.
+        if let Some(script) = script {
+            gm_ticket_step(&mut probe, script, now, pos, map, &mut exit);
+        }
+    });
+    world.insert_resource(probe);
+    for e in exit {
+        world.write_message(e);
+    }
+}
+
+/// One frame of the probe on the VM, the `World` lent.
+fn gm_ticket_step(
+    probe: &mut GmTicketProbe,
+    script: &mut UiScript,
+    now: f64,
+    pos: Vec3,
+    map: Option<u32>,
+    exit: &mut Vec<AppExit>,
+) {
     let phase = probe.phase;
 
     match phase {
@@ -259,8 +275,8 @@ fn gm_ticket_probe(
             if now - since < SETTLE_SECS {
                 return;
             }
-            let baseline = status_answers(&script).len();
-            if !run_or_skip(&mut probe, &script, "1 queue", "GetGMStatus()") {
+            let baseline = status_answers(script).len();
+            if !run_or_skip(probe, script, "1 queue", "GetGMStatus()") {
                 return;
             }
             probe.phase = Phase::Queue {
@@ -271,7 +287,7 @@ fn gm_ticket_probe(
 
         // Step 1, the queue status: no event at all means the round trip is dead.
         Phase::Queue { since, baseline } => {
-            let seen = status_answers(&script);
+            let seen = status_answers(script);
             let Some(i) = matching(&seen, baseline, |_| true) else {
                 if now - since > ANSWER_TIMEOUT_SECS {
                     error!(
@@ -303,7 +319,7 @@ fn gm_ticket_probe(
                  gate opens)"
             );
             probe.passes += 1;
-            if !run_or_skip(&mut probe, &script, "2 clean", "DeleteGMTicket()") {
+            if !run_or_skip(probe, script, "2 clean", "DeleteGMTicket()") {
                 return;
             }
             probe.phase = Phase::CleanGap { since: now };
@@ -315,8 +331,8 @@ fn gm_ticket_probe(
             if now - since < WRITE_GAP_SECS {
                 return;
             }
-            let baseline = ticket_answers(&script).len();
-            if !run_or_skip(&mut probe, &script, "2 clean", "GetGMTicket()") {
+            let baseline = ticket_answers(script).len();
+            if !run_or_skip(probe, script, "2 clean", "GetGMTicket()") {
                 return;
             }
             probe.phase = Phase::CleanGet {
@@ -325,9 +341,9 @@ fn gm_ticket_probe(
             };
         }
         Phase::CleanGet { since, baseline } => {
-            let seen = ticket_answers(&script);
+            let seen = ticket_answers(script);
             if matching(&seen, baseline, |(c, _)| *c == NO_TICKET).is_some() {
-                if !toast_matches(&mut probe, &script, "2 clean", false) {
+                if !toast_matches(probe, script, "2 clean", false) {
                     return;
                 }
                 info!(
@@ -337,7 +353,7 @@ fn gm_ticket_probe(
                 probe.passes += 1;
                 probe.phase = Phase::Rest {
                     since: now,
-                    last: bevy_to_wow(player.pos),
+                    last: bevy_to_wow(pos),
                     still_since: now,
                 };
             } else if now - since > ANSWER_TIMEOUT_SECS {
@@ -359,7 +375,7 @@ fn gm_ticket_probe(
             last,
             still_since,
         } => {
-            let here = bevy_to_wow(player.pos);
+            let here = bevy_to_wow(pos);
             if distance(here, last) > REST_EPS {
                 probe.phase = Phase::Rest {
                     since,
@@ -381,10 +397,10 @@ fn gm_ticket_probe(
             }
             let text = unique_text("");
             probe.create_pos = here;
-            probe.create_map = map.map(|m| m.0).unwrap_or(0);
+            probe.create_map = map.unwrap_or(0);
             if !run_or_skip(
-                &mut probe,
-                &script,
+                probe,
+                script,
                 "3 create",
                 &format!("NewGMTicket(\"{text}\", true)"),
             ) {
@@ -399,7 +415,7 @@ fn gm_ticket_probe(
             // The first tick after the create call is the last frame the drain can stamp the
             // packet in, so the drift is measured here and not at the later db-expect print.
             if probe.stamp_drift.is_none() {
-                let drift = distance(bevy_to_wow(player.pos), probe.create_pos);
+                let drift = distance(bevy_to_wow(pos), probe.create_pos);
                 probe.stamp_drift = Some(drift);
                 if drift > STAMP_DRIFT_EPS {
                     warn!(
@@ -411,8 +427,8 @@ fn gm_ticket_probe(
             if now - since < WRITE_GAP_SECS {
                 return;
             }
-            let baseline = ticket_answers(&script).len();
-            if !run_or_skip(&mut probe, &script, "3 create", "GetGMTicket()") {
+            let baseline = ticket_answers(script).len();
+            if !run_or_skip(probe, script, "3 create", "GetGMTicket()") {
                 return;
             }
             probe.phase = Phase::CreateGet {
@@ -421,11 +437,11 @@ fn gm_ticket_probe(
             };
         }
         Phase::CreateGet { since, baseline } => {
-            let seen = ticket_answers(&script);
+            let seen = ticket_answers(script);
             let want = probe.create_text.clone();
             if let Some(i) = matching(&seen, baseline, |(_, t)| *t == want) {
                 let (cat, text) = &seen[i];
-                if !toast_matches(&mut probe, &script, "3 create", true) {
+                if !toast_matches(probe, script, "3 create", true) {
                     return;
                 }
                 info!(
@@ -435,7 +451,7 @@ fn gm_ticket_probe(
                      are laid out the way the server reads them, and the id-led answer decodes."
                 );
                 probe.passes += 1;
-                report_db_expectation(&probe, "after create", &want);
+                report_db_expectation(probe, "after create", &want);
                 warn!(
                     "PROBE_GMTICKET: SKIP (4 db) — operator step, by design: the client never \
                      reads map/position back, so only the server's own row proves they landed. \
@@ -444,8 +460,8 @@ fn gm_ticket_probe(
                 );
                 let text = unique_text(" edited");
                 if !run_or_skip(
-                    &mut probe,
-                    &script,
+                    probe,
+                    script,
                     "5 edit",
                     &format!("UpdateGMTicket(\"{text}\")"),
                 ) {
@@ -471,8 +487,8 @@ fn gm_ticket_probe(
             if now - since < WRITE_GAP_SECS {
                 return;
             }
-            let baseline = ticket_answers(&script).len();
-            if !run_or_skip(&mut probe, &script, "5 edit", "GetGMTicket()") {
+            let baseline = ticket_answers(script).len();
+            if !run_or_skip(probe, script, "5 edit", "GetGMTicket()") {
                 return;
             }
             probe.phase = Phase::EditGet {
@@ -481,7 +497,7 @@ fn gm_ticket_probe(
             };
         }
         Phase::EditGet { since, baseline } => {
-            let seen = ticket_answers(&script);
+            let seen = ticket_answers(script);
             let want = probe.edit_text.clone();
             // Equality, never `contains`: a stray leading byte is the failure this step catches.
             if let Some(i) = matching(&seen, baseline, |(_, t)| *t == want) {
@@ -492,8 +508,8 @@ fn gm_ticket_probe(
                      bare cstring is right."
                 );
                 probe.passes += 1;
-                report_db_expectation(&probe, "after edit", &want);
-                if !run_or_skip(&mut probe, &script, "6 abandon", "DeleteGMTicket()") {
+                report_db_expectation(probe, "after edit", &want);
+                if !run_or_skip(probe, script, "6 abandon", "DeleteGMTicket()") {
                     return;
                 }
                 probe.phase = Phase::AbandonGap { since: now };
@@ -519,8 +535,8 @@ fn gm_ticket_probe(
             if now - since < WRITE_GAP_SECS {
                 return;
             }
-            let baseline = ticket_answers(&script).len();
-            if !run_or_skip(&mut probe, &script, "6 abandon", "GetGMTicket()") {
+            let baseline = ticket_answers(script).len();
+            if !run_or_skip(probe, script, "6 abandon", "GetGMTicket()") {
                 return;
             }
             probe.phase = Phase::AbandonGet {
@@ -529,9 +545,9 @@ fn gm_ticket_probe(
             };
         }
         Phase::AbandonGet { since, baseline } => {
-            let seen = ticket_answers(&script);
+            let seen = ticket_answers(script);
             if matching(&seen, baseline, |(c, _)| *c == NO_TICKET).is_some() {
-                if !toast_matches(&mut probe, &script, "6 abandon", false) {
+                if !toast_matches(probe, script, "6 abandon", false) {
                     return;
                 }
                 info!(
@@ -563,7 +579,7 @@ fn gm_ticket_probe(
                 probe.passes, probe.fails
             );
             // AppExit plus a hard-exit backstop, so a teardown hang cannot keep the account held.
-            exit.write(AppExit::Success);
+            exit.push(AppExit::Success);
             std::thread::spawn(|| {
                 std::thread::sleep(std::time::Duration::from_secs(5));
                 warn!("PROBE_GMTICKET: still alive 5s after AppExit — hard exit");

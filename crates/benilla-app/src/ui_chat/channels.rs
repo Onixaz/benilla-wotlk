@@ -78,14 +78,11 @@ fn end_channel_session(
 /// Seed a fresh VM's joined-channel mirror, which is otherwise pushed only on a join or a leave, so
 /// a `/reload` would leave `GetChannelName` and `/N` empty until the next one.
 pub(super) fn seed_channels(
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
+    mut script: crate::ui_script::InTurn,
     channels: Res<ChannelState>,
     mut seeded: Local<crate::ui_script::VmMemo<bool>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     if seeded.claim(&script) {
@@ -95,16 +92,13 @@ pub(super) fn seed_channels(
 
 /// The session-end edge: a confirmed `/logout` back to the glue screens (`OnExit(InWorld)`).
 pub(super) fn end_session_channels(
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
+    mut script: crate::ui_script::InTurn,
     mut channels: ResMut<ChannelState>,
     mut walk: ResMut<ZoneChannelWalk>,
     mut cascade: ResMut<GuildRecruitmentCascade>,
 ) {
     end_channel_session(
-        script.map(NonSendMut::into_inner),
+        script.turn().as_deref_mut(),
         &mut channels,
         &mut walk,
         &mut cascade,
@@ -114,10 +108,7 @@ pub(super) fn end_session_channels(
 /// The other session end, a dead socket: a recoverable drop never leaves `InWorld`, but the
 /// reconnect gets a fresh server-side `Player` in no channels, so it clears the same state.
 pub(super) fn end_session_channels_on_disconnect(
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
+    mut script: crate::ui_script::InTurn,
     mut channels: ResMut<ChannelState>,
     mut walk: ResMut<ZoneChannelWalk>,
     mut cascade: ResMut<GuildRecruitmentCascade>,
@@ -127,7 +118,7 @@ pub(super) fn end_session_channels_on_disconnect(
         return;
     }
     end_channel_session(
-        script.map(NonSendMut::into_inner),
+        script.turn().as_deref_mut(),
         &mut channels,
         &mut walk,
         &mut cascade,
@@ -384,14 +375,11 @@ pub(super) fn auto_join_zone_channels(
     ),
     mut walk: ResMut<ZoneChannelWalk>,
     mut entered: MessageReader<crate::net::EnteredWorldMessage>,
-    (mut script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
+    mut script: crate::ui_script::InTurn,
     mut catalog_fed: Local<crate::ui_script::VmMemo<Option<(String, bool)>>>,
 ) {
     let (player, cinematic) = (&body.0, &body.1);
-    if let Some(script) = script.as_deref_mut() {
+    if let Some(mut script) = script.turn() {
         for id in script.take_zone_mask_additions() {
             if let Some(mask) = &mut channels.zone_mask {
                 *mask |= super::edit::zone_bit(id);
@@ -426,9 +414,9 @@ pub(super) fn auto_join_zone_channels(
     // built-in channel", which files `General` as a custom channel and joins one of that name.
     // Zone-less, a zone row carries `resolved: None`, the reference's nil leg.
     if !channels.channels.is_empty() {
-        if let Some(script) = script.as_mut() {
+        if let Some(mut script) = script.turn() {
             let at = zone.clone().unwrap_or_default();
-            let fed = catalog_fed.get(script);
+            let fed = catalog_fed.get(&script);
             if fed.as_ref() != Some(&at) {
                 script.set_zone_channel_catalog(zone_channel_catalog(
                     &channels.channels,
@@ -453,7 +441,7 @@ pub(super) fn auto_join_zone_channels(
 
     let steps = plan_walk(&channels, &zone_name, in_city, city_word(&areas.0));
     if apply_walk(&steps, &mut channels, &commands) {
-        if let Some(script) = script.as_mut() {
+        if let Some(mut script) = script.turn() {
             // `GetChannelName(n)` answers the new name from this frame on, as in the reference.
             script.set_channel_slots(channels.ui_slots());
         }

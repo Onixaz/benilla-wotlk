@@ -51,18 +51,18 @@ impl<'w, 's> LiveView<'w, 's> {
         let (objects, items, commands) = self.containers.as_ref()?.item_reads();
         let reads = crate::ui_action::usable_cache::Sources {
             spells: self.spells.as_deref(),
-            actions: self.actions.get(),
-            slots: self.slots.get(),
-            bound: self.bound.get(),
-            pet_bar: self.pet_bar.get(),
-            cooldowns: self.cooldowns.get(),
+            actions: self.actions.as_deref(),
+            slots: self.slots.as_deref(),
+            bound: self.bound.as_deref(),
+            pet_bar: self.pet_bar.as_deref(),
+            cooldowns: self.cooldowns.as_deref(),
             me: self.me(),
-            target_guid: self.selection.get().and_then(|s| s.guid).unwrap_or(0),
+            target_guid: self.selection.as_deref().and_then(|s| s.guid).unwrap_or(0),
             stores: &self.stores,
             objects,
             auras: &self.auras,
-            place: self.place.get(),
-            pending: self.pending.get(),
+            place: self.place.as_deref(),
+            pending: self.pending.as_deref(),
             world: &self.usable_world,
             factions: self.factions.as_deref(),
             reputations: self.reputations.as_deref(),
@@ -101,7 +101,7 @@ impl<'w, 's> LiveView<'w, 's> {
         }
         let template = items.template(item_id, 0, commands);
         let use_spell = template.and_then(|t| t.use_spell);
-        if let (Some(u), Some(cooldowns)) = (use_spell, self.cooldowns.get()) {
+        if let (Some(u), Some(cooldowns)) = (use_spell, self.cooldowns.as_deref()) {
             let category = match u.category {
                 0 => self
                     .spells
@@ -137,7 +137,7 @@ impl<'w, 's> LiveView<'w, 's> {
 
     /// The 0-based bar `slot` through the resolvers.
     pub(super) fn resolve_slot(&self, slot: u32) -> Option<Resolved> {
-        let bar = self.slots.get()?;
+        let bar = self.slots.as_deref()?;
         let Some(button) = u8::try_from(slot).ok().and_then(|s| bar.buttons.get(&s)) else {
             return Some(Resolved::default());
         };
@@ -154,13 +154,13 @@ impl<'w, 's> LiveView<'w, 's> {
             ACTION_KIND_MACRO => {
                 use crate::ui_macro::BoundSpell;
                 if let Some(BoundSpell::Spell(s)) =
-                    self.bound.get().and_then(|b| b.0.get(&button.action))
+                    self.bound.as_deref().and_then(|b| b.0.get(&button.action))
                 {
                     out.spell = *s;
                 }
             }
             k if k == ACTION_KIND_PET => {
-                let bar = self.pet_bar.get();
+                let bar = self.pet_bar.as_deref();
                 let word = bar
                     .filter(|b| b.spells.pet_guid != 0)
                     .and_then(|b| b.spells.bar.get(button.action as usize).copied())
@@ -230,7 +230,7 @@ impl<'w, 's> LiveView<'w, 's> {
             return !self.engaged.is_empty();
         }
         if let Some(word) = r.pet_word {
-            let Some(bar) = self.pet_bar.get() else {
+            let Some(bar) = self.pet_bar.as_deref() else {
                 return false;
             };
             let id = word.action();
@@ -267,7 +267,7 @@ impl<'w, 's> LiveView<'w, 's> {
     /// the locked target for 0 (`0x809610`).
     pub(super) fn slot_in_range(&self, r: Resolved, target: u64) -> Option<bool> {
         let target = if target == 0 {
-            self.selection.get().and_then(|s| s.guid)?
+            self.selection.as_deref().and_then(|s| s.guid)?
         } else {
             target
         };
@@ -324,7 +324,7 @@ impl<'w, 's> LiveView<'w, 's> {
         let now = std::time::Instant::now();
         let d = |spell| self.spells.as_deref().and_then(|s| s.catalog.get(spell));
         if r.item != 0 {
-            let Some(cooldowns) = self.cooldowns.get() else {
+            let Some(cooldowns) = self.cooldowns.as_deref() else {
                 return IDLE;
             };
             return cooldowns
@@ -338,7 +338,7 @@ impl<'w, 's> LiveView<'w, 's> {
         if r.pet {
             return self
                 .pet_bar
-                .get()
+                .as_deref()
                 .and_then(|b| {
                     b.cooldowns
                         .info(r.spell, 0, d(r.spell), now)
@@ -351,7 +351,7 @@ impl<'w, 's> LiveView<'w, 's> {
 
     /// The bar slot's word (`[0xc1e358 + slot * 4]`), 0 for an empty one.
     pub(super) fn slot_word(&self, slot: u32) -> Option<u32> {
-        let bar = self.slots.get()?;
+        let bar = self.slots.as_deref()?;
         Some(
             u8::try_from(slot)
                 .ok()
@@ -365,7 +365,7 @@ impl<'w, 's> LiveView<'w, 's> {
     /// its template or display row is missing; a pet action's spell icon or mode or order global.
     pub(super) fn slot_icon(&self, slot: u32) -> Option<Option<benilla_ui::script::ActionIcon>> {
         use benilla_ui::script::ActionIcon;
-        let bar = self.slots.get()?;
+        let bar = self.slots.as_deref()?;
         let Some(button) = u8::try_from(slot).ok().and_then(|s| bar.buttons.get(&s)) else {
             return Some(None);
         };
@@ -394,7 +394,7 @@ impl<'w, 's> LiveView<'w, 's> {
                     .and_then(|t| crate::ui_items::item_icon(containers.icons(), t.display_info_id))
                     .unwrap_or_else(|| crate::ui_action::slots::MISSING_ITEM_ICON.to_string()),
             )),
-            k if k == ACTION_KIND_PET => self.pet_bar.get().and_then(|bar| {
+            k if k == ACTION_KIND_PET => self.pet_bar.as_deref().and_then(|bar| {
                 crate::ui_pet::temp_slot_icon(
                     bar,
                     button.action,
@@ -475,21 +475,21 @@ impl<'w, 's> LiveView<'w, 's> {
             .map(|w| w.action())
     }
 
-    /// The slot write (`0x5aae80`, `0x5aaa90` for 0): stored and sent, then the slot's usable bytes
-    /// recomputed (`0x5aa390`); `Some(false)` on a locked bar.
     /// The bar's walk at a verb's site (`0x5aa470`), `sets_usable` as the verb reads it: whether a slot's bytes moved.
     pub(super) fn bar_update(&mut self, sets_usable: bool) -> Option<bool> {
-        let mut caches = self.usable.get()?.clone();
+        let mut caches = self.usable.as_deref()?.clone();
         caches.sets_usable = sets_usable;
         let changed = self.usable_reads(|r| {
             let mut out = Vec::new();
             crate::ui_action::usable_cache::bar_pass(r, &mut caches, &mut out);
             !out.is_empty()
         })?;
-        *self.usable.get_mut()? = caches;
+        *self.usable.as_deref_mut()? = caches;
         Some(changed)
     }
 
+    /// The slot write (`0x5aae80`, `0x5aaa90` for 0): stored and sent, then the slot's usable bytes
+    /// recomputed (`0x5aa390`); `Some(false)` on a locked bar.
     pub(super) fn write_slot_word(&mut self, slot: u32, word: u32) -> Option<bool> {
         let Ok(slot) = u8::try_from(slot) else {
             return Some(false);
@@ -498,11 +498,11 @@ impl<'w, 's> LiveView<'w, 's> {
             return Some(false);
         }
         let net = self.commands.as_deref()?;
-        let written = self.slots.get_mut()?.write_slot(slot, word, net);
+        let written = self.slots.as_deref_mut()?.write_slot(slot, word, net);
         if written {
-            let sets_usable = self.usable.get().is_some_and(|c| c.sets_usable);
+            let sets_usable = self.usable.as_deref().is_some_and(|c| c.sets_usable);
             if let Some(fresh) = self.usable_reads(|r| r.slot(slot, sets_usable)) {
-                if let Some(caches) = self.usable.get_mut() {
+                if let Some(caches) = self.usable.as_deref_mut() {
                     caches.slots[usize::from(slot)] = fresh;
                 }
             }

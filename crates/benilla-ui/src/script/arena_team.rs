@@ -746,65 +746,69 @@ mod tests {
         let s = vm();
         assert_eq!(s.arity("GetArenaTeam(1)").unwrap(), 22);
         assert!(s.eval::<bool>("return GetArenaTeam(1) == nil").unwrap());
-        let _live = crate::script::live::lend_arena_teams(team());
-        let got = s
-            .eval::<String>(
-                "local n, size, rating, games, wins, sgames, swins, played, splayed, rank, \
+        let mut live_v = crate::script::live::arena_teams(team());
+        crate::script::live::lending(&mut live_v, || {
+            let got = s
+                .eval::<String>(
+                    "local n, size, rating, games, wins, sgames, swins, played, splayed, rank, \
                  personal, r, g, b, emblem = GetArenaTeam(1) \
                  return table.concat({n, size, rating, games, wins, sgames, swins, played, \
                  splayed, rank, personal, emblem}, ',') .. '|' .. r .. ',' .. b",
-            )
-            .unwrap();
-        assert_eq!(got, "Probes,2,1500,4,2,10,6,4,10,12,1520,7|1,0");
-        assert!(s.eval::<bool>("return GetArenaTeam(2) == nil").unwrap());
-        assert_eq!(s.eval::<i64>("return IsArenaTeamCaptain(1)").unwrap(), 1);
-        assert!(s.eval::<bool>("return IsInArenaTeam() == true").unwrap());
+                )
+                .unwrap();
+            assert_eq!(got, "Probes,2,1500,4,2,10,6,4,10,12,1520,7|1,0");
+            assert!(s.eval::<bool>("return GetArenaTeam(2) == nil").unwrap());
+            assert_eq!(s.eval::<i64>("return IsArenaTeamCaptain(1)").unwrap(), 1);
+            assert!(s.eval::<bool>("return IsInArenaTeam() == true").unwrap());
+        });
     }
 
     #[test]
     fn the_roster_sorts_by_name_and_selects_by_guid() {
         let s = vm();
-        let _live = crate::script::live::lend_arena_teams(team());
-        assert_eq!(
-            s.eval::<i64>("return GetNumArenaTeamMembers(1)").unwrap(),
-            2
-        );
-        assert_eq!(
-            s.eval::<String>("return (GetArenaTeamRosterInfo(1, 1))")
-                .unwrap(),
-            "Claude",
-            "name A to Z first"
-        );
-        assert_eq!(s.arity("GetArenaTeamRosterInfo(1, 9)").unwrap(), 10);
-        s.run("SetArenaTeamRosterSelection(1, 2)").unwrap();
-        assert_eq!(
-            s.eval::<i64>("return GetArenaTeamRosterSelection(1)")
-                .unwrap(),
-            2
-        );
-        s.run("SortArenaTeamRoster('name')").unwrap();
-        assert_eq!(
-            s.eval::<String>("return (GetArenaTeamRosterInfo(1, 1))")
-                .unwrap(),
-            "Zed",
-            "the front column flips"
-        );
-        assert_eq!(
-            s.eval::<i64>("return GetArenaTeamRosterSelection(1)")
-                .unwrap(),
-            1,
-            "the selection follows its guid"
-        );
-        s.run("SetArenaTeamRosterShowOffline(nil)").unwrap();
-        assert_eq!(
-            s.eval::<i64>("return GetNumArenaTeamMembers(1)").unwrap(),
-            1
-        );
-        assert_eq!(
-            s.eval::<i64>("return GetNumArenaTeamMembers(1, 1)")
-                .unwrap(),
-            2
-        );
+        let mut live_v = crate::script::live::arena_teams(team());
+        crate::script::live::lending(&mut live_v, || {
+            assert_eq!(
+                s.eval::<i64>("return GetNumArenaTeamMembers(1)").unwrap(),
+                2
+            );
+            assert_eq!(
+                s.eval::<String>("return (GetArenaTeamRosterInfo(1, 1))")
+                    .unwrap(),
+                "Claude",
+                "name A to Z first"
+            );
+            assert_eq!(s.arity("GetArenaTeamRosterInfo(1, 9)").unwrap(), 10);
+            s.run("SetArenaTeamRosterSelection(1, 2)").unwrap();
+            assert_eq!(
+                s.eval::<i64>("return GetArenaTeamRosterSelection(1)")
+                    .unwrap(),
+                2
+            );
+            s.run("SortArenaTeamRoster('name')").unwrap();
+            assert_eq!(
+                s.eval::<String>("return (GetArenaTeamRosterInfo(1, 1))")
+                    .unwrap(),
+                "Zed",
+                "the front column flips"
+            );
+            assert_eq!(
+                s.eval::<i64>("return GetArenaTeamRosterSelection(1)")
+                    .unwrap(),
+                1,
+                "the selection follows its guid"
+            );
+            s.run("SetArenaTeamRosterShowOffline(nil)").unwrap();
+            assert_eq!(
+                s.eval::<i64>("return GetNumArenaTeamMembers(1)").unwrap(),
+                1
+            );
+            assert_eq!(
+                s.eval::<i64>("return GetNumArenaTeamMembers(1, 1)")
+                    .unwrap(),
+                2
+            );
+        });
     }
 
     /// The rating check matches the size against the last roster's type (`0x5a3823`), never the cache record's.
@@ -812,47 +816,53 @@ mod tests {
     fn the_rating_check_reads_the_rosters_team_type() {
         let mut slots = team();
         {
-            let _live = crate::script::live::lend_arena_teams(slots.clone());
-            assert!(
-                rating_met(1500, 0),
-                "a 2v2 roster rated 1500, personal 1520"
-            );
-            assert!(!rating_met(1501, 0), "the team's rating short");
-            assert!(!rating_met(1500, 1), "no 3v3 slot");
+            let mut live_v = crate::script::live::arena_teams(slots.clone());
+            crate::script::live::lending(&mut live_v, || {
+                assert!(
+                    rating_met(1500, 0),
+                    "a 2v2 roster rated 1500, personal 1520"
+                );
+                assert!(!rating_met(1501, 0), "the team's rating short");
+                assert!(!rating_met(1500, 1), "no 3v3 slot");
+            });
         }
         slots[0].roster_type = 0;
-        let _live = crate::script::live::lend_arena_teams(slots);
-        assert!(
-            !rating_met(1500, 0),
-            "no roster yet, whatever the record says"
-        );
+        let mut live_v = crate::script::live::arena_teams(slots);
+        crate::script::live::lending(&mut live_v, || {
+            assert!(
+                !rating_met(1500, 0),
+                "no roster yet, whatever the record says"
+            );
+        });
     }
 
     #[test]
     fn the_sends_resolve_the_team_id() {
         let mut s = vm();
-        let _live = crate::script::live::lend_arena_teams(team());
-        s.run(
-            "ArenaTeamRoster(1) ArenaTeamRoster(2) ArenaTeamInviteByName(1, 'Claudetwo') \
+        let mut live_v = crate::script::live::arena_teams(team());
+        crate::script::live::lending(&mut live_v, || {
+            s.run(
+                "ArenaTeamRoster(1) ArenaTeamRoster(2) ArenaTeamInviteByName(1, 'Claudetwo') \
              ArenaTeamInviteByName(1, '') ArenaTeamLeave(3) AcceptArenaTeam()",
-        )
-        .unwrap();
-        assert_eq!(
-            s.take_arena_team_requests(),
-            vec![
-                ArenaTeamRequest::Roster { team_id: 9 },
-                ArenaTeamRequest::Invite {
-                    team_id: 9,
-                    name: "Claudetwo".into()
-                },
-                ArenaTeamRequest::Leave { team_id: 0 },
-                ArenaTeamRequest::Accept,
-            ]
-        );
-        let err = s
-            .run(&format!("ArenaTeamInviteByName(1, '{}')", "x".repeat(49)))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("Name too long"), "{err}");
+            )
+            .unwrap();
+            assert_eq!(
+                s.take_arena_team_requests(),
+                vec![
+                    ArenaTeamRequest::Roster { team_id: 9 },
+                    ArenaTeamRequest::Invite {
+                        team_id: 9,
+                        name: "Claudetwo".into()
+                    },
+                    ArenaTeamRequest::Leave { team_id: 0 },
+                    ArenaTeamRequest::Accept,
+                ]
+            );
+            let err = s
+                .run(&format!("ArenaTeamInviteByName(1, '{}')", "x".repeat(49)))
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("Name too long"), "{err}");
+        });
     }
 }

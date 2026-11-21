@@ -893,10 +893,7 @@ fn fade_out_ambience(zone: &mut ZoneAudio, fade_ms: u64) {
 /// The Lua music slot: this frame's queued verbs, the loop, the slider and the watch.
 /// Unconditional: the stream is the caller's, not the world soundscape's.
 fn lua_music(
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
+    mut script: crate::ui_script::InTurn,
     mut zone: NonSendMut<ZoneAudio>,
     mut out: NonSendMut<SoundOutput>,
     assets: Option<Res<WorldAssets>>,
@@ -908,7 +905,10 @@ fn lua_music(
 ) {
     let zone = &mut *zone;
     let now = time.elapsed_secs_f64();
-    let requests = script.map(|mut s| s.take_music()).unwrap_or_default();
+    let requests = script
+        .turn()
+        .map(|mut s| s.take_music())
+        .unwrap_or_default();
     for req in requests {
         match req {
             // The NULL arm always lands, and moves the pump's clock even from cold.
@@ -1118,12 +1118,13 @@ pub(super) fn plugin(app: &mut App) {
         // after the VM tick, whose output it drains.
         .add_systems(
             Update,
-            lua_music
+            crate::ui_script::raises::then_fire(lua_music)
                 .before(server_sounds)
                 .after(crate::ui_script::UiInput)
                 // After the dev mute chord, so the gain feed hears it the same frame.
                 .after(super::toggle_mute)
-                .in_set(WorldStage::Present),
+                .in_set(WorldStage::Present)
+                .in_set(crate::ui_script::UiPaint),
         )
         .add_systems(
             Update,

@@ -956,45 +956,47 @@ mod tests {
     /// The held-payload test runs first in both seams, the bag's and the doll's; only the doll's click binds an armed spell's item.
     #[test]
     fn the_armed_item_half_reroutes_bag_and_doll_clicks() {
-        let mut s = UiScript::new().unwrap();
-        s.set_inventory_slots(doll_slots());
-        s.set_container(0, Some(one_fitting_bag_item()));
+        crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+            let mut s = UiScript::new().unwrap();
+            s.set_inventory_slots(doll_slots());
+            s.set_container(0, Some(one_fitting_bag_item()));
 
-        // Unarmed, both seams do their ordinary gesture and queue nothing.
-        assert!(s.eval::<bool>("return PickupInventoryItem(1)").unwrap());
-        assert!(s.cursor_item().is_some());
-        assert!(s.take_item_picks().is_empty());
+            // Unarmed, both seams do their ordinary gesture and queue nothing.
+            assert!(s.eval::<bool>("return PickupInventoryItem(1)").unwrap());
+            assert!(s.cursor_item().is_some());
+            assert!(s.take_item_picks().is_empty());
 
-        // Armed but holding: the payload wins.
-        s.set_item_pick_armed(true);
-        s.run("PickupContainerItem(0, 1)").unwrap();
-        assert!(
-            s.take_item_picks().is_empty(),
-            "a click while carrying an item is a place, not a bind"
-        );
+            // Armed but holding: the payload wins.
+            s.set_item_pick_armed(true);
+            s.run("PickupContainerItem(0, 1)").unwrap();
+            assert!(
+                s.take_item_picks().is_empty(),
+                "a click while carrying an item is a place, not a bind"
+            );
 
-        // Armed with an empty cursor: the doll binds and leaves the cursor empty. A fresh pair of items: the place left its two locked (`0x5d82af`, `0x6dfc0d`), and a locked item does not bind (`0x5e882c`).
-        assert!(s.cursor_item().is_none());
-        assert!(!s.eval::<bool>("return PickupInventoryItem(1)").unwrap());
-        assert!(
-            s.take_item_picks().is_empty(),
-            "a locked item does not bind"
-        );
-        let mut s = UiScript::new().unwrap();
-        s.set_inventory_slots(doll_slots());
-        s.set_container(0, Some(one_fitting_bag_item()));
-        s.set_item_pick_armed(true);
-        assert!(!s.eval::<bool>("return PickupInventoryItem(1)").unwrap());
-        assert_eq!(
-            s.take_item_picks(),
-            vec![(EQUIPMENT_BAG, 1)],
-            "the doll's click binds its item (`0x5e884f`)"
-        );
-        assert!(s.cursor_item().is_none(), "a bind never stages a payload");
-        // The bag's click binds nothing: it takes the item up as on any empty cursor (`0x5d8228`); the stock button routes a targeting click to `UseContainerItem` (`0x5d874c`).
-        s.run("PickupContainerItem(0, 1)").unwrap();
-        assert!(s.take_item_picks().is_empty());
-        assert!(s.cursor_item().is_some_and(|i| (i.bag, i.slot) == (0, 1)));
+            // Armed with an empty cursor: the doll binds and leaves the cursor empty. A fresh pair of items: the place left its two locked (`0x5d82af`, `0x6dfc0d`), and a locked item does not bind (`0x5e882c`).
+            assert!(s.cursor_item().is_none());
+            assert!(!s.eval::<bool>("return PickupInventoryItem(1)").unwrap());
+            assert!(
+                s.take_item_picks().is_empty(),
+                "a locked item does not bind"
+            );
+            let mut s = UiScript::new().unwrap();
+            s.set_inventory_slots(doll_slots());
+            s.set_container(0, Some(one_fitting_bag_item()));
+            s.set_item_pick_armed(true);
+            assert!(!s.eval::<bool>("return PickupInventoryItem(1)").unwrap());
+            assert_eq!(
+                s.take_item_picks(),
+                vec![(EQUIPMENT_BAG, 1)],
+                "the doll's click binds its item (`0x5e884f`)"
+            );
+            assert!(s.cursor_item().is_none(), "a bind never stages a payload");
+            // The bag's click binds nothing: it takes the item up as on any empty cursor (`0x5d8228`); the stock button routes a targeting click to `UseContainerItem` (`0x5d874c`).
+            s.run("PickupContainerItem(0, 1)").unwrap();
+            assert!(s.take_item_picks().is_empty());
+            assert!(s.cursor_item().is_some_and(|i| (i.bag, i.slot) == (0, 1)));
+        });
     }
 
     /// With the host's state lent `AutoEquipCursorItem` files its question and signals `AUTOEQUIP_BIND_CONFIRM` inside the call (`0x6dfdc8`, `0x6dfe31`), the cursor still holding.

@@ -21,12 +21,9 @@ use benilla_formats::{dbc_width, READ_TABLES};
 /// open issue that builds it, where one does.
 const NOT_READ: &[(&str, &str)] = &[
     ("BannedAddOns", "#245 the addon ban list"),
-    ("CreatureMovementInfo", "#243 creature movement"),
     ("DanceMoves", "#243 dance studio emotes"),
     ("DestructibleModelData", "#243 destructible buildings"),
-    ("GameObjectArtKit", "#243 game object art kits"),
     ("ItemPurchaseGroup", "#239 merchant purchase groups"),
-    ("LoadingScreenTaxiSplines", "#243 the taxi loading screen"),
     ("MailTemplate", "#245 templated mail text: GetInboxText"),
     ("NamesProfanity", "#242 character name checks"),
     ("NamesReserved", "#242 character name checks"),
@@ -41,7 +38,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("Startup_Strings", "#245 the client's startup error text"),
     ("StringLookups", "#245 string lookups"),
     ("TransportPhysics", "#243 transport rocking"),
-    ("TransportRotation", "#243 transport rotation"),
     ("VideoHardware", "#245 graphics defaults by video card"),
     ("WorldChunkSounds", "#244 per-chunk zone sounds"),
     (

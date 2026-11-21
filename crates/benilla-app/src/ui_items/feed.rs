@@ -571,6 +571,107 @@ impl ItemRecordLive<'_, '_> {
     }
 }
 
+/// What the item use's requirement check reads at the use (`0x6dc3f0`): the record off the cache and
+/// our player's fields, skills, proficiencies, standings and book, as the lent view reads them.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct UseReqs<'w, 's> {
+    records: Option<ItemRecordLive<'w, 's>>,
+    me: Query<'w, 's, &'static ObjectStore, With<SelfPlayer>>,
+    classes: Option<Res<'w, crate::chr_classes::ChrClassTable>>,
+    proficiencies: Option<Res<'w, crate::net::Proficiencies>>,
+    reputations: Option<Res<'w, crate::net::Reputations>>,
+    factions: Option<Res<'w, crate::target::Factions>>,
+    actions: Option<Res<'w, crate::ui_action::PlayerActions>>,
+    spells: Option<Res<'w, crate::ui_action::Spells>>,
+    skill_lines: Option<Res<'w, crate::ui_spellbook::SkillLines>>,
+}
+
+/// Our player's requirement fields over [`UseReqs`], each read at the call.
+struct ReqsOf<'a, 'w, 's>(&'a UseReqs<'w, 's>, &'a benilla_protocol::ObjectFields);
+
+impl benilla_ui::script::ReqFields for ReqsOf<'_, '_, '_> {
+    fn level(&self) -> u32 {
+        self.1.unit_level().unwrap_or(0)
+    }
+    fn class_id(&self) -> u32 {
+        u32::from(self.1.unit_class().unwrap_or(0))
+    }
+    fn race_id(&self) -> u32 {
+        u32::from(self.1.unit_race().unwrap_or(0))
+    }
+    fn skill(&self, skill: u32) -> Option<u32> {
+        player_skill(self.1, skill)
+    }
+    fn proficiency(&self, class: u32) -> Option<u32> {
+        self.0.proficiencies.as_deref()?.0.get(&class).copied()
+    }
+    fn rep_rank(&self, faction: u32) -> u8 {
+        player_rep_rank(
+            self.1,
+            self.0.reputations.as_deref(),
+            self.0.factions.as_deref(),
+            faction,
+        )
+    }
+    fn can_dual_wield(&self) -> bool {
+        can_dual_wield(self.0.actions.as_deref(), self.0.spells.as_deref())
+    }
+    fn honor_rank(&self) -> u8 {
+        self.1.player_honor_rank().unwrap_or(0)
+    }
+    fn pvp_medals(&self) -> u32 {
+        self.1.player_pvp_medals().unwrap_or(0)
+    }
+    fn class_flags(&self) -> u32 {
+        player_fields(self.1, self.0.classes.as_deref()).class_flags
+    }
+}
+
+impl UseReqs<'_, '_> {
+    /// The known bits, else the higher-rank walk over our race and class's chains (`0x726160`).
+    fn known_or_higher(&self, me: &benilla_protocol::ObjectFields, spell_id: u32) -> bool {
+        let Some(actions) = self.actions.as_deref() else {
+            return false;
+        };
+        actions.spells.contains(&spell_id)
+            || self.skill_lines.as_deref().is_some_and(|lines| {
+                lines.catalog.higher_rank_known(
+                    spell_id,
+                    me.unit_race().unwrap_or(0),
+                    me.unit_class().unwrap_or(0),
+                    &actions.spells,
+                )
+            })
+    }
+}
+
+impl super::UseRefusal for UseReqs<'_, '_> {
+    /// Item `entry`'s refusal key (`0x6dc3f0`); entry 0, a record not yet cached and no player
+    /// refuse nothing.
+    fn refusal(&self, entry: u32) -> Option<&'static str> {
+        if entry == 0 {
+            return None;
+        }
+        let store = self.me.iter().next()?;
+        static NONE: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+        let known = self.actions.as_deref().map_or(&NONE, |a| &a.spells);
+        let v =
+            self.records
+                .as_ref()?
+                .view(entry, Some(store), self.spells.as_deref(), known, None)?;
+        let me = &store.0;
+        benilla_ui::script::item_use_refusal(&v, &ReqsOf(self, me), |id| {
+            self.known_or_higher(me, id)
+        })
+    }
+
+    /// Our value in `skill`, 0 for a skill not held; `None` with no player or an unpushed level.
+    fn skill_value(&self, skill: u32) -> Option<u32> {
+        let me = &self.me.iter().next()?.0;
+        (me.unit_level().unwrap_or(0) != 0).then(|| player_skill(me, skill).unwrap_or(0))
+    }
+}
+
 /// The player's value plus permanent bonus in `skill`, never the temporary bonus (`0x51a250`); `None` for a skill not held.
 pub(crate) fn player_skill(me: &benilla_protocol::ObjectFields, skill: u32) -> Option<u32> {
     (0..benilla_protocol::messages::PLAYER_SKILL_SLOTS)

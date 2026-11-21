@@ -8,13 +8,15 @@
 //! ([`InstanceState::saw_own_dungeon`]), because AzerothCore never sends
 //! `SMSG_UPDATE_INSTANCE_OWNERSHIP`, so the server alone would never offer the reset.
 
+#[cfg(test)]
+use benilla_ui::script::UiScript;
 use std::time::{Duration, Instant};
 
 use benilla_protocol::messages::{
     EncounterUnitUpdate, InstanceLockWarning, InstanceResetFailure, RaidInstanceMessage,
     RaidInstanceWarning,
 };
-use benilla_ui::script::{InstanceLock, ScriptValue, UiScript};
+use benilla_ui::script::{InstanceLock, ScriptValue};
 use bevy::prelude::*;
 
 use crate::net::{ClientCommand, NetCommands};
@@ -658,14 +660,14 @@ fn track_instance_state(
 /// publish what the instance verbs read; the setters diff.
 #[allow(clippy::too_many_arguments)]
 fn feed_instance(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut state: ResMut<InstanceState>,
     mut chat: ResMut<ChatLog>,
     inputs: ResetInputs,
     time: Res<Time<Real>>,
     mut fed_maps: Local<crate::ui_script::VmMemo<bool>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         // No VM (an engine-only run): drop the queues rather than let them grow.
         state.lines.clear();
         state.welcomes.clear();
@@ -707,8 +709,10 @@ fn feed_instance(
             ],
         );
     }
-    // The clock before its events, so `INSTANCE_LOCK_START`'s `OnShow` reads the time.
-    script.set_instance_lock(state.lock.read(Instant::now()));
+    // The clock before its events, so `INSTANCE_LOCK_START`'s `OnShow` reads the time; after the
+    // welcomes' listeners, which read the model as of their raise, as every write below.
+    let lock = state.lock.read(Instant::now());
+    script.after_raises(move |s| s.set_instance_lock(lock));
     if !state.lock_events.is_empty() {
         for event in std::mem::take(&mut state.lock_events) {
             debug!("ui_instance: {event}");
@@ -719,33 +723,36 @@ fn feed_instance(
     let fed = fed_maps.get(&script);
     if !*fed {
         if let Some(maps) = maps {
-            script.set_dynamic_difficulty_maps(maps.0.dynamic_difficulty_maps());
+            let dynamic = maps.0.dynamic_difficulty_maps();
+            script.after_raises(move |s| s.set_dynamic_difficulty_maps(dynamic));
             *fed = true;
         }
     }
     let here = inputs.current_map.as_ref().map(|m| m.0);
-    script.set_instance_type(here.and_then(|m| maps.and_then(|c| c.0.instance_type(m))));
-    script.set_map_info(here.and_then(|m| {
+    let instance_type = here.and_then(|m| maps.and_then(|c| c.0.instance_type(m)));
+    let map_info = here.and_then(|m| {
         let c = &maps?.0;
         c.instance_type(m)?;
         Some((
             c.name(m).unwrap_or_default().to_string(),
             c.has_dynamic_difficulty(m),
         ))
-    }));
+    });
     let facts = MapFacts {
         known: &|m| inputs.known(m),
         resettable: &|m| inputs.resettable(m),
     };
-    script.set_can_reset_instances(state.can_reset(here, &facts, time.elapsed().as_secs()));
+    let can_reset = state.can_reset(here, &facts, time.elapsed().as_secs());
+    script.after_raises(move |s| {
+        s.set_instance_type(instance_type);
+        s.set_map_info(map_info);
+        s.set_can_reset_instances(can_reset);
+    });
 }
 
 /// Turn the `ResetInstances()` calls and `RespondInstanceLock` answers into their sends.
-fn drain_instance(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    commands: Res<NetCommands>,
-) {
-    let Some(mut script) = script else {
+fn drain_instance(mut script: crate::ui_script::InTurn, commands: Res<NetCommands>) {
+    let Some(mut script) = script.turn() else {
         return;
     };
     for _ in 0..script.take_reset_instance_asks() {
@@ -821,7 +828,7 @@ impl Plugin for UiInstancePlugin {
                     encounter_leave_world
                         .after(crate::net::apply_net_updates)
                         .before(crate::ui_script::UiPress),
-                    drain_instance.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_instance).in_set(UiDrain),
                 ),
             );
     }

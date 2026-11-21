@@ -608,14 +608,14 @@ pub(crate) fn healer_reach(
 /// 40 yd range test against the corpse point (`0x51f663`, inclusive) and its latch's events
 /// (`0x512c40`), and the release POI as its point changes (`0x51f690`), named from the VM.
 fn update_corpse_distance(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut death_net: ResMut<DeathNet>,
     self_q: Query<&Transform, With<SelfPlayer>>,
     arena: crate::ui_arena::ArenaInstance,
     mut corpse_poi: ResMut<CorpsePoi>,
     mut release_poi: ResMut<ReleasePoi>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     if release_poi.from != death_net.release {
@@ -894,10 +894,7 @@ pub(crate) fn ghost_probe() -> Option<bool> {
 
 /// Map the queued Lua death intents onto the wire, after `UiInput` so a click drains that frame.
 fn drain_death(
-    (script, mut live): (
-        Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsCooldowns>,
-    ),
+    mut vm: crate::ui_script::InTurn,
     death_net: Res<DeathNet>,
     mut commands: Commands,
     net: Res<NetCommands>,
@@ -907,7 +904,7 @@ fn drain_death(
     // The soulstone's item leg is an item use, so it carries the bind gate.
     mut gate: crate::ui_bind_confirm::BindGate,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = vm.turn() else {
         return;
     };
     for action in script.take_death_actions() {
@@ -998,8 +995,8 @@ fn drain_death(
                 }
             }
         };
-        // The press's cast-bar edges, fired as it returns (`0x80b556`).
-        ladder.press.fire(&mut script, &mut live);
+        // The press's cast-bar edges, in turn as it returns (`0x80b556`).
+        ladder.press.defer_in_turn(&mut script);
     }
 }
 
@@ -1017,7 +1014,7 @@ impl Plugin for DeathPlugin {
             .add_systems(
                 Update,
                 (
-                    drain_death.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_death).in_set(UiDrain),
                     drive_death_look,
                     // After the transport chain, so a corpse rides this frame's deck pose.
                     resolve_corpse_position

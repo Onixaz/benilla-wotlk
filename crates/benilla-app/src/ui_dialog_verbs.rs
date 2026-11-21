@@ -2,7 +2,6 @@
 
 use std::time::Instant;
 
-use benilla_ui::script::UiScript;
 use bevy::ecs::system::NonSendMut;
 use bevy::prelude::*;
 
@@ -69,7 +68,7 @@ const SPIRIT_GUIDE_ACQUIRE_YD: f32 = 20.0;
 /// kept until 22.
 const SPIRIT_GUIDE_RETAIN_YD: f32 = SPIRIT_GUIDE_ACQUIRE_YD * 1.1;
 
-/// The current-area spirit healer and its wave deadline. Main-thread state the poll, the guide click and `AcceptAreaSpiritHeal` write ([`crate::ui_script::live::Lent`]).
+/// The current-area spirit healer and its wave deadline. Main-thread state the poll, the guide click and `AcceptAreaSpiritHeal` write ([`crate::ui_script::live::MainState`]).
 #[derive(Default)]
 pub(crate) struct AreaSpiritHealer {
     /// Written only by the healer set, [`Self::store_healer`].
@@ -121,6 +120,7 @@ impl AreaSpiritHealer {
     }
 
     /// The whole healer set (`0x523eb0`) from a caller holding our body (the guide click), `fire` running the cancel's event with this state at hand; whether it cancelled a wave.
+    #[cfg(test)]
     pub(crate) fn set_healer(
         &mut self,
         new: Option<u64>,
@@ -138,6 +138,7 @@ impl AreaSpiritHealer {
     }
 
     /// The spirit-guide click (`0x6db180`): the healer set to 0, then to the guid (`0x6db198`, `0x6db1a7`), a cache-bust that makes the second set query even for the healer already held.
+    #[cfg(test)]
     pub(crate) fn click_guide(
         &mut self,
         guid: u64,
@@ -262,6 +263,7 @@ pub(crate) fn poll_finish(
 }
 
 /// The whole poll (`0x524010`), `fire` running the drop's event with the healer at hand; whether it cancelled a wave.
+#[cfg(test)]
 pub(crate) fn run_poll(
     spirit: &mut AreaSpiritHealer,
     inputs: &SpiritPollInputs,
@@ -314,23 +316,66 @@ impl DialogView<'_, '_> {
     }
 }
 
-/// The poll run every frame from the world frame's update, its drop's event fired with the healer lent to the verbs.
-pub(crate) fn poll_area_spirit_healer(
+/// The poll run every frame from the world frame's update: its drop's event fires with the
+/// `World` lent between the drop and the rest of the poll.
+pub(crate) fn poll_area_spirit_healer(world: &mut World) {
+    let cancelled = world.run_system_cached(poll_drop_step).unwrap_or(false);
+    if cancelled {
+        crate::ui_script::safe_world::raise(world, "AREA_SPIRIT_HEALER_OUT_OF_RANGE", vec![]);
+    }
+    if let Err(e) = world.run_system_cached_with(poll_finish_step, cancelled) {
+        warn!("ui_dialog_verbs: the healer poll's finish did not run: {e}");
+    }
+}
+
+/// The spirit-guide click (`0x6db180`): the healer set to 0, then to the guid (`0x6db198`,
+/// `0x6db1a7`), a cache-bust that makes the second set query even for the healer already held;
+/// each set's cancel fires its event with the `World` lent while the deadline still reads
+/// (`0x523eea` before `0x523efa`).
+pub(crate) fn click_guide(world: &mut World, guid: u64) {
+    for new in [None, Some(guid)] {
+        let Ok(Some(cancelled)) = world.run_system_cached_with(store_healer_step, new) else {
+            continue;
+        };
+        if cancelled {
+            crate::ui_script::safe_world::raise(world, "AREA_SPIRIT_HEALER_OUT_OF_RANGE", vec![]);
+        }
+        if let Err(e) = world.run_system_cached_with(finish_set_step, cancelled) {
+            warn!("ui_dialog_verbs: the guide click's set did not finish: {e}");
+        }
+    }
+}
+
+/// The healer set up to its cancel, holding our body (`0x523eb0`).
+fn store_healer_step(
+    In(new): In<Option<u64>>,
+    mut spirit: NonSendMut<AreaSpiritHealer>,
+) -> Option<bool> {
+    spirit.store_healer(new, true)
+}
+
+/// The healer set past its cancel's event (`0x523efa`).
+fn finish_set_step(
+    In(cancelled): In<bool>,
+    mut spirit: NonSendMut<AreaSpiritHealer>,
+    net: Option<Res<NetCommands>>,
+) {
+    spirit.finish_set(cancelled, net.as_deref());
+}
+
+/// The poll's drop: whether it cancelled the held healer.
+fn poll_drop_step(mut spirit: NonSendMut<AreaSpiritHealer>, inputs: SpiritPollInputs) -> bool {
+    poll_drop(&mut spirit, &inputs)
+}
+
+/// The poll's rest after its drop's event.
+fn poll_finish_step(
+    In(cancelled): In<bool>,
     mut spirit: NonSendMut<AreaSpiritHealer>,
     inputs: SpiritPollInputs,
     commands: Res<NetCommands>,
-    (mut script, mut live): (
-        Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsSpirit>,
-    ),
 ) {
-    run_poll(&mut spirit, &inputs, Some(&commands), |spirit| {
-        if let Some(script) = script.as_deref_mut() {
-            live.lending(spirit, || {
-                script.fire_event("AREA_SPIRIT_HEALER_OUT_OF_RANGE", vec![]);
-            });
-        }
-    });
+    poll_finish(&mut spirit, &inputs, cancelled, Some(&commands));
 }
 
 /// The dialog verbs' packet handlers, each firing its event in its turn.
@@ -406,7 +451,8 @@ impl Plugin for UiDialogVerbsPlugin {
                 poll_area_spirit_healer
                     .after(crate::target::TargetUpdate)
                     .run_if(crate::ui_script::ingame_ui_up)
-                    .in_set(crate::char_select::InWorldGated),
+                    .in_set(crate::char_select::InWorldGated)
+                    .in_set(crate::ui_script::UiPaint),
             )
             .add_systems(
                 OnExit(crate::char_select::ClientState::InWorld),
@@ -554,6 +600,47 @@ mod tests {
             ["cancel 2584", "query 7"],
             "the bust makes the second set a real change"
         );
+        assert_eq!(spirit.healer(), Some(7));
+        assert_eq!(spirit.secs(now), 0);
+    }
+
+    /// The click's step fires the bust's cancel with the `World` lent while the deadline still
+    /// reads (`0x523eea` before `0x523efa`), then finishes the set: the cancel, the query, the
+    /// wave zeroed.
+    #[test]
+    fn the_guide_clicks_step_fires_its_cancel_with_the_wave_still_set() {
+        let (net, rx) = tap();
+        let mut world = World::new();
+        let now = Instant::now();
+        let mut spirit = AreaSpiritHealer::default();
+        set(&mut spirit, Some(7), &net, now);
+        spirit.on_time(7, 30_000, now);
+        let _ = sends(&rx);
+        world.insert_non_send_resource(spirit);
+        world.insert_resource(net);
+        let script = benilla_ui::script::UiScript::new().unwrap();
+        script
+            .run(
+                "SEEN = {} local f = CreateFrame('Frame')
+                 f:RegisterEvent('AREA_SPIRIT_HEALER_OUT_OF_RANGE')
+                 f:SetScript('OnEvent', function() SEEN[#SEEN + 1] = GetAreaSpiritHealerTime() end)",
+            )
+            .unwrap();
+        world.insert_non_send_resource(script);
+        click_guide(&mut world, 7);
+        let seen = world
+            .non_send_resource::<benilla_ui::script::UiScript>()
+            .eval::<String>("return table.concat(SEEN, ',')")
+            .unwrap();
+        let secs: Vec<u32> = seen.split(',').map(|s| s.parse().unwrap()).collect();
+        assert_eq!(
+            secs.len(),
+            1,
+            "the bust's first set cancels; the second has no wave"
+        );
+        assert!(secs[0] > 0, "the listener read the wave still set: {seen}");
+        assert_eq!(sends(&rx), ["cancel 2584", "query 7"]);
+        let spirit = world.non_send_resource::<AreaSpiritHealer>();
         assert_eq!(spirit.healer(), Some(7));
         assert_eq!(spirit.secs(now), 0);
     }

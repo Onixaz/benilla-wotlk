@@ -615,12 +615,17 @@ struct TileRender<'w> {
 /// an unchanged one.
 fn forget_dead_vm_tiles(
     mut commands: Commands,
-    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut state: NonSendMut<TileState>,
     mut bridge: ResMut<UiModelTiles>,
     mut table: ResMut<MatAnimTable>,
 ) {
-    state.adopt_vm(script.as_deref(), &mut bridge, &mut commands, &mut table);
+    state.adopt_vm(
+        script.turn().as_deref(),
+        &mut bridge,
+        &mut commands,
+        &mut table,
+    );
 }
 
 /// The per-frame pass: feed the engine the facts it asked for, keep one tile per visible pane,
@@ -628,7 +633,7 @@ fn forget_dead_vm_tiles(
 #[allow(clippy::type_complexity)] // a Bevy system's full input set
 fn sync_tiles(
     mut commands: Commands,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut state: NonSendMut<TileState>,
     mut bridge: ResMut<UiModelTiles>,
     mut assets: TileAssets,
@@ -682,7 +687,7 @@ fn sync_tiles(
 ) {
     state.frame += 1;
     let frame = state.frame;
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         // No VM: the edge retired the tiles; composite nothing and leave no camera live.
         bridge.cells.clear();
         set_camera_active(&mut cams, false);

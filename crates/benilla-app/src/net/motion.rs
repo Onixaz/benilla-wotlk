@@ -19,8 +19,8 @@ pub(in crate::net) use facing::resolve_facing;
 pub(crate) use facing::DisplayFacing;
 pub(crate) use facing::FacingStep;
 pub(crate) use facing::{
-    apply_walk_end_facing, bearing as facing_bearing, drive_display_facing, FacingHold,
-    WalkEndFacing,
+    apply_walk_end_facing, bearing as facing_bearing, drive_display_facing, load_chase_rates,
+    FacingHold, WalkEndFacing,
 };
 pub(crate) use modes::ROOT_APPLY_WIPE;
 pub(crate) use modes::{standing_bits, SwimFlyTransition, UnitMoveModes};

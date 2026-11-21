@@ -4,6 +4,8 @@
 //! moves and dance-cache answers are read and dropped: nothing built reads them, as `PlayDance` is
 //! not.
 
+#[cfg(test)]
+use benilla_ui::script::UiScript;
 use std::time::{Duration, Instant};
 
 use benilla_protocol::messages::{
@@ -11,7 +13,7 @@ use benilla_protocol::messages::{
     CHAT_MSG_ACHIEVEMENT,
 };
 use benilla_protocol::{SessionEvent, SessionEventKind};
-use benilla_ui::script::{ScriptValue, UiScript};
+use benilla_ui::script::ScriptValue;
 use bevy::prelude::*;
 
 use crate::items::Items;
@@ -113,7 +115,7 @@ impl Plugin for NoticesPlugin {
                     feed_notices
                         .in_set(UiFeed)
                         .run_if(crate::ui_script::ingame_ui_up),
-                    drain_level_grant.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_level_grant).in_set(UiDrain),
                 ),
             );
     }
@@ -255,7 +257,7 @@ fn on_notice(
     mut errors: ResMut<UiErrorKeys>,
     names: Res<NameCache>,
     cvars: Option<ResMut<crate::cvars::Cvars>>,
-    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut chat: ResMut<ChatLog>,
     mut events: ResMut<NoticeEvents>,
 ) {
@@ -287,6 +289,7 @@ fn on_notice(
             cvars.set("enablePVPNotifyAFK", value);
             // The VM's text lookup shows a missing key as itself (`0x819d40`).
             let text = script
+                .turn()
                 .as_deref()
                 .and_then(|s| crate::ui_chat::combat::global_string(s, key))
                 .unwrap_or_else(|| key.to_string());
@@ -507,7 +510,7 @@ fn inebriation_line(
 /// landed.
 #[allow(clippy::too_many_arguments)]
 fn feed_notices(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     clock: Res<UiClock>,
     mut grant: ResMut<LevelGrant>,
     mut lines: ResMut<InebriationLines>,
@@ -524,7 +527,7 @@ fn feed_notices(
     mut chat: ResMut<ChatLog>,
     mut pushed: Local<crate::ui_script::VmMemo<(Option<i32>, u64)>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let pushed = pushed.get(&script);
@@ -608,7 +611,7 @@ fn feed_notices(
 /// `AcceptLevelGrant` sends `CMSG_ACCEPT_LEVEL_GRANT` to the pending granter and forgets it
 /// (`0x521b00`); `DeclineLevelGrant` only forgets it (`0x517d20`).
 fn drain_level_grant(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut grant: ResMut<LevelGrant>,
     net: Res<NetCommands>,
     names: Res<NameCache>,
@@ -618,7 +621,7 @@ fn drain_level_grant(
     mut echo: Option<ResMut<crate::console::ConsoleEcho>>,
 ) {
     use benilla_ui::script::UnitRequest as R;
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     // `ConsoleAddMessage`'s lines (`0x512090`).

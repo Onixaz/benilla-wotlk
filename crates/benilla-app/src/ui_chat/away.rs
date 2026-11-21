@@ -177,10 +177,7 @@ pub(crate) fn reconcile_afk_mirror(
 pub(crate) fn movement_clears_afk(
     binds: Res<crate::bindings::BindingsState>,
     cvars: Res<crate::cvars::Cvars>,
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
+    mut script: crate::ui_script::InTurn,
     commands: Res<crate::net::NetCommands>,
     mut chat: ResMut<ChatLog>,
     mut mirror: ResMut<AfkMirror>,
@@ -204,6 +201,7 @@ pub(crate) fn movement_clears_afk(
         return;
     }
     let line = script
+        .turn()
         .and_then(|s| super::combat::global_string(&s, "CLEARED_AFK"))
         .unwrap_or_default();
     push_system(&mut chat, line);

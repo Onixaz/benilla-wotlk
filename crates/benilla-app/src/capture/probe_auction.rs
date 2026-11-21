@@ -16,8 +16,7 @@ use benilla_protocol::messages::{auction_action, auction_error, auction_sort};
 use benilla_protocol::EntityKind;
 use benilla_ui::script::{UiScript, LIST, OWNER};
 
-use super::probes::ProbeClock;
-use crate::net::{ChatKind, ClientCommand, Guid, NetCommands, NetEntity, ObjectStore, SelfPlayer};
+use crate::net::{ChatKind, ClientCommand, NetCommands, ObjectStore};
 use crate::player::Player;
 use crate::ui_auction::AuctionOpen;
 
@@ -201,25 +200,64 @@ macro_rules! eval {
     };
 }
 
+fn auction_probe(world: &mut World) {
+    let Some(store) = super::probes::self_store(world) else {
+        return;
+    };
+    let cx = AuctionCtx {
+        now: f64::from(super::probes::probe_secs(world)),
+        auction: world.resource::<AuctionOpen>().clone(),
+        interact: world
+            .get_resource::<crate::ui_session::InteractTarget>()
+            .and_then(|t| t.0),
+        units: super::probes::seen(world),
+        pos: world.resource::<Player>().pos,
+        net: NetCommands(world.resource::<NetCommands>().0.clone()),
+    };
+    let Some(mut probe) = world.remove_resource::<AuctionProbe>() else {
+        return;
+    };
+    let mut exit = Vec::new();
+    super::probes::with_vm(world, |script| {
+        if let Some(script) = script {
+            auction_step(&mut probe, script, &store, &cx, &mut exit);
+        }
+    });
+    world.insert_resource(probe);
+    for e in exit {
+        world.write_message(e);
+    }
+}
+
+/// What a frame of the auction probe reads off the `World` before its calls into Lua.
+struct AuctionCtx {
+    now: f64,
+    auction: AuctionOpen,
+    /// The interact target (`0xbd07a8`), the portrait's unit.
+    interact: Option<u64>,
+    units: super::probes::Seen,
+    pos: Vec3,
+    net: NetCommands,
+}
+
+/// One frame of the probe on the VM, the `World` lent.
 #[allow(clippy::too_many_lines)]
-fn auction_probe(
-    time: ProbeClock,
-    mut probe: ResMut<AuctionProbe>,
-    auction: Res<AuctionOpen>,
-    (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    self_player: Query<&ObjectStore, With<SelfPlayer>>,
-    player: Res<Player>,
-    units: Query<(&Guid, &NetEntity, &ObjectStore, &Transform), Without<SelfPlayer>>,
-    net: Res<NetCommands>,
-    mut exit: MessageWriter<AppExit>,
+fn auction_step(
+    probe: &mut AuctionProbe,
+    script: &mut UiScript,
+    store: &ObjectStore,
+    cx: &AuctionCtx,
+    exit: &mut Vec<AppExit>,
 ) {
-    let Ok(store) = self_player.single() else {
-        return;
-    };
-    let Some(script) = script else {
-        return;
-    };
-    let now = time.elapsed_secs_f64();
+    let &AuctionCtx {
+        now, interact, pos, ..
+    } = cx;
+    let AuctionCtx {
+        auction,
+        units,
+        net,
+        ..
+    } = cx;
     let say = |text: String| {
         let _ = net.0.send(ClientCommand::Chat {
             kind: ChatKind::Say,
@@ -265,7 +303,7 @@ fn auction_probe(
                 end
                 "#,
             ) {
-                fail(&mut probe, &format!("(0 setup) — installing the hook: {e}"));
+                fail(probe, &format!("(0 setup) — installing the hook: {e}"));
                 probe.phase = Phase::Done;
                 return;
             }
@@ -277,7 +315,7 @@ fn auction_probe(
             if now - since < SETTLE_SECS {
                 return;
             }
-            let me = player.pos;
+            let me = pos;
             let nearest = units
                 .iter()
                 .filter(|(_, net_e, store, tf)| {
@@ -289,7 +327,7 @@ fn auction_probe(
                 .min_by(|a, b| a.1.total_cmp(&b.1));
             if let Some((guid, dist)) = nearest.filter(|n| n.1 <= INTERACT_MAX_YD) {
                 pass(
-                    &mut probe,
+                    probe,
                     &format!("(1 reach) — auctioneer {guid:#x} {dist:.1} yd away"),
                 );
                 probe.auctioneer = Some(guid);
@@ -297,7 +335,7 @@ fn auction_probe(
                 probe.phase = Phase::Greet { since: now };
             } else if now - since > TIMEOUT_SECS {
                 fail(
-                    &mut probe,
+                    probe,
                     &format!("(1 reach) — no auctioneer within {INTERACT_MAX_YD} yd: {nearest:?}"),
                 );
                 probe.phase = Phase::Done;
@@ -317,21 +355,21 @@ fn auction_probe(
                     "return select('#', GetAuctionItemClasses()), BrowseButton1:IsShown() ~= nil, \
                      BrowseNoResultsText:GetText() == BROWSE_SEARCH_TEXT, GetAuctionSort('list', 1) or ''",
                 );
-                let portrait = live.interact_target().0 == probe.auctioneer;
+                let portrait = interact == probe.auctioneer;
                 let line = format!(
                     "classes={classes} row1_shown={row} search_prompt={prompt} portrait={portrait} \
                      sort1={sort:?} house={}",
                     auction.house_id
                 );
                 if classes == 12 && !row && prompt && portrait && sort == "quality" {
-                    pass(&mut probe, &format!("(2 open) — {line}"));
+                    pass(probe, &format!("(2 open) — {line}"));
                 } else {
-                    fail(&mut probe, &format!("(2 open) — {line}"));
+                    fail(probe, &format!("(2 open) — {line}"));
                 }
                 probe.phase = Phase::Lists { since: now };
             } else if now - since > TIMEOUT_SECS {
                 fail(
-                    &mut probe,
+                    probe,
                     &format!(
                         "(2 open) — session {:?}, AuctionFrame shown {shown}",
                         auction.auctioneer
@@ -353,9 +391,9 @@ fn auction_probe(
                     auction.wire.list_results[OWNER], auction.wire.list_results[1]
                 );
                 if landed {
-                    pass(&mut probe, &format!("(3 lists) — {line}"));
+                    pass(probe, &format!("(3 lists) — {line}"));
                 } else {
-                    fail(&mut probe, &format!("(3 lists) — {line}"));
+                    fail(probe, &format!("(3 lists) — {line}"));
                 }
                 probe.phase = Phase::Browse {
                     since: now,
@@ -370,21 +408,21 @@ fn auction_probe(
             results,
         } => {
             if !sent {
-                if can_query(&script) {
-                    crate::ui_script::run_or_warn(&script, "AuctionFrameBrowse_Search()");
+                if can_query(script) {
+                    crate::ui_script::run_or_warn(script, "AuctionFrameBrowse_Search()");
                     probe.phase = Phase::Browse {
                         since: now,
                         sent: true,
                         results,
                     };
                 } else if now - since > TIMEOUT_SECS {
-                    fail(&mut probe, "(4 browse) — CanSendAuctionQuery never opened");
+                    fail(probe, "(4 browse) — CanSendAuctionQuery never opened");
                     probe.phase = Phase::Done;
                 }
                 return;
             }
             if auction.wire.list_results[LIST] > results
-                && event_count(&script, "AUCTION_ITEM_LIST_UPDATE") > 0
+                && event_count(script, "AUCTION_ITEM_LIST_UPDATE") > 0
             {
                 let (batch, total, shown, name, prompt): (i64, i64, bool, String, bool) = eval!(
                     &script,
@@ -401,9 +439,9 @@ fn auction_probe(
                     !shown && prompt
                 };
                 if ok {
-                    pass(&mut probe, &format!("(4 browse) — {line}"));
+                    pass(probe, &format!("(4 browse) — {line}"));
                 } else {
-                    fail(&mut probe, &format!("(4 browse) — {line}"));
+                    fail(probe, &format!("(4 browse) — {line}"));
                 }
                 probe.phase = Phase::Sort {
                     since: now,
@@ -411,7 +449,7 @@ fn auction_probe(
                     results: auction.wire.list_results[LIST],
                 };
             } else if now - since > TIMEOUT_SECS {
-                fail(&mut probe, "(4 browse) — no list result");
+                fail(probe, "(4 browse) — no list result");
                 probe.phase = Phase::Done;
             }
         }
@@ -421,10 +459,10 @@ fn auction_probe(
             results,
         } => {
             if !sent {
-                if can_query(&script) {
+                if can_query(script) {
                     // The Level header: a new column opens reversed, and the search re-asks.
                     crate::ui_script::run_or_warn(
-                        &script,
+                        script,
                         "AuctionFrame_OnClickSortColumn('list', 'level')",
                     );
                     probe.phase = Phase::Sort {
@@ -433,7 +471,7 @@ fn auction_probe(
                         results,
                     };
                 } else if now - since > TIMEOUT_SECS {
-                    fail(&mut probe, "(5 sort) — CanSendAuctionQuery never reopened");
+                    fail(probe, "(5 sort) — CanSendAuctionQuery never reopened");
                     probe.phase = Phase::Done;
                 }
                 return;
@@ -449,9 +487,9 @@ fn auction_probe(
                     auction.wire.last_sort
                 );
                 if front == Some((auction_sort::LEVEL, true)) && col == "level" && rev {
-                    pass(&mut probe, &format!("(5 sort) — {line}"));
+                    pass(probe, &format!("(5 sort) — {line}"));
                 } else {
-                    fail(&mut probe, &format!("(5 sort) — {line}"));
+                    fail(probe, &format!("(5 sort) — {line}"));
                 }
                 probe.phase = Phase::Filters {
                     since: now,
@@ -459,7 +497,7 @@ fn auction_probe(
                     results: auction.wire.list_results[LIST],
                 };
             } else if now - since > TIMEOUT_SECS {
-                fail(&mut probe, "(5 sort) — the header click sent no query");
+                fail(probe, "(5 sort) — the header click sent no query");
                 probe.phase = Phase::Done;
             }
         }
@@ -469,12 +507,9 @@ fn auction_probe(
             results,
         } => {
             if !sent {
-                if !can_query(&script) {
+                if !can_query(script) {
                     if now - since > TIMEOUT_SECS {
-                        fail(
-                            &mut probe,
-                            "(6 filters) — CanSendAuctionQuery never reopened",
-                        );
+                        fail(probe, "(6 filters) — CanSendAuctionQuery never reopened");
                         probe.phase = Phase::Done;
                     }
                     return;
@@ -502,10 +537,10 @@ fn auction_probe(
                      cloth slots={armor_inv} cloak={cloak} selected=({class}, {sub})"
                 );
                 if subs > 0 && weapon_inv == 0 && armor_inv > 0 && cloak && (class, sub) == (2, 2) {
-                    pass(&mut probe, "(6 filters) — Weapon lists its subclasses without slots; Cloth lists its slots, cloak included");
+                    pass(probe, "(6 filters) — Weapon lists its subclasses without slots; Cloth lists its slots, cloak included");
                 } else {
                     fail(
-                        &mut probe,
+                        probe,
                         "(6 filters) — the tree did not open as the reference's",
                     );
                 }
@@ -519,15 +554,15 @@ fn auction_probe(
             if auction.wire.list_results[LIST] > results {
                 let filter = auction.wire.last_filter;
                 if matches!(filter, Some((_, 4, 1))) {
-                    pass(&mut probe, &format!("(6b filter-query) — Armor/Cloth went out as class 4 subclass 1: {filter:?}"));
+                    pass(probe, &format!("(6b filter-query) — Armor/Cloth went out as class 4 subclass 1: {filter:?}"));
                 } else {
                     fail(
-                        &mut probe,
+                        probe,
                         &format!("(6b filter-query) — wire filters {filter:?}"),
                     );
                 }
                 crate::ui_script::run_or_warn(
-                    &script,
+                    script,
                     "AuctionFrameBrowse_Reset(BrowseResetButton)",
                 );
                 probe.phase = Phase::EnsureItem {
@@ -535,7 +570,7 @@ fn auction_probe(
                     sent: false,
                 };
             } else if now - since > TIMEOUT_SECS {
-                fail(&mut probe, "(6b filter-query) — no list result");
+                fail(probe, "(6b filter-query) — no list result");
                 probe.phase = Phase::EnsureItem {
                     since: now,
                     sent: false,
@@ -576,7 +611,7 @@ fn auction_probe(
                 };
             } else if now - since > ITEM_TIMEOUT_SECS {
                 fail(
-                    &mut probe,
+                    probe,
                     &format!("(7 sell) — only {total} of item {ITEM_ENTRY} after .additem"),
                 );
                 probe.phase = Phase::Done;
@@ -604,11 +639,11 @@ fn auction_probe(
                     && button
                 {
                     pass(
-                        &mut probe,
+                        probe,
                         &format!("(7 attach) — right-click filled it: {line}"),
                     );
                 } else {
-                    fail(&mut probe, &format!("(7 attach) — {line}"));
+                    fail(probe, &format!("(7 attach) — {line}"));
                 }
                 probe.money_before = store.0.player_money().unwrap_or(0);
                 probe.deposit = eval!(
@@ -635,19 +670,19 @@ fn auction_probe(
                 probe.phase = Phase::MultiSell { since: now };
             } else if now - since > ITEM_TIMEOUT_SECS {
                 fail(
-                    &mut probe,
+                    probe,
                     "(7 attach) — the right-click left the sell slot empty",
                 );
                 probe.phase = Phase::Done;
             }
         }
         Phase::MultiSell { since } => {
-            for (id, action, error) in new_results(&mut probe, &auction) {
+            for (id, action, error) in new_results(probe, auction) {
                 if action == auction_action::STARTED && error == auction_error::OK {
                     probe.listed.push(id);
                 } else {
                     fail(
-                        &mut probe,
+                        probe,
                         &format!("(8 multisell) — result id {id} action {action} error {error}"),
                     );
                 }
@@ -657,8 +692,8 @@ fn auction_probe(
                 return;
             }
             if done {
-                let start = event_args(&script, "AUCTION_MULTISELL_START");
-                let update = event_args(&script, "AUCTION_MULTISELL_UPDATE");
+                let start = event_args(script, "AUCTION_MULTISELL_START");
+                let update = event_args(script, "AUCTION_MULTISELL_UPDATE");
                 let (slot_empty, blocked): (bool, bool) = eval!(
                     &script,
                     "return GetAuctionSellItemInfo() == nil, AuctionsBlockFrame:IsShown() ~= nil",
@@ -682,19 +717,19 @@ fn auction_probe(
                     && slot_empty
                     && spent == probe.deposit
                 {
-                    pass(&mut probe, &format!("(8 multisell) — {line}"));
+                    pass(probe, &format!("(8 multisell) — {line}"));
                 } else {
-                    fail(&mut probe, &format!("(8 multisell) — {line}"));
+                    fail(probe, &format!("(8 multisell) — {line}"));
                 }
                 probe.phase = Phase::Owned { since: now };
             } else if now - since > TIMEOUT_SECS * 2.0 {
                 let line = format!(
                     "(8 multisell) — listed {:?} of {NUM_STACKS}; FAILURE fired {} time(s); errors {:?}",
                     probe.listed,
-                    event_count(&script, "AUCTION_MULTISELL_FAILURE"),
-                    red_errors(&script)
+                    event_count(script, "AUCTION_MULTISELL_FAILURE"),
+                    red_errors(script)
                 );
-                fail(&mut probe, &line);
+                fail(probe, &line);
                 probe.phase = Phase::Owned { since: now };
             }
         }
@@ -714,7 +749,7 @@ fn auction_probe(
                     "return GetNumAuctionItems('owner'), AuctionsButton1:IsShown() and (AuctionsButton1Name:GetText() or '') or ''",
                 );
                 pass(
-                    &mut probe,
+                    probe,
                     &format!("(9 owned) — the Auctions tab holds {rows} row(s), this run's {ours:?}; row 1 paints {painted:?}"),
                 );
                 probe.phase = if probe.keep {
@@ -728,7 +763,7 @@ fn auction_probe(
                 };
             } else if now - since > TIMEOUT_SECS * 2.0 {
                 let line = format!("(9 owned) — owner rows hold {ours:?} of {:?}", probe.listed);
-                fail(&mut probe, &line);
+                fail(probe, &line);
                 probe.phase = if probe.keep {
                     Phase::Done
                 } else {
@@ -740,7 +775,7 @@ fn auction_probe(
             } else if now - probe.last_ask > 5.0 {
                 // A revisit of the tab: the stock pane asks once per opening, the gate decides.
                 probe.last_ask = now;
-                crate::ui_script::run_or_warn(&script, "GetOwnerAuctionItems()");
+                crate::ui_script::run_or_warn(script, "GetOwnerAuctionItems()");
             }
         }
         Phase::BidSearch {
@@ -749,9 +784,9 @@ fn auction_probe(
             results,
         } => {
             if !sent {
-                if can_query(&script) {
+                if can_query(script) {
                     crate::ui_script::run_or_warn(
-                        &script,
+                        script,
                         "AuctionFrameTab_OnClick(AuctionFrameTab1) AuctionFrameBrowse_Search()",
                     );
                     probe.phase = Phase::BidSearch {
@@ -760,7 +795,7 @@ fn auction_probe(
                         results,
                     };
                 } else if now - since > TIMEOUT_SECS {
-                    fail(&mut probe, "(10 bid) — CanSendAuctionQuery never reopened");
+                    fail(probe, "(10 bid) — CanSendAuctionQuery never reopened");
                     probe.phase = Phase::Cancel {
                         since: now,
                         sent: false,
@@ -795,7 +830,7 @@ fn auction_probe(
                     };
                 }
             } else if now - since > TIMEOUT_SECS {
-                fail(&mut probe, "(10 bid) — no list result");
+                fail(probe, "(10 bid) — no list result");
                 probe.phase = Phase::Cancel {
                     since: now,
                     sent: false,
@@ -804,7 +839,7 @@ fn auction_probe(
         }
         Phase::Bid { since, buyout } => {
             let step = if buyout { "11 buyout" } else { "10 bid" };
-            let results = new_results(&mut probe, &auction);
+            let results = new_results(probe, auction);
             if let Some(&(id, _, error)) =
                 results.iter().find(|r| r.1 == auction_action::BID_PLACED)
             {
@@ -813,10 +848,10 @@ fn auction_probe(
                         "({step}) — BID_PLACED OK on auction {id}: {:?}",
                         probe.bid_target
                     );
-                    pass(&mut probe, &line);
+                    pass(probe, &line);
                 } else {
                     fail(
-                        &mut probe,
+                        probe,
                         &format!("({step}) — BID_PLACED error {error} on auction {id}"),
                     );
                 }
@@ -846,10 +881,10 @@ fn auction_probe(
                 }
             } else if now - since > TIMEOUT_SECS {
                 fail(
-                    &mut probe,
+                    probe,
                     &format!(
                         "({step}) — no BID_PLACED result; errors {:?}",
-                        red_errors(&script)
+                        red_errors(script)
                     ),
                 );
                 probe.phase = Phase::BidsTab { since: now };
@@ -866,14 +901,14 @@ fn auction_probe(
                 "for _, l in ipairs(ProbeAuctionChat) do if string.find(l, string.gsub(ERR_AUCTION_WON_S, '%%s.*', ''), 1, true) == 1 then return true end end return false",
             );
             if rows > 0 && !status.is_empty() {
-                pass(&mut probe, &format!("(12 bids tab) — {rows} bid row(s), row 1 status {status:?}; won line in chat {won}"));
+                pass(probe, &format!("(12 bids tab) — {rows} bid row(s), row 1 status {status:?}; won line in chat {won}"));
                 probe.phase = Phase::Cancel {
                     since: now,
                     sent: false,
                 };
             } else if now - since > TIMEOUT_SECS {
                 fail(
-                    &mut probe,
+                    probe,
                     &format!(
                         "(12 bids tab) — {rows} bid row(s), status {status:?}; won line {won}"
                     ),
@@ -890,7 +925,7 @@ fn auction_probe(
                 return;
             }
             if !sent {
-                crate::ui_script::run_or_warn(&script, "AuctionFrameTab_OnClick(AuctionFrameTab3)");
+                crate::ui_script::run_or_warn(script, "AuctionFrameTab_OnClick(AuctionFrameTab3)");
                 // The Lua indexes the VM's sorted rows.
                 let indices: Vec<usize> = script
                     .auction_ids(OWNER)
@@ -900,7 +935,7 @@ fn auction_probe(
                     .map(|(i, _)| i + 1)
                     .collect();
                 for i in indices.iter().rev() {
-                    crate::ui_script::run_or_warn(&script, &format!("CancelAuction({i})"));
+                    crate::ui_script::run_or_warn(script, &format!("CancelAuction({i})"));
                 }
                 probe.results_seen = auction.wire.results.len();
                 probe.phase = Phase::Cancel {
@@ -920,12 +955,12 @@ fn auction_probe(
                     "(13 cancel) — this run's auctions {:?} are gone from the Auctions tab",
                     probe.listed
                 );
-                pass(&mut probe, &line);
+                pass(probe, &line);
                 probe.phase = Phase::Done;
             } else if now - since > TIMEOUT_SECS {
-                let results = new_results(&mut probe, &auction);
+                let results = new_results(probe, auction);
                 let line = format!("(13 cancel) — still listed {left:?}; results {results:?}");
-                fail(&mut probe, &line);
+                fail(probe, &line);
                 probe.phase = Phase::Done;
             }
         }
@@ -934,20 +969,17 @@ fn auction_probe(
                 return;
             }
             probe.exited = true;
-            let errors = auction_errors(&script);
+            let errors = auction_errors(script);
             if errors.is_empty() {
-                pass(
-                    &mut probe,
-                    "(14 lua) — Blizzard_AuctionUI raised no Lua error",
-                );
+                pass(probe, "(14 lua) — Blizzard_AuctionUI raised no Lua error");
             } else {
-                fail(&mut probe, &format!("(14 lua) — {errors}"));
+                fail(probe, &format!("(14 lua) — {errors}"));
             }
             info!(
                 "PROBE_AUCTION: DONE pass={} fail={}",
                 probe.passes, probe.fails
             );
-            exit.write(AppExit::Success);
+            exit.push(AppExit::Success);
             std::thread::spawn(|| {
                 std::thread::sleep(std::time::Duration::from_secs(5));
                 warn!("PROBE_AUCTION: still alive 5s after AppExit — hard exit");

@@ -22,7 +22,7 @@ use benilla_protocol::messages::TalentsInfo;
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use benilla_ui::script::{
     ScriptValue, TalentGroupView, TalentPrereqView, TalentRankView, TalentTabView, TalentUiState,
-    TalentView, UiScript,
+    TalentView,
 };
 
 use crate::net::{ClientCommand, NetCommands, NetHandlerApp, ObjectStore, SelfPlayer};
@@ -172,7 +172,7 @@ impl Plugin for UiTalentPlugin {
                     // window; drain after it, so a click sends the same frame.
                     feed_talents.in_set(UnitFeed).in_set(TalentFeed),
                     feed_inspect_talents.in_set(UnitFeed),
-                    drain_talent_learns.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_talent_learns).in_set(UiDrain),
                 ),
             );
     }
@@ -265,7 +265,7 @@ struct FeedMemory {
 #[derive(bevy::ecs::system::SystemParam)]
 struct PetTalentInputs<'w, 's> {
     held: ResMut<'w, PetTalentGroup>,
-    bar: crate::ui_script::LentRef<'w, crate::ui_pet::PetBar>,
+    bar: Option<Res<'w, crate::ui_pet::PetBar>>,
     pet: crate::ui_pet::PetUnit<'w, 's>,
     names: Option<Res<'w, crate::names::NameCache>>,
     families: Option<Res<'w, crate::ui_pet_stats::PetFamilyTables>>,
@@ -274,7 +274,7 @@ struct PetTalentInputs<'w, 's> {
 impl PetTalentInputs<'_, '_> {
     fn changed(&self) -> bool {
         self.held.is_changed()
-            || self.bar.is_changed()
+            || self.bar.as_ref().is_some_and(|r| r.is_changed())
             || self.names.as_ref().is_some_and(|r| r.is_changed())
             || self.families.as_ref().is_some_and(|r| r.is_changed())
     }
@@ -291,7 +291,7 @@ impl PetTalentInputs<'_, '_> {
 
 #[allow(clippy::too_many_arguments)]
 fn feed_talents(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     talents: Option<Res<Talents>>,
     mut held: ResMut<PlayerTalentGroups>,
     mut pet_inputs: PetTalentInputs,
@@ -301,7 +301,7 @@ fn feed_talents(
     changed_self: Query<(), (With<SelfPlayer>, Changed<ObjectStore>)>,
     mut memory: Local<crate::ui_script::VmMemo<FeedMemory>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let (memory, vm_reset) = memory.get_reset(&script);
@@ -372,7 +372,7 @@ fn feed_talents(
     // The pet's tree, after the player's: the family `SMSG_PET_SPELLS` named picks it.
     let (pet_guid, family) = pet_inputs
         .bar
-        .get()
+        .as_deref()
         .map_or((0, 0), |b| (b.spells.pet_guid, u32::from(b.spells.family)));
     if family == 0 && !pet_inputs.held.ranks.is_empty() {
         pet_inputs.held.bypass_change_detection().ranks.clear();
@@ -444,14 +444,14 @@ fn feed_talents(
 /// The inspected player's snapshot, pushed when its class, its groups or a catalog moved, then the
 /// `INSPECT_TALENT_READY`s owed; a `/reload`'s new VM gets the snapshot again.
 fn feed_inspect_talents(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     talents: Option<Res<Talents>>,
     spells: Option<Res<Spells>>,
     mut inspect: ResMut<InspectTalents>,
     target: Res<InspectTalentClass>,
     mut memory: Local<crate::ui_script::VmMemo<(Option<TalentUiState>, u32)>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let ((pushed, last_reset), vm_reset) = memory.get_reset(&script);
@@ -660,16 +660,16 @@ fn tab_pages(
 /// the VM chose the talent and rank (`0x5c80e0`, `0x5c6a10`), and the server answers with
 /// `SMSG_TALENTS_INFO`.
 fn drain_talent_learns(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     commands: Res<NetCommands>,
-    bar: crate::ui_script::LentRef<crate::ui_pet::PetBar>,
+    bar: Option<Res<crate::ui_pet::PetBar>>,
     pet: crate::ui_pet::PetUnit,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let pet_guid = bar
-        .get()
+        .as_deref()
         .map(|b| b.spells.pet_guid)
         .filter(|&guid| guid != 0 && pet.store(guid).is_some());
     for (talent_id, rank) in script.take_pet_talent_learns() {

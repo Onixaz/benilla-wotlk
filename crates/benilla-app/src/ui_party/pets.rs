@@ -253,7 +253,8 @@ pub(super) fn feed_token(
     let changed = fed.state != state;
     if changed {
         gate.audit("feed_party", "a group pet-token snapshot");
-        script.set_unit(token, state.clone());
+        let (unit, at) = (state.clone(), token.to_string());
+        crate::ui_script::raises::after_raises(script, move |s| s.set_unit(&at, unit));
     }
     if let Some(owner_token) = owner_token.filter(|_| moved) {
         gate.audit("feed_party", "a group pet edge");

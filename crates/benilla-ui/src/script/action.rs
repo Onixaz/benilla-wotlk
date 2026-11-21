@@ -684,79 +684,81 @@ mod tests {
     /// book, never for a spell slot of the same id, and always two values.
     #[test]
     fn action_autocast_reads_a_pet_book_macro_only() {
-        use crate::script::{MacroBinding, MacroState, MacroView, PetBookState, SpellSlotView};
-        let mut s = UiScript::new().unwrap();
-        let _book = s.set_pet_book(PetBookState {
-            token: Some("PET".into()),
-            slots: vec![SpellSlotView {
-                spell_id: 3009, // Claw
-                autocast: Some((true, false)),
+        crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+            use crate::script::{MacroBinding, MacroState, MacroView, PetBookState, SpellSlotView};
+            let mut s = UiScript::new().unwrap();
+            let _book = s.set_pet_book(PetBookState {
+                token: Some("PET".into()),
+                slots: vec![SpellSlotView {
+                    spell_id: 3009, // Claw
+                    autocast: Some((true, false)),
+                    ..Default::default()
+                }],
+            });
+            s.set_macros(MacroState {
+                account: vec![
+                    MacroView {
+                        name: "claw".into(),
+                        body: "/cast Claw".into(),
+                        ..Default::default()
+                    },
+                    MacroView {
+                        name: "fb".into(),
+                        body: "/cast Fireball".into(),
+                        ..Default::default()
+                    },
+                ],
+                character: Vec::new(),
+            });
+            s.set_macro_bindings(std::collections::HashMap::from([
+                (
+                    1,
+                    MacroBinding {
+                        spell: 3009,
+                        pet_book: true,
+                    },
+                ),
+                (
+                    2,
+                    MacroBinding {
+                        spell: 133,
+                        pet_book: false,
+                    },
+                ),
+            ]));
+            let slot = |kind, action| ActionSlot {
+                kind,
+                action,
                 ..Default::default()
-            }],
-        });
-        s.set_macros(MacroState {
-            account: vec![
-                MacroView {
-                    name: "claw".into(),
-                    body: "/cast Claw".into(),
-                    ..Default::default()
-                },
-                MacroView {
-                    name: "fb".into(),
-                    body: "/cast Fireball".into(),
-                    ..Default::default()
-                },
-            ],
-            character: Vec::new(),
-        });
-        s.set_macro_bindings(std::collections::HashMap::from([
-            (
-                1,
-                MacroBinding {
-                    spell: 3009,
-                    pet_book: true,
-                },
-            ),
-            (
-                2,
-                MacroBinding {
-                    spell: 133,
-                    pet_book: false,
-                },
-            ),
-        ]));
-        let slot = |kind, action| ActionSlot {
-            kind,
-            action,
-            ..Default::default()
-        };
-        s.set_action(1, Some(slot(super::ACTION_KIND_MACRO, 1)));
-        s.set_action(2, Some(slot(super::ACTION_KIND_MACRO, 2)));
-        s.set_action(3, Some(slot(super::ACTION_KIND_SPELL, 3009)));
-        s.set_action(4, Some(slot(super::ACTION_KIND_MACRO, 9)));
+            };
+            s.set_action(1, Some(slot(super::ACTION_KIND_MACRO, 1)));
+            s.set_action(2, Some(slot(super::ACTION_KIND_MACRO, 2)));
+            s.set_action(3, Some(slot(super::ACTION_KIND_SPELL, 3009)));
+            s.set_action(4, Some(slot(super::ACTION_KIND_MACRO, 9)));
 
-        let ask = |s: &UiScript, n: u32| {
-            s.eval::<(i64, Option<i64>, Option<i64>)>(&format!(
-                "local f = function(...) return arg.n, arg[1], arg[2] end \
+            let ask = |s: &UiScript, n: u32| {
+                s.eval::<(i64, Option<i64>, Option<i64>)>(&format!(
+                    "local f = function(...) return arg.n, arg[1], arg[2] end \
                  return f(GetActionAutocast({n}))"
-            ))
-            .unwrap()
-        };
-        assert_eq!(ask(&s, 1), (2, Some(1), None), "the pet-book macro");
-        for n in [2, 3, 4, 5, 0, 121] {
-            assert_eq!(ask(&s, n), (2, None, None), "slot {n}");
-        }
-        let _book = s.set_pet_book(PetBookState {
-            token: Some("PET".into()),
-            slots: vec![SpellSlotView {
-                spell_id: 3009,
-                autocast: Some((true, true)),
-                ..Default::default()
-            }],
+                ))
+                .unwrap()
+            };
+            assert_eq!(ask(&s, 1), (2, Some(1), None), "the pet-book macro");
+            for n in [2, 3, 4, 5, 0, 121] {
+                assert_eq!(ask(&s, n), (2, None, None), "slot {n}");
+            }
+            let _book = s.set_pet_book(PetBookState {
+                token: Some("PET".into()),
+                slots: vec![SpellSlotView {
+                    spell_id: 3009,
+                    autocast: Some((true, true)),
+                    ..Default::default()
+                }],
+            });
+            assert_eq!(ask(&s, 1), (2, Some(1), Some(1)), "autocasting");
+            let err = s.run("GetActionAutocast()").unwrap_err().to_string();
+            assert!(err.contains("Usage: GetActionAutocast(slot)"), "{err}");
         });
-        assert_eq!(ask(&s, 1), (2, Some(1), Some(1)), "autocasting");
-        let err = s.run("GetActionAutocast()").unwrap_err().to_string();
-        assert!(err.contains("Usage: GetActionAutocast(slot)"), "{err}");
     }
 
     fn uses(s: &mut UiScript) -> Vec<(u32, CastAt)> {
@@ -860,21 +862,25 @@ mod tests {
     /// pet bar (`0x5d3720`), as a possessed unit's actions then ride the bonus page.
     #[test]
     fn the_pet_s_temporary_bar_hides_the_pet_bar_and_another_owner_does_not() {
-        let mut s = UiScript::new().unwrap();
-        let _pets = crate::script::live::lend_pets(true, true, true, Vec::new());
-        s.run("ChangeActionBarPage(3)").unwrap();
-        assert_eq!(s.eval::<i64>("return PetHasActionBar()").unwrap(), 1);
+        crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+            let mut s = UiScript::new().unwrap();
+            let mut pets_v = crate::script::live::lend_pets(true, true, true, Vec::new());
+            crate::script::live::lending(&mut pets_v, || {
+                s.run("ChangeActionBarPage(3)").unwrap();
+                assert_eq!(s.eval::<i64>("return PetHasActionBar()").unwrap(), 1);
 
-        s.set_temp_action_bar(0x4); // the override bar
-        assert_eq!(s.eval::<i64>("return GetActionBarPage()").unwrap(), 1);
-        assert_eq!(s.eval::<i64>("return PetHasActionBar()").unwrap(), 1);
+                s.set_temp_action_bar(0x4); // the override bar
+                assert_eq!(s.eval::<i64>("return GetActionBarPage()").unwrap(), 1);
+                assert_eq!(s.eval::<i64>("return PetHasActionBar()").unwrap(), 1);
 
-        s.set_temp_action_bar(0x1 | 0x4);
-        assert!(s.eval::<bool>("return PetHasActionBar() == nil").unwrap());
+                s.set_temp_action_bar(0x1 | 0x4);
+                assert!(s.eval::<bool>("return PetHasActionBar() == nil").unwrap());
 
-        s.set_temp_action_bar(0);
-        assert_eq!(s.eval::<i64>("return GetActionBarPage()").unwrap(), 3);
-        assert_eq!(s.eval::<i64>("return PetHasActionBar()").unwrap(), 1);
+                s.set_temp_action_bar(0);
+                assert_eq!(s.eval::<i64>("return GetActionBarPage()").unwrap(), 3);
+                assert_eq!(s.eval::<i64>("return PetHasActionBar()").unwrap(), 1);
+            });
+        });
     }
 
     #[test]

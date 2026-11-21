@@ -6,7 +6,7 @@
 //! which the stock `HelpFrame.lua` reads as "no ticket".
 
 use benilla_protocol::messages::GmTicket;
-use benilla_ui::script::{GmTicketIntent, ScriptValue, SurveyTables, UiScript};
+use benilla_ui::script::{GmTicketIntent, ScriptValue, SurveyTables};
 use bevy::prelude::*;
 
 use benilla_assets::coords::bevy_to_wow;
@@ -212,14 +212,14 @@ struct GmTicketFeedState {
 
 /// Fire the handler's signals in arrival order; push the categories once per VM.
 fn feed_gm_ticket(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut state: ResMut<GmTicketState>,
     categories: Option<Res<GmTicketCategories>>,
     survey: Option<Res<GmSurveyTables>>,
     mut feed: ResMut<GmTicketFeedState>,
     mut sink: crate::ui_action::MessageSink,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let pushed = feed.vm.get(&script);
@@ -279,14 +279,14 @@ fn update_ticket_args(ticket: Option<&GmTicket>) -> Vec<ScriptValue> {
 
 /// Turn the window's verbs into packets, each through its sender's gate.
 fn drain_gm_ticket(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut state: ResMut<GmTicketState>,
     commands: Res<NetCommands>,
     player: Option<Res<Player>>,
     map: Option<Res<benilla_world::world_map::CurrentMap>>,
     mut sink: crate::ui_action::MessageSink,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
 
@@ -479,7 +479,7 @@ impl Plugin for UiGmTicketPlugin {
                 Update,
                 (
                     feed_gm_ticket.in_set(UiFeed),
-                    drain_gm_ticket.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_gm_ticket).in_set(UiDrain),
                 ),
             );
     }

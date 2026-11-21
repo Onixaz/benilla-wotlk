@@ -31,6 +31,13 @@ pub(crate) struct GuildRegistrarState {
     row: PetitionShowListEntry,
 }
 
+impl GuildRegistrarState {
+    /// The registrar the window is parked on.
+    pub(crate) fn registrar(&self) -> Option<u64> {
+        self.registrar
+    }
+}
+
 /// The `UNIT_NPC_FLAGS` bits that make a showlist's NPC the guild registrar, both of them
 /// (`0x6d6ab7`); an NPC with fewer opens the petition vendor.
 const REGISTRAR_NPC_FLAGS: u32 = crate::target::cursor_mode::npc_flags::PETITIONER

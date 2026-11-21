@@ -63,52 +63,54 @@ fn level_text(s: &UiScript) -> Option<String> {
 /// leave the line nameless.
 #[test]
 fn call_pet_repaints_the_closed_stable_with_unknownobject_while_the_name_is_in_flight() {
-    let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = load_stable();
+    crate::ui_script::test_live::lending(&mut crate::ui_script::test_live::View, || {
+        let _data = benilla_formats::wow_data_or_skip!();
+        let mut s = load_stable();
 
-    // No stable visited: `GetStablePetInfo` misses and `GetSelectedStablePet()` is -1.
-    s.set_unit("pet", Some(pet(None)));
-    s.set_pet_stats(true, hunter_pet_stats());
-    s.fire_event("UNIT_PET", vec![ScriptValue::Str("player".into())]);
+        // No stable visited: `GetStablePetInfo` misses and `GetSelectedStablePet()` is -1.
+        s.set_unit("pet", Some(pet(None)));
+        s.set_pet_stats(true, hunter_pet_stats());
+        s.fire_event("UNIT_PET", vec![ScriptValue::Str("player".into())]);
 
-    assert!(
-        s.errors().is_empty(),
-        "the closed stable window raised on Call Pet: {:?}",
-        s.errors()
-    );
-    assert!(
-        !s.eval::<bool>("return PetStableFrame:IsVisible()").unwrap(),
-        "UNIT_PET must repaint the window without opening it"
-    );
-    assert_eq!(
-        level_text(&s).as_deref(),
-        Some("Unknown Level 58 Boar|nFerocity")
-    );
-    assert_eq!(
-        s.eval::<String>("return PetStableCurrentPet.tooltip")
-            .unwrap(),
-        "Unknown",
-        "the slot's hover title is the same read"
-    );
-    assert_eq!(
-        s.eval::<String>("return PetStableCurrentPet.tooltipSubtext")
-            .unwrap(),
-        "Level 58 Boar|nFerocity"
-    );
+        assert!(
+            s.errors().is_empty(),
+            "the closed stable window raised on Call Pet: {:?}",
+            s.errors()
+        );
+        assert!(
+            !s.eval::<bool>("return PetStableFrame:IsVisible()").unwrap(),
+            "UNIT_PET must repaint the window without opening it"
+        );
+        assert_eq!(
+            level_text(&s).as_deref(),
+            Some("Unknown Level 58 Boar|nFerocity")
+        );
+        assert_eq!(
+            s.eval::<String>("return PetStableCurrentPet.tooltip")
+                .unwrap(),
+            "Unknown",
+            "the slot's hover title is the same read"
+        );
+        assert_eq!(
+            s.eval::<String>("return PetStableCurrentPet.tooltipSubtext")
+                .unwrap(),
+            "Level 58 Boar|nFerocity"
+        );
 
-    // The name lands; the window re-reads it on its next repaint, not on `UNIT_NAME_UPDATE`.
-    s.set_unit("pet", Some(pet(Some("Snarl"))));
-    s.fire_event("PET_STABLE_UPDATE", vec![]);
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
-    assert_eq!(
-        level_text(&s).as_deref(),
-        Some("Snarl Level 58 Boar|nFerocity")
-    );
-    assert_eq!(
-        s.eval::<String>("return PetStableCurrentPet.tooltip")
-            .unwrap(),
-        "Snarl"
-    );
+        // The name lands; the window re-reads it on its next repaint, not on `UNIT_NAME_UPDATE`.
+        s.set_unit("pet", Some(pet(Some("Snarl"))));
+        s.fire_event("PET_STABLE_UPDATE", vec![]);
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+        assert_eq!(
+            level_text(&s).as_deref(),
+            Some("Snarl Level 58 Boar|nFerocity")
+        );
+        assert_eq!(
+            s.eval::<String>("return PetStableCurrentPet.tooltip")
+                .unwrap(),
+            "Snarl"
+        );
+    });
 }
 
 /// With no pet and no stable row 0, the paint takes its empty arm (`PetStable.lua`).
@@ -137,43 +139,45 @@ fn dismissing_the_pet_empties_the_closed_stable_without_raising() {
 /// four stable buttons in list order.
 #[test]
 fn a_full_stable_opens_the_window_with_four_stabled_pets() {
-    use benilla_ui::script::{StableFamily, StableList, StableRow};
+    crate::ui_script::test_live::lending(&mut crate::ui_script::test_live::View, || {
+        use benilla_ui::script::{StableFamily, StableList, StableRow};
 
-    let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = load_stable();
-    let pet = |n: u32, name: &str| StableRow {
-        pet_number: n,
-        entry: 299,
-        name: name.into(),
-        level: 70,
-    };
-    let wolf = StableFamily {
-        icon: r"Interface\Icons\Ability_Hunter_Pet_Wolf".into(),
-        name: "Wolf".into(),
-        talent_tree: Some("Ferocity".into()),
-        diet: vec!["Meat".into()],
-    };
-    s.set_stable(
-        StableList {
-            master: 0x42,
-            num_slots: 4,
-            current: pet(1, "Rex"),
-            stabled: ["Bruiser", "Nibbles", "Ghost", "Fang"]
-                .iter()
-                .zip(2..)
-                .map(|(name, n)| pet(n, name))
-                .collect(),
-        },
-        vec![(299, wolf)],
-    );
-    s.fire_event("PET_STABLE_SHOW", vec![]);
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
-    assert!(s.eval::<bool>("return PetStableFrame:IsShown()").unwrap());
-    for (i, name) in ["Bruiser", "Nibbles", "Ghost", "Fang"].iter().enumerate() {
-        assert_eq!(
-            s.eval::<String>(&format!("return PetStableStabledPet{}.tooltip", i + 1))
-                .unwrap(),
-            *name
+        let _data = benilla_formats::wow_data_or_skip!();
+        let mut s = load_stable();
+        let pet = |n: u32, name: &str| StableRow {
+            pet_number: n,
+            entry: 299,
+            name: name.into(),
+            level: 70,
+        };
+        let wolf = StableFamily {
+            icon: r"Interface\Icons\Ability_Hunter_Pet_Wolf".into(),
+            name: "Wolf".into(),
+            talent_tree: Some("Ferocity".into()),
+            diet: vec!["Meat".into()],
+        };
+        s.set_stable(
+            StableList {
+                master: 0x42,
+                num_slots: 4,
+                current: pet(1, "Rex"),
+                stabled: ["Bruiser", "Nibbles", "Ghost", "Fang"]
+                    .iter()
+                    .zip(2..)
+                    .map(|(name, n)| pet(n, name))
+                    .collect(),
+            },
+            vec![(299, wolf)],
         );
-    }
+        s.fire_event("PET_STABLE_SHOW", vec![]);
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+        assert!(s.eval::<bool>("return PetStableFrame:IsShown()").unwrap());
+        for (i, name) in ["Bruiser", "Nibbles", "Ghost", "Fang"].iter().enumerate() {
+            assert_eq!(
+                s.eval::<String>(&format!("return PetStableStabledPet{}.tooltip", i + 1))
+                    .unwrap(),
+                *name
+            );
+        }
+    });
 }

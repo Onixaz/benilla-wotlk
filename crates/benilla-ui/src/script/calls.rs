@@ -6,22 +6,18 @@
 //! ([`set_apply`]) wherever the host's state is lent ([`super::world_loan`]); with none lent it
 //! waits in one queue, in call order.
 
-use std::cell::Cell;
-
 use super::{world_loan, ActionUse, SelectionRequest, UiScript};
 
 /// The host's applier: one call applied with the lent state, inside the Lua call that made it;
 /// `false` when the host cannot apply it now, and it waits.
 pub type ApplyCall = fn(&mlua::Lua, ScriptCall) -> bool;
 
-thread_local! {
-    /// The host's applier, named once per thread.
-    static APPLY: Cell<Option<ApplyCall>> = const { Cell::new(None) };
-}
+/// The host's applier, kept in the VM's app data.
+struct HostApply(ApplyCall);
 
-/// Name the host's applier of every script call made on this thread.
-pub fn set_apply(apply: ApplyCall) {
-    APPLY.with(|a| a.set(Some(apply)));
+/// Name the host's applier of every script call `lua` makes.
+pub fn set_apply(lua: &mlua::Lua, apply: ApplyCall) {
+    lua.set_app_data(HostApply(apply));
 }
 
 /// Make `call`: applied before this returns where the host's state is lent, after the calls still
@@ -35,7 +31,7 @@ pub(crate) fn make(lua: &mlua::Lua, call: ScriptCall) {
 /// A call a listener makes while one applies is applied inside that listener, nested, as 12340
 /// re-enters its cast entry from a `UNIT_SPELLCAST_SENT` listener (`0x80b556`).
 pub fn apply_queued(lua: &mlua::Lua) {
-    let Some(apply) = APPLY.with(Cell::get) else {
+    let Some(apply) = lua.app_data_ref::<HostApply>().map(|a| a.0) else {
         return;
     };
     if !world_loan::lent() {
@@ -97,19 +93,17 @@ pub enum GuildBankVerdict {
 /// The host's answerer of a [`HostAsk`]; `None` when it cannot answer now.
 pub type AnswerHost = fn(&mlua::Lua, &HostAsk) -> Option<HostAnswer>;
 
-thread_local! {
-    /// The host's answerer, named once per thread.
-    static ANSWER: Cell<Option<AnswerHost>> = const { Cell::new(None) };
-}
+/// The host's answerer, kept in the VM's app data.
+struct HostAnswerer(AnswerHost);
 
-/// Name the host's answerer of every [`HostAsk`] made on this thread.
-pub fn set_answer(answer: AnswerHost) {
-    ANSWER.with(|a| a.set(Some(answer)));
+/// Name the host's answerer of every [`HostAsk`] `lua` makes.
+pub fn set_answer(lua: &mlua::Lua, answer: AnswerHost) {
+    lua.set_app_data(HostAnswerer(answer));
 }
 
 /// Ask the host inside the call, where its state is lent; `None` with none lent, and the verb's request waits for the host's drain. The caller holds no model borrow.
 pub(crate) fn ask_host(lua: &mlua::Lua, ask: &HostAsk) -> Option<HostAnswer> {
-    let answer = ANSWER.with(Cell::get)?;
+    let answer = lua.app_data_ref::<HostAnswerer>().map(|a| a.0)?;
     if !world_loan::lent() {
         return None;
     }
@@ -342,14 +336,19 @@ pub(crate) mod in_call {
         ANSWER.with_borrow(|a| *a)
     }
 
-    /// Run `src` with a host lent that answers every ask with `with`; what the verbs asked, in order.
+    /// Run `src` with a host lent that answers every ask with `with`, inside the caller's loan or a bare view's; what the verbs asked, in order.
     pub(crate) fn run(s: &mut UiScript, with: Option<HostAnswer>, src: &str) -> Vec<HostAsk> {
-        set_apply(apply);
-        set_answer(answer);
-        ANSWER.with_borrow_mut(|a| *a = with);
         let lua = s.lua().clone();
-        let mut host = ();
-        crate::script::world_loan::lend(&lua, &mut host, || s.run(src).unwrap());
+        set_apply(&lua, apply);
+        set_answer(&lua, answer);
+        ANSWER.with_borrow_mut(|a| *a = with);
+        // Inside a test's own loan its view stays the one read; else a bare view is lent.
+        if crate::script::world_loan::lent() {
+            s.run(src).unwrap();
+        } else {
+            let mut view = crate::script::live::TestView::default();
+            crate::script::world_loan::lend_live(&lua, &mut view, || s.run(src).unwrap());
+        }
         ASKED.with_borrow_mut(std::mem::take)
     }
 }

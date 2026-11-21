@@ -20,7 +20,6 @@
 use bevy::prelude::*;
 
 use benilla_protocol::EntityKind;
-use benilla_ui::script::UiScript;
 
 use super::probes::ProbeClock;
 use crate::creature_anim::AnimDriver;
@@ -64,7 +63,17 @@ pub(crate) struct ProbeChestPlugin;
 impl Plugin for ProbeChestPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ChestProbe>()
-            .add_systems(Update, chest_probe);
+            .init_resource::<super::probes::ProbeChunks>()
+            .init_resource::<super::probes::LootFrameShown>()
+            .add_systems(
+                Update,
+                (
+                    super::probes::read_loot_frame,
+                    chest_probe,
+                    super::probes::run_probe_chunks,
+                )
+                    .chain(),
+            );
     }
 }
 
@@ -126,10 +135,8 @@ fn target() -> [f32; 4] {
 }
 
 /// Whether `LootFrame` is shown (after `LOOT_OPENED`), else the app-side loot session.
-fn window_open(script: &UiScript, loot: &LootState) -> bool {
-    script
-        .eval::<bool>("return LootFrame:IsShown() and 1 or nil")
-        .unwrap_or_else(|_| loot.source().is_some())
+fn window_open(shown: Option<bool>, loot: &LootState) -> bool {
+    shown.unwrap_or_else(|| loot.source().is_some())
 }
 
 /// One window's verdict line; `expect` is the id every frame of the window must carry.
@@ -168,7 +175,8 @@ fn report(label: &str, expect: u16, seen: &[Option<u16>]) -> u32 {
 fn chest_probe(
     time: ProbeClock,
     mut probe: ResMut<ChestProbe>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    shown: Res<super::probes::LootFrameShown>,
+    mut chunks: ResMut<super::probes::ProbeChunks>,
     self_q: Query<&AnimDriver, With<SelfPlayer>>,
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
     player: Res<Player>,
@@ -184,7 +192,7 @@ fn chest_probe(
     let Ok(driver) = self_q.single() else {
         return; // not in-world yet
     };
-    let Some(script) = script else {
+    let Some(shown) = shown.0 else {
         return; // no UI VM in this build
     };
     let now = time.elapsed_secs_f64();
@@ -272,7 +280,7 @@ fn chest_probe(
             probe.phase = Phase::WaitLoot { since: now };
         }
         Phase::WaitLoot { since } => {
-            if window_open(&script, &loot) {
+            if window_open(shown, &loot) {
                 info!(
                     "PROBE_CHEST: loot window up on {:#x} — sampling {SAMPLE_FRAMES} frames OPEN",
                     loot.source().unwrap_or_default()
@@ -293,12 +301,12 @@ fn chest_probe(
                 probe.latch_open = latch.0;
                 probe.kneel_open = kneel.0;
                 info!("PROBE_CHEST: closing the window through the live VM's own CloseLoot()");
-                let _ = script.eval::<()>("CloseLoot()");
+                chunks.run("CloseLoot()", |_, _| {});
                 probe.phase = Phase::WaitClosed { since: now };
             }
         }
         Phase::WaitClosed { since } => {
-            if !window_open(&script, &loot) {
+            if !window_open(shown, &loot) {
                 info!("PROBE_CHEST: window closed — sampling {SAMPLE_FRAMES} frames AFTER");
                 probe.phase = Phase::After;
             } else if now - since > CLOSE_TIMEOUT_SECS {

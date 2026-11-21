@@ -4,7 +4,7 @@ use bevy::prelude::*;
 
 use benilla_formats::{SpellCatalog, SummonPropertiesCatalog};
 use benilla_protocol::messages::{PET_ACT_COMMAND, PET_COMMAND_DISMISS};
-use benilla_ui::script::{PetMenuOutcome, PetMenuVerb, ScriptValue, UiScript};
+use benilla_ui::script::{PetMenuOutcome, PetMenuVerb, ScriptValue};
 
 use crate::net::{ClientCommand, NetCommands};
 use crate::ui_action::UiError;
@@ -127,15 +127,16 @@ fn rename(cx: &MenuCx, name: &str) -> PetMenuOutcome {
 
 /// The menu verbs a script call queued ahead of them, run in turn once that call applied.
 pub(super) fn drain_pet_menu(
-    (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    bar: crate::ui_script::LentRef<PetBar>,
+    mut vm: crate::ui_script::InTurn,
+    stable: Option<Res<crate::ui_stable::StableOpen>>,
+    bar: Option<Res<PetBar>>,
     commands: Res<NetCommands>,
     pet: PetUnit,
     spells: Option<Res<crate::ui_action::Spells>>,
     summons: Option<Res<crate::spell::SummonSlots>>,
     mover: Query<&crate::net::Guid, With<crate::net::ActiveMover>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = vm.turn() else {
         return;
     };
     let (abandons, dismisses) = script.take_pet_gives_up();
@@ -143,16 +144,14 @@ pub(super) fn drain_pet_menu(
     if abandons == 0 && dismisses == 0 && renames.is_empty() {
         return;
     }
-    let Some(bar) = bar.get() else {
+    let Some(bar) = bar.as_deref() else {
         return;
     };
-    let stable_master = live
-        .view()
-        .stable
-        .open()
+    let stable_master = stable
+        .as_deref()
         .and_then(crate::ui_session::NpcSession::npc);
     let cx = MenuCx {
-        bar: &bar,
+        bar,
         pet: &pet,
         spells: spells.as_deref(),
         summons: summons.as_deref(),

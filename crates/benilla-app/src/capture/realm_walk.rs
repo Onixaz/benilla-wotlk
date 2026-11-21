@@ -11,7 +11,6 @@ use benilla_ui::script::UiScript;
 use bevy::prelude::*;
 
 use super::glue_press::{self as press, glue};
-use super::probes::ProbeClock;
 use crate::net::CharListMessage;
 
 /// How long each leg may take before the walk names the one that stalled.
@@ -41,26 +40,35 @@ struct Walk {
 }
 
 impl Walk {
-    fn fail(&mut self, exit: &mut MessageWriter<AppExit>, why: &str) {
+    fn fail(&mut self, exit: &mut Vec<AppExit>, why: &str) {
         error!("realm-smoke: FAILED — {why}");
-        exit.write(AppExit::error());
+        exit.push(AppExit::error());
         self.phase = u8::MAX;
     }
 }
 
 /// The walk; every leg logs itself, so a timeout names the boundary that stalled.
 fn walk_realm_list(
-    mut msgs: MessageReader<CharListMessage>,
-    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
-    time: ProbeClock,
+    world: &mut World,
+    msgs: &mut bevy::ecs::system::SystemState<MessageReader<CharListMessage>>,
     mut walk: Local<Walk>,
-    mut exit: MessageWriter<AppExit>,
 ) {
-    walk.seen += msgs.read().count() as u32;
+    walk.seen += msgs.get_mut(world).read().count() as u32;
     if walk.phase == u8::MAX {
         return;
     }
-    let now = time.elapsed_secs();
+    let now = super::probes::probe_secs(world);
+    let mut exit = Vec::new();
+    super::probes::with_vm(world, |script| {
+        walk_leg(script.as_deref(), &mut walk, now, &mut exit)
+    });
+    for e in exit {
+        world.write_message(e);
+    }
+}
+
+/// One frame of the walk on the glue VM, `None` before it stands.
+fn walk_leg(script: Option<&UiScript>, walk: &mut Walk, now: f32, exit: &mut Vec<AppExit>) {
     // `WOW_CHAR` and `WOW_RIG` each seat a body and answer the roster this walk drives, so
     // either one, even inherited from the shell, fails the walk on its first frame.
     if !walk.armed {
@@ -71,7 +79,7 @@ fn walk_realm_list(
                 .map(|v| (k, v))
         }) {
             walk.fail(
-                &mut exit,
+                exit,
                 &format!(
                     "{key}={} seats a body — this walk drives CHARACTER SELECT and there is no \
                      roster screen to drive once one is seated. Unset it (`scripts/smoke.sh` \
@@ -82,12 +90,12 @@ fn walk_realm_list(
             return;
         }
     }
-    let s = glue(script.as_deref());
+    let s = glue(script);
     let realm_up = s.is_some_and(press::realm_list_up);
     let at_select = s.is_some_and(|s| press::select_up(s) && !press::roster(s).is_empty());
     if walk.phase == 0 && now - walk.mark > ENTRY_TIMEOUT {
         walk.fail(
-            &mut exit,
+            exit,
             &format!(
                 "never reached character select in {ENTRY_TIMEOUT:.0}s (glue VM {}) — nothing \
                  was driven, so the fault is upstream of the walk",
@@ -105,7 +113,7 @@ fn walk_realm_list(
             walk.seen,
             walk.rosters,
         );
-        walk.fail(&mut exit, &why);
+        walk.fail(exit, &why);
         return;
     }
     let Some(s) = s else {
@@ -122,13 +130,13 @@ fn walk_realm_list(
         1 if realm_up && now - walk.mark > DWELL => {
             if !press::select_shown(s) {
                 walk.fail(
-                    &mut exit,
+                    exit,
                     "the list replaced the character screen instead of standing over it",
                 );
                 return;
             }
             info!("realm-smoke: list up, character select still underneath → Okay");
-            okay(&mut walk, s, now);
+            okay(walk, s, now);
         }
         // ── 2 · Okay has to land: a fresh roster, list down, still at select. ────────────────
         2 if walk.seen >= walk.rosters && !realm_up && at_select => {
@@ -145,7 +153,7 @@ fn walk_realm_list(
         4 if !realm_up && now - walk.mark > DWELL => {
             if !at_select {
                 walk.fail(
-                    &mut exit,
+                    exit,
                     "Cancel left character select instead of just hiding the list",
                 );
                 return;
@@ -155,14 +163,14 @@ fn walk_realm_list(
             press::press_change_realm(s);
             (walk.phase, walk.mark) = (5, now);
         }
-        5 if realm_up && now - walk.mark > DWELL => okay(&mut walk, s, now),
+        5 if realm_up && now - walk.mark > DWELL => okay(walk, s, now),
         6 if walk.seen >= walk.rosters && !realm_up && at_select => {
             info!(
                 "realm-smoke: done — {} roster(s), {} char(s) at character select",
                 walk.seen,
                 press::roster(s).len()
             );
-            exit.write(AppExit::Success);
+            exit.push(AppExit::Success);
             walk.phase = u8::MAX;
         }
         _ => {}

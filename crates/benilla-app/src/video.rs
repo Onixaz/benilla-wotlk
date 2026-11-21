@@ -607,7 +607,7 @@ impl Plugin for VideoPlugin {
             .add_systems(
                 Last,
                 (
-                    drain_restart_gx,
+                    crate::ui_script::raises::then_fire(drain_restart_gx),
                     validate_refresh,
                     apply_present_mode,
                     apply_window_mode,
@@ -643,15 +643,12 @@ pub(crate) struct GxRestarts(pub(crate) u32);
 /// the reference's restart commits them (`0x7698b0`); `GetCVar` answers the applied value until
 /// then.
 fn drain_restart_gx(
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
+    mut script: crate::ui_script::InTurn,
     mut restarts: ResMut<GxRestarts>,
     mut cvars: ResMut<crate::cvars::Cvars>,
     mut commands: Commands,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let asks = script.take_restart_gx_asks();
@@ -765,17 +762,14 @@ struct PublishedModes {
 /// The host half of `GetScreenResolutions`, `GetCurrentResolution` and `GetRefreshRates`,
 /// recomputed on change; the reference builds its list once and never invalidates it.
 fn publish_display_modes(
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
+    mut script: crate::ui_script::InTurn,
     cfg: Res<VideoConfig>,
     windows: Query<&Window, With<PrimaryWindow>>,
     monitors: Query<(Entity, Ref<bevy::window::Monitor>), With<PrimaryMonitor>>,
     mut last: Local<crate::ui_script::VmMemo<PublishedModes>>,
 ) {
     use crate::ui_script::gate;
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let Ok(window) = windows.single() else {

@@ -856,61 +856,63 @@ fn popup_children_inherit_the_dialog_stratum() {
 fn reward_rows_preview_and_post_and_a_plain_click_stays_inert() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = open_log(eight_entries());
-    s.record_writes();
-    // A main-hand template makes the hammer dressable (`IsDressableItem` `0x517530`).
-    s.set_item_template(
-        2024,
-        benilla_ui::script::ItemTemplateView {
-            name: "Militia Hammer".into(),
-            quality: 1,
-            inventory_type: 21,
-            ..Default::default()
-        },
-    );
-    assert!(
-        s.eval::<bool>("return QuestInfoItem1:IsShown()").unwrap(),
-        "the fixture's one fixed reward row is laid out"
-    );
-    let _ = s.take_dressup_edits();
+    let mut writes_v = crate::ui_script::test_live::View;
+    crate::ui_script::test_live::lending(&mut writes_v, || {
+        // A main-hand template makes the hammer dressable (`IsDressableItem` `0x517530`).
+        s.set_item_template(
+            2024,
+            benilla_ui::script::ItemTemplateView {
+                name: "Militia Hammer".into(),
+                quality: 1,
+                inventory_type: 21,
+                ..Default::default()
+            },
+        );
+        assert!(
+            s.eval::<bool>("return QuestInfoItem1:IsShown()").unwrap(),
+            "the fixture's one fixed reward row is laid out"
+        );
+        let _ = s.take_dressup_edits();
 
-    s.run("QuestInfoItem1:Click()").unwrap();
-    assert!(
-        s.take_dressup_edits().is_empty(),
-        "a plain click never opens the dressing room"
-    );
-    assert_eq!(
-        s.eval::<i64>("return QuestInfoFrame.itemChoice").unwrap(),
-        0
-    );
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+        s.run("QuestInfoItem1:Click()").unwrap();
+        assert!(
+            s.take_dressup_edits().is_empty(),
+            "a plain click never opens the dressing room"
+        );
+        assert_eq!(
+            s.eval::<i64>("return QuestInfoFrame.itemChoice").unwrap(),
+            0
+        );
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 
-    s.run("ChatEdit_ActivateChat(ChatFrame1EditBox)").unwrap();
-    s.set_modifiers(true, false, false);
-    s.run("QuestInfoItem1:Click()").unwrap();
-    s.set_modifiers(false, false, false);
-    assert_eq!(
-        s.eval::<String>("return ChatFrame1EditBox:GetText()")
-            .unwrap(),
-        format!(" {HAMMER_LINK}"),
-        "shift-click posted the reward's link after `ChatEdit_InsertLink`'s space"
-    );
-    assert!(
-        s.take_dressup_edits().is_empty(),
-        "the shift arm never opens the room"
-    );
+        s.run("ChatEdit_ActivateChat(ChatFrame1EditBox)").unwrap();
+        s.set_modifiers(true, false, false);
+        s.run("QuestInfoItem1:Click()").unwrap();
+        s.set_modifiers(false, false, false);
+        assert_eq!(
+            s.eval::<String>("return ChatFrame1EditBox:GetText()")
+                .unwrap(),
+            format!(" {HAMMER_LINK}"),
+            "shift-click posted the reward's link after `ChatEdit_InsertLink`'s space"
+        );
+        assert!(
+            s.take_dressup_edits().is_empty(),
+            "the shift arm never opens the room"
+        );
 
-    s.set_modifiers(false, true, false);
-    s.run("QuestInfoItem1:Click()").unwrap();
-    s.set_modifiers(false, false, false);
-    assert_eq!(
-        s.take_dressup_edits(),
-        vec![
-            benilla_ui::script::DressUpIntent::Dress,
-            benilla_ui::script::DressUpIntent::TryOn(2024, [0; 4])
-        ],
-        "ctrl-click opened the room wearing the reward"
-    );
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+        s.set_modifiers(false, true, false);
+        s.run("QuestInfoItem1:Click()").unwrap();
+        s.set_modifiers(false, false, false);
+        assert_eq!(
+            s.take_dressup_edits(),
+            vec![
+                benilla_ui::script::DressUpIntent::Dress,
+                benilla_ui::script::DressUpIntent::TryOn(2024, [0; 4])
+            ],
+            "ctrl-click opened the room wearing the reward"
+        );
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    });
 }
 
 /// With chat open a title shift-click inserts the quest's link, `GetQuestLink`

@@ -277,59 +277,63 @@ mod tests {
     #[test]
     fn notify_inspect_drops_the_honor_reply_at_the_call_when_the_target_moves() {
         let mut s = seeded();
-        let _live = crate::script::live::lend_test(Default::default());
-        let held = |s: &UiScript, call: &str| {
-            let honor = s
-                .eval::<bool>(&format!("{call}; return HasInspectHonorData() ~= nil"))
-                .unwrap();
-            let team = s.model_ref().inspect_arena_teams[0].is_some();
-            assert_eq!(honor, team, "the reply and the teams go together");
-            honor
-        };
-        s.run(r#"NotifyInspect("party1")"#).unwrap();
-        s.set_inspect_honor(Some(crate::script::InspectHonorData::default()));
-        s.set_inspect_arena_team(
-            0,
-            crate::script::InspectArenaTeamWords {
-                team_id: 9,
-                ..Default::default()
-            },
-        );
-        assert!(held(&s, r#"NotifyInspect("party1")"#), "the same target");
-        assert!(held(&s, r#"NotifyInspect("target")"#), "the mob is refused");
-        assert!(!held(&s, r#"NotifyInspect("player")"#), "a new target");
-        assert_eq!(
-            s.take_inspect_notifies(),
-            [
-                ("party1".into(), P1),
-                ("party1".into(), P1),
-                ("player".into(), ME)
-            ]
-        );
+        let mut live_v = crate::script::live::TestView::default();
+        crate::script::live::lending(&mut live_v, || {
+            let held = |s: &UiScript, call: &str| {
+                let honor = s
+                    .eval::<bool>(&format!("{call}; return HasInspectHonorData() ~= nil"))
+                    .unwrap();
+                let team = s.model_ref().inspect_arena_teams[0].is_some();
+                assert_eq!(honor, team, "the reply and the teams go together");
+                honor
+            };
+            s.run(r#"NotifyInspect("party1")"#).unwrap();
+            s.set_inspect_honor(Some(crate::script::InspectHonorData::default()));
+            s.set_inspect_arena_team(
+                0,
+                crate::script::InspectArenaTeamWords {
+                    team_id: 9,
+                    ..Default::default()
+                },
+            );
+            assert!(held(&s, r#"NotifyInspect("party1")"#), "the same target");
+            assert!(held(&s, r#"NotifyInspect("target")"#), "the mob is refused");
+            assert!(!held(&s, r#"NotifyInspect("player")"#), "a new target");
+            assert_eq!(
+                s.take_inspect_notifies(),
+                [
+                    ("party1".into(), P1),
+                    ("party1".into(), P1),
+                    ("player".into(), ME)
+                ]
+            );
+        });
     }
 
     /// A moved target resets the inspected talent tabs inside the call (`0x5e76f2`); the same target keeps them (`0x5e76c9`).
     #[test]
     fn notify_inspect_resets_the_talent_tabs_at_the_call_when_the_target_moves() {
         let mut s = seeded();
-        let _live = crate::script::live::lend_test(Default::default());
-        s.run(r#"NotifyInspect("party1")"#).unwrap();
-        s.set_inspect_talents(crate::script::TalentUiState {
-            tabs: vec![Default::default()],
-            talents: vec![Vec::new()],
-            ..Default::default()
+        let mut live_v = crate::script::live::TestView::default();
+        crate::script::live::lending(&mut live_v, || {
+            s.run(r#"NotifyInspect("party1")"#).unwrap();
+            s.set_inspect_talents(crate::script::TalentUiState {
+                tabs: vec![Default::default()],
+                talents: vec![Vec::new()],
+                ..Default::default()
+            });
+            let tabs = |s: &UiScript, call: &str| {
+                s.eval::<i64>(&format!("{call}; return GetNumTalentTabs(true)"))
+                    .unwrap()
+            };
+            assert_eq!(tabs(&s, r#"NotifyInspect("party1")"#), 1, "the same target");
+            assert_eq!(
+                tabs(&s, r#"NotifyInspect("target")"#),
+                1,
+                "the mob is refused"
+            );
+            assert_eq!(tabs(&s, r#"NotifyInspect("player")"#), 0, "a new target");
         });
-        let tabs = |s: &UiScript, call: &str| {
-            s.eval::<i64>(&format!("{call}; return GetNumTalentTabs(true)"))
-                .unwrap()
-        };
-        assert_eq!(tabs(&s, r#"NotifyInspect("party1")"#), 1, "the same target");
-        assert_eq!(
-            tabs(&s, r#"NotifyInspect("target")"#),
-            1,
-            "the mob is refused"
-        );
-        assert_eq!(tabs(&s, r#"NotifyInspect("player")"#), 0, "a new target");
     }
 
     fn answers(s: &UiScript, expr: &str) -> bool {

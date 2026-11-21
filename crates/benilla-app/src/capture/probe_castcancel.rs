@@ -10,7 +10,6 @@
 
 use bevy::prelude::*;
 
-use super::probes::ProbeClock;
 use crate::net::SelfPlayer;
 
 pub(crate) struct ProbeCastCancelPlugin;
@@ -39,34 +38,23 @@ const BAR_PHASE_CHUNK: &str = "return (function()\n\
 /// Logs each cast-bar phase change with a timestamp. Stock `CastingBarFrame.lua` holds
 /// `CASTING_BAR_HOLD_TIME` (1 s), then steps the flash by 0.2 and the fade by 0.05 once per
 /// `OnUpdate` (`CastingBarFrame.lua:132-147`), so burst and fade last 5 and 20 frames.
-fn bar_timeline(
-    time: ProbeClock,
-    (script, _live): (
-        Option<NonSend<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
-    self_player: Query<(), With<SelfPlayer>>,
-    mut last: Local<crate::ui_script::VmMemo<String>>,
-) {
-    if self_player.is_empty() {
+fn bar_timeline(world: &mut World, mut last: Local<crate::ui_script::VmMemo<String>>) {
+    let mut in_world = world.query_filtered::<(), With<SelfPlayer>>();
+    if in_world.iter(world).next().is_none() {
         return;
     }
-    let Some(script) = script else {
-        return;
-    };
+    let elapsed = world.resource::<Time<bevy::time::Real>>().elapsed_secs();
     // Session-keyed: a phase string left from the last login would swallow the first transition.
-    let last = last.get(&script);
-    let Ok(state) = script.eval::<String>(BAR_PHASE_CHUNK) else {
-        return;
-    };
-    if state != *last {
-        info!(
-            "castcancel probe: bar {:.3}s {}",
-            time.elapsed_secs(),
-            state
-        );
-        *last = state;
-    }
+    crate::ui_script::safe_world::lend(world, |script| {
+        let last = last.get(script);
+        let Ok(state) = script.eval::<String>(BAR_PHASE_CHUNK) else {
+            return;
+        };
+        if state != *last {
+            info!("castcancel probe: bar {elapsed:.3}s {state}");
+            *last = state;
+        }
+    });
 }
 
 /// Probe state: when we entered the world, and the next phase to run.
@@ -92,54 +80,55 @@ const USE_HEARTH_CHUNK: &str = "return (function()\n\
 
 /// From 3 s after world entry, use the Hearthstone (deadline 10 s), press `W` 2 s into the cast
 /// and release it 0.3 s later; every phase logs.
-fn cast_cancel_probe(
-    time: ProbeClock,
-    mut probe: ResMut<ProbeCastCancel>,
-    self_player: Query<(), With<SelfPlayer>>,
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
-    mut keys: ResMut<ButtonInput<KeyCode>>,
-) {
-    if self_player.is_empty() {
+fn cast_cancel_probe(world: &mut World) {
+    let mut in_world = world.query_filtered::<(), With<SelfPlayer>>();
+    if in_world.iter(world).next().is_none() {
         return;
     }
-    let entered = *probe.entered.get_or_insert(time.elapsed_secs());
-    let t = time.elapsed_secs() - entered;
-    match probe.phase {
+    let now = world.resource::<Time<bevy::time::Real>>().elapsed_secs();
+    let mut probe = world.resource_mut::<ProbeCastCancel>();
+    let entered = *probe.entered.get_or_insert(now);
+    let t = now - entered;
+    let (phase, used_at) = (probe.phase, probe.used_at.unwrap_or(f32::MAX));
+    match phase {
         0 if t >= 3.0 => {
-            let Some(script) = script else {
-                probe.phase = 99;
-                error!("castcancel probe: no UI VM — cannot use the Hearthstone");
-                return;
-            };
-            match script.eval::<bool>(USE_HEARTH_CHUNK) {
-                Ok(true) => {
+            let used =
+                crate::ui_script::safe_world::lend(world, |s| s.eval::<bool>(USE_HEARTH_CHUNK));
+            let mut probe = world.resource_mut::<ProbeCastCancel>();
+            match used {
+                None => {
+                    probe.phase = 99;
+                    error!("castcancel probe: no UI VM — cannot use the Hearthstone");
+                }
+                Some(Ok(true)) => {
                     probe.phase = 1;
                     probe.used_at = Some(t);
                     info!("castcancel probe: using the Hearthstone (10 s cast opens the bar)");
                 }
-                Ok(false) if t >= 10.0 => {
+                Some(Ok(false)) if t >= 10.0 => {
                     probe.phase = 99;
                     error!("castcancel probe: no Hearthstone link resolved by t+10 s");
                 }
-                Ok(false) => {} // still resolving, retry next frame
-                Err(e) => {
+                Some(Ok(false)) => {} // still resolving, retry next frame
+                Some(Err(e)) => {
                     probe.phase = 99;
                     error!("castcancel probe: {e}");
                 }
             }
         }
-        1 if t >= probe.used_at.unwrap_or(f32::MAX) + 2.0 => {
-            probe.phase = 2;
+        1 if t >= used_at + 2.0 => {
+            world.resource_mut::<ProbeCastCancel>().phase = 2;
             info!("castcancel probe: pressing W mid-cast — the local cancel should fire NOW");
-            keys.press(KeyCode::KeyW);
+            world
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(KeyCode::KeyW);
         }
-        2 if t >= probe.used_at.unwrap_or(f32::MAX) + 2.3 => {
-            probe.phase = 3;
+        2 if t >= used_at + 2.3 => {
+            world.resource_mut::<ProbeCastCancel>().phase = 3;
             info!("castcancel probe: releasing W — read the cast-trace for the verdict");
-            keys.release(KeyCode::KeyW);
+            world
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .release(KeyCode::KeyW);
         }
         _ => {}
     }

@@ -345,7 +345,7 @@ impl Plugin for PlayerPlugin {
         // (`0x495320`).
         .add_systems(
             Update,
-            camera::latch_world_mouse
+            crate::ui_script::raises::then_fire(camera::latch_world_mouse)
                 .in_set(WorldClickSet)
                 .in_set(crate::ui_script::UiPress)
                 .after(crate::ui_script::PointerArbiter)

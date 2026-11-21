@@ -85,22 +85,23 @@ pub(super) fn seed_ui_fixture(
     progress: Res<WorldLoadProgress>,
     mut loot: ResMut<crate::ui_loot::LootState>,
     (icons, mut name_seeds): (Option<Res<crate::entities::ItemDisplays>>, Commands),
-    (mut script, mut live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive<(
-            crate::ui_script::OwnsSelection,
-            crate::ui_script::OwnsActions,
-        )>,
+    (mut vm, mut giver, mut chunks): (
+        crate::ui_script::InTurn,
+        Option<NonSendMut<crate::ui_quest::QuestGiver>>,
+        ResMut<super::probes::ProbeChunks>,
     ),
-    mut selection: crate::ui_script::OwnedMut<crate::target::Selection>,
+    mut selection: ResMut<crate::target::Selection>,
     // A nested tuple, one param under Bevy's 16-param cap.
     (mut actions, mut exit, mut loading): (
-        crate::ui_script::OwnedMut<crate::ui_action::PlayerActions>,
+        ResMut<crate::ui_action::PlayerActions>,
         MessageWriter<AppExit>,
         ResMut<crate::loading_screen::LoadingScreen>,
     ),
 ) {
     let mut names = NameSeeds(&mut name_seeds);
+    // Model writes in turn; every chunk runs right after with the `World` lent
+    // (`super::probes::run_probe_chunks`).
+    let mut script = vm.turn();
     // A glue-screen capture has no world scenario, and no glue screen opens a UI fixture.
     let Some(scenario) = ctx.scenario else {
         return;
@@ -493,29 +494,27 @@ pub(super) fn seed_ui_fixture(
                 count: 1,
                 display_id: disp,
             };
-            live.with_giver_mut(|g| {
-                g.expect("the quest window").open(
-                    NPC_GUID,
-                    crate::ui_quest::QuestView::Detail(benilla_protocol::messages::QuestDetails {
-                        npc: NPC_GUID,
-                        quest_id: 783,
-                        title: "A Threat Within".into(),
-                        details:
-                            "Kobolds have infested the Echo Ridge Mine to the northeast. Slay them \
+            giver.as_deref_mut().expect("the quest window").open(
+                NPC_GUID,
+                crate::ui_quest::QuestView::Detail(benilla_protocol::messages::QuestDetails {
+                    npc: NPC_GUID,
+                    quest_id: 783,
+                    title: "A Threat Within".into(),
+                    details:
+                        "Kobolds have infested the Echo Ridge Mine to the northeast. Slay them \
                               and return to me."
-                                .into(),
-                        objectives: "Kill 8 Kobold Vermin.".into(),
-                        auto_launched: true,
-                        choices: vec![choice(92_001, DISP_SWORD), choice(92_002, DISP_STONE)],
-                        rewards: vec![choice(92_003, DISP_SHIELD)],
-                        extra: benilla_protocol::messages::QuestExtraRewards {
-                            money: 1234, // 12s 34c
-                            ..Default::default()
-                        },
+                            .into(),
+                    objectives: "Kill 8 Kobold Vermin.".into(),
+                    auto_launched: true,
+                    choices: vec![choice(92_001, DISP_SWORD), choice(92_002, DISP_STONE)],
+                    rewards: vec![choice(92_003, DISP_SHIELD)],
+                    extra: benilla_protocol::messages::QuestExtraRewards {
+                        money: 1234, // 12s 34c
                         ..Default::default()
-                    }),
-                )
-            });
+                    },
+                    ..Default::default()
+                }),
+            );
             // The panel's publish and event, as its packet's handler runs them.
             commands.queue(crate::ui_quest::publish_panel);
         }
@@ -537,36 +536,31 @@ pub(super) fn seed_ui_fixture(
                 }),
             );
             // The multi-quest greeting: two available quests, bullet rows under "Available Quests".
-            live.with_giver_mut(|g| {
-                g.expect("the quest window").open(
-                    NPC_GUID,
-                    crate::ui_quest::QuestView::Greeting(
-                        benilla_protocol::messages::QuestGiverList {
-                            npc: NPC_GUID,
-                            greeting: "Greetings, $N. The town of Goldshire needs able hands."
-                                .into(),
-                            emote_delay: 0,
-                            emote: 0,
-                            quests: vec![
-                                benilla_protocol::messages::QuestListEntry {
-                                    quest_id: 84,
-                                    icon: 0,
-                                    level: 4,
-                                    title: "Brotherhood of Thieves".into(),
-                                    ..Default::default()
-                                },
-                                benilla_protocol::messages::QuestListEntry {
-                                    quest_id: 40,
-                                    icon: 0,
-                                    level: 3,
-                                    title: "Eagan Peltskinner".into(),
-                                    ..Default::default()
-                                },
-                            ],
+            giver.as_deref_mut().expect("the quest window").open(
+                NPC_GUID,
+                crate::ui_quest::QuestView::Greeting(benilla_protocol::messages::QuestGiverList {
+                    npc: NPC_GUID,
+                    greeting: "Greetings, $N. The town of Goldshire needs able hands.".into(),
+                    emote_delay: 0,
+                    emote: 0,
+                    quests: vec![
+                        benilla_protocol::messages::QuestListEntry {
+                            quest_id: 84,
+                            icon: 0,
+                            level: 4,
+                            title: "Brotherhood of Thieves".into(),
+                            ..Default::default()
                         },
-                    ),
-                )
-            });
+                        benilla_protocol::messages::QuestListEntry {
+                            quest_id: 40,
+                            icon: 0,
+                            level: 3,
+                            title: "Eagan Peltskinner".into(),
+                            ..Default::default()
+                        },
+                    ],
+                }),
+            );
             commands.queue(crate::ui_quest::publish_panel);
         }
         UiFixture::QuestLog => {
@@ -728,30 +722,31 @@ pub(super) fn seed_ui_fixture(
             let Some(mut script) = script else {
                 return;
             };
-            seed_bag_window(&mut script, icons.as_deref());
-            seed_equipped_bags(&mut script, icons.as_deref());
+            seed_bag_window(&mut script, &mut chunks, icons.as_deref());
+            seed_equipped_bags(&mut script, &mut chunks, icons.as_deref());
         }
         UiFixture::Cooldown => {
             let Some(mut script) = script else {
                 return;
             };
-            seed_cooldown_filmstrip(&mut script, icons.as_deref());
+            seed_cooldown_filmstrip(&mut script, &mut chunks, icons.as_deref());
         }
         UiFixture::CooldownShine => {
             let Some(mut script) = script else {
                 return;
             };
-            seed_cooldown_filmstrip(&mut script, icons.as_deref());
+            seed_cooldown_filmstrip(&mut script, &mut chunks, icons.as_deref());
             // The pet bar's autocast shine, raised by hand, as no pet is fed.
-            if let Err(e) = script.run(
+            chunks.run(
                 "PetActionBarFrame:Show()\n\
                  for i = 1, 4 do\n\
                      local b = getglobal(\"PetActionButton\"..i)\n\
                      if b then b:Show(); getglobal(b:GetName()..\"AutoCast\"):Show() end\n\
                  end",
-            ) {
-                warn!("capture: ui-cooldown-shine failed to raise the autocast shine: {e}");
-            }
+                move |_, e| {
+                    warn!("capture: ui-cooldown-shine failed to raise the autocast shine: {e}");
+                },
+            );
         }
         UiFixture::WorldMap => {
             let Some(mut script) = script else {
@@ -766,24 +761,27 @@ pub(super) fn seed_ui_fixture(
             let words = usize::from(benilla_protocol::messages::PLAYER_EXPLORED_ZONES_SLOTS);
             script.set_world_map_explored(vec![0x5555_5555; words]);
             // The Elwynn zone map: continent 2, zone 10 in the alphabetical zone list.
-            if let Err(e) = script.run("ToggleWorldMap(); SetMapZoom(2, 10)") {
+            chunks.run("ToggleWorldMap(); SetMapZoom(2, 10)", move |_, e| {
                 warn!("capture: ui-worldmap seed failed to open the map: {e}");
-            }
+            });
         }
         UiFixture::PartyInvite => {
-            let Some(script) = script else {
+            let Some(_) = script.as_ref() else {
                 return;
             };
             // Raised through the real `StaticPopupDialogs` entry, as a real invite is.
-            if let Err(e) = script.run(r#"StaticPopup_Show("PARTY_INVITE", "Brisca")"#) {
-                warn!("capture: ui-partyinvite seed failed to raise the dialog: {e}");
-            }
+            chunks.run(
+                r#"StaticPopup_Show("PARTY_INVITE", "Brisca")"#,
+                move |_, e| {
+                    warn!("capture: ui-partyinvite seed failed to raise the dialog: {e}");
+                },
+            );
         }
         UiFixture::Tooltip => {
             let Some(mut script) = script else {
                 return;
             };
-            seed_bag_window(&mut script, icons.as_deref());
+            seed_bag_window(&mut script, &mut chunks, icons.as_deref());
             // The hovered shield's full template and a player under its level requirement: quality
             // name, bind, slot and type, armor and block, stats, durability, a red requirement, a
             // long green Use: line that wraps, a charges line after it, and the flavor text.
@@ -865,14 +863,13 @@ pub(super) fn seed_ui_fixture(
             // Opens the tooltip over the top-left button (`Item16`, game slot 1, the Small Shield)
             // through the hover's OnEnter path. `IsBagOpen` names the backpack's window, as the
             // twelve `ContainerFrame`s are recycled across containers.
-            if let Err(e) = script.run(
+            chunks.run(
                 "local i = IsBagOpen(0)\n\
                  if i then\n\
                      ContainerFrameItemButton_OnEnter(getglobal(\"ContainerFrame\"..i..\"Item16\"))\n\
-                 end",
-            ) {
+                 end", move |_, e| {
                 warn!("capture: ui-tooltip seed failed to open the tooltip: {e}");
-            }
+            });
         }
         UiFixture::TooltipWorld => {
             let Some(mut script) = script else {
@@ -897,9 +894,11 @@ pub(super) fn seed_ui_fixture(
                     ..Default::default()
                 }),
             );
-            if !script.world_tooltip_unit("mouseover") {
-                warn!("capture: ui-tooltip-world seed failed to open the tooltip");
-            }
+            chunks.call(|s| {
+                if !s.world_tooltip_unit("mouseover") {
+                    warn!("capture: ui-tooltip-world seed failed to open the tooltip");
+                }
+            });
         }
         UiFixture::TooltipRank => {
             let Some(mut script) = script else {
@@ -923,9 +922,11 @@ pub(super) fn seed_ui_fixture(
                     ..Default::default()
                 }),
             );
-            if !script.world_tooltip_unit("mouseover") {
-                warn!("capture: ui-tooltip-rank seed failed to open the tooltip");
-            }
+            chunks.call(|s| {
+                if !s.world_tooltip_unit("mouseover") {
+                    warn!("capture: ui-tooltip-rank seed failed to open the tooltip");
+                }
+            });
         }
         UiFixture::Character => {
             // A synthetic self player carrying the full stat block, which the `ui_char` feed turns
@@ -1138,20 +1139,20 @@ pub(super) fn seed_ui_fixture(
                 ))
                 .id();
             // As the V binding does, so FrameXML's replay at `PLAYER_ENTERING_WORLD` agrees.
-            set_enemy_plates(script.as_deref(), true);
+            set_enemy_plates(&mut chunks, true);
             // The wolf is the target, so its plate draws lit with the target ring.
-            let mut selected = selection.write();
+            let selected = selection.as_mut();
             selected.target = Some(wolf);
             selected.guid = Some(WOLF_GUID);
         }
         UiFixture::Options => {
-            let Some(script) = script else {
+            let Some(_) = script.as_ref() else {
                 return;
             };
             // Opened through the live panel path, its first panel selected by its OnShow.
-            if let Err(e) = script.run("ShowUIPanel(VideoOptionsFrame)") {
+            chunks.run("ShowUIPanel(VideoOptionsFrame)", move |_, e| {
                 warn!("capture: ui-options seed failed to open the window: {e}");
-            }
+            });
         }
         UiFixture::OptionsAudio => {
             let Some(script) = script else {
@@ -1159,9 +1160,9 @@ pub(super) fn seed_ui_fixture(
             };
             // The real CVar set first, so the rows read real values, then the live open path.
             script.register_cvars(crate::cvars::registered_pairs());
-            if let Err(e) = script.run("ShowUIPanel(AudioOptionsFrame)") {
+            chunks.run("ShowUIPanel(AudioOptionsFrame)", move |_, e| {
                 warn!("capture: ui-options-audio seed failed: {e}");
-            }
+            });
         }
         UiFixture::OptionsGraphics => {
             let Some(script) = script else {
@@ -1169,12 +1170,13 @@ pub(super) fn seed_ui_fixture(
             };
             // The Effects panel, as the Audio fixture.
             script.register_cvars(crate::cvars::registered_pairs());
-            if let Err(e) = script.run(
+            chunks.run(
                 "ShowUIPanel(VideoOptionsFrame); \
                  OptionsFrame_OpenToCategory(VideoOptionsFrame, VideoOptionsEffectsPanel)",
-            ) {
-                warn!("capture: ui-options-graphics seed failed: {e}");
-            }
+                move |_, e| {
+                    warn!("capture: ui-options-graphics seed failed: {e}");
+                },
+            );
         }
         UiFixture::OptionsChat => {
             let Some(script) = script else {
@@ -1182,25 +1184,25 @@ pub(super) fn seed_ui_fixture(
             };
             // The Social panel, as the Audio fixture.
             script.register_cvars(crate::cvars::registered_pairs());
-            if let Err(e) =
-                script.run("InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsSocialPanel)")
-            {
-                warn!("capture: ui-options-chat seed failed: {e}");
-            }
+            chunks.run(
+                "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsSocialPanel)",
+                |_, e| warn!("capture: ui-options-chat seed failed: {e}"),
+            );
         }
         UiFixture::ColorPicker => {
-            let Some(script) = script else {
+            let Some(_) = script.as_ref() else {
                 return;
             };
             // An addon's usual opening: set the colour, ask for opacity, show the window. The
             // colour puts both markers off their defaults, so a mirrored axis shows.
-            if let Err(e) = script.run(
+            chunks.run(
                 "ColorPickerFrame.hasOpacity = 1; ColorPickerFrame.opacity = 0.3; \
                  ColorPickerFrame:SetColorRGB(0.15, 0.55, 0.75); \
                  ShowUIPanel(ColorPickerFrame)",
-            ) {
-                warn!("capture: ui-color-picker seed failed: {e}");
-            }
+                move |_, e| {
+                    warn!("capture: ui-color-picker seed failed: {e}");
+                },
+            );
         }
         UiFixture::OptionsDropdownList => {
             let Some(script) = script else {
@@ -1208,12 +1210,13 @@ pub(super) fn seed_ui_fixture(
             };
             // The Camera Following Style list open, through the panel's own dropdown button.
             script.register_cvars(crate::cvars::registered_pairs());
-            if let Err(e) = script.run(
+            chunks.run(
                 "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsCameraPanel); \
                  InterfaceOptionsCameraPanelStyleDropDownButton:Click()",
-            ) {
-                warn!("capture: ui-options-dropdown seed failed: {e}");
-            }
+                move |_, e| {
+                    warn!("capture: ui-options-dropdown seed failed: {e}");
+                },
+            );
         }
         UiFixture::KeyBindings => {
             let Some(script) = script else {
@@ -1222,9 +1225,12 @@ pub(super) fn seed_ui_fixture(
             // The stock window over the commands the load registered, opened as the game menu's
             // Key Bindings rung opens it (`GameMenuFrame.xml`).
             script.register_cvars(crate::cvars::registered_pairs());
-            if let Err(e) = script.run("KeyBindingFrame_LoadUI(); ShowUIPanel(KeyBindingFrame)") {
-                warn!("capture: ui-keybindings seed failed: {e}");
-            }
+            chunks.run(
+                "KeyBindingFrame_LoadUI(); ShowUIPanel(KeyBindingFrame)",
+                move |_, e| {
+                    warn!("capture: ui-keybindings seed failed: {e}");
+                },
+            );
         }
         UiFixture::SpellBook => {
             // A human warrior who also knows two cross-class spells. The book resolves through
@@ -1260,10 +1266,10 @@ pub(super) fn seed_ui_fixture(
             let mut sword = template("Militia Shortsword", 2);
             sword.display_info_id = DISP_SWORD;
             seed_template(&mut commands, 93_011, sword);
-            let Some(script) = script.as_mut() else {
+            let Some(_) = script.as_ref() else {
                 return;
             };
-            actions.write().spells.extend([
+            actions.spells.extend([
                 // The auto-attack shows the equipped sword's icon, not the placeholder of spell 6603,
                 // in General (no skill line).
                 6603, // Attack
@@ -1283,12 +1289,12 @@ pub(super) fn seed_ui_fixture(
                 9078, // Cloth proficiency
             ]);
             // The P binding's path; the feed pushes over the settle window.
-            if let Err(e) = script.run("ToggleSpellBook(BOOKTYPE_SPELL)") {
+            chunks.run("ToggleSpellBook(BOOKTYPE_SPELL)", move |_, e| {
                 warn!("capture: ui-spellbook seed failed to open the book: {e}");
-            }
+            });
         }
         UiFixture::Macro | UiFixture::MacroPopup => {
-            let Some(script) = script.as_mut() else {
+            let Some(_) = script.as_ref() else {
                 return;
             };
             // Made through the live `CreateMacro` path, so `UPDATE_MACROS` reaches the window as a
@@ -1318,18 +1324,18 @@ pub(super) fn seed_ui_fixture(
             if fixture == UiFixture::MacroPopup {
                 seed.push_str("MacroEditButton:Click()\n");
             }
-            if let Err(e) = script.run(&seed) {
+            chunks.run(&seed, move |_, e| {
                 warn!("capture: ui-macro seed failed: {e}");
-            }
+            });
         }
         UiFixture::Social => {
             // Nothing to seed: an empty friends list opens the same frames a full one does.
-            let Some(script) = script.as_mut() else {
+            let Some(_) = script.as_ref() else {
                 return;
             };
-            if let Err(e) = script.run("ToggleFriendsFrame(1)") {
+            chunks.run("ToggleFriendsFrame(1)", move |_, e| {
                 warn!("capture: ui-social seed failed to open the pane: {e}");
-            }
+            });
         }
         UiFixture::ChatEdit => {
             let Some(script) = script.as_mut() else {
@@ -1349,7 +1355,7 @@ pub(super) fn seed_ui_fixture(
             // under the glyphs and the caret at its end. The tab and window tint follow the
             // cursor in `FCF_OnUpdate`, so a fixed-reveal OnUpdate pins them; it calls
             // `PanelTemplates_TabResize` every frame until the label's measure lands.
-            if let Err(e) = script.run(
+            chunks.run(
                 "ChatFrameEditBox:SetText(\"hello northshire\")\n\
                  ChatFrameEditBox:HighlightText(6, 16)\n\
                  ChatFrame1:SetScript('OnUpdate', function()\n\
@@ -1357,9 +1363,10 @@ pub(super) fn seed_ui_fixture(
                      ChatFrame1Tab:SetAlpha(1.0)\n\
                      FCF_SetWindowAlpha(ChatFrame1, 0.25, 1)\n\
                  end)",
-            ) {
-                warn!("capture: ui-chatedit seed failed: {e}");
-            }
+                move |_, e| {
+                    warn!("capture: ui-chatedit seed failed: {e}");
+                },
+            );
         }
         UiFixture::ChatTabHover => {
             let Some(script) = script.as_mut() else {
@@ -1382,44 +1389,46 @@ pub(super) fn seed_ui_fixture(
             //   9            cursor off the dock (bare scene, the baseline)
             let mode = std::env::var("WOW_TABHOVER").unwrap_or_else(|_| "1".into());
             let select = if mode == "3" { 1 } else { 2 };
-            if let Err(e) = script.run(&format!("FCF_SelectDockFrame(ChatFrame{select})")) {
-                warn!("capture: ui-chat-tabhover select failed: {e}");
-            }
-            script.resolve();
-            let expr = match mode.as_str() {
-                "2" | "3" => "return ChatFrame2Tab:GetCenter()",
-                "0" => {
-                    "return (ChatFrame2:GetLeft() + ChatFrame2:GetRight()) / 2, \
-                        (ChatFrame2:GetBottom() + ChatFrame2:GetTop()) / 2"
+            chunks.call(move |script| {
+                if let Err(e) = script.run(&format!("FCF_SelectDockFrame(ChatFrame{select})")) {
+                    warn!("capture: ui-chat-tabhover select failed: {e}");
                 }
-                // 9: park far away, so the dock conceals itself.
-                "9" => "return 2000, 2000",
-                _ => "return ChatFrame1Tab:GetCenter()",
-            };
-            let centre: Result<(f32, f32), _> = script.eval(expr);
-            match centre {
-                Ok((x, y)) => {
-                    script.mouse_move(x, y);
-                    // Settle the reveal ramp without waiting on the app's own frames.
-                    for _ in 0..40 {
-                        if let Err(e) = script.run("FCF_OnUpdate(0.05)") {
-                            warn!("capture: ui-chat-tabhover pump failed: {e}");
-                            break;
-                        }
-                        script.resolve();
+                script.resolve();
+                let expr = match mode.as_str() {
+                    "2" | "3" => "return ChatFrame2Tab:GetCenter()",
+                    "0" => {
+                        "return (ChatFrame2:GetLeft() + ChatFrame2:GetRight()) / 2, \
+                            (ChatFrame2:GetBottom() + ChatFrame2:GetTop()) / 2"
                     }
+                    // 9: park far away, so the dock conceals itself.
+                    "9" => "return 2000, 2000",
+                    _ => "return ChatFrame1Tab:GetCenter()",
+                };
+                let centre: Result<(f32, f32), _> = script.eval(expr);
+                match centre {
+                    Ok((x, y)) => {
+                        script.mouse_move(x, y);
+                        // Settle the reveal ramp without waiting on the app's own frames.
+                        for _ in 0..40 {
+                            if let Err(e) = script.run("FCF_OnUpdate(0.05)") {
+                                warn!("capture: ui-chat-tabhover pump failed: {e}");
+                                break;
+                            }
+                            script.resolve();
+                        }
+                    }
+                    Err(e) => warn!("capture: ui-chat-tabhover centre failed: {e}"),
                 }
-                Err(e) => warn!("capture: ui-chat-tabhover centre failed: {e}"),
-            }
+            });
         }
         UiFixture::NameWater => {
             use benilla_protocol::messages::ObjectFields;
             // The subject is an NPC's overhead name, and `UnitNameNPC` defaults to "0"; set
             // through Lua as a player would, so the sync drains it into `NameConfig`.
-            if let Some(script) = script.as_deref_mut() {
-                if let Err(e) = script.run("SetCVar(\"UnitNameNPC\", \"1\")") {
+            if script.is_some() {
+                chunks.run("SetCVar(\"UnitNameNPC\", \"1\")", move |_, e| {
                     warn!("capture: name fixture could not enable UnitNameNPC: {e}");
-                }
+                });
             }
             // The self player at the eye; the name colour is its reaction to the wolf.
             const SELF_GUID: u64 = 0x51;
@@ -1476,7 +1485,7 @@ pub(super) fn seed_ui_fixture(
                 Visibility::default(),
             ));
             // A plated unit draws no floating name, so enemy plates go off.
-            set_enemy_plates(script.as_deref(), false);
+            set_enemy_plates(&mut chunks, false);
         }
         UiFixture::NameRank => {
             use benilla_protocol::messages::ObjectFields;
@@ -1520,7 +1529,7 @@ pub(super) fn seed_ui_fixture(
                 Visibility::default(),
             ));
             // A plated unit draws no floating name, so enemy plates go off.
-            set_enemy_plates(script.as_deref(), false);
+            set_enemy_plates(&mut chunks, false);
         }
         // The lighting matrix: one spawn with a streamed entity's component set, anonymous and
         // with plates off, so no glyph rides over the body.
@@ -1567,7 +1576,7 @@ pub(super) fn seed_ui_fixture(
                     ));
                 }
             }
-            set_enemy_plates(script.as_deref(), false);
+            set_enemy_plates(&mut chunks, false);
         }
     }
 }
@@ -1584,6 +1593,7 @@ const COOLDOWN_SPAN_S: f64 = 10_000.0;
 /// cooldown, in reading order since game slot 1 renders top-left.
 fn seed_cooldown_filmstrip(
     script: &mut benilla_ui::script::UiScript,
+    chunks: &mut super::probes::ProbeChunks,
     icons: Option<&crate::entities::ItemDisplays>,
 ) {
     // The clock first: `set_container` stores each triple against it, and
@@ -1635,15 +1645,16 @@ fn seed_cooldown_filmstrip(
             slots,
         }),
     );
-    if let Err(e) = script.run("OpenBag(0)") {
+    chunks.run("OpenBag(0)", move |_, e| {
         warn!("capture: ui-cooldown failed to open the backpack: {e}");
-    }
+    });
 }
 
 /// Seeds and opens the backpack with a fixed item set, for the `Bag` and `Tooltip` fixtures. With
 /// no `SelfPlayer` in capture the `ui_items` feed leaves bag 0 alone.
 fn seed_bag_window(
     script: &mut benilla_ui::script::UiScript,
+    chunks: &mut super::probes::ProbeChunks,
     icons: Option<&crate::entities::ItemDisplays>,
 ) {
     // Display ids the offline icon catalog resolves.
@@ -1706,9 +1717,9 @@ fn seed_bag_window(
     // `OpenBag` builds and paints the window in one call (`ContainerFrame_GenerateFrame`). Not
     // `OpenBackpack()`, which `ContainerFrameAdapters.xml` makes open every equipped bag, and only
     // the backpack is fed.
-    if let Err(e) = script.run("OpenBag(0)") {
+    chunks.run("OpenBag(0)", move |_, e| {
         warn!("capture: bag window seed failed: {e}");
-    }
+    });
 
     // Chat lines in ChatFrame1 for the line shadow and `ChatFontNormal`: SYSTEM yellow, SAY white,
     // LOOT green. In the loot lines the item's quality escape wins for its bracketed name, and the
@@ -1738,6 +1749,7 @@ fn seed_bag_window(
 /// partial top). They stack up and left from the backpack as in-game.
 fn seed_equipped_bags(
     script: &mut benilla_ui::script::UiScript,
+    chunks: &mut super::probes::ProbeChunks,
     icons: Option<&crate::entities::ItemDisplays>,
 ) {
     const DISP_SWORD: u32 = 1542;
@@ -1841,18 +1853,16 @@ fn seed_equipped_bags(
             }),
         );
         // After `set_container`: `OpenBag` refuses a container with no slots.
-        if let Err(e) = script.run(&format!("OpenBag({bag_id})")) {
+        chunks.run(format!("OpenBag({bag_id})"), move |_, e| {
             warn!("capture: equipped bag {bag_id} seed failed: {e}");
-        }
+        });
     }
 }
 
 /// Turn enemy plates on or off as the V binding does, through its CVar.
-fn set_enemy_plates(script: Option<&benilla_ui::script::UiScript>, on: bool) {
+fn set_enemy_plates(chunks: &mut super::probes::ProbeChunks, on: bool) {
     let lua = format!("SetCVar('nameplateShowEnemies', {})", u8::from(on));
-    if let Some(Err(e)) = script.map(|s| s.run(&lua)) {
-        warn!("nameplates: {e}");
-    }
+    chunks.run(lua, |_, e| warn!("nameplates: {e}"));
 }
 
 #[cfg(test)]

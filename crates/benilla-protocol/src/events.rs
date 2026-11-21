@@ -359,6 +359,8 @@ pub enum SessionEvent {
     TransferPending {
         map_id: u32,
         transport_entry: Option<u32>,
+        /// The map the transport leaves, sent with the entry: the ship loading screen's leg.
+        transport_map: Option<u32>,
     },
     /// `SMSG_TRANSFER_ABORTED`: the transfer to `map` is off (map full, no instance), with the
     /// third byte reasons 7 to 9 carry.
@@ -588,6 +590,8 @@ pub enum SessionEvent {
         racial_leader: bool,
         /// The health and power multipliers, 0.0 on a miss.
         modifiers: (f32, f32),
+        /// `CreatureMovementInfo.dbc` id; 0 is none, and on a miss.
+        movement_id: u32,
     },
     /// `SMSG_GAMEOBJECT_QUERY_RESPONSE`, keyed by template `entry`; `data` is the type-specific
     /// raw tail. An unknown entry still fires, every field zero or empty.

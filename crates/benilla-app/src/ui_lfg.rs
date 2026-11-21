@@ -332,7 +332,7 @@ struct FeedMemory {
 
 #[allow(clippy::too_many_arguments)]
 fn feed_lfg(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     catalog: Option<Res<LfgCatalog>>,
     mut feed: ResMut<LfgFeed>,
     current_map: Option<Res<benilla_world::world_map::CurrentMap>>,
@@ -342,12 +342,11 @@ fn feed_lfg(
     classes: Option<Res<ChrClassTable>>,
     displays: Option<Res<ItemDisplays>>,
     commands: Res<NetCommands>,
-    mut errors: ResMut<UiErrorKeys>,
-    mut sounds: ResMut<MessageSounds>,
+    mut sinks: LfgSinks,
     areas: Option<Res<crate::area::AreaTableRes>>,
     mut memory: Local<VmMemo<FeedMemory>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let (memory, vm_reset) = memory.get_reset(&script);
@@ -368,31 +367,16 @@ fn feed_lfg(
     let me = self_guid.0.unwrap_or(0);
     let name_of = |guid: u64| names.resolve(guid, &commands).map(str::to_string);
     for item in std::mem::take(&mut feed.pending) {
-        let lines = match item {
-            Pending::EnterWorld => {
-                script.lfg_enter_world();
-                Vec::new()
+        // Once one has raised, the next applies as a step after its listeners, which read the
+        // model as of their raise.
+        if script.has_raised() {
+            if let Some(ui) = script.queue() {
+                ui.world(move |world| apply_pending_step(world, item, me));
+                continue;
             }
-            Pending::JoiningParty => {
-                script.lfg_joining_party();
-                Vec::new()
-            }
-            Pending::ClearPartyInfo => {
-                script.lfg_clear_party_info();
-                Vec::new()
-            }
-            Pending::VoteKickReasonNeeded(name) => {
-                script.fire_event(
-                    "VOTE_KICK_REASON_NEEDED",
-                    vec![benilla_ui::script::ScriptValue::Str(name)],
-                );
-                Vec::new()
-            }
-            Pending::Packet { packet, grouped } => {
-                apply(&mut script, packet, grouped, me, &name_of)
-            }
-        };
-        show(&script, lines, &mut errors, &mut sounds);
+        }
+        let lines = apply_pending(&mut script, item, me, &name_of);
+        show(&script, lines, &mut sinks);
     }
 
     for request in script.take_lfg_requests() {
@@ -432,7 +416,7 @@ fn feed_lfg(
             .collect();
         if pushed != memory.names {
             memory.names = pushed.clone();
-            script.set_lfg_names(pushed);
+            script.after_raises(move |s| s.set_lfg_names(pushed));
         }
     }
     if let Some(areas) = areas {
@@ -443,7 +427,7 @@ fn feed_lfg(
                 .filter_map(|a| Some((a, areas.0.name(a)?.to_string())))
                 .collect();
             if !named.is_empty() {
-                script.set_lfr_area_names(named);
+                script.after_raises(move |s| s.set_lfr_area_names(named));
             }
         }
     }
@@ -455,9 +439,71 @@ fn feed_lfg(
             .collect();
         if icons != memory.icons {
             memory.icons = icons.clone();
-            script.set_lfg_display_icons(icons);
+            script.after_raises(move |s| s.set_lfg_display_icons(icons));
         }
     }
+}
+
+/// One waiting item into the VM; what it shows comes back.
+fn apply_pending(
+    script: &mut UiScript,
+    item: Pending,
+    me: u64,
+    name_of: &dyn Fn(u64) -> Option<String>,
+) -> Vec<LfgLine> {
+    match item {
+        Pending::EnterWorld => {
+            script.lfg_enter_world();
+            Vec::new()
+        }
+        Pending::JoiningParty => {
+            script.lfg_joining_party();
+            Vec::new()
+        }
+        Pending::ClearPartyInfo => {
+            script.lfg_clear_party_info();
+            Vec::new()
+        }
+        Pending::VoteKickReasonNeeded(name) => {
+            script.fire_event(
+                "VOTE_KICK_REASON_NEEDED",
+                vec![benilla_ui::script::ScriptValue::Str(name)],
+            );
+            Vec::new()
+        }
+        Pending::Packet { packet, grouped } => apply(script, packet, grouped, me, name_of),
+    }
+}
+
+/// [`apply_pending`] as a step with the `World` lent: its raises fire in place, and its lines
+/// show once it returns.
+fn apply_pending_step(world: &mut World, item: Pending, me: u64) {
+    let lines = crate::ui_script::live::with_live_world(world, |script| {
+        let name_of = |guid: u64| {
+            crate::ui_script::safe_world::with_world(|w| {
+                let commands = w.get_resource::<NetCommands>()?;
+                let names = w.get_resource::<NameCache>()?;
+                names.resolve(guid, commands).map(str::to_string)
+            })
+            .flatten()
+        };
+        apply_pending(script, item, me, &name_of)
+    })
+    .unwrap_or_default();
+    if let Err(e) = world.run_system_cached_with(show_step, lines) {
+        warn!("ui_lfg: a waiting item's lines did not show: {e}");
+    }
+}
+
+fn show_step(In(lines): In<Vec<LfgLine>>, script: NonSend<UiScript>, mut sinks: LfgSinks) {
+    show(&script, lines, &mut sinks);
+}
+
+/// Where an item's lines show: the frame's message lines and its sound kits.
+#[derive(bevy::ecs::system::SystemParam)]
+struct LfgSinks<'w> {
+    errors: ResMut<'w, UiErrorKeys>,
+    sounds: ResMut<'w, MessageSounds>,
 }
 
 /// One server message into the VM; what it shows comes back.
@@ -713,12 +759,8 @@ fn reward(r: LfgCompletionReward) -> LfgCompletionRewardView {
 }
 
 /// The engine's lines through the error display's queue, its kits through the UI sound path.
-fn show(
-    script: &UiScript,
-    lines: Vec<LfgLine>,
-    errors: &mut UiErrorKeys,
-    sounds: &mut MessageSounds,
-) {
+fn show(script: &UiScript, lines: Vec<LfgLine>, sinks: &mut LfgSinks) {
+    let LfgSinks { errors, sounds } = sinks;
     for line in lines {
         match line {
             LfgLine::Key(key) => errors.0.push(UiError::key(key)),
@@ -732,5 +774,68 @@ fn show(
             }
             LfgLine::Sound(kit) => sounds.push_kit(kit),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A waiting item's listener reads the model as of its raise: the next item applies once
+    /// the listener has run, so the vote kick's listener reads the player info the join clears.
+    #[test]
+    fn a_vote_kicks_listener_does_not_see_the_next_items_write() {
+        let mut app = App::new();
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        app.insert_resource(NetCommands(tx))
+            .init_resource::<LfgFeed>()
+            .init_resource::<SelfGuid>()
+            .init_resource::<NameCache>()
+            .init_resource::<UiErrorKeys>()
+            .init_resource::<MessageSounds>()
+            .init_resource::<crate::ui_script::live::UiEvents>()
+            .add_systems(Update, feed_lfg);
+        app.insert_non_send_resource(UiScript::new().expect("VM"));
+        // The feed's first run resets a new VM's state.
+        app.update();
+        let mut script = app.world_mut().non_send_resource_mut::<UiScript>();
+        let _ = script.lfg_update_player(
+            benilla_ui::script::LfgUpdateView {
+                update_type: 6,
+                joined: true,
+                comment: "hi".into(),
+                ..Default::default()
+            },
+            false,
+        );
+        script
+            .run(
+                "SEEN = {} local f = CreateFrame('Frame') f:RegisterEvent('VOTE_KICK_REASON_NEEDED')
+                 f:SetScript('OnEvent', function() SEEN[#SEEN + 1] = select(6, GetLFGInfoServer()) end)",
+            )
+            .unwrap();
+        crate::ui_script::raises::fire_raises(app.world_mut());
+        let seen_before: String = app
+            .world()
+            .non_send_resource::<UiScript>()
+            .eval("return (select(6, GetLFGInfoServer()))")
+            .unwrap();
+        assert_eq!(seen_before, "hi", "the player info holds the comment");
+        app.world_mut().resource_mut::<LfgFeed>().pending = vec![
+            Pending::VoteKickReasonNeeded("Bob".into()),
+            Pending::JoiningParty,
+        ];
+        app.update();
+        crate::ui_script::raises::fire_raises(app.world_mut());
+        let script = app.world().non_send_resource::<UiScript>();
+        let seen: String = script.eval("return table.concat(SEEN, ',')").unwrap();
+        assert_eq!(
+            seen, "hi",
+            "the listener ran before the join cleared the info"
+        );
+        let after: String = script
+            .eval("return (select(6, GetLFGInfoServer()))")
+            .unwrap();
+        assert_eq!(after, "", "the join cleared it after the listener");
     }
 }

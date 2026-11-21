@@ -483,9 +483,10 @@ impl Plugin for UiActionPlugin {
                         .after(benilla_world::schedule::WorldStage::Net)
                         .before(crate::ui_script::UiPress),
                     feed::feed_actions.in_set(UnitFeed).in_set(SlotIdentityFeed),
-                    equipment_sets::drain_equipment_sets.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(equipment_sets::drain_equipment_sets)
+                        .in_set(UiDrain),
                     // The target chain queues the openers earlier in the frame.
-                    drain::drain_go_openers.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain::drain_go_openers).in_set(UiDrain),
                     // The latches must be current before the target chain's cursor reads them.
                     track_learned_abilities
                         .in_set(UnitFeed)

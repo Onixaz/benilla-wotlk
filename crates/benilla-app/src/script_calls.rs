@@ -41,14 +41,17 @@ pub(crate) fn apply_in_call(lua: &mlua::Lua, call: ScriptCall) -> bool {
         return true;
     }
     let applied = with_world(|world| {
-        let applied = in_call_step(world, |world| {
-            world.run_system_cached_with(apply_one, call).ok()
-        });
-        // The setter's tail, inside the call that moved the selection (`0x524f38`-`0x524f54`).
-        if applied.is_some() {
-            crate::ui_unit::target_set_tail(world);
-        }
-        applied
+        // The setter's tail at the selection write (`0x524f38`-`0x524f54`), ahead of what the call
+        // raises after it: the cast's attack pick selects before the send (`0x80d661`, `0x80b556`).
+        step_then_fire(
+            world,
+            |world| world.run_system_cached_with(apply_one, call).ok(),
+            |world, applied| {
+                if applied.is_some() {
+                    crate::ui_unit::target_set_tail(world);
+                }
+            },
+        )
     })
     .flatten();
     match applied {
@@ -69,18 +72,37 @@ pub(crate) fn apply_in_call(lua: &mlua::Lua, call: ScriptCall) -> bool {
 /// raises nothing while it holds the `World`; its signals, lines and a press's edges queue, and
 /// fire as it returns with the `World` lent again, so a listener's own call applies nested.
 pub(crate) fn in_call_step<R>(world: &mut World, step: impl FnOnce(&mut World) -> R) -> R {
+    step_then_fire(world, step, |_, _| ())
+}
+
+/// [`in_call_step`], with `tail` run on the step's result after its borrows end and ahead of its
+/// raises.
+fn step_then_fire<R>(
+    world: &mut World,
+    step: impl FnOnce(&mut World) -> R,
+    tail: impl FnOnce(&mut World, &R),
+) -> R {
     use crate::ui_script::live::UiEvents;
+    let Some(lua) = world
+        .get_non_send_resource::<UiScript>()
+        .map(|s| s.lua().clone())
+    else {
+        let out = step(world);
+        tail(world, &out);
+        return out;
+    };
     // What an enclosing turn queued stays its own, fired by it.
     let earlier = world.get_resource_or_init::<UiEvents>().set_aside();
-    let (out, raised) = benilla_ui::script::world_loan::raises_in_turn(|| step(world));
+    let (out, raised) = benilla_ui::script::world_loan::raises_in_turn(&lua, || step(world));
+    tail(world, &out);
     // The step's raises as it returns: the ones it made through the VM (the item-use fork's
     // `USE_GLYPH` `0x5d8ad3`, the lock edges `0x706feb`, the selection's refusal line
     // `0x5216f0`), then its queued ones (`0x80b556`, `0x806200`). #1363 fires each at its step
     // inside the press.
     if !raised.is_empty() {
         crate::ui_script::safe_world::lend(world, |script| {
-            for (event, args) in raised {
-                script.fire_event(&event, args);
+            for raise in raised {
+                raise.run(script);
             }
         });
     }
@@ -132,9 +154,9 @@ pub(crate) fn apply_script_calls(world: &mut World) {
 #[allow(clippy::type_complexity)] // the appliers, one per owner of the state a call touches
 fn apply_one(
     In(call): In<ScriptCall>,
-    (mut script, live, mut ui): (
+    (mut script, merchant, mut ui): (
         NonSendMut<UiScript>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsScriptCalls>,
+        Option<Res<crate::ui_merchant::MerchantOpen>>,
         ResMut<crate::ui_script::live::UiEvents>,
     ),
     mut appliers: ParamSet<(
@@ -215,7 +237,7 @@ fn apply_one(
                         let held = appliers
                             .p6()
                             .bar
-                            .read()
+                            .as_ref()
                             .spells
                             .bar
                             .get(index as usize)
@@ -235,7 +257,8 @@ fn apply_one(
             ScriptCall::UseItem { bag, slot } => appliers.p5().use_item(script, bag, slot),
             ScriptCall::InteractObject(guid) => appliers.p0().interact_object(guid),
             ScriptCall::UseContainerItem { bag, slot } => {
-                let vendor = live.merchant_vendor();
+                // The vendor the bag click sells to (`0xbfa3e8`).
+                let vendor = merchant.as_ref().and_then(|m| m.vendor);
                 appliers.p5().use_container_item(script, bag, slot, vendor);
             }
             ScriptCall::UseInventoryItem(id) => appliers.p5().use_inventory_item(script, id),
@@ -305,7 +328,7 @@ pub(crate) fn pet_press(
     ) -> crate::ui_pet::PetCast,
 ) -> crate::ui_pet::PetCast {
     let at = |press: &crate::ui_pet::PetPress| {
-        let bar = press.bar.read();
+        let bar = press.bar.as_ref();
         (bar.bar_signals, bar.cooldowns.generation)
     };
     let (signals, generation) = at(press);
@@ -1123,6 +1146,70 @@ mod tests {
                 ("select", NEW)
             ]
         );
+    }
+
+    /// A typed `/script` line runs with the `World` lent, so its `TargetUnit` is applied inside
+    /// the line and the line's next statement reads the new target (`0x524bf0`).
+    #[test]
+    fn a_script_lines_target_applies_inside_the_line() {
+        let mut f = frame(false);
+        // The stock `/script` row (`ChatFrame.lua`), which runs the rest of the line.
+        f.app
+            .world()
+            .non_send_resource::<UiScript>()
+            .run(
+                r#"SlashCmdList = { SCRIPT = function(msg) loadstring(msg)() end }
+                   SLASH_SCRIPT1 = "/script""#,
+            )
+            .expect("the row is declared");
+        f.app
+            .world_mut()
+            .insert_resource(crate::ui_chat::commands::SlashCommands::default());
+        f.app
+            .world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .push_chat_input(
+                r#"/script TargetUnit("party1") Seen = UnitExists("target") and 1 or 0"#.into(),
+            );
+        f.app
+            .world_mut()
+            .run_system_once(crate::ui_chat::drain_chat_input)
+            .expect("the drain runs as a one-shot system");
+        let seen = f
+            .app
+            .world()
+            .non_send_resource::<UiScript>()
+            .eval::<i64>("return Seen")
+            .unwrap();
+        assert_eq!((seen, selected(&f)), (1, Some(NEW)));
+    }
+
+    /// The pick's selection is told before the cast it makes: `PLAYER_TARGET_CHANGED` fires inside
+    /// the setter (`0x524f54`) the pick calls (`0x80d661`), ahead of the send's `UNIT_SPELLCAST_SENT`
+    /// (`0x80b556`), and the send's listener reads the new target.
+    #[test]
+    fn a_strikes_pick_tells_the_new_target_before_the_send() {
+        let mut f = frame(false);
+        spawn_mob(&mut f, &[]);
+        with_strike(&mut f);
+        run(
+            &mut f,
+            r#"Seen = {}
+               local l = CreateFrame("Frame")
+               l:RegisterEvent("PLAYER_TARGET_CHANGED")
+               l:RegisterEvent("UNIT_SPELLCAST_SENT")
+               l:SetScript("OnEvent", function(_, e)
+                   table.insert(Seen, e .. ":" .. tostring(UnitExists("target") and 1 or 0))
+               end)
+               UseAction(1)"#,
+        );
+        let seen = f
+            .app
+            .world()
+            .non_send_resource::<UiScript>()
+            .eval::<String>("return table.concat(Seen, ',')")
+            .unwrap();
+        assert_eq!(seen, "PLAYER_TARGET_CHANGED:1,UNIT_SPELLCAST_SENT:1");
     }
 
     /// A self-cast press passes the caster to the pick, and the reaction to oneself is 4, so the

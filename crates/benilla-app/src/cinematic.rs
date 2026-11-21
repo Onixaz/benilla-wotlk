@@ -23,11 +23,12 @@
 //! camera, so the flight is over streamed terrain) and the UI's cinematic flag, which drives
 //! `CinematicFrame` and makes `InCinematic()` true so `StaticPopup` suppresses dialogs.
 
+#[cfg(test)]
+use benilla_ui::script::UiScript;
 use std::time::Duration;
 
 use benilla_assets::{AssetSet, LockRecover, WorldAssets};
 use benilla_formats::{CinematicCatalog, CinematicPath};
-use benilla_ui::script::UiScript;
 use benilla_world::schedule::WorldStage;
 use benilla_world::view::WorldCamera;
 use bevy::prelude::*;
@@ -145,17 +146,22 @@ impl Plugin for CinematicPlugin {
             // would leave nothing listening for ESC.
             .add_systems(
                 Update,
-                feed_ui
+                crate::ui_script::raises::then_fire(feed_ui.run_if(crate::ui_script::ingame_ui_up))
                     .in_set(WorldStage::Input)
-                    .after(drive)
-                    .run_if(crate::ui_script::ingame_ui_up),
+                    .after(drive),
             )
             // The cursor and the bars, after the driver settled this frame's state.
             .add_systems(
                 Update,
                 drive_letterbox.in_set(WorldStage::Input).after(drive),
             )
-            .add_systems(Update, send_opening_cinematic.in_set(WorldStage::Input))
+            .add_systems(
+                Update,
+                crate::ui_script::raises::then_fire(send_opening_cinematic)
+                    .in_set(WorldStage::Input)
+                    // Ahead of the driver: what it raises fires before the frame's cinematic edges.
+                    .before(take_trigger),
+            )
             // Leaving the world drops a cinematic with no ack, as the reference's teardown does
             // (it clears the flag and sends no `CMSG_COMPLETE_CINEMATIC`).
             .add_systems(OnExit(ClientState::InWorld), abandon_on_leaving_world);
@@ -544,10 +550,10 @@ fn abandon_on_leaving_world(
 /// is per VM, so a `/reload` mid-cinematic re-fires `CINEMATIC_START` into the rebuilt tree.
 fn feed_ui(
     cine: Res<Cinematic>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut published: Local<crate::ui_script::VmMemo<Option<bool>>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let playing = cine.is_playing();
@@ -576,11 +582,8 @@ fn feed_ui(
 
 /// Each Lua `OpeningCinematic()` is one empty `CMSG_OPENING_CINEMATIC`; the server answers, if at
 /// all, with the `SMSG_TRIGGER_CINEMATIC` [`take_trigger`] plays.
-fn send_opening_cinematic(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    net: Option<Res<NetCommands>>,
-) {
-    let Some(mut script) = script else {
+fn send_opening_cinematic(mut script: crate::ui_script::InTurn, net: Option<Res<NetCommands>>) {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let asks = script.take_opening_cinematic_asks();

@@ -12,9 +12,11 @@
 //! The scene fills the pane at the pane's own aspect, as the reference frames it, and starts over
 //! with each `SetModel` instance; the pane's showing resets the glue glow.
 
+#[cfg(test)]
+use benilla_ui::script::UiScript;
 use bevy::prelude::*;
 
-use benilla_ui::script::{GlueScenePane, UiScript, VmKind};
+use benilla_ui::script::{GlueScenePane, VmKind};
 
 use super::glue_mgr::GlueMgr;
 use crate::portrait::{
@@ -103,22 +105,25 @@ pub(crate) struct StockFeed {
 /// Feed the glue booth from the glue VM while the stock glue screens are up, and stand it down
 /// once they are not (the world entered, the VM gone).
 pub(crate) fn feed_stock_glue_preview(
-    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mgr: Res<GlueMgr>,
     state: Option<Res<State<crate::char_select::ClientState>>>,
     mut preview: ResMut<GluePreview>,
     mut feed: Local<super::VmMemo<StockFeed>>,
 ) {
     let in_world = state.is_some_and(|s| *s.get() == crate::char_select::ClientState::InWorld);
-    let script = script.filter(|s| s.vm_kind() == VmKind::Glue && !in_world);
-    let pane = script.as_deref().and_then(|s| s.glue_scene());
+    let turn = script.turn();
+    let script = turn
+        .as_deref()
+        .filter(|s| s.vm_kind() == VmKind::Glue && !in_world);
+    let pane = script.and_then(|s| s.glue_scene());
     let StockPreview {
         scene,
         look,
         yaw,
         fog,
         lights,
-    } = match script.as_deref() {
+    } = match script {
         Some(s) => {
             let standing = s.glue_standing_guid().and_then(|g| mgr.roster_character(g));
             stock_preview(
@@ -131,7 +136,7 @@ pub(crate) fn feed_stock_glue_preview(
         None => StockPreview::default(),
     };
     // A new VM's panes are new frames: the memo starts over with it.
-    let feed = feed.get_for(script.as_deref());
+    let feed = feed.get_for(script);
     // A pane that was not the one shown last frame has just shown: its OnShow.
     let shown = pane.as_ref().map(|p| p.handle);
     if shown.is_some() && shown != feed.shown {

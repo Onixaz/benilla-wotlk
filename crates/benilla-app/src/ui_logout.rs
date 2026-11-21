@@ -13,7 +13,9 @@
 //! logout that exits the process on completion; the QUIT dialog has an "Exit now" button and CAMP
 //! has none.
 
-use benilla_ui::script::{SessionRequest, UiScript};
+use benilla_ui::script::SessionRequest;
+#[cfg(test)]
+use benilla_ui::script::UiScript;
 use bevy::prelude::*;
 
 use crate::net::{ClientCommand, LoggedOutMessage, NetCommands, SelfGuid};
@@ -90,11 +92,11 @@ impl LogoutState {
 /// Fire the signals in wire order: the events the stock CAMP and QUIT dialogs hang off, and the
 /// refusal line.
 fn feed_logout(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut logout: ResMut<LogoutState>,
     mut sink: crate::ui_action::MessageSink,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     for signal in std::mem::take(&mut logout.signals) {
@@ -112,7 +114,7 @@ fn feed_logout(
 
 /// Turn the Lua intents into packets; a forced quit, or a quit with no world session, exits.
 pub(crate) fn drain_logout(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut logout: ResMut<LogoutState>,
     self_guid: Res<SelfGuid>,
     commands: Res<NetCommands>,
@@ -120,7 +122,7 @@ pub(crate) fn drain_logout(
     mut reload: ResMut<crate::ui_script::ReloadUiPending>,
     mut cinematic: ResMut<crate::cinematic::Cinematic>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     for request in script.take_session_requests() {
@@ -211,9 +213,12 @@ impl Plugin for UiLogoutPlugin {
                 feed_logout.in_set(UiFeed),
                 // After the idle handler, which reads the pending byte: its request is drained and
                 // the byte set in the frame it was asked, as the reference sets it in the call.
-                (drain_logout, exit_on_logout_complete)
+                (
+                    crate::ui_script::raises::then_fire(drain_logout),
+                    exit_on_logout_complete,
+                )
                     .in_set(UiDrain)
-                    .after(crate::ui_chat::idle::idle_handler),
+                    .after(crate::ui_chat::idle::IdleStep),
             ),
         );
     }

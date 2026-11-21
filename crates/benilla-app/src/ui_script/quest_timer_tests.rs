@@ -36,10 +36,9 @@ impl benilla_ui::script::LiveState for Clock {
     }
 }
 
-/// The server clock lent at `now` until the loan drops; a later loan reads over it.
-fn clock_at(now: f64) -> benilla_ui::script::LiveLoan<Clock> {
-    // SAFETY: each test drops its loans on its own thread, in reverse order of their making.
-    unsafe { benilla_ui::script::LiveLoan::new(Clock(now)) }
+/// The server clock at `now`.
+fn clock_at(now: f64) -> Clock {
+    Clock(now)
 }
 
 /// The window's own dependencies only, so a missing one shows.
@@ -111,40 +110,44 @@ fn the_window_follows_the_timed_quests() {
     let mut s = harness();
 
     s.seed_quest_log(log(vec![quest(783, "A Threat Within", 0)]));
-    let _clock = clock_at(1_000_000.0);
-    s.fire_event("QUEST_LOG_UPDATE", vec![]);
-    assert!(!shown(&s, "QuestTimerFrame"), "no timed quest, no window");
+    let mut clock_v = clock_at(1_000_000.0);
+    crate::ui_script::test_live::lending(&mut clock_v, || {
+        s.fire_event("QUEST_LOG_UPDATE", vec![]);
+        assert!(!shown(&s, "QuestTimerFrame"), "no timed quest, no window");
 
-    // Two timed quests around an untimed one, 860 s and 45 s out.
-    s.seed_quest_log(log(vec![
-        quest(1, "Deliver the Message", 1_000_860),
-        quest(2, "A Threat Within", 0),
-        quest(3, "Escort the Caravan", 1_000_045),
-    ]));
-    s.fire_event("QUEST_LOG_UPDATE", vec![]);
+        // Two timed quests around an untimed one, 860 s and 45 s out.
+        s.seed_quest_log(log(vec![
+            quest(1, "Deliver the Message", 1_000_860),
+            quest(2, "A Threat Within", 0),
+            quest(3, "Escort the Caravan", 1_000_045),
+        ]));
+        s.fire_event("QUEST_LOG_UPDATE", vec![]);
 
-    assert!(shown(&s, "QuestTimerFrame"));
-    assert!(shown(&s, "QuestTimer1") && shown(&s, "QuestTimer2"));
-    assert!(!shown(&s, "QuestTimer3"), "only two timers are live");
-    // The reference's timers read 1 s short, formatted by `SecondsToTime` (`UIParent.lua:1004`).
-    assert_eq!(row_text(&s, 1), "14 Mins 19 Secs ");
-    assert_eq!(row_text(&s, 2), "44 Secs ");
-    assert_eq!(
-        s.eval::<f64>("return QuestTimerFrame:GetHeight()").unwrap(),
-        45.0 + 16.0 * 2.0
-    );
+        assert!(shown(&s, "QuestTimerFrame"));
+        assert!(shown(&s, "QuestTimer1") && shown(&s, "QuestTimer2"));
+        assert!(!shown(&s, "QuestTimer3"), "only two timers are live");
+        // The reference's timers read 1 s short, formatted by `SecondsToTime` (`UIParent.lua:1004`).
+        assert_eq!(row_text(&s, 1), "14 Mins 19 Secs ");
+        assert_eq!(row_text(&s, 2), "44 Secs ");
+        assert_eq!(
+            s.eval::<f64>("return QuestTimerFrame:GetHeight()").unwrap(),
+            45.0 + 16.0 * 2.0
+        );
 
-    // Row 2 maps to the third log entry, past the untimed one.
-    assert_eq!(s.eval::<i64>("return GetQuestIndexForTimer(2)").unwrap(), 3);
+        // Row 2 maps to the third log entry, past the untimed one.
+        assert_eq!(s.eval::<i64>("return GetQuestIndexForTimer(2)").unwrap(), 3);
 
-    // The clock alone moves; OnUpdate repaints with no QUEST_LOG_UPDATE (`QuestTimerFrame.lua:35`).
-    let _clock = clock_at(1_000_030.0);
-    s.tick(0.2);
-    assert_eq!(row_text(&s, 2), "14 Secs ");
+        // The clock alone moves; OnUpdate repaints with no QUEST_LOG_UPDATE (`QuestTimerFrame.lua:35`).
+        let mut clock_v = clock_at(1_000_030.0);
+        crate::ui_script::test_live::lending(&mut clock_v, || {
+            s.tick(0.2);
+            assert_eq!(row_text(&s, 2), "14 Secs ");
 
-    s.seed_quest_log(log(vec![quest(2, "A Threat Within", 0)]));
-    s.fire_event("QUEST_LOG_UPDATE", vec![]);
-    assert!(!shown(&s, "QuestTimerFrame"));
+            s.seed_quest_log(log(vec![quest(2, "A Threat Within", 0)]));
+            s.fire_event("QUEST_LOG_UPDATE", vec![]);
+            assert!(!shown(&s, "QuestTimerFrame"));
+        });
+    });
 }
 
 #[test]
@@ -153,27 +156,29 @@ fn the_countdown_reaches_the_draw_list() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
     s.seed_quest_log(log(vec![quest(1, "Deliver the Message", 1_000_860)]));
-    let _clock = clock_at(1_000_000.0);
-    s.fire_event("QUEST_LOG_UPDATE", vec![]);
-    s.tick(0.0);
+    let mut clock_v = clock_at(1_000_000.0);
+    crate::ui_script::test_live::lending(&mut clock_v, || {
+        s.fire_event("QUEST_LOG_UPDATE", vec![]);
+        s.tick(0.0);
 
-    let quads = s.extract();
-    let text: Vec<String> = quads
-        .iter()
-        .filter_map(|q| match &q.content {
-            benilla_ui::script::QuadContent::Text { text, .. } => Some(text.clone()),
-            _ => None,
-        })
-        .flatten()
-        .collect();
-    assert!(
-        text.iter().any(|t| t.contains("14 Mins")),
-        "the countdown never reached the draw list: {text:?}"
-    );
-    assert!(
-        text.iter().any(|t| t == "Quest Timers"),
-        "the QUEST_TIMERS title never reached the draw list: {text:?}"
-    );
+        let quads = s.extract();
+        let text: Vec<String> = quads
+            .iter()
+            .filter_map(|q| match &q.content {
+                benilla_ui::script::QuadContent::Text { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert!(
+            text.iter().any(|t| t.contains("14 Mins")),
+            "the countdown never reached the draw list: {text:?}"
+        );
+        assert!(
+            text.iter().any(|t| t == "Quest Timers"),
+            "the QUEST_TIMERS title never reached the draw list: {text:?}"
+        );
+    });
 }
 
 /// The window also repaints on `PLAYER_ENTERING_WORLD` (`QuestTimerFrame.lua:3`).
@@ -183,9 +188,11 @@ fn a_world_entry_paints_a_quest_already_running() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
     s.seed_quest_log(log(vec![quest(1, "Deliver the Message", 1_000_090)]));
-    let _clock = clock_at(1_000_000.0);
-    s.fire_event("PLAYER_ENTERING_WORLD", vec![ScriptValue::Bool(true)]);
-    assert!(shown(&s, "QuestTimerFrame"));
-    // One minute takes the singular `MINUTES_ABBR`, not its `_P1` plural; 90 s reads 89.
-    assert_eq!(row_text(&s, 1), "1 Min 29 Secs ");
+    let mut clock_v = clock_at(1_000_000.0);
+    crate::ui_script::test_live::lending(&mut clock_v, || {
+        s.fire_event("PLAYER_ENTERING_WORLD", vec![ScriptValue::Bool(true)]);
+        assert!(shown(&s, "QuestTimerFrame"));
+        // One minute takes the singular `MINUTES_ABBR`, not its `_P1` plural; 90 s reads 89.
+        assert_eq!(row_text(&s, 1), "1 Min 29 Secs ");
+    });
 }

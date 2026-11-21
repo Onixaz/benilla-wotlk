@@ -8,9 +8,9 @@
 //! the reference's re-run only repeats the join, which vmangos swallows, or the leave, whose "Not
 //! on channel" notice nothing prints.
 
-use bevy::prelude::*;
-
+#[cfg(test)]
 use benilla_ui::script::UiScript;
+use bevy::prelude::*;
 
 use crate::area::AreaTableRes;
 use crate::net::{NetCommands, ObjectStore, SelfPlayer};
@@ -100,7 +100,7 @@ pub(crate) fn cascade(auto: bool, guild_id: u32, in_capital: bool) -> Option<Cas
 
 /// The cascade, chained after the walk: the reference runs it at the walk's tail, on a fresh zone.
 pub(super) fn guild_recruitment_cascade(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut state: ResMut<GuildRecruitmentCascade>,
     mut channels: ResMut<ChannelState>,
     walk: Res<ZoneChannelWalk>,
@@ -108,7 +108,9 @@ pub(super) fn guild_recruitment_cascade(
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     commands: Res<NetCommands>,
 ) {
-    let Some(mut script) = script else { return };
+    let Some(mut script) = script.turn() else {
+        return;
+    };
     // The mode setter (`0x508260`), called with 0: unmoved is a no-op; 1 runs the cascade, 0
     // leaves a joined recruitment channel and refreshes the windows.
     if let Some(mode) = state.cvar.take() {
@@ -186,14 +188,19 @@ pub(super) fn guild_recruitment_cascade(
             match channels.claim_slot(&name) {
                 Some(n) => {
                     debug!("chat: {name:?} registered as slot {n}");
-                    script.set_channel_slots(channels.ui_slots());
+                    // After an earlier arm's `UPDATE_CHAT_WINDOWS` listeners, as the write below.
+                    let slots = channels.ui_slots();
+                    script.after_raises(move |s| s.set_channel_slots(slots));
                 }
                 None => warn!(
                     "chat: no free slot for {name:?} — all {} are taken",
                     super::edit::MAX_CHANNELS
                 ),
             }
-            script.register_chat_window_channel(0, &row.shortcut, row.id);
+            let (shortcut, id) = (row.shortcut.clone(), row.id);
+            script.after_raises(move |s| {
+                s.register_chat_window_channel(0, &shortcut, id);
+            });
             // The client's own join (`0x49eb70`).
             let _ = commands
                 .0
@@ -289,5 +296,78 @@ mod tests {
         c.clear_session();
         assert!(!c.pending);
         assert!(c.observe_guild_id(42), "a new session sees it fresh");
+    }
+
+    /// The join arm writes the slot and window 1's list, then signals `UPDATE_CHAT_WINDOWS`
+    /// (`0x81b530` runs its listeners in the caller): the listener reads the window's new entry.
+    #[test]
+    fn the_joins_listener_reads_the_windows_new_entry() {
+        const GUILD_RECRUITMENT: u32 = 25;
+        const CAPITAL: u32 = 1519;
+        let row = |flags, name: &str| benilla_formats::AreaTableRow {
+            map_id: 0,
+            zone_id: 0,
+            explore_flag: 0,
+            flags,
+            faction_group_mask: 0,
+            exploration_level: 0,
+            name: name.to_string(),
+            ambient_multiplier: 0.0,
+        };
+        let mut walk = ZoneChannelWalk::default();
+        walk.zone_id = Some(CAPITAL);
+        let mut app = App::new();
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        app.insert_resource(NetCommands(tx))
+            .insert_resource(AreaTableRes(benilla_formats::AreaTableCatalog::from_rows(
+                vec![
+                    (CAPITAL, row(AREA_FLAG_CAPITAL, "Stormwind City")),
+                    (1, row(0x200, "City")),
+                ],
+            )))
+            .insert_resource(ChannelState {
+                channels: benilla_formats::ChatChannelsCatalog::from_rows(vec![
+                    benilla_formats::ChatChannelRow {
+                        id: GUILD_RECRUITMENT,
+                        // `GUILD_REQ`, the row the cascade joins.
+                        flags: 0x2_0032,
+                        pattern: "GuildRecruitment - %s".into(),
+                        shortcut: "GuildRecruitment".into(),
+                    },
+                ]),
+                zone_mask: Some(0),
+                ..Default::default()
+            })
+            .insert_resource(walk)
+            .init_resource::<GuildRecruitmentCascade>()
+            .init_resource::<crate::ui_script::live::UiEvents>()
+            .add_systems(Update, guild_recruitment_cascade);
+        app.world_mut().spawn((
+            SelfPlayer,
+            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[])),
+        ));
+        app.world_mut()
+            .resource_mut::<GuildRecruitmentCascade>()
+            .request();
+        let mut script = UiScript::new().expect("VM");
+        script.set_guild_recruitment_mode(1);
+        script
+            .run(
+                "SEEN = {} local f = CreateFrame('Frame') f:RegisterEvent('UPDATE_CHAT_WINDOWS')
+                 f:SetScript('OnEvent', function() SEEN[#SEEN + 1] = tostring((GetChatWindowChannels(1))) end)",
+            )
+            .unwrap();
+        app.insert_non_send_resource(script);
+        app.update();
+        crate::ui_script::raises::fire_raises(app.world_mut());
+        let seen: String = app
+            .world()
+            .non_send_resource::<UiScript>()
+            .eval("return table.concat(SEEN, ',')")
+            .unwrap();
+        assert_eq!(
+            seen, "GuildRecruitment",
+            "the listener reads the joined entry"
+        );
     }
 }

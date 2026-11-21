@@ -11,7 +11,7 @@ use benilla_formats::{GlyphCatalog, SPELL_EFFECT_APPLY_GLYPH};
 use benilla_protocol::field::{FIELD_PLAYER_GLYPHS_1, FIELD_PLAYER_GLYPHS_ENABLED};
 use benilla_ui::script::{
     GlyphCatalogView, GlyphSlotView, GlyphSockets, GlyphTargeting, GlyphView, ScriptValue,
-    UiScript, NUM_GLYPH_SOCKETS,
+    NUM_GLYPH_SOCKETS,
 };
 
 use crate::net::{ClientCommand, FieldChanged, NetCommands, ObjectStore, SelfPlayer};
@@ -39,7 +39,7 @@ impl Plugin for UiGlyphPlugin {
                     feed_glyphs
                         .in_set(UnitFeed)
                         .after(crate::ui_talent::TalentFeed),
-                    drain_glyph_removes.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_glyph_removes).in_set(UiDrain),
                 ),
             );
     }
@@ -155,16 +155,16 @@ fn watcher_events(catalog: &GlyphCatalog, edge: &FieldChanged) -> Vec<(&'static 
 
 #[allow(clippy::too_many_arguments)]
 fn feed_glyphs(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     glyphs: Option<Res<Glyphs>>,
     spells: Option<Res<Spells>>,
-    targeting: crate::ui_script::LentRef<SpellTargeting>,
+    targeting: Option<Res<SpellTargeting>>,
     self_q: Query<(Entity, &ObjectStore), With<SelfPlayer>>,
     changed_self: Query<(), (With<SelfPlayer>, Changed<ObjectStore>)>,
     mut edges: MessageReader<FieldChanged>,
     mut memory: Local<VmMemo<()>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         edges.clear();
         return;
     };
@@ -180,10 +180,10 @@ fn feed_glyphs(
     if vm_reset || !changed_self.is_empty() {
         script.set_glyph_sockets(me.map(|(_, store)| sockets_of(store)).unwrap_or_default());
     }
-    if vm_reset || spells_changed || targeting.is_changed() {
+    if vm_reset || spells_changed || targeting.as_ref().is_some_and(|t| t.is_changed()) {
         let glyph = targeting
-            .get()
-            .and_then(|t| targeting_of(&t, spells.as_deref()));
+            .as_deref()
+            .and_then(|t| targeting_of(t, spells.as_deref()));
         script.set_glyph_targeting(glyph);
     }
     let (Some(glyphs), Some((me, _))) = (glyphs.as_deref(), me) else {
@@ -200,11 +200,8 @@ fn feed_glyphs(
 
 /// `RemoveGlyphFromSocket`'s sends, `CMSG_REMOVE_GLYPH` per socket; the server answers with
 /// `SMSG_TALENTS_INFO` and the glyph field.
-fn drain_glyph_removes(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    commands: Res<NetCommands>,
-) {
-    let Some(mut script) = script else {
+fn drain_glyph_removes(mut script: crate::ui_script::InTurn, commands: Res<NetCommands>) {
+    let Some(mut script) = script.turn() else {
         return;
     };
     for socket in script.take_glyph_removes() {

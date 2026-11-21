@@ -332,21 +332,21 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::script::live::{lend_test, LiveLoan, TestView};
+    use crate::script::live::TestView;
     use crate::script::UiScript;
 
     /// Ten seconds a rune for every kind, a death knight's rates.
     const DK: RuneRegen = [0.1; RUNE_KINDS];
 
     /// The player object held with `runes` and the death knight's rates.
-    fn seated_with(runes: RuneState) -> LiveLoan<TestView> {
-        lend_test(TestView {
+    fn seated_with(runes: RuneState) -> TestView {
+        TestView {
             runes: Some((runes, DK)),
             ..Default::default()
-        })
+        }
     }
 
-    fn seated() -> (UiScript, LiveLoan<TestView>) {
+    fn seated() -> (UiScript, TestView) {
         (UiScript::new().unwrap(), seated_with(RuneState::default()))
     }
 
@@ -366,26 +366,30 @@ mod tests {
     /// Every character starts on the reference's six runes, blood, unholy and frost in pairs.
     #[test]
     fn a_new_game_reads_two_runes_of_each_kind() {
-        let (s, _live) = seated();
-        let kinds: Vec<i64> = (1..=6)
-            .map(|i| s.eval(&format!("return GetRuneType({i})")).unwrap())
-            .collect();
-        assert_eq!(kinds, [1, 1, 2, 2, 3, 3]);
+        let (s, mut live_v) = seated();
+        crate::script::live::lending(&mut live_v, || {
+            let kinds: Vec<i64> = (1..=6)
+                .map(|i| s.eval(&format!("return GetRuneType({i})")).unwrap())
+                .collect();
+            assert_eq!(kinds, [1, 1, 2, 2, 3, 3]);
+        });
     }
 
     /// A slot past the live six or below 1 answers nothing, as does a call with no player.
     #[test]
     fn an_invalid_slot_or_no_player_answers_nothing() {
-        let (s, _live) = seated();
-        for slot in [0, 7, 9, -1] {
-            assert_eq!(
-                s.arity(&format!("GetRuneType({slot})")).unwrap(),
-                0,
-                "{slot}"
-            );
-        }
-        assert!(s.run("GetRuneType('x')").is_err());
-        drop(_live);
+        let (s, mut live_v) = seated();
+        crate::script::live::lending(&mut live_v, || {
+            for slot in [0, 7, 9, -1] {
+                assert_eq!(
+                    s.arity(&format!("GetRuneType({slot})")).unwrap(),
+                    0,
+                    "{slot}"
+                );
+            }
+            assert!(s.run("GetRuneType('x')").is_err());
+        });
+
         let bare = UiScript::new().unwrap();
         assert_eq!(bare.arity("GetRuneType('x')").unwrap(), 0);
     }
@@ -491,21 +495,23 @@ mod tests {
         let s = UiScript::new().unwrap();
         let mut r = dk();
         r.set_predicted(0x3f, 0x3d, None, 50_000, &DK);
-        let live = seated_with(r);
-        let (start, duration, ready): (f64, f64, bool) =
-            s.eval("return GetRuneCooldown(2)").unwrap();
-        assert_eq!((start, duration, ready), (50.0, 10.0, false));
-        let (start, ready): (f64, bool) = s
-            .eval("local a, _, c = GetRuneCooldown(1) return a, c")
-            .unwrap();
-        assert_eq!((start, ready), (0.0, true));
-        assert_eq!(s.eval::<i64>("return GetRuneCount(1)").unwrap(), 1);
-        assert_eq!(s.eval::<i64>("return GetRuneCount(2)").unwrap(), 0);
-        assert_eq!(s.arity("GetRuneCount(9)").unwrap(), 0);
-        assert!(s.run("GetRuneCooldown(9)").is_err());
-        assert!(s.run("GetRuneCooldown()").is_err());
-        assert!(s.run("GetRuneCount()").is_err());
-        drop(live);
+        let mut live_v = seated_with(r);
+        crate::script::live::lending(&mut live_v, || {
+            let (start, duration, ready): (f64, f64, bool) =
+                s.eval("return GetRuneCooldown(2)").unwrap();
+            assert_eq!((start, duration, ready), (50.0, 10.0, false));
+            let (start, ready): (f64, bool) = s
+                .eval("local a, _, c = GetRuneCooldown(1) return a, c")
+                .unwrap();
+            assert_eq!((start, ready), (0.0, true));
+            assert_eq!(s.eval::<i64>("return GetRuneCount(1)").unwrap(), 1);
+            assert_eq!(s.eval::<i64>("return GetRuneCount(2)").unwrap(), 0);
+            assert_eq!(s.arity("GetRuneCount(9)").unwrap(), 0);
+            assert!(s.run("GetRuneCooldown(9)").is_err());
+            assert!(s.run("GetRuneCooldown()").is_err());
+            assert!(s.run("GetRuneCount()").is_err());
+        });
+
         let bare = UiScript::new().unwrap();
         assert_eq!(bare.arity("GetRuneCooldown(1)").unwrap(), 0);
         assert_eq!(bare.arity("GetRuneCount()").unwrap(), 0);

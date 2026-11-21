@@ -185,21 +185,22 @@ mod tests {
     #[test]
     fn the_verbs_edit_the_pane_in_their_call_and_try_on_reads_its_argument_like_the_client() {
         let mut s = room();
-        let mut loan = crate::script::live::lend_test(Default::default());
-        let mut edits = || {
-            loan.with_view_mut(|v| std::mem::take(&mut v.dressup))
-                .into_iter()
-                .map(|(_, i)| i)
-                .collect::<Vec<_>>()
-        };
-        s.run(r#"DM:TryOn(117)"#).unwrap();
-        assert_eq!(
-            edits(),
-            vec![DressUpIntent::TryOn(117, [0; 4])],
-            "the edit lands before the call returns"
-        );
-        s.run(
-            r#"
+        let mut loan_v = crate::script::live::TestView::default();
+        crate::script::live::lending(&mut loan_v, || {
+            let edits = || {
+                crate::script::live::test_view(|v| std::mem::take(&mut v.dressup))
+                    .into_iter()
+                    .map(|(_, i)| i)
+                    .collect::<Vec<_>>()
+            };
+            s.run(r#"DM:TryOn(117)"#).unwrap();
+            assert_eq!(
+                edits(),
+                vec![DressUpIntent::TryOn(117, [0; 4])],
+                "the edit lands before the call returns"
+            );
+            s.run(
+                r#"
             DM:SetUnit("player")
             DM:TryOn("117")
             DM:TryOn(1234.7)
@@ -211,38 +212,39 @@ mod tests {
             DM:TryOn(nil)
             DM:TryOn(-5)
             "#,
-        )
-        .unwrap();
-        assert_eq!(
-            edits(),
-            vec![
-                DressUpIntent::Dress,
-                DressUpIntent::TryOn(117, [0; 4]),
-                DressUpIntent::TryOn(1234, [0; 4]),
-                DressUpIntent::Undress,
-                DressUpIntent::Dress,
-                DressUpIntent::Dress,
-                DressUpIntent::TryOn(117, [0; 4]),
-            ]
-        );
-        assert_eq!(
-            s.take_shown(),
-            vec!["ERR_NOT_EQUIPPABLE"],
-            "the nil argument"
-        );
-        // The same two PlayerModel verbs on a paper-doll pane edit nothing.
-        s.run(r#"pm = CreateFrame("PlayerModel", "PMOnly", UIParent) pm:SetUnit("player") pm:RefreshUnit()"#)
+            )
             .unwrap();
-        assert!(edits().is_empty());
-        // Two panes are two models: each edit names its own.
-        s.run(r#"dm2 = CreateFrame("DressUpModel", "DM2", UIParent) DM:Dress() DM2:Dress()"#)
+            assert_eq!(
+                edits(),
+                vec![
+                    DressUpIntent::Dress,
+                    DressUpIntent::TryOn(117, [0; 4]),
+                    DressUpIntent::TryOn(1234, [0; 4]),
+                    DressUpIntent::Undress,
+                    DressUpIntent::Dress,
+                    DressUpIntent::Dress,
+                    DressUpIntent::TryOn(117, [0; 4]),
+                ]
+            );
+            assert_eq!(
+                s.take_shown(),
+                vec!["ERR_NOT_EQUIPPABLE"],
+                "the nil argument"
+            );
+            // The same two PlayerModel verbs on a paper-doll pane edit nothing.
+            s.run(r#"pm = CreateFrame("PlayerModel", "PMOnly", UIParent) pm:SetUnit("player") pm:RefreshUnit()"#)
             .unwrap();
-        let panes: Vec<_> = loan.with_view_mut(|v| std::mem::take(&mut v.dressup));
-        assert_eq!(panes.len(), 2);
-        assert_ne!(panes[0].0, panes[1].0, "each pane is its own model");
-        // Its yaw is its own facing, read by name like every other pane's.
-        s.run("DM:SetRotation(0.61)").unwrap();
-        assert!((s.model_pane_facing("DM") - 0.61).abs() < 1e-6);
+            assert!(edits().is_empty());
+            // Two panes are two models: each edit names its own.
+            s.run(r#"dm2 = CreateFrame("DressUpModel", "DM2", UIParent) DM:Dress() DM2:Dress()"#)
+                .unwrap();
+            let panes: Vec<_> = crate::script::live::test_view(|v| std::mem::take(&mut v.dressup));
+            assert_eq!(panes.len(), 2);
+            assert_ne!(panes[0].0, panes[1].0, "each pane is its own model");
+            // Its yaw is its own facing, read by name like every other pane's.
+            s.run("DM:SetRotation(0.61)").unwrap();
+            assert!((s.model_pane_facing("DM") - 0.61).abs() < 1e-6);
+        });
     }
 
     /// `IsDressableItem` (`0x517530`): a cached template with an InventoryType, or a recipe whose

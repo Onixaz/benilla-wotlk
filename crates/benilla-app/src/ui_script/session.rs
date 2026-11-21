@@ -128,7 +128,7 @@ mod tests {
         let mut offenders = Vec::new();
         for file in rust_files(&src) {
             let text = std::fs::read_to_string(&file).expect("readable source");
-            if !text.contains("UiScript") {
+            if !text.contains("UiScript") && !text.contains("InTurn") {
                 continue; // no VM in this file, so no memory about one
             }
             let rel = file
@@ -137,7 +137,7 @@ mod tests {
                 .to_string_lossy()
                 .replace('\\', "/");
             for params in fn_parameter_lists(&text) {
-                if !params.contains("UiScript") {
+                if !params.contains("UiScript") && !params.contains("ui_script::InTurn") {
                     continue;
                 }
                 for (name, ty) in locals_in(params) {

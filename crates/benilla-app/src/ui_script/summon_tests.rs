@@ -241,14 +241,16 @@ fn the_getters_answer_empties_before_anything_is_pending() {
 /// The binding truncates ms to whole seconds; the dialog seeds its countdown from it.
 #[test]
 fn the_time_left_getter_truncates_to_whole_seconds() {
-    let mut s = Lent::new(UiScript::new().unwrap());
-    s.set_summon_confirm(SummonConfirmUiState {
-        summoner: "Twomage".into(),
-        area: "Stormwind City".into(),
-        time_left_ms: 1_999,
+    crate::ui_script::test_live::lending(&mut crate::ui_script::test_live::View, || {
+        let mut s = Lent::new(UiScript::new().unwrap());
+        s.set_summon_confirm(SummonConfirmUiState {
+            summoner: "Twomage".into(),
+            area: "Stormwind City".into(),
+            time_left_ms: 1_999,
+        });
+        assert_eq!(
+            s.eval::<f64>("return GetSummonConfirmTimeLeft()").unwrap(),
+            1.0
+        );
     });
-    assert_eq!(
-        s.eval::<f64>("return GetSummonConfirmTimeLeft()").unwrap(),
-        1.0
-    );
 }

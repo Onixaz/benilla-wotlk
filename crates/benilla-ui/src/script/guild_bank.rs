@@ -1013,8 +1013,8 @@ fn build_item_icons(model: &mut Model) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::script::live::{lend_test, TestView};
-    use crate::script::{GuildRankInfo, GuildState, LiveLoan, UiScript};
+    use crate::script::live::TestView;
+    use crate::script::{GuildRankInfo, GuildState, UiScript};
 
     fn slot(item_id: u32, count: u32) -> Option<GuildBankSlotView> {
         Some(GuildBankSlotView {
@@ -1088,218 +1088,232 @@ mod tests {
         }
     }
 
-    /// The bank lent as the live view, with control and 50000 copper in the bank.
-    fn lend_bank() -> LiveLoan<TestView> {
-        lend_test(TestView {
+    /// The bank as the live view answers it, with control and 50000 copper in the bank.
+    fn lend_bank() -> TestView {
+        TestView {
             control: true,
             guild_bank: bank(),
             guild_bank_money: 50_000,
             guild_bank_text_stale: vec![1],
             ..Default::default()
-        })
+        }
     }
 
-    fn vm() -> (UiScript, LiveLoan<TestView>) {
-        let bank = lend_bank();
+    fn vm() -> (UiScript, TestView) {
+        let mut bank = lend_bank();
         let mut s = UiScript::new().unwrap();
-        s.set_guild(member(
-            WITHDRAW_GOLD,
-            100,
-            [(0x7, 10), (0x1, 0), (0, 0), (0, 0), (0, 0), (0, 0)],
-        ));
+        crate::script::live::lending(&mut bank, || {
+            s.set_guild(member(
+                WITHDRAW_GOLD,
+                100,
+                [(0x7, 10), (0x1, 0), (0, 0), (0, 0), (0, 0), (0, 0)],
+            ))
+        });
         (s, bank)
     }
 
     #[test]
     fn tab_info_reads_the_view_and_our_rank() {
-        let (s, _bank) = vm();
-        let row = s
-            .eval::<(String, String, Option<i64>, Option<i64>, i64, i64)>(
-                "return GetGuildBankTabInfo(1)",
-            )
-            .unwrap();
-        assert_eq!(
-            row,
-            (
-                "Mats".into(),
-                "Interface\\Icons\\INV_Fabric_Linen_01".into(),
-                Some(1),
-                Some(1),
-                10,
-                3
-            )
-        );
-        let row = s
-            .eval::<(Option<String>, String, Option<i64>, Option<i64>)>(
-                "local n, i, v, d = GetGuildBankTabInfo(2) return n, i, v, d",
-            )
-            .unwrap();
-        assert_eq!(row.1, "Interface\\Icons\\INV_Misc_QuestionMark");
-        assert_eq!((row.2, row.3), (Some(1), None), "tab 2 is view-only");
-        assert_eq!(
-            s.eval::<(Option<String>, i64, i64)>(
-                "local n, _, _, _, w, r = GetGuildBankTabInfo(3) return n, w, r"
-            )
-            .unwrap(),
-            (None, 0, 0),
-            "past the bought tabs"
-        );
-        assert!(s
-            .eval::<bool>("return CanEditGuildTabInfo(1) == 1")
-            .unwrap());
-        assert!(s
-            .eval::<bool>("return CanEditGuildTabInfo(2) == nil")
-            .unwrap());
-        assert!(s
-            .eval::<bool>("return CanWithdrawGuildBankMoney() == 1")
-            .unwrap());
-        assert_eq!(
-            s.eval::<i64>("return GetGuildBankTabCost()").unwrap(),
-            5_000_000
-        );
-        assert_eq!(
-            s.eval::<String>("return GetGuildBankText(1)").unwrap(),
-            "hello"
-        );
-        assert!(s.eval::<bool>("return GetGuildBankText(3) == nil").unwrap());
+        let (s, mut bank_v) = vm();
+        crate::script::live::lending(&mut bank_v, || {
+            let row = s
+                .eval::<(String, String, Option<i64>, Option<i64>, i64, i64)>(
+                    "return GetGuildBankTabInfo(1)",
+                )
+                .unwrap();
+            assert_eq!(
+                row,
+                (
+                    "Mats".into(),
+                    "Interface\\Icons\\INV_Fabric_Linen_01".into(),
+                    Some(1),
+                    Some(1),
+                    10,
+                    3
+                )
+            );
+            let row = s
+                .eval::<(Option<String>, String, Option<i64>, Option<i64>)>(
+                    "local n, i, v, d = GetGuildBankTabInfo(2) return n, i, v, d",
+                )
+                .unwrap();
+            assert_eq!(row.1, "Interface\\Icons\\INV_Misc_QuestionMark");
+            assert_eq!((row.2, row.3), (Some(1), None), "tab 2 is view-only");
+            assert_eq!(
+                s.eval::<(Option<String>, i64, i64)>(
+                    "local n, _, _, _, w, r = GetGuildBankTabInfo(3) return n, w, r"
+                )
+                .unwrap(),
+                (None, 0, 0),
+                "past the bought tabs"
+            );
+            assert!(s
+                .eval::<bool>("return CanEditGuildTabInfo(1) == 1")
+                .unwrap());
+            assert!(s
+                .eval::<bool>("return CanEditGuildTabInfo(2) == nil")
+                .unwrap());
+            assert!(s
+                .eval::<bool>("return CanWithdrawGuildBankMoney() == 1")
+                .unwrap());
+            assert_eq!(
+                s.eval::<i64>("return GetGuildBankTabCost()").unwrap(),
+                5_000_000
+            );
+            assert_eq!(
+                s.eval::<String>("return GetGuildBankText(1)").unwrap(),
+                "hello"
+            );
+            assert!(s.eval::<bool>("return GetGuildBankText(3) == nil").unwrap());
+        });
     }
 
     #[test]
     fn item_info_and_links_read_the_listed_slots() {
-        let (s, _bank) = vm();
-        assert_eq!(
-            s.eval::<(String, i64, Option<i64>)>("return GetGuildBankItemInfo(1, 3)")
-                .unwrap(),
-            ("Interface\\Icons\\I2589".into(), 7, None)
-        );
-        assert_eq!(
-            s.eval::<(Option<String>, i64, Option<i64>)>("return GetGuildBankItemInfo(1, 1)")
-                .unwrap(),
-            (None, 0, None)
-        );
-        assert_eq!(
-            s.eval::<(Option<String>, i64)>("return GetGuildBankItemInfo(2, 1)")
-                .unwrap(),
-            (None, 0),
-            "an unlisted tab"
-        );
-        assert!(s
-            .eval::<String>("return GetGuildBankItemLink(1, 98)")
-            .unwrap()
-            .contains("item:4306:"));
-        assert_eq!(s.arity("GetGuildBankItemLink(1, 1)").unwrap(), 0);
+        let (s, mut bank_v) = vm();
+        crate::script::live::lending(&mut bank_v, || {
+            assert_eq!(
+                s.eval::<(String, i64, Option<i64>)>("return GetGuildBankItemInfo(1, 3)")
+                    .unwrap(),
+                ("Interface\\Icons\\I2589".into(), 7, None)
+            );
+            assert_eq!(
+                s.eval::<(Option<String>, i64, Option<i64>)>("return GetGuildBankItemInfo(1, 1)")
+                    .unwrap(),
+                (None, 0, None)
+            );
+            assert_eq!(
+                s.eval::<(Option<String>, i64)>("return GetGuildBankItemInfo(2, 1)")
+                    .unwrap(),
+                (None, 0),
+                "an unlisted tab"
+            );
+            assert!(s
+                .eval::<String>("return GetGuildBankItemLink(1, 98)")
+                .unwrap()
+                .contains("item:4306:"));
+            assert_eq!(s.arity("GetGuildBankItemLink(1, 1)").unwrap(), 0);
+        });
     }
 
     #[test]
     fn a_pickup_locks_the_slot_and_a_drop_on_another_asks_a_move() {
-        let (mut s, _bank) = vm();
-        s.run("PickupGuildBankItem(1, 3)").unwrap();
-        assert!(s
-            .eval::<bool>("local _, _, l = GetGuildBankItemInfo(1, 3) return l == 1")
-            .unwrap());
-        let (kind, id) = s.eval::<(String, i64)>("return GetCursorInfo()").unwrap();
-        assert_eq!((kind.as_str(), id), ("item", 2589));
-        assert!(s.eval::<bool>("return not CursorHasItem()").unwrap());
-        s.run("PickupGuildBankItem(1, 10)").unwrap();
-        assert_eq!(
-            s.take_guild_bank_requests(),
-            vec![GuildBankRequest::MoveItem {
-                tab: 0,
-                slot: 9,
-                src_tab: 0,
-                src_slot: 2,
-                item_id: 2589,
-                split: None
-            }]
-        );
-        // The app sent it: the cursor clears and the slot unlocks.
-        s.settle_guild_bank(GuildBankVerdict::Sent);
-        assert!(s.eval::<bool>("return GetCursorInfo() == nil").unwrap());
-        assert!(s
-            .eval::<bool>("local _, _, l = GetGuildBankItemInfo(1, 3) return l == nil")
-            .unwrap());
+        let (mut s, mut bank_v) = vm();
+        crate::script::live::lending(&mut bank_v, || {
+            s.run("PickupGuildBankItem(1, 3)").unwrap();
+            assert!(s
+                .eval::<bool>("local _, _, l = GetGuildBankItemInfo(1, 3) return l == 1")
+                .unwrap());
+            let (kind, id) = s.eval::<(String, i64)>("return GetCursorInfo()").unwrap();
+            assert_eq!((kind.as_str(), id), ("item", 2589));
+            assert!(s.eval::<bool>("return not CursorHasItem()").unwrap());
+            s.run("PickupGuildBankItem(1, 10)").unwrap();
+            assert_eq!(
+                s.take_guild_bank_requests(),
+                vec![GuildBankRequest::MoveItem {
+                    tab: 0,
+                    slot: 9,
+                    src_tab: 0,
+                    src_slot: 2,
+                    item_id: 2589,
+                    split: None
+                }]
+            );
+            // The app sent it: the cursor clears and the slot unlocks.
+            s.settle_guild_bank(GuildBankVerdict::Sent);
+            assert!(s.eval::<bool>("return GetCursorInfo() == nil").unwrap());
+            assert!(s
+                .eval::<bool>("local _, _, l = GetGuildBankItemInfo(1, 3) return l == nil")
+                .unwrap());
+        });
     }
 
     #[test]
     fn a_split_takes_one_to_the_stack_size() {
-        let (mut s, _bank) = vm();
-        s.run("SplitGuildBankItem(1, 98, 21)").unwrap();
-        assert!(s.eval::<bool>("return GetCursorInfo() == nil").unwrap());
-        s.run("SplitGuildBankItem(1, 98, 5)").unwrap();
-        s.run("PickupContainerItem(0, 1)").unwrap();
-        assert_eq!(
-            s.take_guild_bank_requests(),
-            vec![GuildBankRequest::WithdrawItem {
-                src_tab: 0,
-                src_slot: 97,
-                item_id: 4306,
-                bag: 0,
-                bag_slot: 1,
-                split: Some(5)
-            }]
-        );
-        assert!(s.eval::<bool>("return GetCursorInfo() == nil").unwrap());
+        let (mut s, mut bank_v) = vm();
+        crate::script::live::lending(&mut bank_v, || {
+            s.run("SplitGuildBankItem(1, 98, 21)").unwrap();
+            assert!(s.eval::<bool>("return GetCursorInfo() == nil").unwrap());
+            s.run("SplitGuildBankItem(1, 98, 5)").unwrap();
+            s.run("PickupContainerItem(0, 1)").unwrap();
+            assert_eq!(
+                s.take_guild_bank_requests(),
+                vec![GuildBankRequest::WithdrawItem {
+                    src_tab: 0,
+                    src_slot: 97,
+                    item_id: 4306,
+                    bag: 0,
+                    bag_slot: 1,
+                    split: Some(5)
+                }]
+            );
+            assert!(s.eval::<bool>("return GetCursorInfo() == nil").unwrap());
+        });
     }
 
     #[test]
     fn bank_money_rides_cursor_mode_12() {
-        let (s, _bank) = vm();
-        assert_eq!(s.eval::<i64>("return GetGuildBankMoney()").unwrap(), 50_000);
-        s.run("PickupGuildBankMoney(60000)").unwrap();
-        assert!(
-            s.eval::<bool>("return GetCursorInfo() == nil").unwrap(),
-            "past the bank"
-        );
-        s.run("PickupGuildBankMoney(1234)").unwrap();
-        assert_eq!(
-            s.eval::<(String, i64)>("return GetCursorInfo()").unwrap(),
-            ("guildbankmoney".into(), 1234)
-        );
-        assert_eq!(s.eval::<i64>("return GetCursorMoney()").unwrap(), 1234);
-        assert!(s.eval::<bool>("return CursorHasMoney() == nil").unwrap());
-        s.run("ClearCursor()").unwrap();
-        assert!(s.eval::<bool>("return GetCursorInfo() == nil").unwrap());
+        let (s, mut bank_v) = vm();
+        crate::script::live::lending(&mut bank_v, || {
+            assert_eq!(s.eval::<i64>("return GetGuildBankMoney()").unwrap(), 50_000);
+            s.run("PickupGuildBankMoney(60000)").unwrap();
+            assert!(
+                s.eval::<bool>("return GetCursorInfo() == nil").unwrap(),
+                "past the bank"
+            );
+            s.run("PickupGuildBankMoney(1234)").unwrap();
+            assert_eq!(
+                s.eval::<(String, i64)>("return GetCursorInfo()").unwrap(),
+                ("guildbankmoney".into(), 1234)
+            );
+            assert_eq!(s.eval::<i64>("return GetCursorMoney()").unwrap(), 1234);
+            assert!(s.eval::<bool>("return CursorHasMoney() == nil").unwrap());
+            s.run("ClearCursor()").unwrap();
+            assert!(s.eval::<bool>("return GetCursorInfo() == nil").unwrap());
+        });
     }
 
     #[test]
     fn money_and_tab_sends_queue_their_requests() {
-        let (mut s, _bank) = vm();
-        s.set_money(500);
-        s.run("DepositGuildBankMoney(600)").unwrap();
-        assert!(s.take_guild_bank_requests().is_empty());
-        assert_eq!(s.take_shown(), vec!["ERR_NOT_ENOUGH_MONEY"]);
-        s.run("DepositGuildBankMoney(400) WithdrawGuildBankMoney(7.9) BuyGuildBankTab()")
-            .unwrap();
-        assert_eq!(
-            s.take_guild_bank_requests(),
-            vec![
-                GuildBankRequest::DepositMoney(400),
-                GuildBankRequest::WithdrawMoney(7),
-            ]
-        );
-        assert_eq!(
-            s.take_shown(),
-            vec!["ERR_BANKSLOT_INSUFFICIENT_FUNDS"],
-            "the third tab costs more than purse and bank"
-        );
-        s.run("QueryGuildBankTab(2) QueryGuildBankTab(7) QueryGuildBankLog(7) SetGuildBankText(1, 'x') AutoStoreGuildBankItem(1, 3)").unwrap();
-        assert_eq!(
-            s.take_guild_bank_requests(),
-            vec![
-                GuildBankRequest::QueryTab(1),
-                GuildBankRequest::QueryLog(6),
-                GuildBankRequest::SetText {
-                    tab: 0,
-                    text: "x".into()
-                },
-                GuildBankRequest::AutoStore {
-                    tab: 0,
-                    slot: 2,
-                    item_id: 2589,
-                    count: 7
-                },
-            ]
-        );
+        let (mut s, mut bank_v) = vm();
+        crate::script::live::lending(&mut bank_v, || {
+            s.set_money(500);
+            s.run("DepositGuildBankMoney(600)").unwrap();
+            assert!(s.take_guild_bank_requests().is_empty());
+            assert_eq!(s.take_shown(), vec!["ERR_NOT_ENOUGH_MONEY"]);
+            s.run("DepositGuildBankMoney(400) WithdrawGuildBankMoney(7.9) BuyGuildBankTab()")
+                .unwrap();
+            assert_eq!(
+                s.take_guild_bank_requests(),
+                vec![
+                    GuildBankRequest::DepositMoney(400),
+                    GuildBankRequest::WithdrawMoney(7),
+                ]
+            );
+            assert_eq!(
+                s.take_shown(),
+                vec!["ERR_BANKSLOT_INSUFFICIENT_FUNDS"],
+                "the third tab costs more than purse and bank"
+            );
+            s.run("QueryGuildBankTab(2) QueryGuildBankTab(7) QueryGuildBankLog(7) SetGuildBankText(1, 'x') AutoStoreGuildBankItem(1, 3)").unwrap();
+            assert_eq!(
+                s.take_guild_bank_requests(),
+                vec![
+                    GuildBankRequest::QueryTab(1),
+                    GuildBankRequest::QueryLog(6),
+                    GuildBankRequest::SetText {
+                        tab: 0,
+                        text: "x".into()
+                    },
+                    GuildBankRequest::AutoStore {
+                        tab: 0,
+                        slot: 2,
+                        item_id: 2589,
+                        count: 7
+                    },
+                ]
+            );
+        });
     }
 
     /// The lock, the cursor and the text's events fire inside their verb's call, in 12340's order:
@@ -1308,9 +1322,10 @@ mod tests {
     /// `GUILDBANKFRAME_CLOSED` before the banker clears, open or not (`0x5a4270`).
     #[test]
     fn the_bank_verbs_fire_their_events_inside_the_call() {
-        let (s, bank) = vm();
-        s.run(
-            r#"
+        let (s, mut bank_v) = vm();
+        crate::script::live::lending(&mut bank_v, || {
+            s.run(
+                r#"
             seen = {}
             local f = CreateFrame("Frame")
             for _, e in ipairs({"CURSOR_UPDATE", "GUILDBANK_ITEM_LOCK_CHANGED",
@@ -1327,212 +1342,229 @@ mod tests {
             CloseGuildBankFrame()
             CloseGuildBankFrame()
             "#,
-        )
-        .unwrap();
-        assert_eq!(
-            s.eval::<i64>("return calls").unwrap(),
-            3,
-            "inside the pickup"
-        );
-        let seen: Vec<String> = s.eval("return seen").unwrap();
-        assert_eq!(
-            seen,
-            [
-                "CURSOR_UPDATE:nil:nil:2",
-                "CURSOR_UPDATE:nil:nil:2",
-                "GUILDBANK_ITEM_LOCK_CHANGED:nil:1:2",
-                "GUILDBANK_UPDATE_TEXT:1:1:2",
-                "GUILDBANKFRAME_CLOSED:nil:1:2",
-                "GUILDBANKFRAME_CLOSED:nil:1:2",
-            ]
-        );
-        assert_eq!(bank.with_view(|v| v.guild_bank_text_sent.clone()), [1]);
-        assert!(!bank.with_view(|v| v.guild_bank.open), "the banker cleared");
+            )
+            .unwrap();
+            assert_eq!(
+                s.eval::<i64>("return calls").unwrap(),
+                3,
+                "inside the pickup"
+            );
+            let seen: Vec<String> = s.eval("return seen").unwrap();
+            assert_eq!(
+                seen,
+                [
+                    "CURSOR_UPDATE:nil:nil:2",
+                    "CURSOR_UPDATE:nil:nil:2",
+                    "GUILDBANK_ITEM_LOCK_CHANGED:nil:1:2",
+                    "GUILDBANK_UPDATE_TEXT:1:1:2",
+                    "GUILDBANKFRAME_CLOSED:nil:1:2",
+                    "GUILDBANKFRAME_CLOSED:nil:1:2",
+                ]
+            );
+            assert_eq!(
+                crate::script::live::test_view(|v| v.guild_bank_text_sent.clone()),
+                [1]
+            );
+            assert!(
+                !crate::script::live::test_view(|v| v.guild_bank.open),
+                "the banker cleared"
+            );
+        });
     }
 
     #[test]
     fn the_logs_read_with_their_ages() {
-        let (s, _bank) = vm();
-        assert_eq!(
-            s.eval::<i64>("return GetNumGuildBankTransactions(1)")
-                .unwrap(),
-            1
-        );
-        assert_eq!(
-            s.eval::<i64>("return GetNumGuildBankTransactions(8)")
-                .unwrap(),
-            0
-        );
-        let row = s
+        let (s, mut bank_v) = vm();
+        crate::script::live::lending(&mut bank_v, || {
+            assert_eq!(
+                s.eval::<i64>("return GetNumGuildBankTransactions(1)")
+                    .unwrap(),
+                1
+            );
+            assert_eq!(
+                s.eval::<i64>("return GetNumGuildBankTransactions(8)")
+                    .unwrap(),
+                0
+            );
+            let row = s
             .eval::<(String, String, String, i64, i64, i64)>(
                 "local t, n, l, c, a, b = GetGuildBankTransaction(1, 1) return t, n, l, c, a, b",
             )
             .unwrap();
-        assert_eq!(row, ("move".into(), "Claude".into(), "L".into(), 5, 1, 3));
-        assert_eq!(
+            assert_eq!(row, ("move".into(), "Claude".into(), "L".into(), 5, 1, 3));
+            assert_eq!(
             s.eval::<(i64, i64, i64, i64)>(
                 "local _, _, _, _, _, _, y, m, d, h = GetGuildBankTransaction(1, 1) return y, m, d, h"
             )
             .unwrap(),
             (0, 0, 2, 3)
         );
-        assert_eq!(
-            s.eval::<i64>("return GetNumGuildBankMoneyTransactions()")
-                .unwrap(),
-            1
-        );
-        assert_eq!(
-            s.eval::<(String, Option<String>, i64)>("return GetGuildBankMoneyTransaction(1)")
-                .unwrap(),
-            ("withdrawForTab".into(), None, 1000)
-        );
+            assert_eq!(
+                s.eval::<i64>("return GetNumGuildBankMoneyTransactions()")
+                    .unwrap(),
+                1
+            );
+            assert_eq!(
+                s.eval::<(String, Option<String>, i64)>("return GetGuildBankMoneyTransaction(1)")
+                    .unwrap(),
+                ("withdrawForTab".into(), None, 1000)
+            );
+        });
     }
 
     #[test]
     fn tabard_files_follow_the_tabard_or_are_nil() {
-        let (mut s, _bank) = vm();
-        assert_eq!(s.arity("GetGuildTabardFileNames()").unwrap(), 6);
-        assert!(s
-            .eval::<bool>("return GetGuildTabardFileNames() == nil")
-            .unwrap());
-        let mut g = member(0, 0, [(0, 0); 6]);
-        g.tabard = Some([3, 15, 1, 4, 41]);
-        s.set_guild(g);
-        assert_eq!(
-            s.eval::<(String, String, String, String, String, String)>(
-                "return GetGuildTabardFileNames()"
-            )
-            .unwrap(),
-            (
-                "Textures\\GuildEmblems\\Background_41_TU_U".into(),
-                "Textures\\GuildEmblems\\Background_41_TL_U".into(),
-                "Textures\\GuildEmblems\\Emblem_03_15_TU_U".into(),
-                "Textures\\GuildEmblems\\Emblem_03_15_TL_U".into(),
-                "Textures\\GuildEmblems\\Border_01_04_TU_U".into(),
-                "Textures\\GuildEmblems\\Border_01_04_TL_U".into(),
-            )
-        );
+        let (mut s, mut bank_v) = vm();
+        crate::script::live::lending(&mut bank_v, || {
+            assert_eq!(s.arity("GetGuildTabardFileNames()").unwrap(), 6);
+            assert!(s
+                .eval::<bool>("return GetGuildTabardFileNames() == nil")
+                .unwrap());
+            let mut g = member(0, 0, [(0, 0); 6]);
+            g.tabard = Some([3, 15, 1, 4, 41]);
+            s.set_guild(g);
+            assert_eq!(
+                s.eval::<(String, String, String, String, String, String)>(
+                    "return GetGuildTabardFileNames()"
+                )
+                .unwrap(),
+                (
+                    "Textures\\GuildEmblems\\Background_41_TU_U".into(),
+                    "Textures\\GuildEmblems\\Background_41_TL_U".into(),
+                    "Textures\\GuildEmblems\\Emblem_03_15_TU_U".into(),
+                    "Textures\\GuildEmblems\\Emblem_03_15_TL_U".into(),
+                    "Textures\\GuildEmblems\\Border_01_04_TU_U".into(),
+                    "Textures\\GuildEmblems\\Border_01_04_TL_U".into(),
+                )
+            );
+        });
     }
 
     #[test]
     fn the_tab_icon_chooser_and_a_tab_rename() {
-        let (mut s, _bank) = vm();
-        s.set_macro_item_icon_source(Box::new(|| {
-            vec![
-                "Interface\\Icons\\INV_Misc_QuestionMark".into(),
-                "Interface\\Icons\\INV_Axe_01".into(),
-            ]
-        }));
-        assert_eq!(s.eval::<i64>("return GetNumMacroItemIcons()").unwrap(), 2);
-        assert_eq!(
-            s.eval::<String>("return GetMacroItemIconInfo(2)").unwrap(),
-            "Interface\\Icons\\INV_Axe_01"
-        );
-        assert_eq!(
-            s.eval::<String>("return GetMacroItemIconInfo(3)").unwrap(),
-            ""
-        );
-        s.run("SetGuildBankTabInfo(1, 'Ore 2', 2)").unwrap();
-        s.run("SetGuildBankTabInfo(1, \"Ore's\", 2)").unwrap();
-        assert_eq!(
-            s.take_guild_bank_requests(),
-            vec![GuildBankRequest::SetTabInfo {
-                tab: 0,
-                name: "Ore 2".into(),
-                icon: "INV_Axe_01".into()
-            }]
-        );
-        assert_eq!(s.take_shown(), vec!["ERR_NAME_INVALID"]);
+        let (mut s, mut bank_v) = vm();
+        crate::script::live::lending(&mut bank_v, || {
+            s.set_macro_item_icon_source(Box::new(|| {
+                vec![
+                    "Interface\\Icons\\INV_Misc_QuestionMark".into(),
+                    "Interface\\Icons\\INV_Axe_01".into(),
+                ]
+            }));
+            assert_eq!(s.eval::<i64>("return GetNumMacroItemIcons()").unwrap(), 2);
+            assert_eq!(
+                s.eval::<String>("return GetMacroItemIconInfo(2)").unwrap(),
+                "Interface\\Icons\\INV_Axe_01"
+            );
+            assert_eq!(
+                s.eval::<String>("return GetMacroItemIconInfo(3)").unwrap(),
+                ""
+            );
+            s.run("SetGuildBankTabInfo(1, 'Ore 2', 2)").unwrap();
+            s.run("SetGuildBankTabInfo(1, \"Ore's\", 2)").unwrap();
+            assert_eq!(
+                s.take_guild_bank_requests(),
+                vec![GuildBankRequest::SetTabInfo {
+                    tab: 0,
+                    name: "Ore 2".into(),
+                    icon: "INV_Axe_01".into()
+                }]
+            );
+            assert_eq!(s.take_shown(), vec!["ERR_NAME_INVALID"]);
+        });
     }
 
     /// With the host's state lent a swap's gates run inside the call (`0x5a63a1`, `0x5a63c5`): a send clears the cursor and signals `GUILDBANKBAGSLOTS_CHANGED` before the verb returns (`0x5a5688`, `0x5a5694`), and nothing waits for the drain.
     #[test]
     fn a_sent_swap_clears_and_signals_inside_the_call() {
         use crate::script::calls::in_call;
-        let (mut s, _bank) = vm();
-        s.run("PickupGuildBankItem(1, 3)").unwrap();
-        crate::script::tick::fired::take();
-        let asked = in_call::run(
-            &mut s,
-            Some(HostAnswer::GuildBank(GuildBankVerdict::Sent)),
-            "PickupGuildBankItem(1, 10) HELD_AFTER = GetCursorInfo()",
-        );
-        assert_eq!(
-            asked,
-            [HostAsk::GuildBank(GuildBankRequest::MoveItem {
-                tab: 0,
-                slot: 9,
-                src_tab: 0,
-                src_slot: 2,
-                item_id: 2589,
-                split: None
-            })]
-        );
-        let fired = crate::script::tick::fired::names();
-        assert_eq!(
-            fired.last().map(String::as_str),
-            Some("GUILDBANKBAGSLOTS_CHANGED"),
-            "{fired:?}"
-        );
-        assert!(fired.contains(&"CURSOR_UPDATE".to_string()), "{fired:?}");
-        assert!(
-            fired.contains(&"GUILDBANK_ITEM_LOCK_CHANGED".to_string()),
-            "{fired:?}"
-        );
-        assert!(s.eval::<bool>("return HELD_AFTER == nil").unwrap());
-        assert!(s.take_guild_bank_requests().is_empty());
+        let (mut s, mut bank) = vm();
+        crate::script::live::lending(&mut bank, || {
+            s.run("PickupGuildBankItem(1, 3)").unwrap();
+            crate::script::tick::fired::take();
+            let asked = in_call::run(
+                &mut s,
+                Some(HostAnswer::GuildBank(GuildBankVerdict::Sent)),
+                "PickupGuildBankItem(1, 10) HELD_AFTER = GetCursorInfo()",
+            );
+            assert_eq!(
+                asked,
+                [HostAsk::GuildBank(GuildBankRequest::MoveItem {
+                    tab: 0,
+                    slot: 9,
+                    src_tab: 0,
+                    src_slot: 2,
+                    item_id: 2589,
+                    split: None
+                })]
+            );
+            let fired = crate::script::tick::fired::names();
+            assert_eq!(
+                fired.last().map(String::as_str),
+                Some("GUILDBANKBAGSLOTS_CHANGED"),
+                "{fired:?}"
+            );
+            assert!(fired.contains(&"CURSOR_UPDATE".to_string()), "{fired:?}");
+            assert!(
+                fired.contains(&"GUILDBANK_ITEM_LOCK_CHANGED".to_string()),
+                "{fired:?}"
+            );
+            assert!(s.eval::<bool>("return HELD_AFTER == nil").unwrap());
+            assert!(s.take_guild_bank_requests().is_empty());
+        });
     }
 
     /// A refused swap shows its line inside the call with the cursor still holding (`0x5a5476`); an unresolved item back on its own slot only clears (`0x5a55fe`); the bank-to-bag swap's refusal shows before the verb's own clear (`0x5d8472`, `0x5d847b`).
     #[test]
     fn a_refused_swap_shows_its_line_inside_the_call() {
         use crate::script::calls::in_call;
-        let (mut s, _bank) = vm();
-        s.run(
-            r#"local f = CreateFrame("Frame")
-               f:RegisterEvent("UI_ERROR_MESSAGE")
-               f:SetScript("OnEvent", function() HELD_AT_LINE = GetCursorInfo() end)
-               PickupGuildBankItem(1, 3)"#,
-        )
-        .unwrap();
-        let g = s.lua().globals();
-        g.set(
-            "ERR_GUILD_BANK_BOUND_ITEM",
-            "You cannot store soulbound items in the guild bank",
-        )
-        .unwrap();
-        crate::script::tick::fired::take();
-        let refused = Some(HostAnswer::GuildBank(GuildBankVerdict::Refused(
-            "ERR_GUILD_BANK_BOUND_ITEM",
-        )));
-        in_call::run(&mut s, refused, "PickupGuildBankItem(1, 10)");
-        assert_eq!(crate::script::tick::fired::names(), ["UI_ERROR_MESSAGE"]);
-        assert_eq!(s.take_shown(), ["ERR_GUILD_BANK_BOUND_ITEM"]);
-        assert!(s.eval::<bool>("return GetCursorInfo() == 'item'").unwrap());
+        let (mut s, mut bank) = vm();
+        crate::script::live::lending(&mut bank, || {
+            s.run(
+                r#"local f = CreateFrame("Frame")
+                   f:RegisterEvent("UI_ERROR_MESSAGE")
+                   f:SetScript("OnEvent", function() HELD_AT_LINE = GetCursorInfo() end)
+                   PickupGuildBankItem(1, 3)"#,
+            )
+            .unwrap();
+            let g = s.lua().globals();
+            g.set(
+                "ERR_GUILD_BANK_BOUND_ITEM",
+                "You cannot store soulbound items in the guild bank",
+            )
+            .unwrap();
+            crate::script::tick::fired::take();
+            let refused = Some(HostAnswer::GuildBank(GuildBankVerdict::Refused(
+                "ERR_GUILD_BANK_BOUND_ITEM",
+            )));
+            in_call::run(&mut s, refused, "PickupGuildBankItem(1, 10)");
+            assert_eq!(crate::script::tick::fired::names(), ["UI_ERROR_MESSAGE"]);
+            assert_eq!(s.take_shown(), ["ERR_GUILD_BANK_BOUND_ITEM"]);
+            assert!(s.eval::<bool>("return GetCursorInfo() == 'item'").unwrap());
 
-        // The bank-to-bag swap: the line with the item still held, then the clear.
-        s.run("HELD_AT_LINE = nil").unwrap();
-        in_call::run(&mut s, refused, "PickupContainerItem(0, 1)");
-        let fired = crate::script::tick::fired::names();
-        assert_eq!(fired[0], "UI_ERROR_MESSAGE", "{fired:?}");
-        assert!(
-            fired[1..].contains(&"CURSOR_UPDATE".to_string()),
-            "{fired:?}"
-        );
-        assert!(s
-            .eval::<bool>("return HELD_AT_LINE == 'item' and GetCursorInfo() == nil")
-            .unwrap());
+            // The bank-to-bag swap: the line with the item still held, then the clear.
+            s.run("HELD_AT_LINE = nil").unwrap();
+            in_call::run(&mut s, refused, "PickupContainerItem(0, 1)");
+            let fired = crate::script::tick::fired::names();
+            assert_eq!(fired[0], "UI_ERROR_MESSAGE", "{fired:?}");
+            assert!(
+                fired[1..].contains(&"CURSOR_UPDATE".to_string()),
+                "{fired:?}"
+            );
+            assert!(s
+                .eval::<bool>("return HELD_AT_LINE == 'item' and GetCursorInfo() == nil")
+                .unwrap());
 
-        s.run("PickupGuildBankItem(1, 3)").unwrap();
-        crate::script::tick::fired::take();
-        let dropped = Some(HostAnswer::GuildBank(GuildBankVerdict::DropHeld));
-        in_call::run(&mut s, dropped, "PickupGuildBankItem(1, 3)");
-        let fired = crate::script::tick::fired::names();
-        assert!(
-            !fired.contains(&"GUILDBANKBAGSLOTS_CHANGED".to_string()),
-            "{fired:?}"
-        );
-        assert!(s.eval::<bool>("return GetCursorInfo() == nil").unwrap());
+            s.run("PickupGuildBankItem(1, 3)").unwrap();
+            crate::script::tick::fired::take();
+            let dropped = Some(HostAnswer::GuildBank(GuildBankVerdict::DropHeld));
+            in_call::run(&mut s, dropped, "PickupGuildBankItem(1, 3)");
+            let fired = crate::script::tick::fired::names();
+            assert!(
+                !fired.contains(&"GUILDBANKBAGSLOTS_CHANGED".to_string()),
+                "{fired:?}"
+            );
+            assert!(s.eval::<bool>("return GetCursorInfo() == nil").unwrap());
+        });
     }
 
     /// The auto-store signals inside the call after its clear (`0x5a64c1`, `0x5a65c5`), and it and the pickup stop a targeting cursor first (`0x5a64e6`, `0x5a6329`).
@@ -1540,29 +1572,31 @@ mod tests {
     fn the_auto_store_signals_and_both_takes_stop_targeting_inside_the_call() {
         use crate::script::calls::in_call;
         use crate::script::live::TestTargeting;
-        let (mut s, _bank) = vm();
-        s.set_spell_targeting(true);
-        crate::script::tick::fired::take();
-        let stored = Some(HostAnswer::GuildBank(GuildBankVerdict::Stored));
-        let asked = in_call::run(&mut s, stored, "AutoStoreGuildBankItem(1, 3)");
-        assert_eq!(asked.len(), 1);
-        assert_eq!(
-            crate::script::tick::fired::names(),
-            [
-                "CURSOR_UPDATE",
-                "APPLIED SpellStopTargeting",
-                "GUILDBANKBAGSLOTS_CHANGED"
-            ]
-        );
-        in_call::run(&mut s, None, "PickupGuildBankItem(1, 3)");
-        let fired = crate::script::tick::fired::names();
-        assert_eq!(fired[0], "APPLIED SpellStopTargeting", "{fired:?}");
-        assert_eq!(
-            fired.last().map(String::as_str),
-            Some("GUILDBANK_ITEM_LOCK_CHANGED"),
-            "{fired:?}"
-        );
-        s.set_spell_targeting(false);
+        let (mut s, mut bank) = vm();
+        crate::script::live::lending(&mut bank, || {
+            s.set_spell_targeting(true);
+            crate::script::tick::fired::take();
+            let stored = Some(HostAnswer::GuildBank(GuildBankVerdict::Stored));
+            let asked = in_call::run(&mut s, stored, "AutoStoreGuildBankItem(1, 3)");
+            assert_eq!(asked.len(), 1);
+            assert_eq!(
+                crate::script::tick::fired::names(),
+                [
+                    "CURSOR_UPDATE",
+                    "APPLIED SpellStopTargeting",
+                    "GUILDBANKBAGSLOTS_CHANGED"
+                ]
+            );
+            in_call::run(&mut s, None, "PickupGuildBankItem(1, 3)");
+            let fired = crate::script::tick::fired::names();
+            assert_eq!(fired[0], "APPLIED SpellStopTargeting", "{fired:?}");
+            assert_eq!(
+                fired.last().map(String::as_str),
+                Some("GUILDBANK_ITEM_LOCK_CHANGED"),
+                "{fired:?}"
+            );
+            s.set_spell_targeting(false);
+        });
     }
 
     /// The split clears the cursor and stops a targeting cursor before the stack goes up (`0x5a6778`, `0x5a6780`), and a whole stack goes up twice, plain and then with its amount (`0x5a6799`, `0x5a67ba`).
@@ -1570,32 +1604,34 @@ mod tests {
     fn a_split_clears_and_stops_targeting_before_it_holds() {
         use crate::script::calls::in_call;
         use crate::script::live::TestTargeting;
-        let (mut s, _bank) = vm();
-        s.set_spell_targeting(true);
-        crate::script::tick::fired::take();
-        in_call::run(&mut s, None, "SplitGuildBankItem(1, 98, 5)");
-        let fired = crate::script::tick::fired::names();
-        assert_eq!(
-            fired[..2],
-            ["CURSOR_UPDATE", "APPLIED SpellStopTargeting"],
-            "{fired:?}"
-        );
-        let locks = |fired: &[String]| {
-            fired
-                .iter()
-                .filter(|e| *e == "GUILDBANK_ITEM_LOCK_CHANGED")
-                .count()
-        };
-        assert_eq!(locks(&fired), 1, "{fired:?}");
-        s.set_spell_targeting(false);
-        s.run("ClearCursor()").unwrap();
-        crate::script::tick::fired::take();
-        // The whole stack of 20: locked, unlocked by the second setter's clear, locked again.
-        s.run("SplitGuildBankItem(1, 98, 20)").unwrap();
-        assert_eq!(locks(&crate::script::tick::fired::names()), 3);
-        assert_eq!(
-            s.eval::<(String, i64)>("return GetCursorInfo()").unwrap().0,
-            "item"
-        );
+        let (mut s, mut bank) = vm();
+        crate::script::live::lending(&mut bank, || {
+            s.set_spell_targeting(true);
+            crate::script::tick::fired::take();
+            in_call::run(&mut s, None, "SplitGuildBankItem(1, 98, 5)");
+            let fired = crate::script::tick::fired::names();
+            assert_eq!(
+                fired[..2],
+                ["CURSOR_UPDATE", "APPLIED SpellStopTargeting"],
+                "{fired:?}"
+            );
+            let locks = |fired: &[String]| {
+                fired
+                    .iter()
+                    .filter(|e| *e == "GUILDBANK_ITEM_LOCK_CHANGED")
+                    .count()
+            };
+            assert_eq!(locks(&fired), 1, "{fired:?}");
+            s.set_spell_targeting(false);
+            s.run("ClearCursor()").unwrap();
+            crate::script::tick::fired::take();
+            // The whole stack of 20: locked, unlocked by the second setter's clear, locked again.
+            s.run("SplitGuildBankItem(1, 98, 20)").unwrap();
+            assert_eq!(locks(&crate::script::tick::fired::names()), 3);
+            assert_eq!(
+                s.eval::<(String, i64)>("return GetCursorInfo()").unwrap().0,
+                "item"
+            );
+        });
     }
 }

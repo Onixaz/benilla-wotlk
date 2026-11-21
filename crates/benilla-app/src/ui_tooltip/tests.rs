@@ -1131,3 +1131,28 @@ fn the_mouseover_token_clears_when_no_unit_is_hovered() {
         assert_eq!(named(&mut app), (None, None), "after {what}");
     }
 }
+
+/// The hover's tooltip builder runs Lua (`OnTooltipSetDefaultAnchor`, the unit render), so the
+/// driver, which holds the VM in turn, queues it: it runs at the raise step after the feed with the
+/// `World` lent, not inside the system (a debug build fails a chunk run there).
+#[test]
+fn the_hover_builds_the_unit_plate_at_the_raise_step() {
+    let (mut app, wolf, _) = mouseover_app();
+    app.init_resource::<crate::ui_script::live::UiEvents>();
+    app.world_mut()
+        .non_send_resource_mut::<UiScript>()
+        .run(
+            r#"Anchored = 0
+               local t = CreateFrame("GameTooltip", "GameTooltip")
+               t:SetScript("OnTooltipSetDefaultAnchor", function() Anchored = Anchored + 1 end)"#,
+        )
+        .unwrap();
+    hover_unit(&mut app, wolf, WOLF);
+    assert_eq!(
+        eval(&mut app, "return Anchored"),
+        Some(0),
+        "nothing ran in the feed"
+    );
+    crate::ui_script::live::fire_handler_events(app.world_mut());
+    assert_eq!(eval(&mut app, "return Anchored"), Some(1));
+}

@@ -27,53 +27,57 @@ fn player() -> UnitState {
 /// The reference's order: the `Usage:` check, the not-targeting no-op, the queue.
 #[test]
 fn spell_target_unit_checks_in_the_references_order() {
-    let mut s = UiScript::new().unwrap();
-    let usage = |s: &mut UiScript, call: &str| {
-        let err = s.run(call).expect_err(call).to_string();
-        assert!(
-            err.contains(r#"Usage: SpellTargetUnit("unit")"#),
-            "{call}: {err}"
+    crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+        let mut s = UiScript::new().unwrap();
+        let usage = |s: &mut UiScript, call: &str| {
+            let err = s.run(call).expect_err(call).to_string();
+            assert!(
+                err.contains(r#"Usage: SpellTargetUnit("unit")"#),
+                "{call}: {err}"
+            );
+        };
+
+        // Not targeting: the argument is still type-checked, then nothing, not even the token check.
+        usage(&mut s, "SpellTargetUnit({})");
+        usage(&mut s, "SpellTargetUnit()");
+        s.run(r#"SpellTargetUnit("not-a-unit") SpellTargetUnit("player")"#)
+            .expect("a bad token is no error while not targeting");
+        assert!(s.take_spell_target_unit().is_empty(), "and nothing queues");
+
+        // Targeting: a known token queues, resolved or not.
+        s.set_spell_targeting(true);
+        usage(&mut s, "SpellTargetUnit(nil)");
+        s.run(r#"SpellTargetUnit("player") SpellTargetUnit("party1")"#)
+            .unwrap();
+        assert_eq!(
+            s.take_spell_target_unit(),
+            vec!["player".to_string(), "party1".to_string()]
         );
-    };
-
-    // Not targeting: the argument is still type-checked, then nothing, not even the token check.
-    usage(&mut s, "SpellTargetUnit({})");
-    usage(&mut s, "SpellTargetUnit()");
-    s.run(r#"SpellTargetUnit("not-a-unit") SpellTargetUnit("player")"#)
-        .expect("a bad token is no error while not targeting");
-    assert!(s.take_spell_target_unit().is_empty(), "and nothing queues");
-
-    // Targeting: a known token queues, resolved or not.
-    s.set_spell_targeting(true);
-    usage(&mut s, "SpellTargetUnit(nil)");
-    s.run(r#"SpellTargetUnit("player") SpellTargetUnit("party1")"#)
-        .unwrap();
-    assert_eq!(
-        s.take_spell_target_unit(),
-        vec!["player".to_string(), "party1".to_string()]
-    );
+    });
 }
 
 #[test]
 fn spell_can_target_unit_answers_per_validated_token() {
-    let mut s = UiScript::new().unwrap();
-    s.set_unit_guids(&UnitGuids {
-        player: 0x10,
-        party: [0x21, 0, 0, 0],
-        target: 0x30,
-        ..Default::default()
+    crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+        let mut s = UiScript::new().unwrap();
+        s.set_unit_guids(&UnitGuids {
+            player: 0x10,
+            party: [0x21, 0, 0, 0],
+            target: 0x30,
+            ..Default::default()
+        });
+        s.set_spell_targeting(true);
+        s.set_spell_targetable_units([0x10, 0x21]);
+        assert!(s
+            .eval::<bool>(r#"return SpellCanTargetUnit("player") == 1"#)
+            .unwrap());
+        assert!(s
+            .eval::<bool>(r#"return SpellCanTargetUnit("PARTY1") == 1"#)
+            .unwrap());
+        assert!(s
+            .eval::<bool>(r#"return SpellCanTargetUnit("target") == nil"#)
+            .unwrap());
     });
-    s.set_spell_targeting(true);
-    s.set_spell_targetable_units([0x10, 0x21]);
-    assert!(s
-        .eval::<bool>(r#"return SpellCanTargetUnit("player") == 1"#)
-        .unwrap());
-    assert!(s
-        .eval::<bool>(r#"return SpellCanTargetUnit("PARTY1") == 1"#)
-        .unwrap());
-    assert!(s
-        .eval::<bool>(r#"return SpellCanTargetUnit("target") == nil"#)
-        .unwrap());
 }
 
 /// `0x60e630`: `0x` and sixteen upper-case hex digits, nil for nobody, a counter-hidden

@@ -2,7 +2,7 @@
 
 use bevy::prelude::*;
 
-use benilla_ui::script::{UiScript, UnitState};
+use benilla_ui::script::UnitState;
 
 use crate::creature_type::CreatureTypeSources;
 use crate::names::NameCache;
@@ -50,13 +50,13 @@ pub(crate) fn push_pet_token(world: &mut World) {
 }
 
 fn push_pet_token_system(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     pet: PetUnit,
     names: Res<NameCache>,
     commands: Res<NetCommands>,
     spells: Option<Res<crate::ui_action::Spells>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let fresh = pet_snapshot(&pet, &names, &commands, spells.as_deref());
@@ -65,7 +65,7 @@ fn push_pet_token_system(
 
 /// Feed the `"pet"` token's per-field `UNIT_*` events, the units' fan-out (#1289).
 pub(crate) fn feed_pet_unit(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     pet: PetUnit,
     // The per-field edges, for `fire_transitions`' watch-bridge arms.
     mut field_edges: MessageReader<crate::net::FieldChanged>,
@@ -77,7 +77,7 @@ pub(crate) fn feed_pet_unit(
     spells: Option<Res<crate::ui_action::Spells>>,
     mut memory: Local<crate::ui_script::VmMemo<PetUnitMemory>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let (memory, vm_reset) = memory.get_reset(&script);
