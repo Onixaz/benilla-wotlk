@@ -1,18 +1,19 @@
-//! The unit-token resolver, token to guid, over the state it reads, which the app pushes as
-//! [`UnitGuids`] (`0x60abf0`). Every compare folds ASCII case. A token is a base, then hops: the
-//! bases are 12340's, in its compare order: `player`, `vehicle`, `pet`, `target`, `partypetN`,
-//! `partyN`, `raidpetN`, `raidN`, `bossN`, `arenapetN`, `arenaN`, `commentatorN`, `mouseover`,
-//! `focus`, then the exact `npc`, `questnpc` and `none`. Each hop after it (`0x60aaa0`), behind an
-//! optional `-`, is `target` or `pet`. A token whose base names nobody with text after it, whose
-//! text is not hops, or that no base matches goes to the name lookup (`0x60a630`): a group member's
-//! or pet's name, then hops.
+//! The unit-token resolver, token to guid (`0x60abf0`), over the client's state read at the call
+//! through the lent view ([`super::super::LiveState::unit_base`]). Every compare folds ASCII case.
+//! A token is a base, then hops: the bases are 12340's, in its compare order: `player`, `vehicle`,
+//! `pet`, `target`, `partypetN`, `partyN`, `raidpetN`, `raidN`, `bossN`, `arenapetN`, `arenaN`,
+//! `commentatorN`, `mouseover`, `focus`, then the exact `npc`, `questnpc` and `none`. Each hop
+//! after it (`0x60aaa0`), behind an optional `-`, is `target` or `pet`. A token whose base names
+//! nobody with text after it, whose text is not hops, or that no base matches goes to the name
+//! lookup (`0x60a630`): a group member's or pet's name, then hops.
 
 use std::collections::HashMap;
 
 use super::super::live::read_live;
 
-/// What the resolver reads: the guid globals, the group tables and, for each unit a token can
-/// reach, whether it is held and whom it targets. A zero guid is nobody.
+/// A fixed set of the resolver's tables, for a test or a capture fixture with no game behind the
+/// VM: the guid globals, the group tables and, for each unit a token can reach, whether it is held
+/// and whom it targets. A zero guid is nobody. The game's own are read at the call, never copied.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct UnitGuids {
     /// The local player's guid; 0 without the player object, when `player` and `pet` answer nil.
@@ -25,10 +26,8 @@ pub struct UnitGuids {
     pub target: u64,
     /// The mouseover global, read only while it is a held unit.
     pub mouseover: u64,
-    /// The interact target as last pushed, which `"npc"` names when no view is lent.
+    /// The interact target, which `"npc"` names when no view is lent.
     pub npc: u64,
-    /// The focus `[0xbd07d0]`, which `FocusUnit` sets in the VM; a push keeps the VM's.
-    pub focus: u64,
     /// `partyN`'s guid, index N-1.
     pub party: [u64; 4],
     /// `partypetN`'s guid, index N-1.
@@ -50,6 +49,17 @@ pub struct UnitGuids {
     /// lookup (`0x60c1f0`, type mask 8 at `0x60c21e`) and the descriptor read a `target` hop
     /// makes. A guid missing here is not held.
     pub held: HashMap<u64, u64>,
+}
+
+/// The rows of each numbered base's table at the call, which the name lookup and the unit-event
+/// fan-out walk: the party's filled slots, the raid roster's rows, `GetNumArenaOpponents`
+/// (`0x549630`) and the encounter's slots.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct UnitCounts {
+    pub party: usize,
+    pub raid: usize,
+    pub arena: usize,
+    pub boss: usize,
 }
 
 /// A token's base, the resolver's compares in its order (`partypet` before `party`, `raidpet`
@@ -289,49 +299,87 @@ fn same_name(buffer: &[u8], name: &str) -> bool {
     String::from_utf8_lossy(buffer).to_lowercase() == name.to_lowercase()
 }
 
-impl UnitGuids {
-    /// Equal in everything a push carries: the focus is the VM's own.
-    pub(crate) fn same_push(&self, other: &Self) -> bool {
-        let Self {
-            player,
-            pet,
-            vehicle,
-            target,
-            mouseover,
-            npc,
-            focus: _,
-            party,
-            party_pets,
-            raid,
-            raid_pets,
-            boss,
-            arena,
-            arena_pets,
-            arena_count,
-            held,
-        } = self;
-        *player == other.player
-            && *pet == other.pet
-            && *vehicle == other.vehicle
-            && *target == other.target
-            && *mouseover == other.mouseover
-            && *npc == other.npc
-            && *party == other.party
-            && *party_pets == other.party_pets
-            && *raid == other.raid
-            && *raid_pets == other.raid_pets
-            && *boss == other.boss
-            && *arena == other.arena
-            && *arena_pets == other.arena_pets
-            && *arena_count == other.arena_count
-            && *held == other.held
+/// A numbered base by its 0-based row.
+type Numbered = fn(u32) -> UnitBase;
+
+/// Where a [`Tokens`] reads the tables.
+#[derive(Clone, Copy)]
+enum Src<'a> {
+    /// The game's, through the lent view, at each read.
+    Live,
+    /// A test's or a capture fixture's.
+    Fixture(&'a UnitGuids),
+    /// No game and no fixture: every table names nobody.
+    Empty,
+}
+
+/// The resolver over the client's state at the call (`0x60abf0`): the game's through the lent
+/// view, or, where no view lends it, a fixture's. The focus `[0xbd07d0]` is the VM's own.
+#[derive(Clone, Copy)]
+pub(crate) struct Tokens<'a> {
+    src: Src<'a>,
+    focus: u64,
+}
+
+impl<'a> Tokens<'a> {
+    /// A fixture's tables where a test or a harness set one, else the game's when the lent view
+    /// reads them, else none.
+    pub(crate) fn new(fixture: Option<&'a UnitGuids>, focus: u64) -> Self {
+        let src = match fixture {
+            Some(g) => Src::Fixture(g),
+            None if read_live(|l| l.unit_base(UnitBase::Player).is_some()).unwrap_or(false) => {
+                Src::Live
+            }
+            None => Src::Empty,
+        };
+        Self { src, focus }
     }
 
-    /// The guid `token` names with no name lookup, which needs the names [`Self::resolve_named`]
-    /// reads: `None` for nobody, `Err` where the lookup would run.
+    /// `fixture`'s tables alone, whatever view is lent.
     #[cfg(test)]
-    pub(crate) fn resolve(&self, token: &str) -> Result<Option<u64>, ()> {
-        self.resolve_named(token, |_, _| None)
+    pub(crate) fn of(fixture: &'a UnitGuids, focus: u64) -> Self {
+        Self {
+            src: Src::Fixture(fixture),
+            focus,
+        }
+    }
+
+    /// Whether the game's tables are read, through the lent view.
+    pub(crate) fn is_live(&self) -> bool {
+        matches!(self.src, Src::Live)
+    }
+
+    /// Our guid, 0 without the player object.
+    pub(crate) fn player(&self) -> u64 {
+        self.base_guid(UnitBase::Player)
+    }
+
+    /// The target global.
+    pub(crate) fn target(&self) -> u64 {
+        self.base_guid(UnitBase::Target)
+    }
+
+    /// The table rows the walks cover, read at the call.
+    pub(crate) fn counts(&self) -> UnitCounts {
+        match self.src {
+            Src::Live => read_live(|l| l.unit_counts()).flatten().unwrap_or_default(),
+            Src::Fixture(g) => UnitCounts {
+                party: g.party.iter().take_while(|&&m| m != 0).count(),
+                raid: g.raid.len(),
+                arena: g.arena_count.min(g.arena.len()),
+                boss: g.boss.len(),
+            },
+            Src::Empty => UnitCounts::default(),
+        }
+    }
+
+    /// A held unit's `UNIT_FIELD_TARGET`, `None` for a guid that is no held unit (`0x60aaa0`).
+    fn held_target(&self, guid: u64) -> Option<u64> {
+        match self.src {
+            Src::Live => read_live(|l| l.unit_target(guid)).flatten(),
+            Src::Fixture(g) => g.held.get(&guid).copied(),
+            Src::Empty => None,
+        }
     }
 
     /// The guid `token` names (`0x60abf0`, with no target default), `None` for nobody, `Err` where
@@ -363,51 +411,73 @@ impl UnitGuids {
         Ok(Some(end).filter(|&g| g != 0))
     }
 
-    /// The unit a base names, 0 for nobody.
+    /// The guid `token` names with no name lookup: `None` for nobody, `Err` where the lookup would
+    /// run.
+    #[cfg(test)]
+    pub(crate) fn resolve(&self, token: &str) -> Result<Option<u64>, ()> {
+        self.resolve_named(token, |_, _| None)
+    }
+
+    /// The unit a base names, read at the call; 0 for nobody.
     pub(crate) fn base_guid(&self, base: UnitBase) -> u64 {
-        // The indexed bases: the table's row for the parsed number.
-        let at = |table: &[u64], row: u32| {
-            usize::try_from(row)
-                .ok()
-                .and_then(|row| table.get(row))
-                .copied()
-                .unwrap_or(0)
-        };
         match base {
-            UnitBase::Player => self.player,
-            UnitBase::Pet if self.player == 0 => 0,
-            UnitBase::Pet => self.pet,
-            UnitBase::Target => self.target,
+            UnitBase::Focus => self.focus,
             // The interact target read at the call (`0x60af67`); with none held, nobody.
             UnitBase::Npc => self.npc_guid(),
-            // Deviation: the reference's party-pet lookup has no bound and reads past its
-            // four-entry table, which is stale memory, not a mechanism; past it, nobody.
-            UnitBase::PartyPet(row) => at(&self.party_pets, row),
-            // Capped at 4.
-            UnitBase::Party(row) => at(&self.party, row),
-            // Capped at the roster count.
-            UnitBase::RaidPet(row) => at(&self.raid_pets, row),
-            UnitBase::Raid(row) => at(&self.raid, row),
-            // Bounded by the slot count, as `0x5ed710` is.
-            UnitBase::Boss(row) => at(&self.boss, row),
-            UnitBase::Mouseover if !self.held.contains_key(&self.mouseover) => 0,
-            UnitBase::Mouseover => self.mouseover,
-            UnitBase::Focus => self.focus,
-            UnitBase::Vehicle => self.vehicle,
-            // Bounded by the five slots only (`0x608180`, `0x60a2f0`).
-            UnitBase::Arena(row) => at(&self.arena, row),
-            UnitBase::ArenaPet(row) => at(&self.arena_pets, row),
             // The open quest window's giver, read live (`0x6081b0`).
             UnitBase::QuestNpc => read_live(|l| l.quest_npc()).flatten().unwrap_or(0),
             // The spectated players are listed in commentator mode alone, which benilla never
             // asks for (`CMSG_COMMENTATOR_ENABLE`), so the list is empty.
             UnitBase::Commentator(_) => 0,
+            base => match self.src {
+                Src::Live => read_live(|l| l.unit_base(base)).flatten().unwrap_or(0),
+                Src::Fixture(g) => g.table_base(base),
+                Src::Empty => 0,
+            },
         }
     }
 
     /// Whether `guid` is a party member or on the raid roster (`0x512a00`).
     fn in_group(&self, guid: u64) -> bool {
-        guid != 0 && (self.party.contains(&guid) || self.raid.contains(&guid))
+        guid != 0 && (self.in_party(guid) || self.in_raid(guid))
+    }
+
+    /// Whether `guid` holds one of the party's slots.
+    pub(crate) fn in_party(&self, guid: u64) -> bool {
+        guid != 0 && (0..4).any(|row| self.base_guid(UnitBase::Party(row)) == guid)
+    }
+
+    /// Whether `guid` is on the raid roster.
+    pub(crate) fn in_raid(&self, guid: u64) -> bool {
+        guid != 0
+            && self
+                .rows(self.counts().raid, UnitBase::Raid)
+                .any(|g| g == guid)
+    }
+
+    /// The group test a dead-looking unit and `UnitInRange` waive or ask (`0x512a30`): us, our pet,
+    /// a party member or its pet, a raid member or its pet.
+    pub(crate) fn is_member_or_pet(&self, guid: u64) -> bool {
+        if guid == 0 {
+            return false;
+        }
+        let counts = self.counts();
+        let tables: [(Numbered, usize); 4] = [
+            (UnitBase::Party, 4),
+            (UnitBase::PartyPet, 4),
+            (UnitBase::Raid, counts.raid),
+            (UnitBase::RaidPet, counts.raid),
+        ];
+        self.player() == guid
+            || self.base_guid(UnitBase::Pet) == guid
+            || tables
+                .into_iter()
+                .any(|(base, count)| self.rows(count, base).any(|g| g == guid))
+    }
+
+    /// The first `count` rows of a numbered base, in order.
+    fn rows(&self, count: usize, base: Numbered) -> impl Iterator<Item = u64> + '_ {
+        (0..count).map(move |row| self.base_guid(base(u32::try_from(row).unwrap_or(u32::MAX))))
     }
 
     /// The hops from `guid` (`0x60aaa0`): `None` where they fail, which zeroes the guid and sends
@@ -415,11 +485,11 @@ impl UnitGuids {
     /// player reads the target global; off another unit, its held `UNIT_FIELD_TARGET`. A `pet`
     /// hop reads the held unit's pet live.
     pub(crate) fn follow(&self, mut guid: u64, hops: Hops<'_>) -> Option<u64> {
-        let me = (self.player != 0).then_some(self.player);
+        let me = Some(self.player()).filter(|&g| g != 0);
         for hop in hops {
             guid = match hop.ok()? {
-                Hop::Target if Some(guid) == me => self.target,
-                Hop::Target => self.held.get(&guid).copied().unwrap_or(0),
+                Hop::Target if Some(guid) == me => self.target(),
+                Hop::Target => self.held_target(guid).unwrap_or(0),
                 Hop::Pet => {
                     let open = Some(guid) == me
                         || self.in_group(guid)
@@ -446,48 +516,35 @@ impl UnitGuids {
     ) -> Option<(u64, Hops<'t>)> {
         let (buffer, with_realm, hops) = split_name(token);
         let named = |unit: &str| name_of(unit, with_realm).is_some_and(|n| same_name(buffer, &n));
-        let party_count = self.party.iter().take_while(|&&g| g != 0).count();
-        let arena_count = self.arena_count.min(self.arena.len());
-        let first = |prefix: &str, table: &[u64], count: usize| {
-            (0..count.min(table.len()))
+        let counts = self.counts();
+        let first = |prefix: &str, base: Numbered, count: usize| {
+            (0..count)
                 .find(|i| named(&format!("{prefix}{}", i + 1)))
-                .map_or(0, |i| table[i])
+                .map_or(0, |i| {
+                    self.base_guid(base(u32::try_from(i).unwrap_or(u32::MAX)))
+                })
         };
         let mut guid = if named("player") {
-            self.player
-        } else if !self.raid.is_empty() {
-            first("raid", &self.raid, self.raid.len())
-        } else if party_count != 0 {
-            first("party", &self.party, party_count)
+            self.player()
+        } else if counts.raid != 0 {
+            first("raid", UnitBase::Raid, counts.raid)
+        } else if counts.party != 0 {
+            first("party", UnitBase::Party, counts.party)
         } else {
-            first("arena", &self.arena, arena_count)
+            first("arena", UnitBase::Arena, counts.arena)
         };
         if guid == 0 {
             guid = if named("pet") {
                 self.base_guid(UnitBase::Pet)
-            } else if !self.raid.is_empty() {
-                first("raidpet", &self.raid_pets, self.raid.len())
-            } else if party_count != 0 {
-                first("partypet", &self.party_pets, party_count)
+            } else if counts.raid != 0 {
+                first("raidpet", UnitBase::RaidPet, counts.raid)
+            } else if counts.party != 0 {
+                first("partypet", UnitBase::PartyPet, counts.party)
             } else {
-                first("arenapet", &self.arena_pets, arena_count)
+                first("arenapet", UnitBase::ArenaPet, counts.arena)
             };
         }
         (guid != 0).then_some((guid, hops))
-    }
-
-    /// The guids a hop can end on: each held unit's target, when it names one. `held` holds the
-    /// bases' units and each unit a hop reaches from them, so a token with a hop names one of
-    /// these or nobody, and a per-guid feed over them covers the chains a script can spell. A guid
-    /// repeats when two units share a target, and the last hop's unit need not be held: the lookup
-    /// that finds its object is the reader's.
-    pub(crate) fn chain_ends(&self) -> impl Iterator<Item = u64> + '_ {
-        // The focus and the vehicle too: they read their unit by guid, the way a hop's end is read.
-        self.held
-            .values()
-            .copied()
-            .chain([self.focus, self.vehicle])
-            .filter(|&guid| guid != 0 && guid != crate::script::focus::NOBODY)
     }
 
     /// [`Self::resolve`], a token the reference refuses naming nobody.
@@ -504,43 +561,50 @@ impl UnitGuids {
         if guid == 0 {
             return out;
         }
-        if self.player == guid {
+        let player = self.player();
+        if player == guid {
             out.push("player".into());
         }
-        if self.vehicle == guid {
+        if self.base_guid(UnitBase::Vehicle) == guid {
             out.push("vehicle".into());
         }
-        if self.player != 0 && self.pet == guid {
+        if player != 0 && self.base_guid(UnitBase::Pet) == guid {
             out.push("pet".into());
         }
-        for (prefix, table) in [
-            ("party", &self.party[..]),
-            ("partypet", &self.party_pets[..]),
-            ("raid", &self.raid[..]),
-            ("raidpet", &self.raid_pets[..]),
-        ] {
-            for (i, &g) in table.iter().enumerate() {
+        let counts = self.counts();
+        let tables: [(&str, Numbered, usize); 4] = [
+            ("party", UnitBase::Party, 4),
+            ("partypet", UnitBase::PartyPet, 4),
+            ("raid", UnitBase::Raid, counts.raid),
+            ("raidpet", UnitBase::RaidPet, counts.raid),
+        ];
+        for (prefix, base, count) in tables {
+            for (i, g) in self.rows(count, base).enumerate() {
                 if g == guid {
                     out.push(format!("{prefix}{}", i + 1));
                 }
             }
         }
         // Over the counted slots, an opponent tested before its pet, the first match ending it.
-        for i in 0..self.arena_count.min(self.arena.len()) {
-            if self.arena[i] == guid {
+        for i in 0..counts.arena {
+            let row = u32::try_from(i).unwrap_or(u32::MAX);
+            if self.base_guid(UnitBase::Arena(row)) == guid {
                 out.push(format!("arena{}", i + 1));
                 break;
             }
-            if self.arena_pets[i] == guid {
+            if self.base_guid(UnitBase::ArenaPet(row)) == guid {
                 out.push(format!("arenapet{}", i + 1));
                 break;
             }
         }
         // The first slot only, as the reference's loop breaks on a match.
-        if let Some(i) = self.boss.iter().position(|&g| g == guid) {
+        if let Some(i) = self
+            .rows(counts.boss, UnitBase::Boss)
+            .position(|g| g == guid)
+        {
             out.push(format!("boss{}", i + 1));
         }
-        if self.target == guid {
+        if self.target() == guid {
             out.push("target".into());
         }
         if self.focus == guid {
@@ -553,11 +617,65 @@ impl UnitGuids {
         out
     }
 
-    /// The `"npc"` guid: the interact target read at the call (`0x60af67`), 0 with none held; with no view lent, the one last pushed.
-    pub fn npc_guid(&self) -> u64 {
+    /// The `"npc"` guid: the interact target read at the call (`0x60af67`), 0 with none held;
+    /// with no view lent, a fixture's.
+    pub(crate) fn npc_guid(&self) -> u64 {
         match read_live(|l| l.interact_target()) {
             Some(held) => held.unwrap_or(0),
-            None => self.npc,
+            None => match self.src {
+                Src::Fixture(g) => g.npc,
+                _ => 0,
+            },
+        }
+    }
+
+    /// The guids a fixture's chains end on, each once: each held unit's target, the focus and the
+    /// vehicle. The game's are walked by the app.
+    pub(crate) fn fixture_chain_ends(&self) -> Vec<u64> {
+        let Src::Fixture(g) = self.src else {
+            return Vec::new();
+        };
+        let mut ends: Vec<u64> = g
+            .held
+            .values()
+            .copied()
+            .chain([self.focus, g.vehicle])
+            .filter(|&guid| guid != 0 && guid != crate::script::focus::NOBODY)
+            .collect();
+        ends.sort_unstable();
+        ends.dedup();
+        ends
+    }
+}
+
+impl UnitGuids {
+    /// A fixture's unit for a base its tables hold; the VM's and the view's own bases are
+    /// [`Tokens`]'.
+    fn table_base(&self, base: UnitBase) -> u64 {
+        // The indexed bases: the table's row for the parsed number.
+        let at = |table: &[u64], row: u32| {
+            usize::try_from(row)
+                .ok()
+                .and_then(|row| table.get(row))
+                .copied()
+                .unwrap_or(0)
+        };
+        match base {
+            UnitBase::Player => self.player,
+            UnitBase::Pet if self.player == 0 => 0,
+            UnitBase::Pet => self.pet,
+            UnitBase::Target => self.target,
+            UnitBase::PartyPet(row) => at(&self.party_pets, row),
+            UnitBase::Party(row) => at(&self.party, row),
+            UnitBase::RaidPet(row) => at(&self.raid_pets, row),
+            UnitBase::Raid(row) => at(&self.raid, row),
+            UnitBase::Boss(row) => at(&self.boss, row),
+            UnitBase::Mouseover if !self.held.contains_key(&self.mouseover) => 0,
+            UnitBase::Mouseover => self.mouseover,
+            UnitBase::Vehicle => self.vehicle,
+            UnitBase::Arena(row) => at(&self.arena, row),
+            UnitBase::ArenaPet(row) => at(&self.arena_pets, row),
+            UnitBase::Npc | UnitBase::Focus | UnitBase::QuestNpc | UnitBase::Commentator(_) => 0,
         }
     }
 }
@@ -565,6 +683,29 @@ impl UnitGuids {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The fixture's tables with no focus, as the VM's tests read them.
+    impl UnitGuids {
+        fn resolve(&self, token: &str) -> Result<Option<u64>, ()> {
+            Tokens::of(self, 0).resolve(token)
+        }
+
+        fn resolve_named(
+            &self,
+            token: &str,
+            name_of: impl Fn(&str, bool) -> Option<String>,
+        ) -> Result<Option<u64>, ()> {
+            Tokens::of(self, 0).resolve_named(token, name_of)
+        }
+
+        fn guid_of(&self, token: &str) -> Option<u64> {
+            Tokens::of(self, 0).guid_of(token)
+        }
+
+        fn tokens_naming(&self, guid: u64) -> Vec<String> {
+            Tokens::of(self, 0).tokens_naming(guid)
+        }
+    }
 
     const ME: u64 = 0x10;
     const PET: u64 = 0xF140_0000_0000_0077;
@@ -580,18 +721,14 @@ mod tests {
     /// between `target` and `npc` (`0x60bb70`).
     #[test]
     fn the_focus_is_a_base_and_is_fanned_out() {
-        let g = UnitGuids {
-            focus: P1,
-            ..guids()
-        };
-        assert_eq!(g.guid_of("focus"), Some(P1));
-        assert_eq!(g.guid_of("focustarget"), Some(ME));
-        assert_eq!(guids().guid_of("focus"), None, "no focus, nobody");
-        let mob = UnitGuids {
-            focus: MOB,
-            ..guids()
-        };
-        assert_eq!(mob.tokens_naming(MOB), ["target", "focus", "npc"]);
+        let g = guids();
+        assert_eq!(Tokens::of(&g, P1).guid_of("focus"), Some(P1));
+        assert_eq!(Tokens::of(&g, P1).guid_of("focustarget"), Some(ME));
+        assert_eq!(g.guid_of("focus"), None, "no focus, nobody");
+        assert_eq!(
+            Tokens::of(&g, MOB).tokens_naming(MOB),
+            ["target", "focus", "npc"]
+        );
     }
 
     /// `vehicle` names the seated player's transport, `vehicletarget` hops off it, and the
@@ -609,7 +746,7 @@ mod tests {
         assert_eq!(g.guid_of("vehicletarget"), Some(ME));
         assert_eq!(g.tokens_naming(CART), ["vehicle", "pet"]);
         assert_eq!(guids().guid_of("vehicle"), None, "not seated, nobody");
-        assert!(g.chain_ends().any(|e| e == CART));
+        assert!(Tokens::of(&g, 0).fixture_chain_ends().contains(&CART));
     }
 
     /// `bossN` reads the encounter's slot N-1, bounded by the slots (`0x5ed710`), and the fan-out
@@ -666,7 +803,6 @@ mod tests {
             target: MOB,
             mouseover: MOB,
             npc: MOB,
-            focus: 0,
             party: [P1, FAR, 0, 0],
             party_pets: [P1_PET, 0, 0, 0],
             raid: vec![ME, P1, R3],

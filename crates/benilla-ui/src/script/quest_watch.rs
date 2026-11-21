@@ -720,7 +720,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             // The token resolves through the unit feed's guids, not at the call (#1289). A missing or empty token is the target (`0x60b029`).
 
             let target = if token.is_empty() {
-                Some(model.unit_guids.target).filter(|&g| g != 0)
+                Some(model.target_guid()).filter(|&g| g != 0)
             } else {
                 model.token_guid(&token)
             };

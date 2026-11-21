@@ -183,7 +183,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(());
             };
             let guid = model.unit(&token).map(|u| u.guid);
-            let player = model.unit_guids.player;
+            let player = model.player_guid();
             let Some(vehicle) = model
                 .vehicles
                 .player_vehicle

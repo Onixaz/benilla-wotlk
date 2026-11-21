@@ -1,6 +1,6 @@
 //! The focus `[0xbd07d0]`: `FocusUnit` and `ClearFocus` set it through the game UI's focus setter
-//! (`0x51ff20`), which signals `PLAYER_FOCUS_CHANGED` on a change. It rides
-//! [`super::UnitGuids::focus`], which the app's pushes keep, so `focus` resolves like any base.
+//! (`0x51ff20`), which signals `PLAYER_FOCUS_CHANGED` on a change. The VM holds it, and the
+//! resolver reads it as any base.
 
 use mlua::{Lua, Value};
 
@@ -10,7 +10,7 @@ pub const NOBODY: u64 = 0xFFFF_FFFF_FFFF_FFFE;
 impl super::UiScript {
     /// The focus guid, 0 for none.
     pub fn focus_guid(&self) -> u64 {
-        self.model_ref().unit_guids.focus
+        self.model_ref().focus
     }
 
     /// The focus setter from the engine: the target break, the world leave and the pet-change
@@ -25,10 +25,10 @@ impl super::UiScript {
 fn set_focus_target(lua: &Lua, guid: u64) {
     {
         let mut model = super::model_mut_of(lua);
-        if model.unit_guids.focus == guid {
+        if model.focus == guid {
             return;
         }
-        model.unit_guids.focus = guid;
+        model.focus = guid;
     }
     super::tick::fire_event_into(lua, "PLAYER_FOCUS_CHANGED", Vec::new());
 }
@@ -47,7 +47,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let guid = {
                 let model = super::model_mut_of(lua);
                 if token.is_empty() {
-                    Some(model.unit_guids.target)
+                    Some(model.target_guid())
                 } else {
                     model
                         .resolve_token(&token)

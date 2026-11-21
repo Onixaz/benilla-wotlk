@@ -46,7 +46,7 @@ fn unit_power(
     let model = lua
         .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data");
-    let player = model.unit_guids.player;
+    let player = model.player_guid();
     let Some(u) = model.unit(&token) else {
         return Ok(0);
     };
@@ -174,7 +174,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            if model.unit_guids.player == 0 {
+            if model.player_guid() == 0 {
                 return Ok(Value::Nil);
             }
             let unit = token.as_deref().and_then(|t| model.unit(t));
@@ -1619,12 +1619,12 @@ fn unit_reads_dead(lua: &Lua, token: &str, ask: DeathAsk) -> bool {
         .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data");
     let guid = model.token_guid(token);
+    let member = guid.is_some_and(|g| model.tokens().is_member_or_pet(g));
     let live = crate::script::read_live(|live| {
         let guid = guid?;
         let health = live.unit_health(guid)?;
         let ghost = live.player_flags(guid).is_some_and(|f| f & 0x10 != 0);
-        let looks_dead = live.unit_dynamic_flags(guid).is_some_and(|f| f & 0x20 != 0)
-            && !group_member_or_pet(&model.unit_guids, live.active_player(), guid);
+        let looks_dead = live.unit_dynamic_flags(guid).is_some_and(|f| f & 0x20 != 0) && !member;
         Some(match ask {
             DeathAsk::Dead => health == 0 || looks_dead,
             DeathAsk::Ghost => ghost,
@@ -1644,16 +1644,4 @@ fn unit_reads_dead(lua: &Lua, token: &str, ask: DeathAsk) -> bool {
                 DeathAsk::DeadOrGhost => u.dead || u.ghost,
             }
     })
-}
-
-/// The group test the dead-looking flag is waived for (`0x512a30`): us, our pet, a party member
-/// or its pet (`0x52d310`), a raid member or its pet (`0x573200`).
-fn group_member_or_pet(guids: &super::UnitGuids, me: Option<u64>, guid: u64) -> bool {
-    guid != 0
-        && (me == Some(guid)
-            || guids.pet == guid
-            || guids.party.contains(&guid)
-            || guids.party_pets.contains(&guid)
-            || guids.raid.contains(&guid)
-            || guids.raid_pets.contains(&guid))
 }

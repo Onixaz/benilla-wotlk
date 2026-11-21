@@ -8,10 +8,7 @@ use bevy::prelude::*;
 
 use benilla_formats::ChrClasses;
 use benilla_protocol::messages::ObjectType;
-use benilla_ui::script::{
-    parse_unit_token, power_token, Hop, Hops, ScriptValue, UiScript, UnitBase, UnitState,
-    UnitTokenParse, WornDisplay, PET_OF_ANYONE,
-};
+use benilla_ui::script::{power_token, ScriptValue, UiScript, UnitState, WornDisplay};
 
 use crate::creature_type::CreatureTypeSources;
 use crate::names::NameCache;
@@ -23,6 +20,9 @@ use crate::target::{ring_reaction, Factions, Selection};
 use crate::ui_script::{gate, UiDrain};
 
 mod held;
+pub(crate) mod tokens;
+
+pub(crate) use tokens::{TokenView, UnitTokens, UnitVm, VmUnits};
 
 /// The per-guid snapshots of the tokens that read a unit by guid, `vehicle` among them.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -702,241 +702,6 @@ pub(crate) fn player_token_guid(
     }
 }
 
-/// What the unit-token resolver reads from the VM, which owns both: the focus `[0xbd07d0]`, which
-/// `FocusUnit` sets inside the call before, and the names the name lookup (`0x60a630`) matches.
-/// The default reads neither, so `focus` and a name name nobody.
-#[derive(Clone, Copy, Default)]
-pub(crate) struct VmUnits<'a>(Option<&'a UiScript>);
-
-impl<'a> VmUnits<'a> {
-    pub(crate) fn of(vm: &'a UiScript) -> Self {
-        Self(Some(vm))
-    }
-
-    fn focus(self) -> Option<u64> {
-        self.0.map(UiScript::focus_guid)
-    }
-
-    fn unit_by_name<'t>(self, token: &'t str) -> Option<(u64, Hops<'t>)> {
-        self.0?.unit_by_name(token)
-    }
-}
-
-/// [`VmUnits`] for a system that holds the VM for nothing else.
-#[derive(bevy::ecs::system::SystemParam)]
-pub(crate) struct UnitVm<'w> {
-    script: Option<NonSend<'w, UiScript>>,
-}
-
-impl UnitVm<'_> {
-    pub(crate) fn view(&self) -> VmUnits<'_> {
-        VmUnits(self.script.as_deref())
-    }
-}
-
-/// The one unit-token resolver, the reference's (`0x60abf0`): case-insensitive compares, the hops,
-/// the name lookup, then the object manager; a caller wanting a type tests the resolved unit.
-/// [`Selection`] is a parameter because [`crate::target::SelectCommit`] writes it through its own
-/// borrow, and the VM's part is one too ([`VmUnits`]).
-#[derive(bevy::ecs::system::SystemParam)]
-pub(crate) struct UnitTokens<'w, 's> {
-    /// `Option`, like those below: a UI-only harness lacks their plugins; a bare `Res` panics.
-    index: Option<Res<'w, crate::net::GuidIndex>>,
-    hovered: Option<Res<'w, crate::target::Hovered>>,
-    hovered_go: Option<Res<'w, crate::target::HoveredObject>>,
-    encounter: Option<Res<'w, crate::ui_instance::EncounterUnits>>,
-    arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
-    group: Res<'w, crate::ui_party::GroupState>,
-    pub(crate) stores: Query<'w, 's, &'static ObjectStore>,
-    me: Query<
-        'w,
-        's,
-        (
-            Entity,
-            &'static Guid,
-            Option<&'static crate::vehicle::Passenger>,
-        ),
-        With<SelfPlayer>,
-    >,
-}
-
-impl UnitTokens<'_, '_> {
-    fn me(&self) -> Option<(Entity, u64)> {
-        self.me.iter().next().map(|(e, g, _)| (e, g.0))
-    }
-
-    /// The guid lookup, `pub(crate)` for `TargetLastEnemy`, which starts from a guid.
-    pub(crate) fn held(&self, guid: u64) -> Option<(Entity, u64)> {
-        Some((*self.index.as_ref()?.0.get(&guid)?, guid))
-    }
-
-    /// The held unit `token` names: [`Self::guid_of`], then the object manager, the player, the
-    /// selection and the hover pick answering for their own units.
-    pub(crate) fn resolve(
-        &self,
-        token: &str,
-        selection: &Selection,
-        vm: VmUnits<'_>,
-    ) -> Option<(Entity, u64)> {
-        let guid = self.guid_of(token, selection, vm)?;
-        let picked = || {
-            let hovered = self.hovered.as_ref()?;
-            hovered.mouseover(&self.hovered_go.as_deref().copied().unwrap_or_default())
-        };
-        self.held(guid)
-            .or_else(|| self.me().filter(|&(_, g)| g == guid))
-            .or_else(|| {
-                selection
-                    .target
-                    .filter(|_| selection.guid == Some(guid))
-                    .map(|e| (e, guid))
-            })
-            .or_else(|| picked().filter(|&(_, g)| g == guid))
-    }
-
-    /// The guid `token` names, held or not, as the reference's resolve answers before any object
-    /// lookup; `None` for nobody and for a token it refuses. The text is read by
-    /// [`parse_unit_token`], which the VM's resolver shares, so both take the same tokens: a base
-    /// whose unit is there, or that names nobody with no text after it, takes its hops; any other
-    /// token is a name, which the VM looks up ([`VmUnits`]), and its hops.
-    pub(crate) fn guid_of(
-        &self,
-        token: &str,
-        selection: &Selection,
-        vm: VmUnits<'_>,
-    ) -> Option<u64> {
-        match parse_unit_token(token) {
-            UnitTokenParse::Empty | UnitTokenParse::Nobody => return None,
-            UnitTokenParse::Unit { base, hops } => {
-                let guid = self.base(base, selection, vm).unwrap_or(0);
-                if guid != 0 || hops.is_empty() {
-                    if let Some(end) = self.follow(guid, hops, selection) {
-                        return Some(end).filter(|&g| g != 0);
-                    }
-                }
-            }
-            UnitTokenParse::Name => {}
-        }
-        let (guid, hops) = vm.unit_by_name(token)?;
-        self.follow(guid, hops, selection).filter(|&g| g != 0)
-    }
-
-    /// The guid a token's base names, before any hop, held or not.
-    fn base(&self, base: UnitBase, selection: &Selection, vm: VmUnits<'_>) -> Option<u64> {
-        let live = |guid: u64| {
-            self.held(guid)
-                .and_then(|(e, _)| self.stores.get(e).ok())
-                .map(|s| &s.0)
-        };
-        match base {
-            UnitBase::Player => self.me().map(|(_, g)| g),
-            UnitBase::Target => selection.guid,
-            // The same pick `ui_tooltip` pushes `"mouseover"` from.
-            UnitBase::Mouseover => self
-                .hovered
-                .as_ref()?
-                .mouseover(&self.hovered_go.as_deref().copied().unwrap_or_default())
-                .map(|(_, guid)| guid),
-            // Our charm, else our summon (`0x60acc3`-`0x60acd3`), as the `"pet"` snapshot reads it.
-            UnitBase::Pet => self.stores.get(self.me()?.0).ok()?.0.unit_pet_guid(),
-            UnitBase::Party(row) => self.party_member(row),
-            UnitBase::Raid(row) => self.raid_member(row),
-            UnitBase::PartyPet(row) => self
-                .party_member(row)
-                .and_then(|m| self.group.party_pet_guid(m, live(m))),
-            UnitBase::RaidPet(row) => self
-                .raid_member(row)
-                .and_then(|m| self.group.raid_pet_guid(m, live(m))),
-            // The interact target (`0x60af67`), read through the view every resolving system lends; with none lent, nobody.
-            UnitBase::Npc => crate::ui_script::live::interact_target().flatten(),
-            // The quest window's source (`0x6081b0`), read through the view lent to the call.
-            UnitBase::QuestNpc => crate::ui_script::live::quest_npc(),
-            // The encounter's slot (`0x5ed710`).
-            UnitBase::Boss(row) => Some(self.encounter.as_ref()?.boss(usize::try_from(row).ok()?)),
-            // The opponent slot (`0x608180`), and its pet (`0x60a2f0`).
-            UnitBase::Arena(row) => self
-                .arena
-                .as_ref()?
-                .opponents()
-                .get(usize::try_from(row).ok()?)
-                .copied(),
-            UnitBase::ArenaPet(row) => {
-                let index = self.index.as_ref()?;
-                let pets = self
-                    .arena
-                    .as_ref()?
-                    .pets(&crate::ui_arena::pet_of(index, &self.stores));
-                pets.get(usize::try_from(row).ok()?).copied()
-            }
-            // The player's transport while seated (`0x60ac87`).
-            UnitBase::Vehicle => self
-                .me
-                .iter()
-                .next()?
-                .2
-                .filter(|p| p.state == crate::vehicle::SEATED)
-                .map(|p| p.vehicle),
-            // The VM's focus `[0xbd07d0]`.
-            UnitBase::Focus => vm.focus(),
-            // Listed in commentator mode alone, which benilla never asks for.
-            UnitBase::Commentator(_) => None,
-        }
-    }
-
-    /// The hops from `guid` (`0x60aaa0`): `None` where they fail. A `target` hop off the player
-    /// reads the target global, off another unit its `UNIT_FIELD_TARGET`; a `pet` hop, the unit's
-    /// charm, else its summon, and only off the player or a party or raid member unless our
-    /// `PLAYER_FLAGS` holds [`PET_OF_ANYONE`]. The unit lookup takes the unit typemask, so a hop
-    /// off any other object, or off a unit not held, is nobody.
-    fn follow(&self, mut guid: u64, hops: Hops<'_>, selection: &Selection) -> Option<u64> {
-        let me = self.me();
-        let unit = |guid: u64| {
-            self.held(guid)
-                .or_else(|| me.filter(|&(_, g)| g == guid))
-                .and_then(|(e, _)| self.stores.get(e).ok())
-                .filter(|s| s.is_unit())
-                .map(|s| &s.0)
-        };
-        for hop in hops {
-            let ours = guid != 0 && me.is_some_and(|(_, g)| g == guid);
-            guid = match hop.ok()? {
-                Hop::Target if ours => selection.guid.unwrap_or(0),
-                Hop::Target => unit(guid).and_then(|u| u.unit_target()).unwrap_or(0),
-                Hop::Pet => {
-                    let anyone = me
-                        .and_then(|(e, _)| self.stores.get(e).ok())
-                        .is_some_and(|s| s.0.player_flags() & PET_OF_ANYONE != 0);
-                    if !(ours || self.in_group(guid) || anyone) {
-                        return None;
-                    }
-                    unit(guid).and_then(|u| u.unit_pet_guid()).unwrap_or(0)
-                }
-            };
-        }
-        Some(guid)
-    }
-
-    /// Whether `guid` is a party member or on the raid roster (`0x512a00`).
-    fn in_group(&self, guid: u64) -> bool {
-        guid != 0
-            && (self.group.party_slots().any(|m| m.guid == guid)
-                || crate::ui_party::raid_row_guids(&self.group, self.me().map(|(_, g)| g))
-                    .contains(&guid))
-    }
-
-    /// The guid in 0-based party slot `row`, the one `partyN` and `partypetN` share.
-    fn party_member(&self, row: u32) -> Option<u64> {
-        let slot = usize::try_from(row).ok()?;
-        self.group.party_slots().nth(slot).map(|m| m.guid)
-    }
-
-    /// The guid on 0-based raid row `row`, the one `raidN` and `GetRaidRosterInfo` share.
-    fn raid_member(&self, row: u32) -> Option<u64> {
-        let index = usize::try_from(row).ok()?.checked_add(1)?;
-        crate::ui_party::raid_row_guid(&self.group, self.me().map(|(_, g)| g), index)
-    }
-}
-
 /// Squared distance as the reference sums it: `f32` widened to `f64`, `(dz² + dx²) + dy²` (shared
 /// by `CanInspect` and `CheckInteractDistance`). Bevy's axes change it by at most a last ulp, which
 /// matters only on a threshold.
@@ -971,13 +736,15 @@ fn feed_farsight_focus(
 /// Feed the unit reach map: per held unit a token can name, its squared distance and whether it
 /// passes inspect's two other refusals, a non-player and an attackable one (vmangos
 /// `MiscHandler.cpp:945-956`; that the client checks them is inferred, being partly undecoded). The
-/// guids are the resolver's own inputs, which the aura feed pushes each frame
-/// ([`UiScript::held_unit_guids`], so this runs after it): the bases and each unit a `target` chain
-/// reaches, and the VM resolves a verb's token to one of them or to a guid with no entry. Ungated:
-/// distances move every frame, and no event keys off the map.
+/// guids are the units a token can name now ([`tokens::walk`]): the bases and each unit a `target`
+/// chain reaches, and the VM resolves a verb's token to one of them or to a guid with no entry.
+/// Ungated: distances move every frame, and no event keys off the map.
 fn feed_unit_reach(
     mut script: crate::ui_script::InTurn,
     tokens: UnitTokens,
+    units: tokens::TokenView,
+    selection: Res<Selection>,
+    interact: Option<Res<crate::ui_session::InteractTarget>>,
     self_q: Query<(&Transform, &ObjectStore), With<SelfPlayer>>,
     transforms: Query<&Transform>,
     factions: Option<Res<Factions>>,
@@ -989,7 +756,11 @@ fn feed_unit_reach(
     };
     let mut reach = HashMap::new();
     if let Some((self_tf, self_store)) = self_q.iter().next() {
-        for guid in script.held_unit_guids() {
+        let interact = interact.as_ref().and_then(|t| t.0).unwrap_or(0);
+        for guid in units
+            .walk(script.focus_guid(), selection.guid, interact)
+            .held
+        {
             let Some((entity, _)) = tokens.held(guid) else {
                 continue;
             };
@@ -1538,14 +1309,6 @@ pub(crate) fn push_arena_units(
         arena: instance.active(),
     };
     let guids = arena_guids(arena.as_deref(), index.as_deref(), &stores);
-    let mut slots = [0; crate::ui_arena::ARENA_SLOTS];
-    let mut pets = [0; crate::ui_arena::ARENA_SLOTS];
-    slots.copy_from_slice(&guids[..crate::ui_arena::ARENA_SLOTS]);
-    pets.copy_from_slice(&guids[crate::ui_arena::ARENA_SLOTS..]);
-    let count = arena
-        .as_deref()
-        .map_or(0, crate::ui_arena::ArenaOpponents::count);
-    script.set_arena_unit_guids(slots, pets, count);
     let tokens = crate::ui_arena::ARENA_TOKENS
         .into_iter()
         .chain(crate::ui_arena::ARENA_PET_TOKENS);
@@ -1667,7 +1430,6 @@ fn target_tail_writes(
 ) -> Option<Vec<crate::ui_action::usable_cache::UsableEvent>> {
     let guid = tail.selection.guid;
     let script = &mut *tail.script;
-    script.set_target_guid(guid.unwrap_or(0));
     if script.target_signalled() == guid {
         return None;
     }
@@ -2661,8 +2423,9 @@ mod tests {
         assert!(!s.pvp && !s.is_pvp_ffa, "the 1.12 bits are not read");
     }
 
-    /// `"mouseover"` resolves through the pick the tooltip publishes: the hovered unit, until a
-    /// nearer GameObject wins it and the resolver rejects the GameObject's guid.
+    /// `"mouseover"` resolves through the pick the tooltip publishes: the hovered unit, held as a
+    /// unit (`0x60aefa`), until a nearer GameObject wins it and the resolver rejects the
+    /// GameObject's guid.
     #[test]
     fn the_mouseover_token_resolves_nobody_behind_a_nearer_gameobject() {
         use crate::target::{Hovered, HoveredObject};
@@ -2671,8 +2434,18 @@ mod tests {
 
         let mut app = App::new();
         app.init_resource::<crate::ui_party::GroupState>()
-            .init_resource::<HoveredObject>();
-        let wolf = app.world_mut().spawn_empty().id();
+            .init_resource::<HoveredObject>()
+            .init_resource::<crate::net::GuidIndex>();
+        let wolf = app
+            .world_mut()
+            .spawn(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (2, 0x9),
+            ])))
+            .id();
+        app.world_mut()
+            .resource_mut::<crate::net::GuidIndex>()
+            .0
+            .insert(WOLF, wolf);
         app.insert_resource(Hovered {
             target: Some(wolf),
             guid: Some(WOLF),
@@ -2974,7 +2747,8 @@ mod tests {
             app.world_mut()
                 .entity_mut(me)
                 .insert(Transform::from_xyz(0.0, 0.0, 0.0));
-            let held = stream(&mut app, pet(1), &[]);
+            // A unit (type mask 9), as the walk reaches only held units (`0x4d4db0`, mask 8).
+            let held = stream(&mut app, pet(1), &[(2, 0x9)]);
             // Along one axis, so d² is exactly yards².
             app.world_mut()
                 .entity_mut(held)
@@ -3428,11 +3202,12 @@ mod tests {
         });
         app.update();
 
-        let answers = |app: &App, expr: &str| {
-            app.world()
-                .non_send_resource::<UiScript>()
-                .eval::<bool>(&format!("return {expr} ~= nil"))
-                .unwrap()
+        // The tokens resolve against the world at the call, which the verbs read lent.
+        let answers = |app: &mut App, expr: &str| {
+            crate::ui_script::live::with_live_world(app.world_mut(), |s| {
+                s.eval::<bool>(&format!("return {expr} ~= nil")).unwrap()
+            })
+            .expect("a VM")
         };
         // The base and each hop, at their own distances: the 10-yard row is `1`, the 30-yard `4`.
         for (token, kind, want) in [
@@ -3457,7 +3232,7 @@ mod tests {
         ] {
             assert_eq!(
                 answers(
-                    &app,
+                    &mut app,
                     &format!(r#"CheckInteractDistance("{token}", {kind})"#)
                 ),
                 want,
@@ -3474,7 +3249,7 @@ mod tests {
             ("party1targettargettarget", false),
         ] {
             assert_eq!(
-                answers(&app, &format!(r#"CanInspect("{token}")"#)),
+                answers(&mut app, &format!(r#"CanInspect("{token}")"#)),
                 want,
                 "CanInspect({token})"
             );
@@ -4135,7 +3910,11 @@ mod tests {
                 .world_mut()
                 .spawn((
                     Guid(guid),
-                    ObjectStore(ObjectFields::from_pairs(&[(FIELD_UNIT_FLAGS, flags)])),
+                    // A unit (type mask 9): the walk measures held units alone.
+                    ObjectStore(ObjectFields::from_pairs(&[
+                        (2, 0x9),
+                        (FIELD_UNIT_FLAGS, flags),
+                    ])),
                     // Along one axis, so d² is exactly yards².
                     Transform::from_xyz(yards, 0.0, 0.0),
                 ))

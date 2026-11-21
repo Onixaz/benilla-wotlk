@@ -196,6 +196,11 @@ const CALLS_NO_LUA: &[(&str, &str, &str)] = &[
         "reads the modified-click table on the Rust side, and its handler writes the object stores      the view would read",
     ),
     (
+        "ui_unit/tokens.rs",
+        "UnitVm",
+        "reads the focus and the name lookup off the VM's model for the app's resolver, and calls no Lua",
+    ),
+    (
         "ui_unit.rs",
         "TargetSetTail",
         "the selection setter's writes into the VM's model; its raises run after it with the `World` lent",

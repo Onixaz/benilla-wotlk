@@ -38,6 +38,16 @@ pub(crate) fn set_fixture_player(
     _script.set_player_req_state(_state);
 }
 
+/// A harness's stand-in resolver tables (`UiScript::set_unit_guids`) for a VM with no game behind
+/// it, which the player build compiles out with the fixtures.
+pub(crate) fn set_fixture_units(
+    _script: &mut benilla_ui::script::UiScript,
+    _guids: benilla_ui::script::UnitGuids,
+) {
+    #[cfg(feature = "dev")]
+    _script.set_unit_guids(&_guids);
+}
+
 /// The instruments, debug panel first: `PerfPlugin` needs the egui plugin and context it sets up.
 pub(crate) struct DevToolsPlugin;
 

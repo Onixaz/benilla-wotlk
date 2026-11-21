@@ -395,13 +395,11 @@ impl super::UiScript {
         }
     }
 
-    /// The guids the chains a script can spell end on ([`UnitGuids::chain_ends`]), each once: the
-    /// units whose snapshots [`Self::set_unit_by_guid`] serves.
+    /// The guids a fixture's chains end on, each once ([`Self::set_unit_guids`]); the game's are
+    /// walked by the app.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn chain_end_guids(&self) -> Vec<u64> {
-        let mut ends: Vec<u64> = self.model_ref().unit_guids.chain_ends().collect();
-        ends.sort_unstable();
-        ends.dedup();
-        ends
+        self.model_ref().tokens().fixture_chain_ends()
     }
 
     /// Push the player's copper (`PLAYER_FIELD_COINAGE`), read by `GetMoney`.
@@ -580,7 +578,7 @@ fn pair_reaction(lua: &Lua, a: &str, b: &str) -> Option<u8> {
         .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data");
     let (ua, ub) = (model.unit(a)?, model.unit(b)?);
-    let player = model.unit_guids.player;
+    let player = model.player_guid();
     let is_player = |token: &str, u: &UnitState| {
         token.eq_ignore_ascii_case("player") || (player != 0 && u.guid == player)
     };
@@ -619,8 +617,10 @@ mod resolve;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use resolve::Tokens;
 pub use resolve::{
-    parse_unit_token, split_name, Hop, Hops, UnitBase, UnitGuids, UnitTokenParse, PET_OF_ANYONE,
+    parse_unit_token, split_name, Hop, Hops, UnitBase, UnitCounts, UnitGuids, UnitTokenParse,
+    PET_OF_ANYONE,
 };
 
 pub(super) use bindings::install;

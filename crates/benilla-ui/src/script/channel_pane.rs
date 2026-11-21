@@ -305,7 +305,7 @@ fn sort_members(roster: &mut [Member]) {
 /// The party roster (`0x5045c0`): the player and the party, the leader as owner (`5`, else `4`),
 /// each with the `0x10` of a member not silenced; the count, 0 outside a party.
 fn build_party(model: &mut Model) -> u32 {
-    let own = model.unit_guids.player;
+    let own = model.player_guid();
     if own == 0 {
         return 0;
     }
@@ -346,7 +346,7 @@ fn build_party(model: &mut Model) -> u32 {
 /// and moderator (`7`), an assistant as moderator (`6`), others `4`, each with the not-silenced
 /// `0x10`; the count, 0 outside a raid.
 fn build_raid(model: &mut Model) -> u32 {
-    let own = model.unit_guids.player;
+    let own = model.player_guid();
     if own == 0 {
         return 0;
     }
@@ -497,7 +497,7 @@ impl super::UiScript {
         {
             let mut model = self.model_mut();
             let model: &mut Model = &mut model;
-            let own = model.unit_guids.player;
+            let own = model.player_guid();
             let pane = &mut model.channel_pane;
             if !pane.is_selected(Kind::Channel, channel) {
                 return;

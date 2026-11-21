@@ -44,14 +44,14 @@ fn event_tokens() -> impl Iterator<Item = &'static str> {
 }
 
 /// The guid [`event_tokens`]' `i`-th names, 0 for nobody.
-fn event_guid(g: &UnitGuids, i: usize) -> u64 {
+fn event_guid(g: &UnitGuids, focus: u64, i: usize) -> u64 {
     let at = |t: &[u64], i: usize| t.get(i).copied().unwrap_or(0);
     match i {
         0 => g.pet,
         1 => g.target,
         // One hop, as the resolver's `target` loop makes it: off a held target only.
         2 => g.held.get(&g.target).copied().unwrap_or(0),
-        3 => g.focus,
+        3 => focus,
         4..=7 => g.party[i - 4],
         8..=11 => g.party_pets[i - 8],
         12..=51 => at(&g.raid, i - 12),
@@ -142,6 +142,8 @@ struct GuidList {
 pub(super) struct UnitAuras {
     /// The resolver's inputs as last built.
     guids: UnitGuids,
+    /// The focus as last read.
+    focus: u64,
     by_guid: HashMap<u64, GuidList>,
     /// Each list version the VM holds, by guid.
     pushed: HashMap<u64, u64>,
@@ -214,7 +216,7 @@ impl UnitAuras {
             g.target,
             g.mouseover,
             g.npc,
-            g.focus,
+            self.focus,
         ) = (me, pet, vehicle, target, mouseover, npc, focus);
         fill_group(&mut g, group, me, &held);
         g.boss.clear();
@@ -244,7 +246,6 @@ impl UnitAuras {
                 self.refresh(guid, live, record_ok, group, &auras_hidden, ctx);
             }
         }
-        script.set_unit_guids(&g);
         self.guids = g;
         self.walk = walk;
         let frame = self.frame;
@@ -267,7 +268,7 @@ impl UnitAuras {
         self.fired.resize(EVENT_TOKEN_COUNT, None);
         let mut fire = Vec::new();
         for (i, token) in event_tokens().enumerate() {
-            let guid = event_guid(&self.guids, i);
+            let guid = event_guid(&self.guids, self.focus, i);
             let cur = match guid {
                 0 => None,
                 g if g == me => Some((g, self.player_version)),
@@ -480,19 +481,23 @@ mod tests {
     /// `UnitDebuff` (or `UnitBuff`) enumerates exactly that many, index 1 up to the nil.
     fn listed(app: &mut App, token: &str, harmful: bool) -> Vec<i64> {
         let verb = if harmful { "UnitDebuff" } else { "UnitBuff" };
-        let s = app.world_mut().non_send_resource::<UiScript>();
-        let ids = s.aura_spell_ids(token, !harmful);
-        let enumerated = s
-            .eval::<usize>(&format!(
-                r#"local n = 0
-                   for i = 1, 48 do
-                       local _, count = {verb}("{token}", i)
-                       if count == nil then break end
-                       n = n + 1
-                   end
-                   return n"#
-            ))
-            .unwrap();
+        // The tokens resolve against the world at the call, which the verbs read lent.
+        let (ids, enumerated) = crate::ui_script::live::with_live_world(app.world_mut(), |s| {
+            let ids = s.aura_spell_ids(token, !harmful);
+            let enumerated = s
+                .eval::<usize>(&format!(
+                    r#"local n = 0
+                       for i = 1, 48 do
+                           local _, count = {verb}("{token}", i)
+                           if count == nil then break end
+                           n = n + 1
+                       end
+                       return n"#
+                ))
+                .unwrap();
+            (ids, enumerated)
+        })
+        .expect("a VM");
         assert_eq!(
             enumerated,
             ids.len(),
@@ -560,11 +565,11 @@ mod tests {
             "buffs off the record"
         );
         assert_eq!(listed(&mut app, "party1", true), [589]);
-        let count = app
-            .world_mut()
-            .non_send_resource::<UiScript>()
-            .eval::<i64>(r#"local _, _, _, count = UnitDebuff("party1", 1) return count"#)
-            .unwrap();
+        let count = crate::ui_script::live::with_live_world(app.world_mut(), |s| {
+            s.eval::<i64>(r#"local _, _, _, count = UnitDebuff("party1", 1) return count"#)
+        })
+        .expect("a VM")
+        .unwrap();
         assert_eq!(count, 1);
         assert_eq!(seen(&mut app), ["party1"]);
 
@@ -835,11 +840,11 @@ mod tests {
         );
         app.update();
         assert_eq!(listed(&mut app, "raid5", true), [589, 11976]);
-        let count = app
-            .world_mut()
-            .non_send_resource::<UiScript>()
-            .eval::<i64>(r#"local _, _, _, count = UnitDebuff("raid5", 1) return count"#)
-            .unwrap();
+        let count = crate::ui_script::live::with_live_world(app.world_mut(), |s| {
+            s.eval::<i64>(r#"local _, _, _, count = UnitDebuff("raid5", 1) return count"#)
+        })
+        .expect("a VM")
+        .unwrap();
         assert_eq!(count, 1);
         assert_eq!(listed(&mut app, "raidpet5", false), [1126]);
         assert_eq!(listed(&mut app, "raidpet5", true), [770]);
@@ -1007,8 +1012,11 @@ mod tests {
         let mut app = party_app();
         app.init_resource::<crate::target::Hovered>();
         let me = app.world_mut().resource::<GuidIndex>().0[&ME];
+        // Our pet is our `SUMMON`, as the `pet` base reads it off us (`0x60acc3`-`0x60acd3`).
+        let mut ours = unit_fields(0x19, MOB);
+        ours.extend([(SUMMON, PET as u32), (SUMMON + 1, (PET >> 32) as u32)]);
         app.world_mut().entity_mut(me).insert((
-            ObjectStore(ObjectFields::from_pairs(&unit_fields(0x19, MOB))),
+            ObjectStore(ObjectFields::from_pairs(&ours)),
             AuraTable::of(ME, &[(32, 6788, HARM)]),
         ));
         stream_unit(&mut app, MOB, 0x9, MEMBER, 589);

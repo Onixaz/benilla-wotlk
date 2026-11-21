@@ -61,6 +61,8 @@ pub(crate) struct LiveView<'w, 's> {
     pub(crate) cooldowns: Slot<'w, crate::spell::Cooldowns>,
     pub(crate) pet_bar: Slot<'w, crate::ui_pet::PetBar>,
     pub(crate) selection: Slot<'w, crate::target::Selection>,
+    /// The unit-token resolver's tables (`0x60abf0`), the target global apart: the selection's.
+    units: crate::ui_unit::TokenView<'w, 's>,
     pub(crate) place: Slot<'w, crate::area::PlayerPlace>,
     /// The player's cast state, which every loan owns: the pending cast (`0x805f30`), the queued
     /// on-swing strike, the auto-repeating spell (`0x7fe130`) and the ground-targeting cursor.
@@ -1326,6 +1328,21 @@ impl LiveState for LiveView<'_, '_> {
     /// Our `UNIT_FIELD_CHARM` or `UNIT_FIELD_SUMMON` (`0x5a1b11`); no player object refuses too (`0x5a1b0b`).
     fn unit_pet(&self, guid: u64) -> Option<u64> {
         self.unit(guid)?.unit_pet_guid()
+    }
+
+    fn unit_base(&self, base: benilla_ui::script::UnitBase) -> Option<u64> {
+        let units = self.units.at(self.selection.get().and_then(|s| s.guid));
+        Some(crate::ui_unit::tokens::base(&units, base).unwrap_or(0))
+    }
+
+    fn unit_target(&self, guid: u64) -> Option<u64> {
+        let units = self.units.at(self.selection.get().and_then(|s| s.guid));
+        crate::ui_unit::tokens::unit_target(&units, guid)
+    }
+
+    fn unit_counts(&self) -> Option<benilla_ui::script::UnitCounts> {
+        let units = self.units.at(self.selection.get().and_then(|s| s.guid));
+        Some(crate::ui_unit::tokens::counts(&units))
     }
 
     fn charm_or_summon(&self) -> bool {

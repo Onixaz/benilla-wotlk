@@ -455,6 +455,21 @@ pub trait LiveState {
         None
     }
 
+    /// The guid a token's base names at the call (`0x60abf0`), `Some(0)` for nobody; `None` where no view lends the resolver's state. `focus`, `npc` and `questnpc` are read apart.
+    fn unit_base(&self, _base: super::UnitBase) -> Option<u64> {
+        None
+    }
+
+    /// A held unit's `UNIT_FIELD_TARGET` as a `target` hop reads it (`0x60aaa0`); `None` for a guid that is no held unit.
+    fn unit_target(&self, _guid: u64) -> Option<u64> {
+        None
+    }
+
+    /// The rows of the numbered bases' tables at the call; `None` where no view lends them.
+    fn unit_counts(&self) -> Option<super::UnitCounts> {
+        None
+    }
+
     /// An open-stable aura is on us (`0x5a19c0`).
     fn open_stable_aura(&self) -> bool {
         false
