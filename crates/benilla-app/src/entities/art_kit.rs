@@ -176,7 +176,9 @@ pub(super) fn apply_art_kits(
             debug!("art kit {kit} names texture variations, which are not applied");
         }
         let Some(host) = net.display_id.and_then(|d| gameobjects.models.get(&d)) else {
-            pend(&mut commands); // the display entry was evicted: retry, as item glows do
+            // No display entry (evicted, or none): no points to hang on. A rebuilt body, which a
+            // map change's eviction brings, takes the kit again.
+            settle(&mut commands, Vec::new());
             continue;
         };
         kits.ensure_models(kit, &asset_server);
