@@ -81,10 +81,18 @@ pub(crate) fn probe_secs(world: &World) -> f32 {
 /// What a queued chunk's failure does to its probe.
 type ChunkFailed = Box<dyn FnOnce(&mut bevy::prelude::World, mlua::Error) + Send + Sync>;
 
-/// The chunks a probe queued this frame, run with the `World` lent by [`run_probe_chunks`] right
-/// after it, each with what its failure does.
+/// One queued call into Lua.
+enum ProbeCall {
+    /// A chunk, and what its failure does.
+    Chunk(String, ChunkFailed),
+    /// A call on the VM.
+    Call(Box<dyn FnOnce(&mut benilla_ui::script::UiScript) + Send + Sync>),
+}
+
+/// The calls into Lua a probe queued this frame, run in order with the `World` lent by
+/// [`run_probe_chunks`] right after it.
 #[derive(bevy::prelude::Resource, Default)]
-pub(crate) struct ProbeChunks(Vec<(String, ChunkFailed)>);
+pub(crate) struct ProbeChunks(Vec<ProbeCall>);
 
 impl ProbeChunks {
     /// Queue `chunk`; `failed` runs on its error.
@@ -93,7 +101,16 @@ impl ProbeChunks {
         chunk: impl Into<String>,
         failed: impl FnOnce(&mut bevy::prelude::World, mlua::Error) + Send + Sync + 'static,
     ) {
-        self.0.push((chunk.into(), Box::new(failed)));
+        self.0
+            .push(ProbeCall::Chunk(chunk.into(), Box::new(failed)));
+    }
+
+    /// Queue `f` on the VM.
+    pub(crate) fn call(
+        &mut self,
+        f: impl FnOnce(&mut benilla_ui::script::UiScript) + Send + Sync + 'static,
+    ) {
+        self.0.push(ProbeCall::Call(Box::new(f)));
     }
 }
 
@@ -102,9 +119,14 @@ pub(crate) fn run_probe_chunks(world: &mut bevy::prelude::World) {
     let Some(mut chunks) = world.get_resource_mut::<ProbeChunks>() else {
         return;
     };
-    for (chunk, failed) in std::mem::take(&mut chunks.0) {
-        if let Some(Err(e)) = with_vm(world, |s| s.map(|s| s.run(&chunk))) {
-            failed(world, e);
+    for call in std::mem::take(&mut chunks.0) {
+        match call {
+            ProbeCall::Chunk(chunk, failed) => {
+                if let Some(Err(e)) = with_vm(world, |s| s.map(|s| s.run(&chunk))) {
+                    failed(world, e);
+                }
+            }
+            ProbeCall::Call(f) => with_vm(world, |s| s.map(f)).unwrap_or_default(),
         }
     }
 }

@@ -674,7 +674,16 @@ impl Plugin for CapturePlugin {
             .add_systems(Update, pin_scene.in_set(WorldStage::Present))
             // Before `UnitFeed`: the seed stands in for wire data live play delivers on earlier
             // frames, so the same frame's feeds and the one-shot `MERCHANT_SHOW` paint must see it.
-            .add_systems(Update, seed_ui_fixture.before(crate::ui_unit::UnitFeed))
+            .init_resource::<probes::ProbeChunks>()
+            .add_systems(
+                Update,
+                (
+                    crate::ui_script::raises::then_fire(seed_ui_fixture),
+                    probes::run_probe_chunks,
+                )
+                    .chain()
+                    .before(crate::ui_unit::UnitFeed),
+            )
             .add_systems(
                 Update,
                 (realm_list::seed_realm_list, glue_create::seed_char_create),

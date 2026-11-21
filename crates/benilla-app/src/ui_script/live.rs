@@ -2629,23 +2629,9 @@ impl<'w, 's, O: Owns> LendLive<'w, 's, O> {
             .with_view(|v| v.merchant.as_ref().and_then(|m| m.state().vendor))
     }
 
-    /// `f` over the gossip globals this parameter borrows, between calls into Lua.
-    pub(crate) fn with_gossip<R>(
-        &self,
-        f: impl FnOnce(Option<&crate::ui_gossip::GossipState>) -> R,
-    ) -> R {
-        self.loan.with_view(|v| f(v.gossip.state()))
-    }
-
     /// `f` over the quest giver this parameter borrows, to write between calls into Lua; a verb reached from inside `f` panics.
     pub(crate) fn with_giver_mut<R>(&mut self, f: impl FnOnce(Option<&mut QuestGiver>) -> R) -> R {
         self.loan.with_view_mut(|v| f(v.lent.giver.get_mut()))
-    }
-
-    /// The guild registrar held, read between calls into Lua.
-    pub(crate) fn registrar(&self) -> Option<u64> {
-        self.loan
-            .with_view(|v| v.petition.as_ref().and_then(|p| p.registrar()))
     }
 
     /// `f` over the guild bank this parameter borrows, to write between calls into Lua; a verb reached from inside `f` panics.

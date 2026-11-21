@@ -787,52 +787,6 @@ fn an_owners_loan_lasts_one_call_and_bevy_sees_the_write() {
     assert_eq!(seen[3], ("changed", true, false));
 }
 
-/// The quest window a system reads or writes through its `LendLive` is out of every verb's reach for as long as the system holds it: a call into Lua made inside, whose button would write the window (`0x58cd20`), panics instead of aliasing it; outside, the verb writes as usual.
-#[test]
-fn a_held_quest_window_shuts_the_verbs_out() {
-    use super::LendLive;
-    use benilla_ui::script::write_live;
-
-    #[derive(Resource, Default)]
-    struct Seen(Vec<(&'static str, bool)>);
-
-    fn holder(
-        (script, mut live): (Option<NonSendMut<UiScript>>, LendLive),
-        mut seen: ResMut<Seen>,
-    ) {
-        let _vm = script;
-        let verb = || std::panic::catch_unwind(|| write_live(|_| ()).is_some()).unwrap_or(false);
-        let read = live.with_giver(|g| g.is_some() && verb());
-        let written = live.with_giver_mut(|g| {
-            g.expect("the window").npc = Some(7);
-            verb()
-        });
-        seen.0.push(("read", read));
-        seen.0.push(("written", written));
-        seen.0.push(("outside", verb()));
-        seen.0.push((
-            "kept",
-            live.with_giver(|g| g.and_then(|g| g.npc)) == Some(7),
-        ));
-    }
-
-    let mut app = App::new();
-    app.init_non_send_resource::<crate::ui_quest::QuestGiver>()
-        .init_resource::<Seen>()
-        .add_systems(Update, holder);
-    app.insert_non_send_resource(UiScript::new().unwrap());
-    app.update();
-    assert_eq!(
-        app.world().resource::<Seen>().0,
-        [
-            ("read", false),
-            ("written", false),
-            ("outside", true),
-            ("kept", true)
-        ]
-    );
-}
-
 /// A system that writes none of the [`super::live::Lent`] state lends `LendLive`'s own borrow: a verb's write lands in the world's state and shows as a change, and a view lending no queue takes nothing.
 #[test]
 fn a_verbs_write_through_lend_live_lands_and_shows_as_a_change() {

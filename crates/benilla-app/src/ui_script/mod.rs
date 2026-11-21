@@ -28,8 +28,7 @@ pub(crate) mod live;
 pub(crate) mod raises;
 pub(crate) mod safe_world;
 pub(crate) use live::{
-    LendLive, LentRef, OwnedMut, OwnsActions, OwnsCooldowns, OwnsScriptCalls, OwnsSelection,
-    OwnsSpirit,
+    LendLive, LentRef, OwnedMut, OwnsCooldowns, OwnsScriptCalls, OwnsSelection, OwnsSpirit,
 };
 pub(crate) use raises::{InTurn, VmTurn};
 #[cfg(test)]
