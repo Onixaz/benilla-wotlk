@@ -33,7 +33,7 @@ mod world;
 
 pub(crate) use apply::apply_net_updates;
 pub(crate) use apply::enter_world_on_self_create;
-use apply::tag_self_player;
+pub(crate) use apply::tag_self_player;
 pub(crate) use handlers::NetHandlerApp;
 
 pub(crate) use io::LoginRequest;

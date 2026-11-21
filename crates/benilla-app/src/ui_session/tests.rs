@@ -344,3 +344,16 @@ fn a_contested_player_is_hostile_to_a_guard_template() {
         "contested"
     );
 }
+
+/// The watchdog runs after the frame's creates resolve us (`0x51fe55` -> `0x4038f0` looks the
+/// active player up in the object table the frame's packets filled), so a clear's listener reads
+/// our own create of the same frame; unordered, its clear could land before our tag.
+#[test]
+fn the_watchdog_runs_after_our_create_is_tagged() {
+    let mut app = crate::game_plugins::schedule_tests::headless_client();
+    assert!(crate::test_support::runs_before(
+        &mut app,
+        crate::net::tag_self_player,
+        update_interact_target
+    ));
+}

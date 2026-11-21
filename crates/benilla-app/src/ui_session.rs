@@ -19,9 +19,11 @@ impl Plugin for UiSessionPlugin {
             .add_systems(
                 Update,
                 (
-                    // Ahead of the press, as the world frame's update runs before input.
+                    // Ahead of the press, as the world frame's update runs before input; after our
+                    // tag, as the frame's creates resolve the active player there (`0x4038f0`).
                     update_interact_target
                         .after(crate::net::apply_net_updates)
+                        .after(crate::net::tag_self_player)
                         .before(crate::ui_script::UiPress),
                     deliver_interact_cues.before(benilla_world::schedule::WorldStage::Present),
                 ),
