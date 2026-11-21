@@ -681,9 +681,9 @@ fn what_follows_the_script_calls_still_follows_them() {
     }
 }
 
-/// Feed Pet through `DropItemOnUnit("pet")` clears the cursor after the send's events, at the
-/// drop's raise step (`0x80b556` signals inside the send), so the world click's payload leg that
-/// follows reads an empty cursor and raises no destroy confirm for the food just fed.
+/// Feed Pet through `DropItemOnUnit("pet")` clears the cursor after the send's events, inside the
+/// drop's own press step (`0x80b556` signals inside the send), so the world click's payload leg
+/// that follows reads an empty cursor and raises no destroy confirm for the food just fed.
 #[test]
 fn a_fed_items_clear_lands_before_the_world_clicks_payload_leg() {
     use bevy::ecs::system::RunSystemOnce;
@@ -693,12 +693,7 @@ fn a_fed_items_clear_lands_before_the_world_clicks_payload_leg() {
     let g = graph_or_skip!();
     let drop = g.one("::drop_item_on_unit");
     let leg = g.one("::drop_on_world_click");
-    assert!(
-        g.succ[drop]
-            .iter()
-            .any(|&s| g.names[s].ends_with("::raises::fire_raises") && g.reaches(s, leg)),
-        "a raise step runs right after the drop and before the world click's payload leg"
-    );
+    assert!(g.reaches(drop, leg), "the drop runs before the payload leg");
     let mut rig = Rig::new(&[]).expect("names");
     let world = rig.app.world_mut();
     let index = world.resource::<GuidIndex>().0.clone();
@@ -761,13 +756,7 @@ fn a_fed_items_clear_lands_before_the_world_clicks_payload_leg() {
         .run_system_once(crate::ui_action::drop_item::drop_item_on_unit)
         .unwrap();
     world
-        .run_system_once(crate::ui_script::raises::fire_raises)
-        .unwrap();
-    world
         .run_system_once(crate::ui_action::drop_item::drop_on_world_click)
-        .unwrap();
-    world
-        .run_system_once(crate::ui_script::raises::fire_raises)
         .unwrap();
     rig.vm().tick(0.01);
     assert!(

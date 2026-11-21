@@ -82,6 +82,39 @@ pub(crate) fn apply_in_call(lua: &mlua::Lua, call: ScriptCall) -> bool {
     }
 }
 
+/// One press of an exclusive holder at its own step: `system` runs the ladder with what it raises
+/// through the VM queued in turn, then those raises and its queued edges fire with the `World`
+/// lent, before the holder's next press, so that press reads what this one armed (`0x80b556`,
+/// `0x80b583`). What earlier systems queued stays queued for their own step.
+pub(crate) fn press_step<I, O, M, S>(world: &mut World, system: S, input: I::Inner<'_>) -> Option<O>
+where
+    I: bevy::ecs::system::SystemInput + 'static,
+    O: 'static,
+    S: IntoSystem<I, O, M> + 'static,
+{
+    use crate::ui_script::live::UiEvents;
+    let lua = world
+        .get_non_send_resource::<UiScript>()
+        .map(|s| s.lua().clone());
+    let earlier = world.get_resource_or_init::<UiEvents>().set_aside();
+    let (out, raised) = match &lua {
+        Some(lua) => benilla_ui::script::world_loan::raises_in_turn(lua, || {
+            world.run_system_cached_with(system, input).ok()
+        }),
+        None => (world.run_system_cached_with(system, input).ok(), Vec::new()),
+    };
+    if !raised.is_empty() {
+        crate::ui_script::safe_world::lend(world, |script| {
+            for raise in raised {
+                raise.run(script);
+            }
+        });
+    }
+    crate::ui_script::live::fire_handler_events(world);
+    world.resource_mut::<UiEvents>().put_back(earlier);
+    out
+}
+
 /// Apply the calls that waited where no `World` was lent, in call order, in the press pass after
 /// the clicks and keys and before the frame's feed, which publishes the cooldowns they arm.
 pub(crate) fn apply_script_calls(world: &mut World) {

@@ -486,7 +486,7 @@ impl Plugin for UiActionPlugin {
                     crate::ui_script::raises::then_fire(equipment_sets::drain_equipment_sets)
                         .in_set(UiDrain),
                     // The target chain queues the openers earlier in the frame.
-                    crate::ui_script::raises::then_fire(drain::drain_go_openers).in_set(UiDrain),
+                    drain::drain_go_openers.in_set(UiDrain),
                     // The latches must be current before the target chain's cursor reads them.
                     track_learned_abilities
                         .in_set(UnitFeed)

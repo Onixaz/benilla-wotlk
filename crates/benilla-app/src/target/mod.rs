@@ -499,12 +499,8 @@ impl Plugin for TargetPlugin {
                 (
                     crate::script_calls::apply_script_calls,
                     (
-                        crate::ui_script::raises::then_fire(
-                            crate::ui_action::drop_item::drop_item_on_unit,
-                        ),
-                        crate::ui_script::raises::then_fire(
-                            crate::ui_action::drop_item::drop_on_world_click,
-                        ),
+                        crate::ui_action::drop_item::drop_item_on_unit,
+                        crate::ui_action::drop_item::drop_on_world_click,
                     )
                         .chain()
                         .in_set(crate::ui_action::drop_item::DropSet),

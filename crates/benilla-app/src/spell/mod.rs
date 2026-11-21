@@ -148,7 +148,7 @@ impl Plugin for SpellPlugin {
                     // The item-target commit: in the press pass after the clicks, so a bag click
                     // binds and its GCD reaches the frame's tick (`0x480410` before `0x495320`);
                     // outside the target chain, as its clicks never reach the world.
-                    crate::ui_script::raises::then_fire(targeting::commit_item_cast_on_pick)
+                    targeting::commit_item_cast_on_pick
                         .in_set(crate::ui_script::UiPress)
                         .after(crate::script_calls::apply_script_calls),
                 ),

@@ -140,7 +140,7 @@ impl Plugin for UiTradeSkillPlugin {
                         .after(crate::ui_script::UiPress)
                         .before(crate::ui_script::UiFeed),
                     feed_trade_skill.in_set(UnitFeed),
-                    crate::ui_script::raises::then_fire(drain_trade_skill)
+                    drain_trade_skill
                         .in_set(crate::ui_script::UiPress)
                         .after(crate::script_calls::apply_script_calls),
                 ),
@@ -790,54 +790,70 @@ fn feed_trade_skill(
 }
 
 /// Drain the Lua intents and run the engine's repeat on our own cast edges: a start commits a
-/// pending repeat, a go may cast again, a failure stops it.
-fn drain_trade_skill(
-    mut vm: crate::ui_script::InTurn,
-    mut open: ResMut<TradeSkillOpen>,
-    mut cast_events: MessageReader<CastEvent>,
-    targeting: cast_target::CastTargeting,
-    mut ladder: CastLadder,
-) {
-    let Some(mut script) = vm.turn() else {
-        return;
-    };
-
-    for spell_id in script.take_trade_skill_casts() {
-        if open.line.is_none() {
+/// pending repeat, a go may cast again, a failure stops it. Each cast is its own press with the
+/// `World` lent at its raises, so the next reads the GCD it armed (`0x80b583`).
+pub(crate) fn drain_trade_skill(world: &mut World) {
+    use crate::ui_script::safe_world::lend;
+    for spell_id in lend(world, |s| s.take_trade_skill_casts()).unwrap_or_default() {
+        if world.resource::<TradeSkillOpen>().line.is_none() {
             debug!("ui_tradeskill: DoTradeSkill({spell_id}) with no open book — ignored");
             continue;
         }
         debug!("ui_tradeskill: DoTradeSkill({spell_id})");
-        ladder.send(spell_id, &targeting.context(), CastCommit::Spell);
-        // The send's cast-bar edges, in turn as it returns (`0x80b556`).
-        ladder.press.defer_in_turn(&mut script);
+        press_trade_skill(world, spell_id);
     }
-
-    let self_entity = ladder.self_player.single().ok().map(|(e, _)| e);
-    for ev in cast_events.read() {
-        if Some(ev.entity) != self_entity {
-            continue;
-        }
+    let edges = world.run_system_cached(own_cast_edges).unwrap_or_default();
+    for (kind, spell_id) in edges {
         // The edges write the repeat at once, in the order read (start `0x5da0f0`, go `0x5da070`,
         // failure `0x5da020`): the frame's packets precede its input and paint (`0x47f10d`).
-        match ev.kind {
-            CastEventKind::Start { .. } => script.trade_skill_cast_started(ev.spell_id),
+        match kind {
+            CastEventKind::Start { .. } => {
+                lend(world, |s| s.trade_skill_cast_started(spell_id));
+            }
             CastEventKind::Go { .. } => {
-                if script.trade_skill_cast_done(ev.spell_id) {
-                    debug!("ui_tradeskill: recast {}", ev.spell_id);
-                    ladder.send(ev.spell_id, &targeting.context(), CastCommit::Spell);
-                    ladder.press.defer_in_turn(&mut script);
+                if lend(world, |s| s.trade_skill_cast_done(spell_id)) == Some(true) {
+                    debug!("ui_tradeskill: recast {spell_id}");
+                    press_trade_skill(world, spell_id);
                 }
             }
-            CastEventKind::Fail { .. } => script.trade_skill_cast_failed(ev.spell_id),
+            CastEventKind::Fail { .. } => {
+                lend(world, |s| s.trade_skill_cast_failed(spell_id));
+            }
             _ => {}
         }
     }
-
-    if script.take_trade_skill_close() {
+    if lend(world, |s| s.take_trade_skill_close()) == Some(true) {
         debug!("ui_tradeskill: client-side close (no packet)");
-        open.line = None;
+        world.resource_mut::<TradeSkillOpen>().line = None;
     }
+}
+
+/// Our own cast edges since the last drain, in the order read.
+fn own_cast_edges(
+    mut cast_events: MessageReader<CastEvent>,
+    me: Query<Entity, With<SelfPlayer>>,
+) -> Vec<(CastEventKind, u32)> {
+    let me = me.single().ok();
+    cast_events
+        .read()
+        .filter(|ev| Some(ev.entity) == me)
+        .map(|ev| (ev.kind, ev.spell_id))
+        .collect()
+}
+
+/// One cast as a press: the ladder, then its raises with the `World` lent (`0x80b556`, `0x80b583`).
+fn press_trade_skill(world: &mut World, spell_id: u32) {
+    crate::script_calls::press_step(world, send_trade_skill, spell_id);
+}
+
+fn send_trade_skill(
+    In(spell_id): In<u32>,
+    targeting: cast_target::CastTargeting,
+    mut ladder: CastLadder,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
+) {
+    ladder.send(spell_id, &targeting.context(), CastCommit::Spell);
+    ladder.press.defer(&mut ui);
 }
 
 #[cfg(test)]
@@ -984,14 +1000,17 @@ mod tests {
         assert_eq!(app.world().resource::<TradeSkillOpen>().line, None);
     }
 
-    /// A start and a go of one craft read in one drain commit the repeat, then spend one of it:
-    /// the go reads the start's commit (`0x5da0f0` then `0x5da070`).
-    #[test]
-    fn a_start_and_a_go_in_one_drain_run_the_repeat_in_order() {
-        use bevy::ecs::system::RunSystemOnce;
-        const ROD: u32 = 7421;
+    const ROD: u32 = 7421;
+
+    /// The whole client headless with us, the Enchanting book holding one recipe and a VM.
+    fn craft_world() -> (
+        App,
+        crossbeam_channel::Receiver<crate::net::ClientCommand>,
+        Entity,
+        benilla_ui::script::UiScript,
+    ) {
         let mut app = crate::game_plugins::schedule_tests::headless_client();
-        let (tx, _rx) = crossbeam_channel::unbounded();
+        let (tx, rx) = crossbeam_channel::unbounded();
         app.insert_resource(NetCommands(tx));
         let world = app.world_mut();
         let me = world
@@ -1036,6 +1055,63 @@ mod tests {
                 tools: Vec::new(),
             }],
         }));
+        (app, rx, me, script)
+    }
+
+    /// Two casts in one drain are two presses: the second reads the GCD the first armed at its
+    /// step (`0x80b583`), so the pending bail ends it (`0x80d34b`, `0x80d36d`) and one cast goes
+    /// out.
+    #[test]
+    fn the_second_cast_in_one_drain_reads_the_firsts_gcd() {
+        use bevy::ecs::system::RunSystemOnce;
+        let (mut app, rx, _me, script) = craft_world();
+        script
+            .run(
+                r#"for i = 1, GetNumTradeSkills() do
+                       if select(2, GetTradeSkillInfo(i)) ~= "header" then
+                           SelectTradeSkill(i)
+                           DoTradeSkill(i, 1)
+                           DoTradeSkill(i, 1)
+                       end
+                   end"#,
+            )
+            .expect("the casts run");
+        let world = app.world_mut();
+        world.insert_non_send_resource(script);
+        world.resource_mut::<TradeSkillOpen>().line = Some(333);
+        let mut spells = crate::ui_action::Spells::empty_for_tests();
+        spells.catalog = benilla_formats::SpellCatalog::from_displays(
+            [(
+                ROD,
+                SpellDisplay {
+                    name: "Runed Copper Rod".into(),
+                    start_recovery_category: 133,
+                    start_recovery_ms: 1500,
+                    ..Default::default()
+                },
+            )]
+            .into(),
+        );
+        world.insert_resource(spells);
+        world
+            .run_system_once(drain_trade_skill)
+            .expect("the drain runs");
+        let sent = rx
+            .try_iter()
+            .filter(|c| {
+                matches!(c, crate::net::ClientCommand::CastSpell { spell_id, .. } if *spell_id == ROD)
+            })
+            .count();
+        assert_eq!(sent, 1, "the second press bailed on the first's GCD");
+    }
+
+    /// A start and a go of one craft read in one drain commit the repeat, then spend one of it:
+    /// the go reads the start's commit (`0x5da0f0` then `0x5da070`).
+    #[test]
+    fn a_start_and_a_go_in_one_drain_run_the_repeat_in_order() {
+        use bevy::ecs::system::RunSystemOnce;
+        let (mut app, _rx, me, mut script) = craft_world();
+        let world = app.world_mut();
         script
             .run(
                 r#"for i = 1, GetNumTradeSkills() do

@@ -239,43 +239,43 @@ impl AttackPress<'_, '_> {
 /// Sends the queued GameObject openers through the cast ladder. The reference reaches its cast
 /// attempt from a right-click as from a button, so every rung applies: a second click on a chest
 /// mid-cast is the ladder's silent same-spell bail.
-pub(super) fn drain_go_openers(
-    mut queue: ResMut<crate::ui_action::GoOpenerCasts>,
-    mut vm: crate::ui_script::InTurn,
+pub(super) fn drain_go_openers(world: &mut World) {
+    let openers = std::mem::take(&mut world.resource_mut::<crate::ui_action::GoOpenerCasts>().0);
+    // Each opener is its own press, its raises fired before the next.
+    for opener in openers {
+        crate::script_calls::press_step(world, go_opener, opener);
+    }
+}
+
+/// One GameObject opener.
+fn go_opener(
+    In(opener): In<super::GoOpener>,
+    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
     targeting: cast_target::CastTargeting,
     mut ladder: CastLadder,
     mut gate: crate::ui_bind_confirm::BindGate,
 ) {
-    if queue.0.is_empty() {
-        return;
-    }
     let ctx = targeting.context();
-    let mut script = vm.turn();
-    for opener in std::mem::take(&mut queue.0) {
-        match opener {
-            super::GoOpener::Spell { spell_id, go_guid } => {
-                debug!("ui_action: gameobject opener casts {spell_id} at {go_guid:#x}");
-                ladder.send_at_object(spell_id, &ctx, go_guid);
-                // The send's cast-bar edges, in turn as it returns (`0x80b556`).
-                match script.as_mut() {
-                    Some(script) => ladder.press.defer_in_turn(script),
-                    None => ladder.press.flush(&mut ladder.ecs),
-                }
-            }
-            // The key goes through the shared item-use fork, as a bag click does.
-            super::GoOpener::Key(it) => {
-                let Some(script) = script.as_mut() else {
-                    continue;
-                };
-                debug!(
-                    "ui_action: gameobject opener uses the key at wire {}/{} on {:?}",
-                    it.bag_index, it.slot, it.on_object
-                );
-                crate::ui_items::send_item_use(it, &ctx, &mut ladder, script, &mut gate, false);
-                ladder.press.defer_in_turn(script);
-            }
+    match opener {
+        super::GoOpener::Spell { spell_id, go_guid } => {
+            debug!("ui_action: gameobject opener casts {spell_id} at {go_guid:#x}");
+            ladder.send_at_object(spell_id, &ctx, go_guid);
+        }
+        // The key goes through the shared item-use fork, as a bag click does.
+        super::GoOpener::Key(it) => {
+            let Some(mut script) = script else {
+                return;
+            };
+            debug!(
+                "ui_action: gameobject opener uses the key at wire {}/{} on {:?}",
+                it.bag_index, it.slot, it.on_object
+            );
+            crate::ui_items::send_item_use(it, &ctx, &mut ladder, &mut script, &mut gate, false);
         }
     }
+    // The press's cast-bar edges, fired at its step (`0x80b556`).
+    ladder.press.defer(&mut ui);
 }
 
 /// What a `UseAction` press reads and writes.

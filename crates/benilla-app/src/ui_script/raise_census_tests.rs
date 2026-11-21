@@ -14,7 +14,6 @@ const ON_THE_QUEUE: &[(&str, &str)] = &[
     ("cinematic.rs", "send_opening_cinematic"),
     ("combat_log/mod.rs", "feed_combat_log"),
     ("cvars/mod.rs", "sync_cvars"),
-    ("death/mod.rs", "drain_death"),
     ("death/mod.rs", "update_corpse_distance"),
     ("hover_log.rs", "record"),
     ("minimap/blips/mod.rs", "drive_blip_tooltip"),
@@ -34,7 +33,6 @@ const ON_THE_QUEUE: &[(&str, &str)] = &[
     ("sound/ui.rs", "feed_drivers"),
     ("sound/ui.rs", "play_item_gesture_sounds"),
     ("sound/zone.rs", "lua_music"),
-    ("spell/targeting/item.rs", "commit_item_cast_on_pick"),
     ("target/click.rs", "world_right_click_payload"),
     ("target/script.rs", "assist_requests"),
     ("target/script.rs", "target_by_name_requests"),
@@ -42,9 +40,6 @@ const ON_THE_QUEUE: &[(&str, &str)] = &[
     ("tutorial.rs", "feed_tutorials"),
     ("ui_achievement.rs", "feed_achievements"),
     ("ui_action/cast_refusal.rs", "show_refusal_now"),
-    ("ui_action/drain.rs", "drain_go_openers"),
-    ("ui_action/drop_item.rs", "drop_item_on_unit"),
-    ("ui_action/drop_item.rs", "drop_on_world_click"),
     ("ui_action/equipment_sets.rs", "drain_equipment_sets"),
     ("ui_action/equipment_sets.rs", "on_equipment_set_list"),
     ("ui_action/equipment_sets.rs", "on_equipment_set_saved"),
@@ -151,7 +146,6 @@ const ON_THE_QUEUE: &[(&str, &str)] = &[
     ("ui_tooltip/mod.rs", "drive_mouseover_tooltip"),
     ("ui_trade/mod.rs", "drain_trade"),
     ("ui_trade/mod.rs", "feed_trade"),
-    ("ui_tradeskill.rs", "drain_trade_skill"),
     ("ui_tradeskill.rs", "feed_trade_skill"),
     ("ui_transfer.rs", "feed_difficulty_notices"),
     ("ui_transfer.rs", "feed_transfer_aborts"),
@@ -187,7 +181,7 @@ const ON_THE_QUEUE: &[(&str, &str)] = &[
 ];
 
 /// The raise steps: the five between the UI phases and each `then_fire` chain.
-const RAISE_STEPS: usize = 76;
+const RAISE_STEPS: usize = 70;
 
 /// `source` with every inline test module cut out, to its closing brace.
 fn production(source: &str) -> String {

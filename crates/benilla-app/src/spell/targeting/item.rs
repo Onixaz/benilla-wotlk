@@ -131,8 +131,84 @@ pub(crate) fn item_bind_verdict(
 /// poison bottle). It also takes both popups' answers: `BindEnchant` re-runs confirmed,
 /// `ReplaceEnchant` calls directly. An empty slot (the reference's null-item guard), a refusal or a
 /// confirm keeps the mode.
-pub(crate) fn commit_item_cast_on_pick(
-    mut vm: crate::ui_script::InTurn,
+pub(crate) fn commit_item_cast_on_pick(world: &mut World) {
+    use crate::script_calls::press_step;
+    use crate::ui_script::safe_world::lend;
+    // The trade window's not-traded slot (`0x5198a0`): a click over an enchant raises the replace
+    // popup, whose Accept casts (`0x80c5f0`).
+    for accepted in lend(world, |s| s.take_trade_enchant_targets()).unwrap_or_default() {
+        press_step(world, item_leg, PickLeg::TradeSlot(accepted));
+    }
+    // Fresh clicks, then the bind popup's Yes, go through the gate; the replace popup's Yes does
+    // not.
+    let picks = lend(world, |s| s.take_item_picks()).unwrap_or_default();
+    let mut asks: Vec<(u64, bool)> = world
+        .run_system_cached_with(pick_guids, picks)
+        .unwrap_or_default();
+    let mut bind_outright: Vec<u64> = Vec::new();
+    press_step(world, item_leg, PickLeg::ImbueRaise);
+    for answer in lend(world, |s| s.take_enchant_confirms()).unwrap_or_default() {
+        if answer == benilla_ui::script::EnchantConfirm::SpellEnchant {
+            press_step(world, item_leg, PickLeg::SpellEnchant);
+            continue;
+        }
+        let Some(guid) = world.resource::<EnchantConfirmItem>().0 else {
+            continue;
+        };
+        match answer {
+            benilla_ui::script::EnchantConfirm::Bind => asks.push((guid, true)),
+            benilla_ui::script::EnchantConfirm::Replace => bind_outright.push(guid),
+            benilla_ui::script::EnchantConfirm::SpellEnchant => {}
+        }
+    }
+    // Each pick is its own press, its raises fired before the next.
+    for (item_guid, confirmed) in asks {
+        press_step(world, item_leg, PickLeg::Ask(item_guid, confirmed));
+    }
+    // `ReplaceEnchant`: bind the parked guid with no gate re-run.
+    for item_guid in bind_outright {
+        press_step(world, item_leg, PickLeg::Outright(item_guid));
+    }
+}
+
+/// One leg of [`commit_item_cast_on_pick`], run as its own press.
+#[derive(Clone, Copy, Debug)]
+enum PickLeg {
+    TradeSlot(bool),
+    ImbueRaise,
+    SpellEnchant,
+    Ask(u64, bool),
+    Outright(u64),
+}
+
+/// The picked slots' item guids; an empty slot keeps the mode.
+fn pick_guids(
+    In(picks): In<Vec<(i64, u32)>>,
+    self_q: Query<&crate::net::ObjectStore, With<SelfPlayer>>,
+    objects: crate::net::Objects,
+) -> Vec<(u64, bool)> {
+    let mut asks = Vec::new();
+    for (bag, slot) in picks {
+        let slot0 = u8::try_from(slot.saturating_sub(1)).unwrap_or(0);
+        match self_q
+            .iter()
+            .next()
+            .and_then(|store| crate::ui_items::slot_guid(&store.0, bag, slot0, &objects))
+        {
+            Some(guid) => asks.push((guid, false)),
+            None => {
+                debug!("ui_action: item pick on an empty slot (bag {bag} slot {slot}) — mode kept")
+            }
+        }
+    }
+    asks
+}
+
+#[allow(clippy::too_many_arguments)]
+fn item_leg(
+    In(leg): In<PickLeg>,
+    mut script: NonSendMut<benilla_ui::script::UiScript>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
     refunds: Option<NonSend<crate::ui_socket::RefundRecords>>,
     self_q: Query<&crate::net::ObjectStore, With<SelfPlayer>>,
     enchants: Option<Res<crate::items::Enchants>>,
@@ -145,210 +221,208 @@ pub(crate) fn commit_item_cast_on_pick(
 ) {
     let (played, trade) = windows;
     let played_now = played.now();
-    let Some(mut script) = vm.turn() else {
-        return;
-    };
-    // The trade window's not-traded slot (`0x5198a0`): a click over an enchant raises the replace
-    // popup, whose Accept casts (`0x80c5f0`).
-    for accepted in script.take_trade_enchant_targets() {
-        let Some(current) = trade.as_deref().and_then(|t| t.their_enchant_slot()) else {
-            continue;
-        };
-        let held = ladder.ground.pending_for(TargetingWants::Item);
-        let Some((spell_id, commit)) = held else {
-            continue;
-        };
-        let replaced = (!accepted && current != 0)
-            .then(|| {
-                let def = ladder.spells.as_deref()?.catalog.get(spell_id)?;
-                let catalog = &enchants.as_deref()?.0;
-                let existing = catalog.name(current)?;
-                (0..3)
-                    .filter(|&i| def.effects[i] == benilla_formats::SPELL_EFFECT_ENCHANT_ITEM)
-                    .find_map(|i| {
-                        let id = u32::try_from(def.effect_misc_value[i]).ok()?;
-                        Some((existing.to_string(), catalog.name(id)?.to_string()))
-                    })
-            })
-            .flatten();
-        match replaced {
-            Some((existing, new)) => script.fire_event(
-                "TRADE_REPLACE_ENCHANT",
-                vec![
-                    benilla_ui::script::ScriptValue::Str(existing),
-                    benilla_ui::script::ScriptValue::Str(new),
-                ],
-            ),
-            None => ladder.commit_targeted(
-                spell_id,
-                commit,
-                crate::spell::cast_send::TargetedBind::TradeItem,
-            ),
-        }
-        // The commit's cast-bar edges, in turn as it returns (`0x80b556`).
-        ladder.press.defer_in_turn(&mut script);
-    }
-    // Fresh clicks, then the bind popup's Yes, go through the gate; the replace popup's Yes does
-    // not.
-    let mut asks: Vec<(u64, bool)> = Vec::new();
-    let mut bind_outright: Vec<u64> = Vec::new();
-    for (bag, slot) in script.take_item_picks() {
-        let slot0 = u8::try_from(slot.saturating_sub(1)).unwrap_or(0);
-        match self_q
-            .iter()
-            .next()
-            .and_then(|store| crate::ui_items::slot_guid(&store.0, bag, slot0, &ladder.objects))
-        {
-            Some(guid) => asks.push((guid, false)),
-            None => {
-                debug!("ui_action: item pick on an empty slot (bag {bag} slot {slot}) — mode kept")
-            }
-        }
-    }
-    // A weapon imbue parked at its trade-window confirm raises it here, where the VM is.
-    if let Some(confirm) = ladder.spell_enchant.as_deref_mut() {
-        if std::mem::take(&mut confirm.raise) {
-            script.fire_event(
-                "END_BOUND_TRADEABLE",
-                vec![benilla_ui::script::ScriptValue::Str("spellenchant".into())],
-            );
-        }
-    }
-    for answer in script.take_enchant_confirms() {
-        if answer == benilla_ui::script::EnchantConfirm::SpellEnchant {
-            // `0x52345b`: the parked imbue cast at the parked item, confirmed; nothing parked,
-            // nothing cast.
-            let parked = ladder
-                .spell_enchant
-                .as_deref_mut()
-                .and_then(|c| c.parked.take());
-            if let Some((spell_id, item)) = parked {
-                debug!("ui_action: imbue {spell_id} confirmed onto {item:#x}");
-                ladder.commit_targeted(
-                    spell_id,
-                    crate::spell::CastCommit::Spell,
-                    crate::spell::cast_send::TargetedBind::Item(item),
-                );
-                ladder.press.defer_in_turn(&mut script);
-            }
-            continue;
-        }
-        let Some(guid) = parked.0 else { continue };
-        match answer {
-            benilla_ui::script::EnchantConfirm::Bind => asks.push((guid, true)),
-            benilla_ui::script::EnchantConfirm::Replace => bind_outright.push(guid),
-            benilla_ui::script::EnchantConfirm::SpellEnchant => {}
-        }
-    }
-
-    for (item_guid, confirmed) in asks {
-        // The last commit's cast-bar edges, fired before this pick's popup can run Lua.
-        ladder.press.defer_in_turn(&mut script);
-        let held = ladder.ground.pending_for(TargetingWants::Item);
-        let Some((spell_id, commit)) = held else {
-            continue; // a click raced a cancel
-        };
-        // An unresolved template binds ungated and the server judges.
-        let entry = ladder
-            .objects
-            .object(item_guid)
-            .and_then(|o| o.object_entry());
-        let clicked = match entry {
-            Some(entry) => ladder
-                .items
-                .template(entry, item_guid, &ladder.commands)
-                .map(|t| (t.class, t.subclass, t.inventory_type)),
-            None => None,
-        };
-        let def = ladder
-            .spells
-            .as_deref()
-            .and_then(|s| s.catalog.get(spell_id));
-        let (Some(def), Some((class, subclass, inventory_type))) = (def, clicked) else {
-            debug!("ui_action: item pick — cast {spell_id} at item {item_guid:#x} (ungated)");
-            ladder.commit_targeted(
-                spell_id,
-                commit,
-                crate::spell::cast_send::TargetedBind::Item(item_guid),
-            );
-            continue;
-        };
-        let cat = enchants.as_deref();
-        let fields = ladder.objects.object(item_guid);
-        let item = ClickedItem {
-            class,
-            subclass,
-            inventory_type,
-            // The same predicate as the tooltip's Soulbound line.
-            already_bound: fields.is_some_and(|f| crate::items::already_bound(f, cat)),
-            existing_enchant: [0u8, 1]
-                .map(|slot| fields.and_then(|f| crate::items::live_enchant(f, slot, cat))),
-            // The record on the item (`item+0x3d4`).
-            refund_open: refunds
-                .as_deref()
-                .is_some_and(|r| r.open(item_guid, played_now)),
-            bound_tradeable: fields.is_some_and(|f| {
-                crate::ui_socket::bound_tradeable(
-                    f,
-                    self_q.iter().next().and_then(|s| s.0.object_guid()),
-                    cat,
-                    played_now,
-                )
-            }),
-        };
-        // `EffectMiscValue` is signed; the reference rejects a negative one before the row lookup.
-        let new = u32::try_from(def.effect_misc_value[0])
-            .ok()
-            .filter(|&id| cat.is_some_and(|c| c.0.has_row(id)))
-            .map(|id| NewEnchant {
-                id,
-                binds: crate::items::binds(id, cat),
-            });
-        match item_bind_verdict(def, &item, new, confirmed) {
-            ItemBind::Refuse(reason) => {
-                debug!(
-                    "ui_action: cast {spell_id} refused at the item bind ({reason:#x}) — \
-                     the cursor stays up"
-                );
-                ladder.press.push_local(spell_id, reason);
-            }
-            ItemBind::ConfirmBind => {
-                debug!("ui_action: item bind confirm for {spell_id} on item {item_guid:#x}");
-                parked.0 = Some(item_guid);
-                script.fire_event("BIND_ENCHANT", vec![]);
-            }
-            ItemBind::ConfirmEndRefund => {
-                debug!("ui_action: end-refund confirm for {spell_id} on item {item_guid:#x}");
-                parked.0 = Some(item_guid);
-                script.fire_event("END_REFUND", vec![benilla_ui::script::ScriptValue::Int(1)]);
-            }
-            ItemBind::ConfirmEndBoundTradeable => {
-                debug!("ui_action: end-bound-tradeable confirm for {spell_id} on {item_guid:#x}");
-                parked.0 = Some(item_guid);
-                script.fire_event(
-                    "END_BOUND_TRADEABLE",
-                    vec![benilla_ui::script::ScriptValue::Str("itemenchant".into())],
-                );
-            }
-            ItemBind::ConfirmReplace { existing, new } => {
-                // Old name first, then new: "Do you want to replace %s with %s?".
-                let name = |id: u32| {
-                    cat.and_then(|c| c.0.name(id))
-                        .unwrap_or_default()
-                        .to_string()
+    'leg: {
+        match leg {
+            PickLeg::TradeSlot(accepted) => {
+                let Some(current) = trade.as_deref().and_then(|t| t.their_enchant_slot()) else {
+                    break 'leg;
                 };
-                debug!("ui_action: replace-enchant confirm {existing} -> {new} on {item_guid:#x}");
-                parked.0 = Some(item_guid);
-                script.fire_event(
-                    "REPLACE_ENCHANT",
-                    vec![
-                        benilla_ui::script::ScriptValue::Str(name(existing)),
-                        benilla_ui::script::ScriptValue::Str(name(new)),
-                    ],
-                );
+                let held = ladder.ground.pending_for(TargetingWants::Item);
+                let Some((spell_id, commit)) = held else {
+                    break 'leg;
+                };
+                let replaced = (!accepted && current != 0)
+                    .then(|| {
+                        let def = ladder.spells.as_deref()?.catalog.get(spell_id)?;
+                        let catalog = &enchants.as_deref()?.0;
+                        let existing = catalog.name(current)?;
+                        (0..3)
+                            .filter(|&i| {
+                                def.effects[i] == benilla_formats::SPELL_EFFECT_ENCHANT_ITEM
+                            })
+                            .find_map(|i| {
+                                let id = u32::try_from(def.effect_misc_value[i]).ok()?;
+                                Some((existing.to_string(), catalog.name(id)?.to_string()))
+                            })
+                    })
+                    .flatten();
+                match replaced {
+                    Some((existing, new)) => script.fire_event(
+                        "TRADE_REPLACE_ENCHANT",
+                        vec![
+                            benilla_ui::script::ScriptValue::Str(existing),
+                            benilla_ui::script::ScriptValue::Str(new),
+                        ],
+                    ),
+                    None => ladder.commit_targeted(
+                        spell_id,
+                        commit,
+                        crate::spell::cast_send::TargetedBind::TradeItem,
+                    ),
+                }
             }
-            ItemBind::Bind => {
-                debug!("ui_action: item pick — cast {spell_id} at item {item_guid:#x}");
+            PickLeg::ImbueRaise => {
+                // A weapon imbue parked at its trade-window confirm raises it here, where the VM is.
+                if let Some(confirm) = ladder.spell_enchant.as_deref_mut() {
+                    if std::mem::take(&mut confirm.raise) {
+                        script.fire_event(
+                            "END_BOUND_TRADEABLE",
+                            vec![benilla_ui::script::ScriptValue::Str("spellenchant".into())],
+                        );
+                    }
+                }
+            }
+            PickLeg::SpellEnchant => {
+                // `0x52345b`: the parked imbue cast at the parked item, confirmed; nothing parked,
+                // nothing cast.
+                let parked = ladder
+                    .spell_enchant
+                    .as_deref_mut()
+                    .and_then(|c| c.parked.take());
+                if let Some((spell_id, item)) = parked {
+                    debug!("ui_action: imbue {spell_id} confirmed onto {item:#x}");
+                    ladder.commit_targeted(
+                        spell_id,
+                        crate::spell::CastCommit::Spell,
+                        crate::spell::cast_send::TargetedBind::Item(item),
+                    );
+                }
+            }
+            PickLeg::Ask(item_guid, confirmed) => {
+                let held = ladder.ground.pending_for(TargetingWants::Item);
+                let Some((spell_id, commit)) = held else {
+                    break 'leg; // a click raced a cancel
+                };
+                // An unresolved template binds ungated and the server judges.
+                let entry = ladder
+                    .objects
+                    .object(item_guid)
+                    .and_then(|o| o.object_entry());
+                let clicked = match entry {
+                    Some(entry) => ladder
+                        .items
+                        .template(entry, item_guid, &ladder.commands)
+                        .map(|t| (t.class, t.subclass, t.inventory_type)),
+                    None => None,
+                };
+                let def = ladder
+                    .spells
+                    .as_deref()
+                    .and_then(|s| s.catalog.get(spell_id));
+                let (Some(def), Some((class, subclass, inventory_type))) = (def, clicked) else {
+                    debug!(
+                        "ui_action: item pick — cast {spell_id} at item {item_guid:#x} (ungated)"
+                    );
+                    ladder.commit_targeted(
+                        spell_id,
+                        commit,
+                        crate::spell::cast_send::TargetedBind::Item(item_guid),
+                    );
+                    break 'leg;
+                };
+                let cat = enchants.as_deref();
+                let fields = ladder.objects.object(item_guid);
+                let item = ClickedItem {
+                    class,
+                    subclass,
+                    inventory_type,
+                    // The same predicate as the tooltip's Soulbound line.
+                    already_bound: fields.is_some_and(|f| crate::items::already_bound(f, cat)),
+                    existing_enchant: [0u8, 1]
+                        .map(|slot| fields.and_then(|f| crate::items::live_enchant(f, slot, cat))),
+                    // The record on the item (`item+0x3d4`).
+                    refund_open: refunds
+                        .as_deref()
+                        .is_some_and(|r| r.open(item_guid, played_now)),
+                    bound_tradeable: fields.is_some_and(|f| {
+                        crate::ui_socket::bound_tradeable(
+                            f,
+                            self_q.iter().next().and_then(|s| s.0.object_guid()),
+                            cat,
+                            played_now,
+                        )
+                    }),
+                };
+                // `EffectMiscValue` is signed; the reference rejects a negative one before the row lookup.
+                let new = u32::try_from(def.effect_misc_value[0])
+                    .ok()
+                    .filter(|&id| cat.is_some_and(|c| c.0.has_row(id)))
+                    .map(|id| NewEnchant {
+                        id,
+                        binds: crate::items::binds(id, cat),
+                    });
+                match item_bind_verdict(def, &item, new, confirmed) {
+                    ItemBind::Refuse(reason) => {
+                        debug!(
+                            "ui_action: cast {spell_id} refused at the item bind ({reason:#x}) — \
+                             the cursor stays up"
+                        );
+                        ladder.press.push_local(spell_id, reason);
+                    }
+                    ItemBind::ConfirmBind => {
+                        debug!(
+                            "ui_action: item bind confirm for {spell_id} on item {item_guid:#x}"
+                        );
+                        parked.0 = Some(item_guid);
+                        script.fire_event("BIND_ENCHANT", vec![]);
+                    }
+                    ItemBind::ConfirmEndRefund => {
+                        debug!(
+                            "ui_action: end-refund confirm for {spell_id} on item {item_guid:#x}"
+                        );
+                        parked.0 = Some(item_guid);
+                        script.fire_event(
+                            "END_REFUND",
+                            vec![benilla_ui::script::ScriptValue::Int(1)],
+                        );
+                    }
+                    ItemBind::ConfirmEndBoundTradeable => {
+                        debug!(
+                            "ui_action: end-bound-tradeable confirm for {spell_id} on {item_guid:#x}"
+                        );
+                        parked.0 = Some(item_guid);
+                        script.fire_event(
+                            "END_BOUND_TRADEABLE",
+                            vec![benilla_ui::script::ScriptValue::Str("itemenchant".into())],
+                        );
+                    }
+                    ItemBind::ConfirmReplace { existing, new } => {
+                        // Old name first, then new: "Do you want to replace %s with %s?".
+                        let name = |id: u32| {
+                            cat.and_then(|c| c.0.name(id))
+                                .unwrap_or_default()
+                                .to_string()
+                        };
+                        debug!(
+                            "ui_action: replace-enchant confirm {existing} -> {new} on {item_guid:#x}"
+                        );
+                        parked.0 = Some(item_guid);
+                        script.fire_event(
+                            "REPLACE_ENCHANT",
+                            vec![
+                                benilla_ui::script::ScriptValue::Str(name(existing)),
+                                benilla_ui::script::ScriptValue::Str(name(new)),
+                            ],
+                        );
+                    }
+                    ItemBind::Bind => {
+                        debug!("ui_action: item pick — cast {spell_id} at item {item_guid:#x}");
+                        ladder.commit_targeted(
+                            spell_id,
+                            commit,
+                            crate::spell::cast_send::TargetedBind::Item(item_guid),
+                        );
+                    }
+                }
+            }
+            PickLeg::Outright(item_guid) => {
+                let held = ladder.ground.pending_for(TargetingWants::Item);
+                let Some((spell_id, commit)) = held else {
+                    break 'leg;
+                };
+                debug!(
+                    "ui_action: replace-enchant accepted — cast {spell_id} at item {item_guid:#x}"
+                );
                 ladder.commit_targeted(
                     spell_id,
                     commit,
@@ -357,22 +431,8 @@ pub(crate) fn commit_item_cast_on_pick(
             }
         }
     }
-
-    // `ReplaceEnchant`: bind the parked guid with no gate re-run.
-    for item_guid in bind_outright {
-        let held = ladder.ground.pending_for(TargetingWants::Item);
-        let Some((spell_id, commit)) = held else {
-            continue;
-        };
-        debug!("ui_action: replace-enchant accepted — cast {spell_id} at item {item_guid:#x}");
-        ladder.commit_targeted(
-            spell_id,
-            commit,
-            crate::spell::cast_send::TargetedBind::Item(item_guid),
-        );
-    }
-    // The commits' cast-bar edges, fired as they return (`0x80b556`).
-    ladder.press.defer_in_turn(&mut script);
+    // The leg's cast-bar edges, fired at its step (`0x80b556`).
+    ladder.press.defer(&mut ui);
 }
 
 #[cfg(test)]
