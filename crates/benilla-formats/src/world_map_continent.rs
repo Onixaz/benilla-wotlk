@@ -52,6 +52,14 @@ impl WorldMapContinentCatalog {
     pub fn is_empty(&self) -> bool {
         self.by_map_id.is_empty()
     }
+
+    /// A catalog of hand-built rows, keyed as the loader does.
+    #[cfg(test)]
+    pub(crate) fn from_rows(rows: impl IntoIterator<Item = WorldMapContinent>) -> Self {
+        Self {
+            by_map_id: rows.into_iter().map(|r| (r.map_id, r)).collect(),
+        }
+    }
 }
 
 pub(crate) fn schema() -> Schema {

@@ -386,3 +386,28 @@ fn a_span_between_stops_runs_start_moving_stop() {
         assert_eq!(*q, cycle[k % 4], "the state order: {runs:?}");
     }
 }
+
+/// The reference's ship legs: a new leg after a teleport node and at a map change, the index the
+/// ship loading screen's leg-change entry compares (`0x7f90f0`, `0x7134a0`).
+#[test]
+fn ship_legs_open_after_a_teleport_and_at_a_map_change() {
+    let node = |i: u32, map_id: u32, flags: u32| TaxiPathNode {
+        id: i,
+        path_id: 1,
+        node_index: i,
+        map_id,
+        pos: [i as f32 * 100.0, 0.0, 0.0],
+        flags,
+        delay: 0,
+    };
+    let nodes = [
+        node(0, 0, 0),
+        node(1, 0, 2),
+        node(2, 0, 1), // teleport: the next node opens leg 1
+        node(3, 0, 0),
+        node(4, 0, 2),
+        node(5, 1, 0), // another map: leg 2
+        node(6, 1, 2),
+    ];
+    assert_eq!(ship_legs(&nodes), vec![0, 0, 0, 1, 1, 2, 2]);
+}
