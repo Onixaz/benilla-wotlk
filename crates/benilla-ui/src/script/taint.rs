@@ -128,6 +128,30 @@ pub(crate) fn gate_args(lua: &Lua, args: &MultiValue) -> mlua::Result<bool> {
 /// `0x513530` with a blocked frame verb: once per nesting, `MACRO_ACTION_BLOCKED` with the calling
 /// function under the macro taint, else `ADDON_ACTION_BLOCKED` with the taint and the function.
 pub(crate) fn blocked(lua: &Lua, this: &Table) {
+    feedback(lua, Some(this));
+}
+
+/// `0x5191c0` for the kinds tainted code may run only while protected actions are allowed
+/// (`0xb` to `0xe`, `0x16`: the raid groups, the macro editors, the binding tables, the action bar
+/// and the equip verbs): secure code always passes, tainted code passes unless protected actions
+/// are barred (`[+0x124c]` clear), where the blocked feedback (`0x513530`, type 2) fires and the
+/// verb does nothing.
+pub(crate) fn lockdown_allows(lua: &Lua) -> bool {
+    if running() == 0 {
+        return true;
+    }
+    let allowed = lua
+        .app_data_ref::<super::ModelCell>()
+        .expect("model app_data")
+        .protected_actions_allowed;
+    if !allowed {
+        feedback(lua, None);
+    }
+    allowed
+}
+
+/// The blocked feedback for the running function, `this` its receiver when it is a method.
+fn feedback(lua: &Lua, this: Option<&Table>) {
     let tag = running();
     let taint = {
         let mut model = super::model_mut_of(lua);
@@ -152,7 +176,7 @@ pub(crate) fn blocked(lua: &Lua, this: &Table) {
 
 /// `0x817ee0`: the running function's name as its caller spelled it, `Object:name` for a method
 /// call, `UNKNOWN` when the caller gave none.
-fn current_function(lua: &Lua, this: &Table) -> String {
+fn current_function(lua: &Lua, this: Option<&Table>) -> String {
     let named = lua.inspect_stack(0, |d| {
         let n = d.names();
         (
@@ -160,8 +184,8 @@ fn current_function(lua: &Lua, this: &Table) -> String {
             n.name_what.is_some_and(|w| w == "method"),
         )
     });
-    match named {
-        Some((Some(name), true)) => {
+    match (named, this) {
+        (Some((Some(name), true)), Some(this)) => {
             let object = this
                 .get::<mlua::Function>("GetName")
                 .and_then(|f| f.call::<Option<String>>(this.clone()))
@@ -170,7 +194,7 @@ fn current_function(lua: &Lua, this: &Table) -> String {
                 .unwrap_or_else(|| "<unnamed>".to_string());
             format!("{object}:{name}")
         }
-        Some((Some(name), false)) => name,
+        (Some((Some(name), _)), _) => name,
         _ => "UNKNOWN".to_string(),
     }
 }
