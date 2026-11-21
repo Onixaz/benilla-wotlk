@@ -279,15 +279,20 @@ fn update_bar(lua: &Lua, h: FrameHandle, unit: Option<&UnitState>) {
         let mut model = crate::script::model_mut_of(lua);
         model.arena.set_shown(bar, shown);
     }
-    if changed {
-        let (id, value) = {
-            let mut model = crate::script::model_mut_of(lua);
-            let v = match model.arena.frame(bar).map(|f| &f.kind_state) {
-                Some(KindState::StatusBar(sb)) => sb.value,
-                _ => 0.0,
-            };
-            (model.frame_id(bar), v)
+    if !changed {
+        return;
+    }
+    let (id, value) = {
+        let mut model = crate::script::model_mut_of(lua);
+        let v = match model.arena.frame(bar).map(|f| &f.kind_state) {
+            Some(KindState::StatusBar(sb)) => sb.value,
+            _ => 0.0,
         };
+        (model.frame_id(bar), v)
+    };
+    // A feed that pushes the unit holds the VM in turn: the handler fires at its raise step, with
+    // the value this write set.
+    super::world_loan::lua_in_turn_or_now(lua, move |lua| {
         if let Err(e) = super::event::fire_widget_handler(
             lua,
             id,
@@ -296,7 +301,7 @@ fn update_bar(lua: &Lua, h: FrameHandle, unit: Option<&UnitState>) {
         ) {
             crate::script::model_mut_of(lua).record_lua_error(&e);
         }
-    }
+    });
 }
 
 /// A `set_unit` push of the unit a tooltip shows updates its health bar without rebuilding the
