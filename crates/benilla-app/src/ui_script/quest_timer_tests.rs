@@ -38,8 +38,7 @@ impl benilla_ui::script::LiveState for Clock {
 
 /// The server clock lent at `now` until the loan drops; a later loan reads over it.
 fn clock_at(now: f64) -> benilla_ui::script::LiveLoan<Clock> {
-    // SAFETY: each test drops its loans on its own thread, in reverse order of their making.
-    unsafe { benilla_ui::script::LiveLoan::new(Clock(now)) }
+    benilla_ui::script::LiveLoan::new(Clock(now))
 }
 
 /// The window's own dependencies only, so a missing one shows.

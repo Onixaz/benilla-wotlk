@@ -388,7 +388,7 @@ fn shown_in_aura_ui(ctx: ListCtx, spell_id: u32, flags: u8, caster: u64) -> bool
 #[derive(bevy::ecs::system::SystemParam)]
 struct AuraUnits<'w> {
     selection: Res<'w, Selection>,
-    pet: crate::ui_script::LentRef<'w, crate::ui_pet::PetBar>,
+    pet: Option<Res<'w, crate::ui_pet::PetBar>>,
     // `Option`: a UI-only harness lacks their plugins; without the party's no group token names
     // anyone.
     group: Option<Res<'w, crate::ui_party::GroupState>>,
@@ -435,7 +435,7 @@ fn feed_auras(
 
     let bevy_now = time.elapsed_secs_f64();
     // Read until the pushes below, before any call into Lua.
-    let pet_read = units.pet.get();
+    let pet_read = units.pet.as_deref();
     let pet_guid = pet_read.as_ref().map_or(0, |b| b.spells.pet_guid);
     // A plain borrow, so the dispel list and the trace clock borrow apart.
     let mem: &mut AuraFeedMemory = &mut mem;
@@ -604,7 +604,6 @@ fn feed_auras(
         }
     }
 
-    drop(pet_read);
     script.set_player_auras(list);
     if changed {
         script.fire_event("UNIT_AURA", vec![ScriptValue::Str("player".into())]);

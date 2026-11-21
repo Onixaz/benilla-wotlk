@@ -222,9 +222,8 @@ fn feed_zone_events(
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
     roster: Option<Res<crate::char_select::Roster>>,
     mut cache: Local<crate::ui_script::VmMemo<ZoneCache>>,
-    mut place: crate::ui_script::OwnedMut<PlayerPlace>,
+    mut place: ResMut<PlayerPlace>,
     mut ids: ResMut<ZoneIds>,
-    mut usable: Option<crate::ui_action::usable_cache::UsableRun>,
 ) {
     let (Some(mut script), Some(areas)) = (vm.turn(), areas) else {
         return;
@@ -256,8 +255,8 @@ fn feed_zone_events(
         },
         flyable_area: leaf_row.flags & 0x400 != 0 && leaf_row.flags & 0x2000_0000 == 0,
     };
-    if *place.read() != fresh {
-        *place.write() = fresh;
+    if *place != fresh {
+        *place = fresh;
     }
 
     // The outdoor texts the indoor naming starts from.
@@ -402,9 +401,12 @@ fn feed_zone_events(
     if minimap_changed {
         debug!("area: minimap zone text → {minimap_text:?}");
     }
-    // The zone feedback ends in the usable update (`0x5206d9`).
-    if let Some(usable) = usable.as_mut() {
-        usable.fire(&mut script, crate::ui_action::usable_cache::Pass::Full);
+    // The zone feedback ends in the usable update (`0x5206d9`), a step in turn after its events:
+    // it reads the place written above.
+    if let Some(ui) = script.queue() {
+        ui.world(crate::ui_action::usable_cache::step(
+            crate::ui_action::usable_cache::Pass::Full,
+        ));
     }
     cache.zone_id = Some(signal.zone_id);
     cache.zone_text = signal.zone_text;

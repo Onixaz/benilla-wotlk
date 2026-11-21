@@ -161,22 +161,19 @@ fn the_pvp_tab_paints_honor_and_a_two_v_two_team() {
     benilla_formats::wow_data_or_skip!();
     let _l = lock();
     let mut s = load();
-    // SAFETY: dropped on this thread at the end of the test, the only loan.
-    let _live = unsafe {
-        benilla_ui::script::LiveLoan::new(OurHonor(
-            HonorState {
-                today_hk: 3,
-                today_honor: 120,
-                yesterday_hk: 7,
-                yesterday_honor: 450,
-                lifetime_hk: 900,
-                honor_currency: 12_345,
-                arena_currency: 678,
-                ..Default::default()
-            },
-            [two_v_two(), Default::default(), Default::default()],
-        ))
-    };
+    let _live = benilla_ui::script::LiveLoan::new(OurHonor(
+        HonorState {
+            today_hk: 3,
+            today_honor: 120,
+            yesterday_hk: 7,
+            yesterday_honor: 450,
+            lifetime_hk: 900,
+            honor_currency: 12_345,
+            arena_currency: 678,
+            ..Default::default()
+        },
+        [two_v_two(), Default::default(), Default::default()],
+    ));
     s.run("TogglePVPFrame()").unwrap();
     s.tick(0.0);
     assert!(shown(&s, "PVPFrame"), "the PvP tab opens first");
@@ -332,8 +329,7 @@ impl benilla_ui::script::LiveState for PvpView {
 }
 
 fn lend() -> benilla_ui::script::LiveLoan<PvpView> {
-    // SAFETY: each test holds its loan on its own thread and drops it at its end.
-    unsafe { benilla_ui::script::LiveLoan::new(PvpView::default()) }
+    benilla_ui::script::LiveLoan::new(PvpView::default())
 }
 
 fn set_rows(view: &benilla_ui::script::LiveLoan<PvpView>, rows: Vec<BattlemasterRow>) {

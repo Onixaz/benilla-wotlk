@@ -613,19 +613,37 @@ pub(crate) struct ItemUse {
     pub(crate) is_charter: bool,
 }
 
+/// The requirement check's reads at the use: the item's refusal key (`0x6dc3f0`) and our value in a
+/// skill, `None` before our level is pushed.
+pub(crate) trait UseRefusal {
+    fn refusal(&self, entry: u32) -> Option<&'static str>;
+    fn skill_value(&self, skill: u32) -> Option<u32>;
+}
+
+/// The VM's own fixtures, for the check's tests.
+#[cfg(test)]
+impl UseRefusal for benilla_ui::script::UiScript {
+    fn refusal(&self, entry: u32) -> Option<&'static str> {
+        self.item_use_refusal(entry)
+    }
+    fn skill_value(&self, skill: u32) -> Option<u32> {
+        benilla_ui::script::UiScript::skill_value(self, skill)
+    }
+}
+
 /// The item use's requirement check (`0x6dc3f0` at `0x708eb9`): a refused item shows the check's
 /// message and sends nothing (`0x708ec2`-`0x708ef6`). Then the use enchant's skill, `enchant_skill`
 /// as [`crate::items::use_enchant_skill`] reads it: under its rank shows inventory result 2's line
 /// (`0x708f2c`-`0x708f39`).
 pub(crate) fn refuse_item_use(
-    script: &benilla_ui::script::UiScript,
+    reqs: &impl UseRefusal,
     entry: u32,
     enchant_skill: Option<(u32, u32)>,
     sink: &mut dyn crate::ui_action::signals::SignalSink,
 ) -> bool {
-    let refusal = script.item_use_refusal(entry).or_else(|| {
+    let refusal = reqs.refusal(entry).or_else(|| {
         let (skill, rank) = enchant_skill?;
-        (script.skill_value(skill)? < rank).then(|| equip_error_key(2))
+        (reqs.skill_value(skill)? < rank).then(|| equip_error_key(2))
     });
     let Some(key) = refusal else {
         return false;
@@ -720,7 +738,9 @@ pub(crate) fn send_item_use(
         .guid
         .and_then(|guid| ladder.objects.object(guid))
         .and_then(|f| crate::items::use_enchant_skill(f, ladder.trade_window.1.as_deref()));
-    if it.start_quest == 0 && refuse_item_use(script, it.entry, enchant_skill, &mut ladder.press) {
+    if it.start_quest == 0
+        && refuse_item_use(&ladder.use_reqs, it.entry, enchant_skill, &mut ladder.press)
+    {
         return false;
     }
     // The toggle predicate over the caster's live aura slots.

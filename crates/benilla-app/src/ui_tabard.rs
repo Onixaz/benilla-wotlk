@@ -114,11 +114,6 @@ impl TabardView<'_, '_> {
         self.target.as_ref().and_then(|t| t.0)
     }
 
-    /// Whether the interact target moved since the reading system last ran.
-    pub(crate) fn target_changed(&self) -> bool {
-        self.target.as_ref().is_some_and(|t| t.is_changed())
-    }
-
     /// The vendor held, read by a system between its calls into Lua.
     pub(crate) fn vendor(&self) -> Option<u64> {
         self.open.as_ref().and_then(|o| o.vendor)

@@ -422,7 +422,7 @@ fn bind_target_unit(
     entity: Entity,
     guid: u64,
 ) {
-    let held = ladder.ground.read().pending();
+    let held = ladder.ground.pending();
     let Some((spell_id, commit, word)) = held else {
         return;
     };
@@ -482,7 +482,7 @@ fn merge(
 pub(crate) struct ScriptCursor<'w, 's> {
     tokens: crate::ui_unit::UnitTokens<'w, 's>,
     /// Read beside the press appliers' own write of it, at each call.
-    selection: crate::ui_script::LentRef<'w, crate::target::Selection>,
+    selection: Option<Res<'w, crate::target::Selection>>,
     checks: BindChecks<'w, 's>,
     ladder: crate::spell::CastLadder<'w, 's>,
 }
@@ -494,11 +494,14 @@ impl ScriptCursor<'_, '_> {
     /// to [`bind_target_unit`].
     pub(crate) fn spell_target_unit(&mut self, token: &str, vm: &benilla_ui::script::UiScript) {
         // An earlier call may have bound or ended the cast: not targeting, no-op.
-        let held = self.ladder.ground.read().spell();
+        let held = self.ladder.ground.spell();
         let Some(spell_id) = held else {
             return;
         };
-        let selection = self.selection.get().map(|s| s.clone()).unwrap_or_default();
+        let selection = self
+            .selection
+            .as_deref().cloned()
+            .unwrap_or_default();
         match self
             .tokens
             .resolve(token, &selection, crate::ui_unit::VmUnits::of(vm))
@@ -509,7 +512,7 @@ impl ScriptCursor<'_, '_> {
                 self.ladder
                     .press
                     .push_local(spell_id, super::validator::ERR_OUT_OF_RANGE);
-                self.ladder.ground.write().clear();
+                self.ladder.ground.clear();
                 self.ladder.press.selection();
             }
         }
@@ -518,8 +521,8 @@ impl ScriptCursor<'_, '_> {
     /// The ESC chain's `SpellStopTargeting()`: the targeting stop, word cleared, no packet.
     pub(crate) fn stop_targeting(&mut self) {
         debug!("ui_action: targeting cancelled (ESC chain)");
-        if self.ladder.ground.read().active() {
-            self.ladder.ground.write().clear();
+        if self.ladder.ground.active() {
+            self.ladder.ground.clear();
             // The cursor's cast ends, and its finish runs the selection update (`0x8054f0`).
             self.ladder.press.selection();
         }
@@ -530,7 +533,7 @@ impl ScriptCursor<'_, '_> {
     /// takes the socket and clears the word's glyph bit, and the emptied word commits (`0x80c596`).
     /// A word without the bit only keeps the socket, which nothing sends.
     pub(crate) fn place_glyph(&mut self, socket: u32, verdict: benilla_ui::script::GlyphPlacement) {
-        let held = self.ladder.ground.read().pending();
+        let held = self.ladder.ground.pending();
         let Some((spell_id, commit, word)) = held else {
             return;
         };
@@ -539,7 +542,7 @@ impl ScriptCursor<'_, '_> {
                 debug!("ui_action: glyph cast {spell_id} refused at socket {socket} ({reason:#x})");
                 let shared = benilla_protocol::messages::wotlk_cast_fail_shared(reason);
                 self.ladder.press.push_local(spell_id, shared);
-                self.ladder.ground.write().clear();
+                self.ladder.ground.clear();
                 self.ladder.press.selection();
             }
             // No 12340 spell carries the glyph bit beside another, so it is the whole word.
@@ -693,11 +696,7 @@ mod tests {
         .expect("a known token");
         world
             .run_system_cached(
-                |(mut script, _live): (
-                    NonSendMut<UiScript>,
-                    crate::ui_script::LendLive<crate::ui_script::OwnsScriptCalls>,
-                ),
-                 mut cursor: ScriptCursor| {
+                |mut script: NonSendMut<UiScript>, mut cursor: ScriptCursor| {
                     for token in script.take_spell_target_unit() {
                         cursor.spell_target_unit(&token, &script);
                     }

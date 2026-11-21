@@ -978,30 +978,24 @@ pub(crate) fn lend_guild_bank(
     bank: benilla_ui::script::GuildBankView,
     money: u64,
 ) -> benilla_ui::script::LiveLoan<GuildBankTestView> {
-    // SAFETY: a test drops its loans on its own thread, the latest first.
-    unsafe {
-        benilla_ui::script::LiveLoan::new(GuildBankTestView {
-            bank,
-            locks: Vec::new(),
-            tab: 0,
-            money,
-            withdraw_money: -1,
-        })
-    }
+    benilla_ui::script::LiveLoan::new(GuildBankTestView {
+        bank,
+        locks: Vec::new(),
+        tab: 0,
+        money,
+        withdraw_money: -1,
+    })
 }
 
 /// Lend an open bank with `slots` purchased and the next slot at `cost` until the loan drops.
 pub(crate) fn lend_bank(slots: u8, cost: u32) -> benilla_ui::script::LiveLoan<BankView> {
-    // SAFETY: a test drops its loans on its own thread, the latest first.
-    unsafe {
-        benilla_ui::script::LiveLoan::new(BankView {
-            slots,
-            cost,
-            banker: Some(0x42),
-            interacting: true,
-            purchases: std::cell::Cell::new(0),
-        })
-    }
+    benilla_ui::script::LiveLoan::new(BankView {
+        slots,
+        cost,
+        banker: Some(0x42),
+        interacting: true,
+        purchases: std::cell::Cell::new(0),
+    })
 }
 
 #[cfg(test)]

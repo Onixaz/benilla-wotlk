@@ -13,7 +13,6 @@ use benilla_ui::script::ScriptValue;
 use crate::items::Items;
 use crate::net::{NetCommands, ObjectStore, Objects};
 use crate::ui_script::live::UiEvents;
-use crate::ui_script::LentRef;
 
 use super::usable_cache::{self, Pass};
 use super::{ActionSlots, PlayerActions, Spells};
@@ -176,9 +175,9 @@ struct ItemTouch {
 
 fn item_touch(
     In(item): In<u32>,
-    actions: LentRef<ActionSlots>,
+    actions: Option<Res<ActionSlots>>,
     book: Option<Res<PlayerActions>>,
-    bound: LentRef<crate::ui_macro::MacroBoundSpells>,
+    bound: Option<Res<crate::ui_macro::MacroBoundSpells>>,
     spells: Option<Res<Spells>>,
     items: Option<Res<Items>>,
     commands: Option<Res<NetCommands>>,
@@ -187,11 +186,11 @@ fn item_touch(
 ) -> ItemTouch {
     let mut out = ItemTouch::default();
     let (Some(actions), Some(items), Some(commands)) =
-        (actions.get(), items.as_deref(), commands.as_deref())
+        (actions.as_deref(), items.as_deref(), commands.as_deref())
     else {
         return out;
     };
-    let bound = bound.get();
+    let bound = bound.as_deref();
     let spells = spells.as_deref();
     let catalog = |id: u32| spells.and_then(|s| s.catalog.get(id));
     let count = me.iter().next().map_or(0, |store| {
@@ -202,7 +201,7 @@ fn item_touch(
     for button in slots {
         if button.kind != ACTION_KIND_ITEM {
             // A spell slot, through its macro too, that takes the item as a reagent.
-            if slot_spell(button, bound.as_deref())
+            if slot_spell(button, bound)
                 .and_then(catalog)
                 .is_some_and(|d| uses_reagent(d, item))
             {
@@ -290,8 +289,8 @@ pub(crate) fn write(world: &mut World, slot: u8, packed: u32) {
     let written = world
         .run_system_cached_with(
             |In((slot, packed)): In<(u8, u32)>,
-             mut actions: crate::ui_script::OwnedMut<ActionSlots>,
-             net: Res<NetCommands>| actions.write().write_slot(slot, packed, &net),
+             mut actions: ResMut<ActionSlots>,
+             net: Res<NetCommands>| actions.write_slot(slot, packed, &net),
             (slot, packed),
         )
         .unwrap_or(false);
@@ -304,19 +303,19 @@ pub(crate) fn write(world: &mut World, slot: u8, packed: u32) {
 /// (`0x5aa550`): their faces follow the weapon, so each signals.
 fn weapon_slots(
     In(ranged): In<bool>,
-    actions: LentRef<ActionSlots>,
-    bound: LentRef<crate::ui_macro::MacroBoundSpells>,
+    actions: Option<Res<ActionSlots>>,
+    bound: Option<Res<crate::ui_macro::MacroBoundSpells>>,
     spells: Option<Res<Spells>>,
 ) -> Vec<u8> {
-    let (Some(actions), Some(spells)) = (actions.get(), spells.as_deref()) else {
+    let (Some(actions), Some(spells)) = (actions.as_deref(), spells.as_deref()) else {
         return Vec::new();
     };
-    let bound = bound.get();
+    let bound = bound.as_deref();
     let mut out: Vec<u8> = actions
         .buttons
         .values()
         .filter(|b| {
-            slot_spell(b, bound.as_deref())
+            slot_spell(b, bound)
                 .and_then(|s| spells.catalog.get(s))
                 .is_some_and(|d| {
                     if ranged {
@@ -353,16 +352,16 @@ pub(crate) fn aura_changed(world: &mut World, spell: u32) {
     let slots = world
         .run_system_cached_with(
             |In(spell): In<u32>,
-             actions: LentRef<ActionSlots>,
-             bound: LentRef<crate::ui_macro::MacroBoundSpells>| {
-                let Some(actions) = actions.get() else {
+             actions: Option<Res<ActionSlots>>,
+             bound: Option<Res<crate::ui_macro::MacroBoundSpells>>| {
+                let Some(actions) = actions.as_deref() else {
                     return Vec::new();
                 };
-                let bound = bound.get();
+                let bound = bound.as_deref();
                 let mut out: Vec<u8> = actions
                     .buttons
                     .values()
-                    .filter(|b| slot_spell(b, bound.as_deref()) == Some(spell))
+                    .filter(|b| slot_spell(b, bound) == Some(spell))
                     .map(|b| b.slot)
                     .collect();
                 out.sort_unstable();
@@ -386,21 +385,21 @@ pub(crate) fn critter_changed(world: &mut World, critter: u32) {
     let slots = world
         .run_system_cached_with(
             |In(critter): In<u32>,
-             actions: LentRef<ActionSlots>,
-             bound: LentRef<crate::ui_macro::MacroBoundSpells>,
+             actions: Option<Res<ActionSlots>>,
+             bound: Option<Res<crate::ui_macro::MacroBoundSpells>>,
              spells: Option<Res<Spells>>,
              summons: Option<Res<crate::spell::SummonSlots>>| {
                 let (Some(actions), Some(spells), Some(summons)) =
-                    (actions.get(), spells.as_deref(), summons.as_deref())
+                    (actions.as_deref(), spells.as_deref(), summons.as_deref())
                 else {
                     return Vec::new();
                 };
-                let bound = bound.get();
+                let bound = bound.as_deref();
                 let mut out: Vec<u8> = actions
                     .buttons
                     .values()
                     .filter(|b| {
-                        slot_spell(b, bound.as_deref())
+                        slot_spell(b, bound)
                             .and_then(|s| spells.catalog.get(s))
                             .is_some_and(|d| {
                                 let row = u32::try_from(d.effect_misc_value_b[0]).ok();

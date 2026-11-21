@@ -747,6 +747,10 @@ pub(crate) struct UnitTokens<'w, 's> {
     encounter: Option<Res<'w, crate::ui_instance::EncounterUnits>>,
     arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
     group: Res<'w, crate::ui_party::GroupState>,
+    /// The interact target (`0xbd07a8`), the `"npc"` base.
+    interact: Option<Res<'w, crate::ui_session::InteractTarget>>,
+    /// The quest window's source (`0x6081b0`), the `"questnpc"` base.
+    giver: Option<NonSend<'w, crate::ui_quest::QuestGiver>>,
     pub(crate) stores: Query<'w, 's, &'static ObjectStore>,
     me: Query<
         'w,
@@ -847,10 +851,10 @@ impl UnitTokens<'_, '_> {
             UnitBase::RaidPet(row) => self
                 .raid_member(row)
                 .and_then(|m| self.group.raid_pet_guid(m, live(m))),
-            // The interact target (`0x60af67`), read through the view every resolving system lends; with none lent, nobody.
-            UnitBase::Npc => crate::ui_script::live::interact_target().flatten(),
-            // The quest window's source (`0x6081b0`), read through the view lent to the call.
-            UnitBase::QuestNpc => crate::ui_script::live::quest_npc(),
+            // The interact target (`0x60af67`).
+            UnitBase::Npc => self.interact.as_ref()?.0,
+            // The quest window's source (`0x6081b0`).
+            UnitBase::QuestNpc => self.giver.as_ref()?.quest_npc(),
             // The encounter's slot (`0x5ed710`).
             UnitBase::Boss(row) => Some(self.encounter.as_ref()?.boss(usize::try_from(row).ok()?)),
             // The opponent slot (`0x608180`), and its pet (`0x60a2f0`).
@@ -2328,7 +2332,7 @@ fn feed_combo_points(
     mut script: crate::ui_script::InTurn,
     combo: Option<Res<crate::spell::ComboPoints>>,
     self_guid: Option<Res<crate::net::SelfGuid>>,
-    pet_bar: crate::ui_script::LentRef<crate::ui_pet::PetBar>,
+    pet_bar: Option<Res<crate::ui_pet::PetBar>>,
     mut memo: Local<crate::ui_script::VmMemo<Option<(u64, u64)>>>,
 ) {
     let (Some(mut script), Some(combo)) = (script.turn(), combo) else {
@@ -2352,7 +2356,7 @@ fn feed_combo_points(
         }
     }
     if pet_moved {
-        let pet = pet_bar.get().map(|b| b.spells.pet_guid);
+        let pet = pet_bar.as_deref().map(|b| b.spells.pet_guid);
         if let Some(pet) = pet {
             script.fire_unit_event(pet, "UNIT_COMBO_POINTS", vec![]);
         }

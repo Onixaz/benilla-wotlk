@@ -366,7 +366,7 @@ struct PlateWorld<'w, 's> {
     camera: Query<'w, 's, (&'static Camera, &'static Transform), With<WorldCamera>>,
     window: Query<'w, 's, &'static Window, With<bevy::window::PrimaryWindow>>,
     // The pending ground-target cast, for the plate's hit-test veto.
-    targeting: crate::ui_script::LentRef<'w, crate::spell::SpellTargeting>,
+    targeting: Option<Res<'w, crate::spell::SpellTargeting>>,
     // An owner guid to its unit, for the owned-unit categories.
     index: Res<'w, crate::net::GuidIndex>,
     // The current map's instance type, for the arena range skip.
@@ -378,7 +378,7 @@ struct PlateWorld<'w, 's> {
 /// `GetTime` stamp of the last frame, keyed as the plates are.
 #[derive(SystemParam)]
 struct PlateCasts<'w, 's> {
-    units: crate::ui_script::LentRef<'w, crate::ui_cast::UnitCasts>,
+    units: Option<Res<'w, crate::ui_cast::UnitCasts>>,
     schools: Option<Res<'w, crate::ui_cast::InterruptSchools>>,
     spells: Option<Res<'w, crate::ui_action::Spells>>,
     bars: Local<'s, (std::collections::HashMap<u64, PlateCastBar>, Option<f64>)>,
@@ -467,7 +467,7 @@ fn drive_vplates(
     script.set_nameplate_hit_test_veto(
         world
             .targeting
-            .get()
+            .as_deref()
             .is_some_and(|t| t.wants(crate::spell::targeting::TargetingWants::Location)),
     );
     let hovered_key = script.hovered_nameplate();
@@ -689,7 +689,7 @@ fn drive_vplates(
         let source = (world.selection.target == Some(entity))
             .then(|| {
                 let schools = casts.schools.as_deref().copied().unwrap_or_default();
-                casts.units.get()?.plate_source(guid.0, schools)
+                casts.units.as_deref()?.plate_source(guid.0, schools)
             })
             .flatten();
         let spells = casts.spells.as_deref();

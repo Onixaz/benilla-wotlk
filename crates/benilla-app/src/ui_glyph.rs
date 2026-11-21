@@ -158,7 +158,7 @@ fn feed_glyphs(
     mut script: crate::ui_script::InTurn,
     glyphs: Option<Res<Glyphs>>,
     spells: Option<Res<Spells>>,
-    targeting: crate::ui_script::LentRef<SpellTargeting>,
+    targeting: Option<Res<SpellTargeting>>,
     self_q: Query<(Entity, &ObjectStore), With<SelfPlayer>>,
     changed_self: Query<(), (With<SelfPlayer>, Changed<ObjectStore>)>,
     mut edges: MessageReader<FieldChanged>,
@@ -180,10 +180,10 @@ fn feed_glyphs(
     if vm_reset || !changed_self.is_empty() {
         script.set_glyph_sockets(me.map(|(_, store)| sockets_of(store)).unwrap_or_default());
     }
-    if vm_reset || spells_changed || targeting.is_changed() {
+    if vm_reset || spells_changed || targeting.as_ref().is_some_and(|t| t.is_changed()) {
         let glyph = targeting
-            .get()
-            .and_then(|t| targeting_of(&t, spells.as_deref()));
+            .as_deref()
+            .and_then(|t| targeting_of(t, spells.as_deref()));
         script.set_glyph_targeting(glyph);
     }
     let (Some(glyphs), Some((me, _))) = (glyphs.as_deref(), me) else {

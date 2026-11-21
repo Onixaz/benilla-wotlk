@@ -451,7 +451,7 @@ pub(crate) fn list_link(
 #[allow(clippy::too_many_arguments)] // a Bevy system's full input set
 fn feed_trade_skill(
     mut vm: crate::ui_script::InTurn,
-    mut open: crate::ui_script::OwnedMut<TradeSkillOpen>,
+    mut open: ResMut<TradeSkillOpen>,
     actions: Res<PlayerActions>,
     data: BookData,
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
@@ -469,7 +469,7 @@ fn feed_trade_skill(
         return;
     };
     let (open_line, opener) = {
-        let o = open.read();
+        let o = open.as_ref();
         (o.line, o.spell_id)
     };
     let me = self_store.single().ok();
@@ -752,7 +752,7 @@ fn feed_trade_skill(
 
     let last = last.get(&script);
     let (show, close) = {
-        let mut o = open.write();
+        let o = open.as_mut();
         (std::mem::take(&mut o.show), std::mem::take(&mut o.close))
     };
     if fresh != *last {
@@ -791,7 +791,7 @@ fn feed_trade_skill(
 /// pending repeat, a go may cast again, a failure stops it.
 fn drain_trade_skill(
     mut vm: crate::ui_script::InTurn,
-    mut open: crate::ui_script::OwnedMut<TradeSkillOpen>,
+    mut open: ResMut<TradeSkillOpen>,
     mut cast_events: MessageReader<CastEvent>,
     targeting: cast_target::CastTargeting,
     mut ladder: CastLadder,
@@ -801,7 +801,7 @@ fn drain_trade_skill(
     };
 
     for spell_id in script.take_trade_skill_casts() {
-        if open.read().line.is_none() {
+        if open.line.is_none() {
             debug!("ui_tradeskill: DoTradeSkill({spell_id}) with no open book — ignored");
             continue;
         }
@@ -834,7 +834,7 @@ fn drain_trade_skill(
 
     if script.take_trade_skill_close() {
         debug!("ui_tradeskill: client-side close (no packet)");
-        open.write().line = None;
+        open.line = None;
     }
 }
 

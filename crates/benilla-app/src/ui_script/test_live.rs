@@ -219,8 +219,7 @@ fn sticky(script: &UiScript) {
                 !script.has_live(),
                 "the sticky loan must be made outside every other loan"
             );
-            // SAFETY: held until the thread ends, made before any loan a later call nests in it.
-            *s.borrow_mut() = Some(unsafe { LiveLoan::new(View) });
+            *s.borrow_mut() = Some(LiveLoan::new(View));
         }
     });
 }
@@ -530,8 +529,7 @@ impl Lent {
         SUMMON.with(|s| *s.borrow_mut() = SummonConfirmUiState::default());
         Self {
             script,
-            // SAFETY: dropped with the wrapper, on this test's thread, and never leaked.
-            _loan: unsafe { LiveLoan::new(View) },
+            _loan: LiveLoan::new(View),
         }
     }
 

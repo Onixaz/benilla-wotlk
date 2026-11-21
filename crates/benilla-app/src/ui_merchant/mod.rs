@@ -588,11 +588,6 @@ pub(crate) struct MerchantLive<'w, 's> {
 }
 
 impl MerchantLive<'_, '_> {
-    /// The globals, read by a system between its calls into Lua.
-    pub(crate) fn state(&self) -> &MerchantOpen {
-        &self.open
-    }
-
     /// Whether a vendor is set (`0xbfa3e8`).
     pub(crate) fn open(&self) -> bool {
         self.open.is_open()

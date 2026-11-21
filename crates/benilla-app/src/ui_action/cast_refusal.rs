@@ -61,7 +61,7 @@ impl CastRefusals for Vec<CastFail> {
 }
 
 /// Where a refusal that names an uncached item links its callback on the item's record, in ask
-/// order with every subsystem's: the caller's loan of the live view, which owns the list.
+/// order with every subsystem's: the record waits the caller holds.
 pub(crate) trait WaitRecord {
     fn wait_record(&mut self, entry: u32, wait: crate::items::RecordWait);
 }
@@ -69,12 +69,6 @@ pub(crate) trait WaitRecord {
 impl WaitRecord for crate::items::RecordWaits {
     fn wait_record(&mut self, entry: u32, wait: crate::items::RecordWait) {
         self.wait(entry, wait, false);
-    }
-}
-
-impl<O: crate::ui_script::live::Owns> WaitRecord for crate::ui_script::LendLive<'_, '_, O> {
-    fn wait_record(&mut self, entry: u32, wait: crate::items::RecordWait) {
-        crate::ui_script::LendLive::wait_record(self, entry, wait);
     }
 }
 

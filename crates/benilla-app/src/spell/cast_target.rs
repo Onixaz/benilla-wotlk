@@ -247,7 +247,7 @@ impl Default for RangeInputs {
 #[derive(SystemParam)]
 pub(crate) struct CastTargeting<'w, 's> {
     /// Read beside the press appliers' own write of it, at each call.
-    selection: crate::ui_script::LentRef<'w, Selection>,
+    selection: Option<Res<'w, Selection>>,
     pub(crate) self_store: Query<'w, 's, &'static ObjectStore, With<SelfPlayer>>,
     pub(crate) self_auras: Query<'w, 's, &'static UnitAuras, With<SelfPlayer>>,
     /// Any caster's auras, for a cast as the pet.
@@ -282,13 +282,15 @@ impl CastTargeting<'_, '_> {
     /// The selection as it stands now: `(entity, guid)`.
     pub(crate) fn selected(&self) -> (Option<Entity>, Option<u64>) {
         self.selection
-            .get()
+            .as_deref()
             .map_or((None, None), |s| (s.target, s.guid))
     }
 
     /// The selection as it stands now, for a token's resolve.
     pub(crate) fn selection(&self) -> Selection {
-        self.selection.get().map(|s| s.clone()).unwrap_or_default()
+        self.selection
+            .as_deref().cloned()
+            .unwrap_or_default()
     }
 
     /// This frame's [`CastContext`].

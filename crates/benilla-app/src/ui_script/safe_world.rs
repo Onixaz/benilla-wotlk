@@ -56,8 +56,7 @@ pub(crate) fn raise(world: &mut World, event: &'static str, args: Vec<ScriptValu
 
 /// The verbs' view over the lent `World`, built for the one read.
 fn live_access(f: &mut dyn FnMut(&mut dyn LiveState)) -> bool {
-    with_world(|w| super::live::with_world_view(w, || benilla_ui::script::write_live(|l| f(l))))
-        .is_some()
+    with_world(|w| super::live::with_world_view(w, |l| f(l))).is_some()
 }
 
 #[cfg(test)]

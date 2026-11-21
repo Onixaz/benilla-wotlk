@@ -322,8 +322,8 @@ pub(crate) fn toggle_attack_local(
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct AttackSeam<'w, 's> {
     pub(crate) net: Res<'w, crate::net::NetCommands>,
-    pub(crate) queued_melee: crate::ui_script::OwnedMut<'w, crate::spell::QueuedMeleeSpell>,
-    pub(crate) auto_repeat: crate::ui_script::OwnedMut<'w, crate::spell::AutoRepeatActive>,
+    pub(crate) queued_melee: ResMut<'w, crate::spell::QueuedMeleeSpell>,
+    pub(crate) auto_repeat: ResMut<'w, crate::spell::AutoRepeatActive>,
     pub(crate) sheath: MessageWriter<'w, SheathRequest>,
     pub(crate) ecs: Commands<'w, 's>,
     /// Our own entity.
@@ -366,7 +366,7 @@ impl AttackSeam<'_, '_> {
         let me = self.me.single().ok();
         cancel_auto_repeat_local(
             me,
-            &mut self.auto_repeat.write(),
+            self.auto_repeat.as_mut(),
             &mut self.ecs,
             &self.net,
             sink,
@@ -375,7 +375,7 @@ impl AttackSeam<'_, '_> {
 
     /// StopAttack.
     pub(crate) fn stop(&mut self, engaged: bool) {
-        stop_attack_local(engaged, &mut self.queued_melee.write(), &self.net);
+        stop_attack_local(engaged, self.queued_melee.as_mut(), &self.net);
     }
 
     /// StartAttack; a no-op before our own entity streams in. Its auto-repeat cancel fires into
@@ -393,7 +393,7 @@ impl AttackSeam<'_, '_> {
             target,
             engaged,
             stop_in_flight,
-            &mut self.auto_repeat.write(),
+            self.auto_repeat.as_mut(),
             &mut self.sheath,
             &mut self.ecs,
             &self.net,

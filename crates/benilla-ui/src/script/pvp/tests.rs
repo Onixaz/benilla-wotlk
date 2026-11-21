@@ -65,8 +65,7 @@ impl Seated {
             pvp_timer: timer,
             ..Default::default()
         };
-        // SAFETY: dropped on this thread, the previous loan first.
-        self.live = Some(unsafe { crate::script::LiveLoan::new(view) });
+        self.live = Some(crate::script::LiveLoan::new(view));
     }
 
     fn set_honor(&mut self, honor: Option<HonorState>) {

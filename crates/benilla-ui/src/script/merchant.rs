@@ -1563,16 +1563,13 @@ mod tests {
         s.set_player_req_state(req);
         assert_eq!(cursor(&mut s), Some(UiCursorMode::UnableBuy), "honor");
 
-        // SAFETY: dropped on this thread at the end of the test, the only loan.
-        let _live = unsafe {
-            crate::script::LiveLoan::new(crate::script::live::TestView {
-                honor: Some(HonorState {
-                    honor_currency: 7000,
-                    ..Default::default()
-                }),
+        let _live = crate::script::LiveLoan::new(crate::script::live::TestView {
+            honor: Some(HonorState {
+                honor_currency: 7000,
                 ..Default::default()
-            })
-        };
+            }),
+            ..Default::default()
+        });
         assert_eq!(cursor(&mut s), Some(UiCursorMode::UnableBuy), "cost item");
         let mut slots = std::collections::HashMap::new();
         slots.insert(
