@@ -314,6 +314,7 @@ mod tests {
             civilian: false,
             racial_leader: false,
             modifiers: (0.0, 0.0),
+            movement_id: 0,
         }
     }
 

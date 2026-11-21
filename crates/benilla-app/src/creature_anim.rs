@@ -122,7 +122,8 @@ impl Wielded {
 }
 
 /// Auto-attacking (`SMSG_ATTACKSTART` to `ATTACKSTOP`), holding the target guid, the reference's
-/// `[+0xc48]`: the Ready idle gates on it, not on sheath; the reference's reach check reads it.
+/// `[+0xa20]` (`0x71afb0`): the Ready idle gates on it, not on sheath; the reference's reach check
+/// reads it.
 #[derive(Component)]
 pub(crate) struct Engaged(pub(crate) u64);
 

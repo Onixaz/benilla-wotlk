@@ -177,7 +177,11 @@ impl Plugin for NetPlugin {
                     .in_set(WorldStage::Net)
                     .after(enter_world_on_self_create),
             )
-            .add_systems(Update, population_pulse.in_set(WorldStage::Net));
+            .add_systems(Update, population_pulse.in_set(WorldStage::Net))
+            .add_systems(
+                Startup,
+                motion::load_chase_rates.after(benilla_assets::AssetSet::Open),
+            );
     }
 }
 
