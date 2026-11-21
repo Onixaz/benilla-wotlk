@@ -11,7 +11,10 @@ use crate::dbc::{f32_at, parse, str_at, u32_at};
 use crate::Chain;
 
 mod atmosphere;
+mod skybox;
 mod tables;
+mod zone_paths;
+mod zones;
 
 pub use atmosphere::Atmosphere;
 use atmosphere::{
@@ -21,6 +24,69 @@ use atmosphere::{
     LP_OCEAN_SHALLOW_ALPHA, LP_SKYBOX, LP_WATER_DEEP_ALPHA, LP_WATER_SHALLOW_ALPHA,
 };
 pub use atmosphere::{ZERO_KEY_COLOR, ZERO_KEY_SCALAR};
+
+/// The fog a light sample takes on `map` at `farclip` yards: the day-night update picks the mode
+/// each frame (`0x7816f0`: mode 1 with pixel shaders, mode 0 below map 530), and the colour pass
+/// applies it to every light it computes (`0x7ecd80`), before the blend.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FogLaw {
+    /// Mode 1: the fog end goes to the far clip and the curve takes [`fog_rate`].
+    pub rate_law: bool,
+    /// The far clip the rate law reads, the camera's validated `farclip`.
+    pub farclip: f32,
+}
+
+impl FogLaw {
+    /// The law on `map`: the rate law from map 530 (Outland, Northrend and their instances).
+    pub fn for_map(map: u32, farclip: f32) -> Self {
+        Self {
+            rate_law: rate_law_map(map),
+            farclip,
+        }
+    }
+
+    /// `0x7ecd80`'s fog steps on one light: the end floored at 10 yd; under the rate law an end of
+    /// at least 250/9 yd takes [`fog_rate`] of its own span and moves to the far clip, and a
+    /// negative start fraction is held at 0. NaN fails both compares and stands, as there.
+    pub fn apply(self, a: &mut Atmosphere) {
+        if a.fog_end < 10.0 {
+            a.fog_end = 10.0;
+        }
+        if !self.rate_law {
+            return;
+        }
+        if a.fog_end >= 27.777_779 {
+            a.fog_rate = fog_rate(a.fog_start_frac * a.fog_end, a.fog_end, self.farclip);
+            a.fog_end = self.farclip;
+        }
+        if a.fog_start_frac < 0.0 {
+            a.fog_start_frac = 0.0;
+        }
+    }
+}
+
+/// Whether `map` takes the rate law: the day-night update (`0x7816f0`) drops to mode 0 below map
+/// id 530.
+pub fn rate_law_map(map: u32) -> bool {
+    map >= 530
+}
+
+/// The fog rate of a `start..end` span (`0x7ecd00`): 1.5 for a span of at least
+/// `min(farclip, 700) − 200` yd, rising linearly to 7 as the span shrinks to nothing.
+pub fn fog_rate(start: f32, end: f32, farclip: f32) -> f32 {
+    let range = farclip.min(700.0) - 200.0;
+    let span = end - start;
+    if span <= range {
+        (1.0 - span / range) * 5.5 + 1.5
+    } else {
+        1.5
+    }
+}
+
+/// The far clip the colour-only debug dumps sample at; the fog law never reaches their output.
+const DEBUG_FARCLIP: f32 = 777.0;
+use skybox::{compact_pairs, merge_pair, seed_pairs, SkyboxPairs};
+pub use skybox::{SkyboxDraw, SKYBOX_FLAG_COMBINE, SKYBOX_FLAG_SYNC_TIME};
 use tables::{band_schema, load_bands, load_float_bands, sample_color, sample_float, Band, DAY};
 
 const LIGHT: &str = "DBFilesClient\\Light.dbc";
@@ -170,10 +236,10 @@ pub struct LightCatalog {
     light_params_water_alpha: HashMap<u32, [f32; 4]>,
     /// `LightParams` id → `lightSkyboxID` ([`LP_SKYBOX`]), for its non-zero rows only.
     light_params_skybox: HashMap<u32, u32>,
-    /// `LightSkybox.dbc` id → model chain path, spelled as a WMO MOSB skybox is so one model never
-    /// builds twice. Only the ghost path reads it here; 12340's 158 skybox params are mostly zone
-    /// skies (`StormPeaks_SkyC_Ulduar.mdx`), which no path draws yet.
-    skyboxes: HashMap<u32, String>,
+    /// `LightSkybox.dbc` id → (model chain path, `Flags`), the path spelled as a WMO MOSB skybox is
+    /// so one model never builds twice. The zone skies ([`Self::skybox_blend`]) and the ghost sky
+    /// ([`Self::ghost_skybox`]) both resolve through it.
+    skyboxes: HashMap<u32, (String, u32)>,
 }
 
 pub(crate) fn light_int_band_schema() -> Schema {
@@ -347,7 +413,14 @@ impl LightCatalog {
             let mut m = HashMap::with_capacity(rs.records().len());
             for r in rs.records() {
                 if let (Some(id), Some(path)) = (u32_at(r, 0), str_at(&rs, r, 1)) {
-                    m.insert(id, crate::models::model_path(&path));
+                    // An unnamed record is a null sky that still holds its list place (`0x7f30c0`).
+                    let flags = u32_at(r, 2).unwrap_or(0);
+                    let path = if path.is_empty() {
+                        String::new()
+                    } else {
+                        crate::models::model_path(&path)
+                    };
+                    m.insert(id, (path, flags));
                 }
             }
             m
@@ -455,11 +528,139 @@ impl LightCatalog {
     pub fn ghost_skybox(&self, map: u32, pos: [f32; 3]) -> Option<&str> {
         let light = self.pick_light(map, pos)?;
         let id = self.light_params_skybox.get(&light.params[SLOT_DEATH])?;
-        self.skyboxes.get(id).map(String::as_str)
+        self.skyboxes
+            .get(id)
+            .map(|(path, _)| path.as_str())
+            .filter(|p| !p.is_empty())
+    }
+
+    /// The ghost sky's `LightSkybox` flags, for its time-of-day sync (`0x7ecf20`).
+    pub fn ghost_skybox_flags(&self, map: u32, pos: [f32; 3]) -> u32 {
+        self.pick_light(map, pos)
+            .and_then(|l| self.light_params_skybox.get(&l.params[SLOT_DEATH]))
+            .and_then(|id| self.skyboxes.get(id))
+            .map_or(0, |(_, flags)| *flags)
+    }
+
+    /// A `Light.dbc` row by id, on any map.
+    fn light_by_id(&self, id: u32) -> Option<&Light> {
+        self.lights.iter().find(|l| l.id == id)
+    }
+
+    /// The zone lights at `pos` with their blend weights, in table order (`0x77eed0`, `0x7ee6b0`).
+    fn zone_lights(&self, map: u32, pos: [f32; 3]) -> Vec<(&Light, f32)> {
+        if !zones::USE_ZONE_LIGHTS {
+            return Vec::new();
+        }
+        zones::zone_lights(map, pos, |id| self.light_by_id(id).is_some())
+            .into_iter()
+            .filter_map(|(id, dist)| {
+                Some((self.light_by_id(id)?, zones::zone_weight(dist).min(1.0)))
+            })
+            .filter(|(_, w)| *w > 0.0)
+            .collect()
+    }
+
+    /// A zone light's own row (falloff end under 3 yards), which `0x7f1360` skips as a sphere.
+    fn zone_marker(l: &Light) -> bool {
+        zones::USE_ZONE_LIGHTS && l.falloff_end < 3.0
+    }
+
+    /// The zone skies this frame, at most three in draw order: the global light's sky seeded at 1.0
+    /// (`0x7ebff0`), then the zone lights, the area spheres farthest first and the server overrides
+    /// folded in at their weights (`0x7f1360`, `0x7ed4c0`), compacted (`0x7f3230`). Magma and slime
+    /// take their fixed row alone; storm leaves the skies alone (`0x7ec220`); the ghost sky is the
+    /// override ([`Self::ghost_skybox`]).
+    pub fn skybox_blend(
+        &self,
+        map: u32,
+        pos: [f32; 3],
+        submersion: Submersion,
+        overrides: &[LightOverride],
+    ) -> Vec<SkyboxDraw> {
+        let sky_of = |param: u32| self.light_params_skybox.get(&param).copied().unwrap_or(0);
+        let record = |id: u32| self.skyboxes.get(&id).cloned();
+        if let Some(p) = submersion.fixed_param() {
+            if self.has_param(p) {
+                return compact_pairs(&seed_pairs(sky_of(p)), record);
+            }
+        }
+        let slot = weather_slot(false, false, submersion.is_water());
+        // The row's params for the slot, the clear slot standing in for an unset one (`0x7eb180`).
+        let param_of = |l: &Light| -> Option<u32> {
+            let p = match l.params[slot] {
+                0 => l.params[SLOT_CLEAR],
+                p => p,
+            };
+            (p >= 1).then_some(p)
+        };
+        // The base, as the atmosphere's: the global, else the zero-match record for a rowless map.
+        // The seven maps with rows but no global start from the constructor's empty pairs.
+        let map_has_no_light = !self.lights.iter().any(|l| l.map == map);
+        let base = self
+            .lights
+            .iter()
+            .find(|l| l.map == map && l.global)
+            .or_else(|| {
+                map_has_no_light
+                    .then(|| self.light_by_id(FALLBACK_LIGHT_ID))
+                    .flatten()
+            })
+            .and_then(param_of);
+        let mut pairs = base.map_or_else(SkyboxPairs::default, |p| seed_pairs(sky_of(p)));
+
+        let dist = |l: &Light| {
+            (0..3)
+                .map(|i| (l.pos[i] - pos[i]).powi(2))
+                .sum::<f32>()
+                .sqrt()
+        };
+        for (light, weight) in self.zone_lights(map, pos) {
+            if let Some(p) = param_of(light) {
+                merge_pair(&mut pairs, sky_of(p), weight);
+            }
+        }
+        let mut locals: Vec<(f32, &Light)> = self
+            .lights
+            .iter()
+            .filter(|l| l.map == map && !l.global && !Self::zone_marker(l))
+            .filter_map(|l| {
+                let d = dist(l);
+                (d <= l.falloff_end).then_some((d, l))
+            })
+            .collect();
+        locals.sort_by(|a, b| b.0.total_cmp(&a.0));
+        for (d, l) in locals {
+            if let Some(p) = param_of(l) {
+                merge_pair(
+                    &mut pairs,
+                    sky_of(p),
+                    blend_alpha(d, l.falloff_start, l.falloff_end),
+                );
+            }
+        }
+        for o in overrides.iter().filter(|o| o.fade > 0.0) {
+            let (Some(base), Some(with)) =
+                (self.light_by_id(o.light), self.light_by_id(o.override_id))
+            else {
+                continue;
+            };
+            let d = dist(base);
+            if d >= base.falloff_end {
+                continue;
+            }
+            if let Some(p) = param_of(with) {
+                let weight = blend_alpha(d, base.falloff_start, base.falloff_end).min(o.fade);
+                merge_pair(&mut pairs, sky_of(p), weight);
+            }
+        }
+        compact_pairs(&pairs, record)
     }
 
     /// The reference's area-light blend: from the map's global light, lerp toward each local
-    /// sphere containing `pos` by its [`blend_alpha`], farthest first.
+    /// sphere containing `pos` by its [`blend_alpha`], farthest first, each light under the map's
+    /// [`FogLaw`] at `farclip`.
+    #[allow(clippy::too_many_arguments)]
     pub fn sample_blended(
         &self,
         map: u32,
@@ -468,8 +669,9 @@ impl LightCatalog {
         stormy: bool,
         submersion: Submersion,
         ghost: bool,
+        farclip: f32,
     ) -> Atmosphere {
-        self.sample_blended_with(map, pos, time, stormy, submersion, ghost, &[])
+        self.sample_blended_with(map, pos, time, stormy, submersion, ghost, farclip, &[])
     }
 
     /// [`Self::sample_blended`], then each server override in order (`0x7f1360`): inside its
@@ -484,13 +686,21 @@ impl LightCatalog {
         stormy: bool,
         submersion: Submersion,
         ghost: bool,
+        farclip: f32,
         overrides: &[LightOverride],
     ) -> Atmosphere {
+        let law = FogLaw::for_map(map, farclip);
+        // Every light the blend reads takes the fog law first, as the colour pass computes it.
+        let lit = |p: u32| {
+            let mut a = self.sample_param(p, time);
+            law.apply(&mut a);
+            a
+        };
         // Magma and slime replace the whole blend with one fixed row (before the slot selection);
         // without the row the chain falls through, as the `maxId` guard does.
         if let Some(p) = submersion.fixed_param() {
             if self.has_param(p) {
-                return self.sample_param(p, time);
+                return lit(p);
             }
         }
         let slot = weather_slot(ghost, stormy, submersion.is_water());
@@ -500,7 +710,7 @@ impl LightCatalog {
                 0 => l.params[SLOT_CLEAR],
                 p => p,
             };
-            (param >= 1).then(|| self.sample_param(param, time))
+            (param >= 1).then(|| lit(param))
         };
 
         // The base: the map's global, else the zero-match record for a rowless map. The seven maps
@@ -519,12 +729,19 @@ impl LightCatalog {
             .and_then(atmo_of)
             .unwrap_or(Atmosphere::DEFAULT);
 
+        // The zone lights first, in table order (`0x7f1360`, `0x7ee6b0`).
+        for (light, weight) in self.zone_lights(map, pos) {
+            if let Some(atmo) = atmo_of(light) {
+                acc = acc.lerp(&atmo, weight);
+            }
+        }
+
         // Farthest first, so the nearest lands last: the reference drains a max-heap keyed on
         // distance, not weight, blending `(dst, row, w)` for every entry, a lone one too.
         let mut locals: Vec<(f32, &Light)> = self
             .lights
             .iter()
-            .filter(|l| l.map == map && !l.global)
+            .filter(|l| l.map == map && !l.global && !Self::zone_marker(l))
             .filter_map(|l| {
                 let d = (0..3)
                     .map(|i| (l.pos[i] - pos[i]).powi(2))
@@ -541,8 +758,9 @@ impl LightCatalog {
             }
         }
         for o in overrides.iter().filter(|o| o.fade > 0.0) {
-            let by_id = |id: u32| self.lights.iter().find(|l| l.id == id);
-            let (Some(base), Some(with)) = (by_id(o.light), by_id(o.override_id)) else {
+            let (Some(base), Some(with)) =
+                (self.light_by_id(o.light), self.light_by_id(o.override_id))
+            else {
                 continue;
             };
             let d = (0..3)
@@ -619,7 +837,8 @@ impl LightCatalog {
             );
         }
         let picked = self.sample(map, pos, time, false);
-        let blended = self.sample_blended(map, pos, time, false, Submersion::Dry, false);
+        let blended =
+            self.sample_blended(map, pos, time, false, Submersion::Dry, false, DEBUG_FARCLIP);
         println!(
             "  => pick_light : amb {} sun {}",
             c(picked.ambient),
@@ -703,6 +922,7 @@ impl LightCatalog {
                     Submersion::Dry
                 },
                 slot == SLOT_DEATH,
+                DEBUG_FARCLIP,
             );
             println!(
                 "  {name:<17} {} {} {:>9.1} {:>6.2}  {:<15} {:<15} {:<15}",
@@ -759,7 +979,7 @@ impl LightCatalog {
         let d = Atmosphere::DEFAULT;
         // Only the fog end is stored × 36. The reference scales it once at load (on rows with
         // `rowIndex % 6 == 0`); scaling the interpolated value here is the same. A 0 end (params 9
-        // and 93) stays 0, kept finite by the shaders' `max(end − start, 0.001)`.
+        // and 93) is floored at 10 yd by the fog law ([`FogLaw::apply`]).
         let fog_end = fb(FB_FOG_END)
             .and_then(|b| sample_float(b, t))
             .map(|v| v / POS_SCALE)
@@ -776,6 +996,8 @@ impl LightCatalog {
             fog_end,
             // Unclamped: negative under storm (Elwynn −0.5), the reference's near veil in rain.
             fog_start_frac,
+            // The band load commits 1 (`0x7ebff0`); the rate law replaces it per light.
+            fog_rate: 1.0,
             fog_color: col(IB_FOG_COLOR),
             sun_diffuse: col(IB_DIFFUSE),
             sun_color: col(IB_SUN_COLOR),
@@ -928,5 +1150,70 @@ mod tests {
         let q = |g: f32| (g * 255.0).floor() / 255.0;
         assert!((q(0.65) - 165.0 / 255.0).abs() < 1e-6);
         assert!((q(0.50) - 127.0 / 255.0).abs() < 1e-6); // Duskwood → 0.498
+    }
+}
+
+#[cfg(test)]
+mod fog_law_tests {
+    use super::*;
+
+    fn atmo(end: f32, frac: f32) -> Atmosphere {
+        Atmosphere {
+            fog_end: end,
+            fog_start_frac: frac,
+            ..Atmosphere::DEFAULT
+        }
+    }
+
+    /// `0x7ecd00`'s line: 7 at no span, 1.5 from `min(farclip, 700) − 200` yd on.
+    #[test]
+    fn the_rate_falls_from_seven_to_one_and_a_half_over_the_span() {
+        assert_eq!(fog_rate(100.0, 100.0, 777.0), 7.0);
+        assert_eq!(fog_rate(0.0, 500.0, 777.0), 1.5);
+        assert_eq!(fog_rate(0.0, 900.0, 777.0), 1.5);
+        assert!((fog_rate(75.0, 300.0, 1277.0) - (0.55 * 5.5 + 1.5)).abs() < 1e-5);
+        // Below 700 yd the range follows the far clip: 177 − 200 is negative, so every span is 1.5.
+        assert_eq!(fog_rate(0.0, 1.0, 177.0), 1.5);
+        assert!((fog_rate(0.0, 150.0, 500.0) - (0.5 * 5.5 + 1.5)).abs() < 1e-5);
+    }
+
+    /// The old world keeps the sampled end and a linear curve; only the 10 yd floor applies.
+    #[test]
+    fn below_map_530_the_fog_stays_linear() {
+        let law = FogLaw::for_map(1, 777.0);
+        let mut a = atmo(300.0, -0.5);
+        law.apply(&mut a);
+        assert_eq!(
+            (a.fog_end, a.fog_start_frac, a.fog_rate),
+            (300.0, -0.5, 1.0)
+        );
+        let mut zero = atmo(0.0, 0.25);
+        law.apply(&mut zero);
+        assert_eq!(zero.fog_end, 10.0, "the end floor holds in both modes");
+    }
+
+    /// Outland: the end goes to the far clip, the rate comes off the zone's own span, and a
+    /// negative start fraction is held at 0.
+    #[test]
+    fn from_map_530_the_end_moves_to_the_far_clip_and_the_curve_takes_the_rate() {
+        let law = FogLaw::for_map(530, 1277.0);
+        assert!(law.rate_law && FogLaw::for_map(571, 777.0).rate_law);
+        let mut a = atmo(300.0, 0.25);
+        law.apply(&mut a);
+        assert_eq!(a.fog_end, 1277.0);
+        assert_eq!(a.fog_start_frac, 0.25);
+        assert_eq!(a.fog_rate, fog_rate(75.0, 300.0, 1277.0));
+        // A negative fraction widens the span the rate reads, then is held at 0.
+        let mut storm = atmo(300.0, -0.5);
+        law.apply(&mut storm);
+        assert_eq!(storm.fog_rate, fog_rate(-150.0, 300.0, 1277.0));
+        assert_eq!(storm.fog_start_frac, 0.0);
+        // Under 250/9 yd (magma's 27) the end and rate stand; the fraction is still held.
+        let mut magma = atmo(27.0, -2.0);
+        law.apply(&mut magma);
+        assert_eq!(
+            (magma.fog_end, magma.fog_rate, magma.fog_start_frac),
+            (27.0, 1.0, 0.0)
+        );
     }
 }

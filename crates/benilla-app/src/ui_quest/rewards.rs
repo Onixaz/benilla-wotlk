@@ -46,19 +46,9 @@ pub(crate) struct RewardInputs<'w, 's> {
     factions: Option<Res<'w, crate::target::Factions>>,
     reputations: Option<Res<'w, crate::net::Reputations>>,
     auras: Query<'w, 's, Ref<'static, UnitAuras>, With<SelfPlayer>>,
-    roster: Option<Res<'w, crate::char_select::Roster>>,
 }
 
 impl RewardInputs<'_, '_> {
-    /// Whether any reward input moved since the reading system last ran.
-    pub(crate) fn changed(&self) -> bool {
-        self.tables.as_ref().is_some_and(|r| r.is_changed())
-            || self.factions.as_ref().is_some_and(|r| r.is_changed())
-            || self.reputations.as_ref().is_some_and(|r| r.is_changed())
-            || self.roster.as_ref().is_some_and(|r| r.is_changed())
-            || self.auras.iter().any(|a| a.is_changed())
-    }
-
     /// A faction's raw standing, as the reference's reputation lookup (`0x5d05b0`) reads it: the
     /// wire slot plus the race/class base, 0 without a slot.
     pub(crate) fn standing(&self, store: &ObjectFields, faction: u32) -> i32 {
@@ -147,12 +137,6 @@ impl RewardInputs<'_, '_> {
             }
         }
         bonus
-    }
-
-    /// A PvP realm (`Cfg_Configs.dbc`'s `PlayerKillingAllowed` for the realm's type), where
-    /// `QuestFlagsPVP` answers nil (`[0xb2f998]`, set at `0x4055c7`).
-    pub(crate) fn realm_is_pvp(&self) -> bool {
-        self.roster.as_ref().is_some_and(|r| r.realm_is_pvp())
     }
 
     /// A quest-log row's extras from its template, at the player's level.

@@ -1,6 +1,7 @@
 //! The rune table, 12340's rune state (`0xc24304`-`0xc24388`), and its verbs `GetRuneType`
-//! (`0x6131e0`), `GetRuneCooldown` (`0x613020`) and `GetRuneCount` (`0x613140`). Times are
-//! milliseconds on the `GetTime` clock, as the reference keeps millisecond OS clock stamps; a
+//! (`0x6131e0`), `GetRuneCooldown` (`0x613020`) and `GetRuneCount` (`0x613140`), which read the
+//! table and the active player's `PLAYER_RUNE_REGEN` rates through the lent view when called. Times
+//! are milliseconds on the `GetTime` clock, as the reference keeps millisecond OS clock stamps; a
 //! last-used time of 0 is a ready rune.
 
 use mlua::{Lua, MultiValue, Value};
@@ -41,9 +42,11 @@ pub struct RuneState {
     pub last_used_ms: [u32; MAX_RUNES],
     /// When each rune comes ready, 0 for none (`0xc24344`).
     pub recharge_ms: [u32; MAX_RUNES],
-    /// `PLAYER_RUNE_REGEN_1..4`: runes of each kind regained per second.
-    pub regen: [f32; RUNE_KINDS],
 }
+
+/// `PLAYER_RUNE_REGEN_1..4`, runes of each kind regained per second, read off the active player
+/// whenever a rate is needed (`0x5ee140`, `0x613020`).
+pub type RuneRegen = [f32; RUNE_KINDS];
 
 /// The table every game starts with, any class (`0x5edef0`): six runes, two each of blood,
 /// unholy and frost, all ready.
@@ -57,7 +60,6 @@ impl Default for RuneState {
             ready: u32::MAX,
             last_used_ms: [0; MAX_RUNES],
             recharge_ms: [0; MAX_RUNES],
-            regen: [0.0; RUNE_KINDS],
         }
     }
 }
@@ -79,19 +81,42 @@ impl RuneState {
         index < MAX_RUNES && (self.count == 0 || index < self.count as usize)
     }
 
+    /// The game start's table (`0x5edef0`), run by a game start and each world entry (`0x528294`):
+    /// the first six slots back to blood, unholy and frost in pairs in both kind tables, every
+    /// rune ready with no recharge. Slots 7 and 8 keep their kinds.
+    pub fn initialize_game(&mut self) {
+        let fresh = Self::default();
+        self.kinds[..6].copy_from_slice(&fresh.kinds[..6]);
+        self.base_kinds[..6].copy_from_slice(&fresh.base_kinds[..6]);
+        self.count = fresh.count;
+        self.ready = fresh.ready;
+        self.last_used_ms = fresh.last_used_ms;
+        self.recharge_ms = fresh.recharge_ms;
+    }
+
     /// The regen rate of slot `index`'s kind.
-    fn rate(&self, index: usize) -> f32 {
-        self.regen
+    fn rate(&self, index: usize, regen: &RuneRegen) -> f32 {
+        regen
             .get(usize::from(self.kinds[index]))
             .copied()
             .unwrap_or(0.0)
     }
 
     /// The rune recharge time (`0x5ee140`): due `(1 - progress) / rate` seconds from now, or
-    /// never below 0.01 runes a second. The x87 keeps the quotient wide and truncates, so a fresh
+    /// never below 0.01 runes a second; without the player object (`regen` `None`) it is left as
+    /// it was. The x87 keeps the quotient wide and truncates, so a fresh
     /// rune at 0.1 a second is due in 9999 ms.
-    fn compute_recharge(&mut self, index: usize, progress: f32, now_ms: u32) {
-        let rate = self.rate(index);
+    fn compute_recharge(
+        &mut self,
+        index: usize,
+        progress: f32,
+        now_ms: u32,
+        regen: Option<&RuneRegen>,
+    ) {
+        let Some(regen) = regen else {
+            return;
+        };
+        let rate = self.rate(index, regen);
         self.recharge_ms[index] = if rate >= 0.01 {
             let wait = (1.0 / f64::from(rate)) * (1.0 - f64::from(progress)) * -1000.0;
             now_ms.wrapping_sub(wait as i64 as u32)
@@ -101,8 +126,8 @@ impl RuneState {
     }
 
     /// `GetRuneCooldown`'s duration: one rune's recharge in seconds, 0 at or below 0.01 a second.
-    pub fn duration(&self, index: usize) -> f32 {
-        let rate = self.rate(index);
+    pub fn duration(&self, index: usize, regen: &RuneRegen) -> f32 {
+        let rate = self.rate(index, regen);
         if rate > 0.01 {
             1.0 / rate
         } else {
@@ -123,7 +148,13 @@ impl RuneState {
     /// `SMSG_RESYNC_RUNES` (`0x5ee440`): the count, then each listed rune's kind in both tables and
     /// its recharge restarted from the progress byte. A full rune keeps a last-used time ten
     /// seconds back, and the ready mask is left alone.
-    pub fn resync(&mut self, count: u32, runes: &[(u8, u8)], now_ms: u32) -> Vec<RuneEvent> {
+    pub fn resync(
+        &mut self,
+        count: u32,
+        runes: &[(u8, u8)],
+        now_ms: u32,
+        regen: Option<&RuneRegen>,
+    ) -> Vec<RuneEvent> {
         self.count = count;
         let mut events = Vec::new();
         for (i, &(kind, progress)) in runes.iter().enumerate().take(MAX_RUNES) {
@@ -131,7 +162,7 @@ impl RuneState {
             self.base_kinds[i] = kind;
             let progress = progress_of(progress);
             self.last_used_ms[i] = started_ago(now_ms, progress);
-            self.compute_recharge(i, progress, now_ms);
+            self.compute_recharge(i, progress, now_ms, regen);
             events.push(RuneEvent::Power {
                 rune: i as u8 + 1,
                 usable: false,
@@ -142,13 +173,18 @@ impl RuneState {
 
     /// `SMSG_ADD_RUNE_POWER` (`0x5ee520`): each masked live rune not already ready gets a finished
     /// recharge; the ready mask is left to the regen tick.
-    pub fn add_power(&mut self, mask: u32, now_ms: u32) -> Vec<RuneEvent> {
+    pub fn add_power(
+        &mut self,
+        mask: u32,
+        now_ms: u32,
+        regen: Option<&RuneRegen>,
+    ) -> Vec<RuneEvent> {
         let mut events = Vec::new();
         for i in 0..(self.count as usize).min(MAX_RUNES) {
             let bit = 1 << i;
             if mask & bit != 0 && self.ready & bit == 0 {
                 self.last_used_ms[i] = now_ms.wrapping_sub(10_000);
-                self.compute_recharge(i, 1.0, now_ms);
+                self.compute_recharge(i, 1.0, now_ms, regen);
                 events.push(RuneEvent::Power {
                     rune: i as u8 + 1,
                     usable: false,
@@ -168,6 +204,7 @@ impl RuneState {
         after: u32,
         progress: Option<&[u8]>,
         now_ms: u32,
+        regen: &RuneRegen,
     ) -> Vec<RuneEvent> {
         self.ready = after;
         let mut events = Vec::new();
@@ -180,7 +217,7 @@ impl RuneState {
                         .and_then(|p| p.get(i))
                         .map_or(0.0, |&b| progress_of(b));
                     self.last_used_ms[i] = started_ago(now_ms, share);
-                    self.compute_recharge(i, share, now_ms);
+                    self.compute_recharge(i, share, now_ms, Some(regen));
                     events.push(RuneEvent::Power {
                         rune,
                         usable: false,
@@ -198,7 +235,7 @@ impl RuneState {
 
     /// The death knight's regen tick (`0x728aa6`-`0x728af8`): every rune not ready whose
     /// recharge time has come joins the ready mask, through [`Self::set_predicted`].
-    pub fn tick(&mut self, now_ms: u32) -> Vec<RuneEvent> {
+    pub fn tick(&mut self, now_ms: u32, regen: &RuneRegen) -> Vec<RuneEvent> {
         let mut ready = self.ready;
         for i in 0..MAX_RUNES {
             let bit = 1 << i;
@@ -209,7 +246,7 @@ impl RuneState {
         if ready == self.ready {
             return Vec::new();
         }
-        self.set_predicted(self.ready, ready, None, now_ms)
+        self.set_predicted(self.ready, ready, None, now_ms, regen)
     }
 
     /// The predicted-runes count by type (`0x5ee3d0`): live ready runes of `kind`.
@@ -220,16 +257,11 @@ impl RuneState {
     }
 }
 
-impl super::UiScript {
-    /// Replace the rune table; the app fires the rune events itself.
-    pub fn set_runes(&mut self, runes: RuneState) {
-        set_field!(self, runes, runes);
-    }
-}
-
-/// The player object exists, the gate each rune verb opens with.
-fn has_player(model: &super::model::Model) -> bool {
-    model.unit("player").is_some_and(|u| u.exists)
+/// The rune table and the active player's rates through the lent view; `None` without the
+/// active player object, which every rune verb gates on (the object lookup with the player
+/// mask, `0x61306f`), or with no view lent.
+fn live_runes() -> Option<(RuneState, RuneRegen)> {
+    super::live::read_live(|l| l.runes()).flatten()
 }
 
 /// `slot - 1` as the reference's unsigned compare reads it: below 1 wraps past every slot.
@@ -243,24 +275,22 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetRuneType",
         lua.create_function(|lua, slot: Value| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            if !has_player(&model) {
+            let Some((runes, _)) = live_runes() else {
                 return Ok(MultiValue::new());
-            }
+            };
             let slot = number_arg(lua, slot, "Usage: Script_GetRuneType(slot)")?;
             let index = slot_index(slot);
-            if !model.runes.valid(index) {
+            if !runes.valid(index) {
                 return Ok(MultiValue::new());
             }
             Ok(MultiValue::from_vec(vec![Value::Integer(
-                i64::from(model.runes.kinds[index]) + 1,
+                i64::from(runes.kinds[index]) + 1,
             )]))
         })?,
     )?;
     // GetRuneCooldown(slot): start in seconds, duration and ready. A slot past 1..8 raises, no
-    // player answers nothing, and the live count is not checked.
+    // player answers nothing, and the live count is not checked. The duration is the slot kind's
+    // `PLAYER_RUNE_REGEN` rate read off the player now (`0x613098`).
     g.set(
         "GetRuneCooldown",
         lua.create_function(|lua, slot: Value| {
@@ -268,16 +298,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if index >= MAX_RUNES {
                 return Err(mlua::Error::RuntimeError("Invalid slot".into()));
             }
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            if !has_player(&model) {
+            let Some((runes, regen)) = live_runes() else {
                 return Ok(MultiValue::new());
-            }
-            let last = model.runes.last_used_ms[index];
+            };
+            let last = runes.last_used_ms[index];
             Ok(MultiValue::from_vec(vec![
                 Value::Number(f64::from(last) * 0.001),
-                Value::Number(f64::from(model.runes.duration(index))),
+                Value::Number(f64::from(runes.duration(index, &regen))),
                 Value::Boolean(last == 0),
             ]))
         })?,
@@ -287,18 +314,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetRuneCount",
         lua.create_function(|lua, slot: Value| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            if !has_player(&model) {
+            let Some((runes, _)) = live_runes() else {
                 return Ok(MultiValue::new());
-            }
+            };
             let index = slot_index(number_arg(lua, slot, "Usage: GetRuneCount(slot)")?);
             if index >= MAX_RUNES {
                 return Ok(MultiValue::new());
             }
             Ok(MultiValue::from_vec(vec![Value::Integer(i64::from(
-                model.runes.ready & (1 << index) != 0,
+                runes.ready & (1 << index) != 0,
             ))]))
         })?,
     )?;
@@ -308,26 +332,26 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::script::{UiScript, UnitState};
+    use crate::script::live::{lend_test, LiveLoan, TestView};
+    use crate::script::UiScript;
 
-    fn seated() -> UiScript {
-        let mut s = UiScript::new().unwrap();
-        s.set_unit(
-            "player",
-            Some(UnitState {
-                exists: true,
-                ..Default::default()
-            }),
-        );
-        s
+    /// Ten seconds a rune for every kind, a death knight's rates.
+    const DK: RuneRegen = [0.1; RUNE_KINDS];
+
+    /// The player object held with `runes` and the death knight's rates.
+    fn seated_with(runes: RuneState) -> LiveLoan<TestView> {
+        lend_test(TestView {
+            runes: Some((runes, DK)),
+            ..Default::default()
+        })
     }
 
-    /// A death knight's table: ten seconds a rune for every kind.
+    fn seated() -> (UiScript, LiveLoan<TestView>) {
+        (UiScript::new().unwrap(), seated_with(RuneState::default()))
+    }
+
     fn dk() -> RuneState {
-        RuneState {
-            regen: [0.1; RUNE_KINDS],
-            ..Default::default()
-        }
+        RuneState::default()
     }
 
     const SPENT_1: RuneEvent = RuneEvent::Power {
@@ -342,7 +366,7 @@ mod tests {
     /// Every character starts on the reference's six runes, blood, unholy and frost in pairs.
     #[test]
     fn a_new_game_reads_two_runes_of_each_kind() {
-        let s = seated();
+        let (s, _live) = seated();
         let kinds: Vec<i64> = (1..=6)
             .map(|i| s.eval(&format!("return GetRuneType({i})")).unwrap())
             .collect();
@@ -352,7 +376,7 @@ mod tests {
     /// A slot past the live six or below 1 answers nothing, as does a call with no player.
     #[test]
     fn an_invalid_slot_or_no_player_answers_nothing() {
-        let s = seated();
+        let (s, _live) = seated();
         for slot in [0, 7, 9, -1] {
             assert_eq!(
                 s.arity(&format!("GetRuneType({slot})")).unwrap(),
@@ -361,6 +385,7 @@ mod tests {
             );
         }
         assert!(s.run("GetRuneType('x')").is_err());
+        drop(_live);
         let bare = UiScript::new().unwrap();
         assert_eq!(bare.arity("GetRuneType('x')").unwrap(), 0);
     }
@@ -371,24 +396,39 @@ mod tests {
     #[test]
     fn a_spent_rune_recharges_over_its_kind_s_period() {
         let mut r = dk();
-        let spent = r.set_predicted(0x3f, 0x3e, Some(&[0; 6]), 50_000);
+        let spent = r.set_predicted(0x3f, 0x3e, Some(&[0; 6]), 50_000, &DK);
         assert_eq!(spent, [SPENT_1, RuneEvent::Usable]);
         assert_eq!(r.ready, 0x3e);
         assert_eq!(r.last_used_ms[0], 50_000);
         assert_eq!(r.recharge_ms[0], 59_999);
         assert_eq!(r.ready_of_kind(0), 1);
         let spare = |rune| RuneEvent::Power { rune, usable: true };
-        assert_eq!(r.tick(50_016), [spare(7), spare(8), RuneEvent::Usable]);
-        assert!(r.tick(59_998).is_empty());
-        assert_eq!(r.tick(59_999), [READY_1, RuneEvent::Usable]);
+        assert_eq!(r.tick(50_016, &DK), [spare(7), spare(8), RuneEvent::Usable]);
+        assert!(r.tick(59_998, &DK).is_empty());
+        assert_eq!(r.tick(59_999, &DK), [READY_1, RuneEvent::Usable]);
         assert_eq!((r.ready & 1, r.last_used_ms[0]), (1, 0));
+    }
+
+    /// The game start's table (`0x5edef0`) readies every rune and puts the first six slots back in
+    /// both kind tables, leaving slots 7 and 8 as they were.
+    #[test]
+    fn the_game_start_resets_the_first_six_slots() {
+        let mut r = dk();
+        r.set_predicted(0xff, 0x3e, None, 50_000, &DK);
+        r.convert(0, 3);
+        r.convert(6, 3);
+        r.count = 4;
+        r.initialize_game();
+        assert_eq!(r.kinds, [0, 0, 1, 1, 2, 2, 3, 0]);
+        assert_eq!((r.ready, r.count), (u32::MAX, 6));
+        assert_eq!((r.last_used_ms, r.recharge_ms), ([0; 8], [0; 8]));
     }
 
     /// A rune spent part-way through its window starts back by the share already passed.
     #[test]
     fn a_progress_byte_moves_the_start_back() {
         let mut r = dk();
-        r.set_predicted(0x3f, 0x3b, Some(&[0, 0, 51, 0, 0, 0]), 50_000);
+        r.set_predicted(0x3f, 0x3b, Some(&[0, 0, 51, 0, 0, 0]), 50_000, &DK);
         assert_eq!(r.last_used_ms[2], 48_000);
         assert_eq!(r.recharge_ms[2], 57_999);
     }
@@ -397,8 +437,10 @@ mod tests {
     #[test]
     fn a_recharging_rune_keeps_its_start() {
         let mut r = dk();
-        r.set_predicted(0x3f, 0x3e, None, 50_000);
-        assert!(!r.set_predicted(0x3f, 0x3e, None, 52_000).contains(&SPENT_1));
+        r.set_predicted(0x3f, 0x3e, None, 50_000, &DK);
+        assert!(!r
+            .set_predicted(0x3f, 0x3e, None, 52_000, &DK)
+            .contains(&SPENT_1));
         assert_eq!(r.last_used_ms[0], 50_000);
     }
 
@@ -414,7 +456,7 @@ mod tests {
         assert_eq!((r.kinds[0], r.base_kinds[0]), (3, 0));
         assert!(r.convert(8, 3).is_empty());
         let wire = [(0, 255), (0, 0), (1, 255), (1, 255), (2, 255), (2, 255)];
-        assert_eq!(r.resync(6, &wire, 90_000).len(), 6);
+        assert_eq!(r.resync(6, &wire, 90_000, Some(&DK)).len(), 6);
         assert_eq!((r.kinds[0], r.base_kinds[0]), (0, 0));
         assert_eq!((r.last_used_ms[0], r.recharge_ms[0]), (80_000, 90_000));
         assert_eq!((r.last_used_ms[1], r.recharge_ms[1]), (90_000, 99_999));
@@ -424,31 +466,32 @@ mod tests {
     #[test]
     fn add_rune_power_finishes_spent_runes() {
         let mut r = dk();
-        r.set_predicted(0xff, 0xfc, None, 10_000);
+        r.set_predicted(0xff, 0xfc, None, 10_000, &DK);
         assert_eq!(
-            r.add_power(0x05, 12_000),
+            r.add_power(0x05, 12_000, Some(&DK)),
             [SPENT_1, RuneEvent::ActionBarCooldown]
         );
         assert_eq!(r.recharge_ms[0], 12_000);
-        assert_eq!(r.tick(12_000), [READY_1, RuneEvent::Usable]);
+        assert_eq!(r.tick(12_000, &DK), [READY_1, RuneEvent::Usable]);
     }
 
     /// Below 0.01 runes a second there is no recharge time and no duration.
     #[test]
     fn a_slow_rate_never_recharges() {
         let mut r = RuneState::default();
-        r.set_predicted(0x3f, 0x3e, None, 50_000);
-        assert_eq!((r.recharge_ms[0], r.duration(0)), (0, 0.0));
+        let slow = [0.0; RUNE_KINDS];
+        r.set_predicted(0x3f, 0x3e, None, 50_000, &slow);
+        assert_eq!((r.recharge_ms[0], r.duration(0, &slow)), (0, 0.0));
     }
 
     /// `GetRuneCooldown` answers the start in seconds, the period and the ready flag;
     /// `GetRuneCount` the ready bit.
     #[test]
     fn the_cooldown_and_count_verbs_read_the_table() {
-        let mut s = seated();
+        let s = UiScript::new().unwrap();
         let mut r = dk();
-        r.set_predicted(0x3f, 0x3d, None, 50_000);
-        s.set_runes(r);
+        r.set_predicted(0x3f, 0x3d, None, 50_000, &DK);
+        let live = seated_with(r);
         let (start, duration, ready): (f64, f64, bool) =
             s.eval("return GetRuneCooldown(2)").unwrap();
         assert_eq!((start, duration, ready), (50.0, 10.0, false));
@@ -462,6 +505,7 @@ mod tests {
         assert!(s.run("GetRuneCooldown(9)").is_err());
         assert!(s.run("GetRuneCooldown()").is_err());
         assert!(s.run("GetRuneCount()").is_err());
+        drop(live);
         let bare = UiScript::new().unwrap();
         assert_eq!(bare.arity("GetRuneCooldown(1)").unwrap(), 0);
         assert_eq!(bare.arity("GetRuneCount()").unwrap(), 0);

@@ -73,7 +73,17 @@ pub struct ViewDistance {
     pub setting: f32,
     /// The camera near plane in yards, the `nearclip` CVar ([`stamp_near_clip`]).
     pub nearclip: f32,
+    /// The horizon's reach as a multiple of [`Self::farclip`], the `horizonFarclipScale` CVar
+    /// ([`Self::set_horizon_scale`]).
+    pub horizon_scale: f32,
 }
+
+/// `horizonFarclipScale`'s registered default; the registration runs its callback, so this is the
+/// live value and not the global's static 1.0 (`0x78e400`).
+pub const HORIZON_SCALE_DEFAULT: f32 = 4.0;
+
+/// The horizon scale's clamp in its change callback (`0x78d7c0`).
+pub const HORIZON_SCALE_RANGE: std::ops::RangeInclusive<f32> = 3.0..=6.0;
 
 /// The `farclip` range the stock slider offers, `GetCVarMin`/`GetCVarMax` (`0x514d40`,
 /// `0x514e30`); shared by `$WOW_FARCLIP`.
@@ -256,9 +266,10 @@ impl Plugin for MsaaSupportPlugin {
 }
 
 /// The world camera's projection far plane in yards. Deviation: the reference projects the
-/// detailed world to `farclip` and the horizon to `horizonfarclip` (default 2112, floored at
-/// `farclip + 528`); ours has one far plane well beyond `farclip`, because the WDL ring draws in
-/// the same projection, and the detailed world ends at `farclip` by the wall.
+/// detailed world to `farclip` and the horizon through its own projection out to
+/// [`ViewDistance::horizon_far`] (`0x791170`); ours has one projection with no far clip (Bevy's is
+/// infinite and its visibility test skips the far plane), the detailed world ends at `farclip` by
+/// the wall, and the WDL band at the horizon far by its own discard. This sizes the sky dome.
 pub const CAM_FAR: f32 = 3000.0;
 
 impl ViewDistance {
@@ -272,6 +283,29 @@ impl ViewDistance {
     /// Set the near plane from a `nearclip` write, clamped to [`NEARCLIP_RANGE`].
     pub fn set_nearclip(&mut self, v: f32) {
         self.nearclip = v.clamp(*NEARCLIP_RANGE.start(), *NEARCLIP_RANGE.end());
+    }
+
+    /// Take a `horizonFarclipScale` write, clamped to [`HORIZON_SCALE_RANGE`] (`0x78d7c0`). A NaN,
+    /// which the reference's string parse never yields and ours does, takes the floor.
+    pub fn set_horizon_scale(&mut self, v: f32) {
+        let (lo, hi) = (*HORIZON_SCALE_RANGE.start(), *HORIZON_SCALE_RANGE.end());
+        self.horizon_scale = if v < lo || v.is_nan() {
+            lo
+        } else if v > hi {
+            hi
+        } else {
+            v
+        };
+    }
+
+    /// The horizon projection's far plane, `scale × farclip` (`0x791170`).
+    pub fn horizon_far(&self) -> f32 {
+        self.horizon_scale * self.farclip
+    }
+
+    /// The horizon walk's radius in chunks, `trunc(scale × farclip × 0.03)` (`0x7cc0b0`).
+    pub fn horizon_walk_chunks(&self) -> i32 {
+        (self.horizon_scale * self.farclip * 0.030_000_001_f32) as i32
     }
 }
 
@@ -290,6 +324,7 @@ impl Default for ViewDistance {
             farclip: validate_farclip(setting, 0),
             setting,
             nearclip: NEARCLIP_DEFAULT,
+            horizon_scale: HORIZON_SCALE_DEFAULT,
         }
     }
 }
@@ -359,9 +394,12 @@ pub fn stamp_near_clip(
     }
 }
 /// The vertical field of view in radians, shared by the projection and every consumer of the near
-/// rectangle: 45°, Bevy's `PerspectiveProjection` default; the reference's follows the aspect,
-/// 44.1° at 16:9.
-pub const CAM_FOVY: f32 = std::f32::consts::FRAC_PI_4;
+/// rectangle: 54° at any aspect, the reference's. Its world projection (`0x607cb0`) takes the game
+/// camera's fov, π/2 from the constructor (`0x606b30`), times 0.6 as a vertical angle (`0x6bf370`).
+pub const CAM_FOVY: f32 = REFERENCE_CAMERA_FOV * 0.6;
+
+/// The game camera's fov in radians, π/2 (`0x606b30`); the projection uses 0.6 of it vertically.
+const REFERENCE_CAMERA_FOV: f32 = std::f32::consts::FRAC_PI_2;
 
 /// The world camera's pose made current within `Update`, for every viewer authority there: Bevy
 /// propagates `GlobalTransform` in `PostUpdate`, a whole jump late after a teleport snap.
@@ -453,6 +491,46 @@ mod tests {
     use super::*;
     use bevy::ecs::system::RunSystemOnce;
 
+    /// The world projection opens 0.6 of the camera's π/2 vertically: 54° at any aspect, so the
+    /// camera at a given zoom frames as much of the scene as the reference's does.
+    #[test]
+    fn the_vertical_field_of_view_is_the_references_54_degrees() {
+        assert!(
+            (CAM_FOVY.to_degrees() - 54.0).abs() < 1e-4,
+            "{}",
+            CAM_FOVY.to_degrees()
+        );
+        assert_eq!(CAM_FOVY, std::f32::consts::FRAC_PI_2 * 0.6_f32);
+    }
+
+    /// The scale callback's clamp, and the two products the horizon pass reads off it.
+    #[test]
+    fn the_horizon_reaches_scale_times_farclip() {
+        let mut v = ViewDistance::default();
+        v.set_farclip(777.0, 0);
+        assert_eq!(
+            v.horizon_scale, 4.0,
+            "the registered default, applied by its callback"
+        );
+        assert_eq!(v.horizon_far(), 4.0 * 777.0);
+        assert_eq!(v.horizon_walk_chunks(), 93);
+        for (asked, kept) in [
+            (1.0, 3.0),
+            (2.99, 3.0),
+            (5.5, 5.5),
+            (9.0, 6.0),
+            (f32::NAN, 3.0),
+        ] {
+            v.set_horizon_scale(asked);
+            assert_eq!(v.horizon_scale, kept, "{asked}");
+        }
+        // Northrend at the top of the slider, under the map's 4750/3 cap: 6 x 1277 yd, 229 chunks.
+        v.set_horizon_scale(6.0);
+        v.set_farclip(1277.0, 571);
+        assert_eq!(v.horizon_far(), 6.0 * 1277.0);
+        assert_eq!(v.horizon_walk_chunks(), 229);
+    }
+
     /// The reference's near stamp reaches the projection, and an unchanged one stays unmarked.
     #[test]
     fn the_near_plane_follows_the_cvar_and_settles() {
@@ -473,6 +551,7 @@ mod tests {
             farclip: 350.0,
             setting: 350.0,
             nearclip: 0.3,
+            horizon_scale: HORIZON_SCALE_DEFAULT,
         });
         app.update();
         let near = |app: &App| match app.world().get::<Projection>(cam).unwrap() {

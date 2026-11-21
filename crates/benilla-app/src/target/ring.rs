@@ -464,7 +464,7 @@ pub(super) fn push_ring(
 /// reputation slot answers with our reputation rank, even in GM mode; any other goes to the
 /// template comparator. Neutral when anything is missing. The reference caps that answer at 6, so
 /// Revered and Exalted both read 6. A party rung lands on this same generic leg, `0x71f770` with
-/// the unit as `this` and the player as the actor. Not applied: the contested guard and the summon
+/// the unit as `this` and the player as the actor ([`generic_reaction`]). Not applied: the summon
 /// tail.
 pub(crate) fn ring_reaction(
     factions: Option<&Factions>,
@@ -478,32 +478,93 @@ pub(crate) fn ring_reaction(
             return rank;
         }
     }
-    let resolved = (|| {
+    let template = target_store.and_then(|t| t.0.unit_faction_template());
+    // A clamp (`cmp esi,6` / `jl` / `mov esi,6`) caps the reference's answer: Exalted's 7 reads 6.
+    template
+        .map_or(Reaction::Neutral as u8, |id| {
+            generic_reaction(factions, reputations, id, self_store)
+        })
+        .min(REACTION_CAP)
+}
+
+/// `UNIT_FIELD_FLAGS_2` bit `0x4`: the viewer's reputation is not asked (`0x71f845`).
+const UNIT_FLAG2_IGNORE_REPUTATION: u32 = 0x4;
+/// `PLAYER_FLAGS` `0x100`, contested PvP, hostile to a template carrying bit `0x1000` (`0x71f809`).
+const PLAYER_FLAGS_CONTESTED_PVP: u32 = 0x100;
+/// The `FactionTemplate.dbc` flag that turns a contested player hostile (`0x71f7f7`).
+const TEMPLATE_FLAG_CONTESTED_GUARD: u32 = 0x1000;
+
+/// The generic reaction of faction template `template` toward our player (`0x71f770`): neutral
+/// when either template is missing (`0x71f87a`); for a player-controlled viewer, hostile when
+/// contested against a guard template (`0x71f7f7`), then a forced reaction (`0x71f822`), then our
+/// standing when the faction has reputation and the viewer does not ignore it (`0x71f845`,
+/// `0x71f85e`); else the template comparator (`0x71f86d`).
+pub(crate) fn generic_reaction(
+    factions: Option<&Factions>,
+    reputations: &Reputations,
+    template: u32,
+    self_store: Option<&ObjectStore>,
+) -> u8 {
+    (|| {
         let catalog = &factions?.0;
-        let self_store = self_store?;
-        let target_tpl = catalog.template(target_store?.0.unit_faction_template()?)?;
-        // A forced reaction, for a player-controlled viewer (`0x71f7d5`).
-        if self_store.0.unit_flags() & UNIT_FLAG_PVP_ATTACKABLE != 0 {
-            if let Some(forced) = reputations.forced_reaction(target_tpl.faction) {
+        let own = &self_store?.0;
+        let tpl = catalog.template(template)?;
+        let self_tpl = catalog.template(own.unit_faction_template()?)?;
+        if own.unit_flags() & UNIT_FLAG_PVP_ATTACKABLE != 0 {
+            if catalog.template_flags(template) & TEMPLATE_FLAG_CONTESTED_GUARD != 0
+                && own.player_flags() & PLAYER_FLAGS_CONTESTED_PVP != 0
+            {
+                return Some(Reaction::Hostile as u8);
+            }
+            if let Some(forced) = reputations.forced_reaction(tpl.faction) {
                 return Some(u8::try_from(forced).unwrap_or(u8::MAX));
             }
+            if own.unit_flags2() & UNIT_FLAG2_IGNORE_REPUTATION == 0 {
+                if let Some(info) = catalog.reputation_faction(tpl.faction) {
+                    let standing = reputations
+                        .0
+                        .get(info.rep_index as usize)
+                        .map_or(0, |&(_flags, s)| s);
+                    let race = own.unit_race().unwrap_or(0);
+                    let class = own.unit_class().unwrap_or(0);
+                    return Some(reputation_rank(info.base_for(race, class) + standing));
+                }
+            }
         }
-        // A reputation faction: our rank with it.
-        if let Some(info) = catalog.reputation_faction(target_tpl.faction) {
-            let standing = reputations
-                .0
-                .get(info.rep_index as usize)
-                .map_or(0, |&(_flags, s)| s);
-            let race = self_store.0.unit_race().unwrap_or(0);
-            let class = self_store.0.unit_class().unwrap_or(0);
-            return Some(reputation_rank(info.base_for(race, class) + standing));
-        }
-        // The template comparator: 1, 3 or 4 on the rank scale.
-        let self_tpl = catalog.template(self_store.0.unit_faction_template()?)?;
-        Some(target_tpl.reaction_toward(self_tpl) as u8)
-    })();
-    // A clamp (`cmp esi,6` / `jl` / `mov esi,6`) caps the reference's answer: Exalted's 7 reads 6.
-    resolved.map_or(Reaction::Neutral as u8, |rank| rank.min(REACTION_CAP))
+        Some(tpl.reaction_toward(self_tpl) as u8)
+    })()
+    .unwrap_or(Reaction::Neutral as u8)
+}
+
+/// A GameObject's reaction toward our player (`0x70edd0`): its creator's, when the creator is a
+/// unit in view (`0x70edff` -> `0x7251c0`); else its `GAMEOBJECT_FACTION` template's generic
+/// reaction (`0x70ee16`); else neutral (`0x70ee23`).
+pub(crate) fn gameobject_reaction(
+    factions: Option<&Factions>,
+    reputations: &Reputations,
+    party: &dyn GroupMembers,
+    creator: Option<&ObjectStore>,
+    go_faction: u32,
+    self_store: Option<&ObjectStore>,
+) -> u8 {
+    if let Some(creator) = creator.filter(|c| c.0.is_unit()) {
+        return ring_reaction(factions, reputations, party, Some(creator), self_store);
+    }
+    if go_faction != 0 {
+        return generic_reaction(factions, reputations, go_faction, self_store);
+    }
+    Reaction::Neutral as u8
+}
+
+/// Whether our player may interact with a GameObject (`0x71f8b0`): never as a ghost (`0x71f8c1`),
+/// else at a reaction of neutral or better (`0x71f8e3`).
+pub(crate) fn can_interact_with_gameobject(self_store: Option<&ObjectStore>, reaction: u8) -> bool {
+    const PLAYER_FLAGS_GHOST: u32 = 0x10;
+    let ghost = self_store.is_some_and(|s| {
+        s.0.object_type() == Some(benilla_protocol::messages::ObjectType::Player)
+            && s.0.player_flags() & PLAYER_FLAGS_GHOST != 0
+    });
+    !ghost && reaction >= Reaction::Neutral as u8
 }
 
 /// Revered, the highest rank `UnitReaction`'s generic leg answers.
@@ -1107,15 +1168,15 @@ mod tests {
     #[test]
     fn the_reputation_rank_is_capped_at_revered() {
         use crate::net::ObjectStore;
-        use crate::target::{stormwind_fixture, HUMAN_WARRIOR};
+        use crate::target::stormwind_fixture;
         use benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE;
         use benilla_protocol::ObjectFields;
 
-        /// `UNIT_FIELD_BYTES_0`, absolute descriptor index.
-        const BYTES_0: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_0;
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
-        let me = ObjectStore(ObjectFields::from_pairs(&[(BYTES_0, HUMAN_WARRIOR)]));
+        let me = ObjectStore(ObjectFields::from_pairs(
+            &crate::target::human_warrior_fields(),
+        ));
         // Both sides of the Honored, Revered and Exalted thresholds, and the wire's own ceiling.
         for (total, want) in [
             (8_999, 4),
@@ -1532,9 +1593,8 @@ mod tests {
                     .run_system_once(
                         |mut pick: AttackPick,
                          mut sel: ResMut<Selection>,
-                         mut seam: crate::creature_anim::AttackSeam,
-                         mut errors: ResMut<crate::ui_action::UiErrorKeys>| {
-                            pick.target(None, &mut sel, &mut seam, &mut errors, false)
+                         mut seam: crate::creature_anim::AttackSeam| {
+                            pick.target(None, &mut sel, &mut seam, false, &mut Vec::new())
                         },
                     )
                     .expect("the scan runs on the built client")

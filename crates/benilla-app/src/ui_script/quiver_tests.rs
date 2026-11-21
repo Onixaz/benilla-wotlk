@@ -431,13 +431,11 @@ fn the_hawk_reminder_is_suppressed_only_once_frames_are_locked() {
     );
 }
 
-/// An arrow stack one lighter, pushed through [`crate::ui_items::feed::apply_container_source`]
-/// as a server update is, fires `ITEM_LOCK_CHANGED` and starts Quiver's reload.
+/// An arrow stack one lighter, its count watch's `BAG_UPDATE` fired as the update's handler fires it (`0x707805`), starts Quiver's reload.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn spending_an_arrow_starts_quivers_reload_through_the_real_item_feed() {
     benilla_formats::wow_data_or_skip!();
-    use crate::ui_items::feed::{apply_container_source, FeedMemory};
     use benilla_ui::script::{ContainerSlot, ContainerState};
     use std::collections::HashMap;
 
@@ -447,10 +445,10 @@ fn spending_an_arrow_starts_quivers_reload_through_the_real_item_feed() {
     assert!(load_addon_files(&s, &root, "Quiver").is_empty());
     start_session(&mut s);
 
-    let quiver = |count: u32| {
-        Some(HashMap::from([(
-            0i64,
-            ContainerState {
+    let quiver = |s: &mut UiScript, count: u32| {
+        s.set_container(
+            0,
+            Some(ContainerState {
                 bag_family: 0,
                 name: Some("Backpack".into()),
                 num_slots: 16,
@@ -462,18 +460,11 @@ fn spending_an_arrow_starts_quivers_reload_through_the_real_item_feed() {
                         ..Default::default()
                     },
                 )]),
-            },
-        )]))
+            }),
+        );
+        s.fire_event("BAG_UPDATE", vec![ScriptValue::Int(0)]);
     };
-    let mut memory = FeedMemory::default();
-    apply_container_source(
-        &mut s,
-        &mut memory,
-        quiver(200),
-        Default::default(),
-        Vec::new(),
-        Vec::new(),
-    );
+    quiver(&mut s, 200);
 
     s.fire_event("START_AUTOREPEAT_SPELL", Vec::new());
     s.tick(0.1);
@@ -481,14 +472,7 @@ fn spending_an_arrow_starts_quivers_reload_through_the_real_item_feed() {
     assert!(!reloading_before, "no shot has landed yet");
 
     // The server's stack count drops by one: a fired shot.
-    apply_container_source(
-        &mut s,
-        &mut memory,
-        quiver(199),
-        Default::default(),
-        Vec::new(),
-        Vec::new(),
-    );
+    quiver(&mut s, 199);
     s.tick(0.1);
 
     let (_, reloading, reload_left, _) = shot_state(&mut s);

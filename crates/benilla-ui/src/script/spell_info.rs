@@ -45,6 +45,8 @@ pub struct SpellStatEffects {
     pub attributes: u32,
     pub effects: [SpellStatEffect; 3],
     pub has_reagents: bool,
+    /// `Reagent[8]` with `ReagentCount[8]`, which the reagent-uses count (`0x801770`) divides by.
+    pub reagents: [(u32, u32); 8],
     /// The first effect's created item, a recipe's product (`0x598830`).
     pub item_type: u32,
     /// The helpful-or-harmful test's two answers (`0x7fe1b0`).
@@ -62,6 +64,18 @@ pub trait SpellInfoSource {
         false
     }
 
+    /// The auto-repeat tests `IsAutoRepeatSpell` makes (`0x5415d0`): the player's auto-repeating
+    /// spell (`0x7fe130`) or its auto-ranged-combat spell (`0x7fe180`) is `spell_id`.
+    fn is_auto_repeat_spell(&self, _spell_id: u32) -> bool {
+        false
+    }
+
+    /// The current-item test (`0x805fc0`): a pending cast of the player's was started by an item of
+    /// entry `item_id`.
+    fn is_current_item(&self, _item_id: u32) -> bool {
+        false
+    }
+
     /// The range lookup with no target answers a nonzero bound (`0x541af0`): the player's, or with
     /// `pet` the pet's.
     fn spell_has_range(&self, _spell_id: u32, _pet: bool) -> bool {
@@ -70,6 +84,13 @@ pub trait SpellInfoSource {
 
     /// The range check (`0x809610`) toward `target`: `None` where the spell cannot take that unit.
     fn spell_in_range(&self, _spell_id: u32, _pet: bool, _target: u64) -> Option<bool> {
+        None
+    }
+
+    /// `IsUsableSpell`'s pair (`0x541680`): the usable walk (`0x80b5d0`) with no target, then the
+    /// power check (`0x8017e0`), on the player or with `pet` its pet; `None` without the caster's
+    /// state.
+    fn spell_usable(&self, _spell_id: u32, _pet: bool) -> Option<(bool, bool)> {
         None
     }
 
@@ -92,6 +113,28 @@ pub trait SpellInfoSource {
     ) -> Option<(String, Option<String>)> {
         None
     }
+}
+
+/// `f` over the spell source at the call: the live view's, which reads the casters and the cast
+/// state as the call is made, else the one installed at load, which reads the tables alone.
+pub(super) fn with_spell_source<R>(
+    lua: &Lua,
+    f: impl FnOnce(&dyn SpellInfoSource) -> R,
+) -> Option<R> {
+    let mut f = Some(f);
+    let mut out = None;
+    super::read_live(|v| {
+        v.with_spell_source(&mut |s| out = f.take().map(|f| f(s)));
+    });
+    if out.is_some() {
+        return out;
+    }
+    let source = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data")
+        .spell_info
+        .clone()?;
+    f.take().map(|f| f(&*source))
 }
 
 impl super::UiScript {
@@ -145,7 +188,7 @@ pub(super) fn spell_of(
                 .coerce_string(second)?
                 .map(|s| s.to_string_lossy())
                 .unwrap_or_default();
-            (super::parse_unit_token(&s) == super::UnitTokenParse::Unknown).then_some(s)
+            model.token_unknown(&s).then_some(s)
         }
         _ => None,
     };
@@ -153,7 +196,22 @@ pub(super) fn spell_of(
         Some(sub) => format!("{name}({sub})"),
         None => name,
     };
-    Ok(resolve_spell_by_name(&model.spellbook, &query).map(|s| (s.spell_id, false)))
+    Ok(
+        resolve_spell_by_name(&super::spellbook::live_book().book, &query)
+            .map(|s| (s.spell_id, false)),
+    )
+}
+
+/// [`spell_of`] as the bindings index with it: the book's array is read past its spells too, so a
+/// slot the book does not fill reads spell 0, and only a failed parse (a name the book lacks)
+/// answers `None`, which the bindings return nothing for.
+pub(super) fn spell_or_zero(
+    lua: &Lua,
+    args: &MultiValue,
+    verb: &str,
+) -> mlua::Result<Option<(u32, bool)>> {
+    let slot = lua.coerce_number(args.front().cloned().unwrap_or(Value::Nil))?;
+    Ok(spell_of(lua, args, verb)?.or(slot.map(|_| (0, false))))
 }
 
 /// The argument the slot parser (`0x540670`) leaves the unit at, 1-based: 3 after a book slot or a
@@ -170,7 +228,9 @@ fn unit_arg(lua: &Lua, args: &MultiValue) -> mlua::Result<Value> {
             .coerce_string(second.clone())?
             .map(|s| s.to_string_lossy())
             .unwrap_or_default();
-        super::parse_unit_token(&s) == super::UnitTokenParse::Unknown
+        lua.app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data")
+            .token_unknown(&s)
     } else {
         false
     };
@@ -187,7 +247,7 @@ pub(super) fn range_unit(lua: &Lua, unit: &Value) -> Option<u64> {
     let model = lua
         .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data");
-    model.unit_guids.resolve(&token).ok().flatten()
+    model.resolve_token(&token).ok().flatten()
 }
 
 /// A range answer as Lua reads it: 1, 0, or nil where the check does not apply.
@@ -203,14 +263,25 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some((spell, pet)) = spell_of(lua, &args, "SpellHasRange")? else {
                 return Ok(MultiValue::from_vec(vec![Value::Nil]));
             };
-            let source = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data")
-                .spell_info
-                .clone();
-            let has = source.is_some_and(|s| s.spell_has_range(spell, pet));
+            let has = with_spell_source(lua, |s| s.spell_has_range(spell, pet)) == Some(true);
             let out = if has { Value::Integer(1) } else { Value::Nil };
             Ok(MultiValue::from_vec(vec![out]))
+        })?,
+    )?;
+
+    // IsUsableSpell(spell [, book]) (`0x541680`): usable and short of power, 1 or nil each; a
+    // failed parse answers nothing, and a slot past the book reads spell 0, which is neither.
+    lua.globals().set(
+        "IsUsableSpell",
+        lua.create_function(|lua, args: MultiValue| {
+            let Some((spell, pet)) = spell_or_zero(lua, &args, "IsUsableSpell")? else {
+                return Ok(MultiValue::new());
+            };
+            let (usable, no_power) = with_spell_source(lua, |s| s.spell_usable(spell, pet))
+                .flatten()
+                .unwrap_or_default();
+            let flag = |b: bool| if b { Value::Integer(1) } else { Value::Nil };
+            Ok(MultiValue::from_vec(vec![flag(usable), flag(no_power)]))
         })?,
     )?;
 
@@ -223,14 +294,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(MultiValue::from_vec(vec![Value::Nil]));
             };
             let target = range_unit(lua, &unit_arg(lua, &args)?);
-            let source = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data")
-                .spell_info
-                .clone();
-            let near = source
-                .zip(target)
-                .and_then(|(s, guid)| s.spell_in_range(spell, pet, guid));
+            let near = target
+                .and_then(|guid| with_spell_source(lua, |s| s.spell_in_range(spell, pet, guid)))
+                .flatten();
             Ok(MultiValue::from_vec(vec![range_answer(near)]))
         })?,
     )?;
@@ -250,19 +316,20 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some((spell_id, _)) = spell else {
                 return Ok(MultiValue::new());
             };
-            let (source, skills) = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                (model.spell_info.clone(), model.skills.entries.clone())
-            };
+            let skills = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data")
+                .skills
+                .entries
+                .clone();
             let skill = |line: u32| {
                 skills
                     .iter()
                     .find(|e| e.skill_id == line)
                     .map_or((0, 0), |e| (e.value, e.max))
             };
-            let Some((name, trade)) = source.and_then(|s| s.spell_link(spell_id, &skill)) else {
+            let link = with_spell_source(lua, |s| s.spell_link(spell_id, &skill)).flatten();
+            let Some((name, trade)) = link else {
                 return Ok(MultiValue::from_vec(vec![Value::Nil, Value::Nil]));
             };
             let link = format!("|cff71d5ff|Hspell:{spell_id}|h[{name}]|h|r");
@@ -294,13 +361,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some((spell_id, pet)) = spell else {
                 return Ok(MultiValue::new());
             };
-            let source = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                model.spell_info.clone()
-            };
-            let Some(info) = source.and_then(|s| s.spell_info(spell_id, pet)) else {
+            let Some(info) = with_spell_source(lua, |s| s.spell_info(spell_id, pet)).flatten()
+            else {
                 return Ok(MultiValue::new());
             };
             let text =

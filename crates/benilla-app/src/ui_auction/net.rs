@@ -35,7 +35,11 @@ fn now(time: &Time) -> f64 {
 
 /// `MSG_AUCTION_HELLO`'s reply (`0x59ff40`): an open house sets the auctioneer and shows the
 /// window (`0x59f000`); a closed one fires `AUCTION_HOUSE_DISABLED`.
-fn on_hello(In(ev): In<SessionEvent>, mut auction: ResMut<AuctionOpen>) {
+fn on_hello(
+    In(ev): In<SessionEvent>,
+    mut auction: ResMut<AuctionOpen>,
+    ui: Option<ResMut<crate::ui_script::live::UiEvents>>,
+) {
     if let SessionEvent::AuctionHello {
         auctioneer,
         house_id,
@@ -43,7 +47,12 @@ fn on_hello(In(ev): In<SessionEvent>, mut auction: ResMut<AuctionOpen>) {
     } = ev
     {
         if enabled {
-            auction.open(auctioneer, house_id);
+            match ui {
+                Some(mut ui) => {
+                    ui.world(move |w| super::set_auctioneer(w, auctioneer, house_id));
+                }
+                None => auction.open(auctioneer, house_id),
+            }
         } else {
             auction.disabled_requested = true;
         }

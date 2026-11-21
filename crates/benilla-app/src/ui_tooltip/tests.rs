@@ -1,6 +1,6 @@
-//! The spell-view cell tests, against the real 5875 data, and the feed's place in the schedule.
+//! The spell-view cell tests, against the real data.
 
-use super::spell_feed::{build_view, feed_spell_tooltips, ViewCaster, ViewCtx};
+use super::spell_view::{build_view, ViewCaster, ViewCtx};
 use super::*;
 use crate::items::Items;
 use crate::net::{NetCommands, ObjectStore, Objects, SelfPlayer};
@@ -9,13 +9,13 @@ use crate::ui_action::{real_spells, PlayerActions, Spells};
 /// No known spells, for views that read none.
 static NO_SPELLS: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
 
-/// The view alone, for the cell tests; the feed keeps what it read beside it.
+/// The view, for the cell tests.
 fn spell_tooltip_view(
     spell_id: u32,
     spells: &Spells,
     vctx: &mut ViewCtx,
 ) -> Option<benilla_ui::script::SpellTooltipView> {
-    build_view(spell_id, spells, vctx).map(|(view, _)| view)
+    build_view(spell_id, spells, vctx)
 }
 
 /// A view context with no player state, the DBC-only half of the builder.
@@ -925,18 +925,6 @@ fn the_skill_lock_line_ramps_a_known_opener_by_its_margin() {
     );
 }
 
-/// A trainer list that lands this frame is hoverable in this frame's tick: the trainer feed derives
-/// the subjects the spell feed pushes.
-#[test]
-fn the_spell_feed_runs_after_the_trainer_feed() {
-    let mut app = crate::game_plugins::schedule_tests::headless_client();
-    assert!(crate::test_support::runs_before(
-        &mut app,
-        crate::ui_trainer::feed_trainer,
-        feed_spell_tooltips
-    ));
-}
-
 const ME: u64 = 0x77;
 const WOLF: u64 = 0xF130_0000_4500_0001;
 const BOAR: u64 = 0xF130_0000_4600_0002;
@@ -1142,272 +1130,4 @@ fn the_mouseover_token_clears_when_no_unit_is_hovered() {
         hover(&mut app, leave, object);
         assert_eq!(named(&mut app), (None, None), "after {what}");
     }
-}
-
-/// A quest panel that opens this frame is hoverable in its tick.
-#[test]
-fn the_spell_feed_runs_after_the_quest_feed() {
-    let mut app = crate::game_plugins::schedule_tests::headless_client();
-    assert!(crate::test_support::runs_before(
-        &mut app,
-        crate::ui_quest::feed_quest,
-        feed_spell_tooltips
-    ));
-}
-
-/// The pet bar, recipe and target-of-target hovers are whole on the first hover.
-#[test]
-fn the_feed_pushes_the_spells_the_vm_holds_before_a_hover() {
-    use benilla_ui::script::{
-        AuraState, PetActionView, TradeSkillDifficulty, TradeSkillGroup, TradeSkillRecipe,
-        TradeSkillState,
-    };
-    let spell = |name: &str, description: &str| benilla_formats::SpellDisplay {
-        name: name.into(),
-        description: Some(description.into()),
-        ..Default::default()
-    };
-    let catalog = std::collections::HashMap::from([
-        (3110, spell("Firebolt", "Deals Fire damage.")),
-        (17253, spell("Bite", "Bite the enemy.")),
-        (589, spell("Shadow Word: Pain", "Shadow damage over time.")),
-    ]);
-    let (tx, _rx) = crossbeam_channel::unbounded();
-    let mut app = App::new();
-    app.insert_resource(Spells {
-        catalog: benilla_formats::SpellCatalog::from_displays(catalog),
-        ..Spells::empty_for_tests()
-    })
-    .insert_resource(NetCommands(tx))
-    .init_resource::<Items>()
-    .init_resource::<crate::net::GuidIndex>()
-    .init_resource::<crate::spell::SpellModifiers>()
-    .add_systems(Update, feed_spell_tooltips);
-
-    let mut script = UiScript::new().unwrap();
-    script.set_pet_actions(
-        true,
-        true,
-        true,
-        vec![PetActionView {
-            name: Some("Firebolt".into()),
-            spell_id: Some(3110),
-            ..Default::default()
-        }],
-    );
-    // A recipe that makes no item hovers its own spell; row 1 is its header.
-    script.set_trade_skill(Some(TradeSkillState {
-        line: 333,
-        line_name: "Enchanting".into(),
-        alt_verb: "Enchant".into(),
-        rank: 1,
-        max_rank: 75,
-        list_link: None,
-        recipes: vec![TradeSkillRecipe {
-            spell_id: 17253,
-            name: "Bite".into(),
-            difficulty: TradeSkillDifficulty::Optimal,
-            num_available: 1,
-            trivial_high: 0,
-            group: Some(TradeSkillGroup::Verb),
-            item_level: 0,
-            inv_slots: 1,
-            creates_item: false,
-            product_item: 0,
-            required_level: None,
-            icon: None,
-            min_made: 1,
-            max_made: 1,
-            cooldown_end: None,
-            description: None,
-            search_text: Vec::new(),
-            reagents: vec![],
-            tools: vec![],
-        }],
-    }));
-    // We target a mob that targets party1, whose list the VM holds by guid.
-    const ME: u64 = 0x10;
-    const MOB: u64 = 0xF130_0000_0000_0001;
-    const TOT: u64 = 0x21;
-    script.set_unit_guids(&benilla_ui::script::UnitGuids {
-        player: ME,
-        target: MOB,
-        party: [TOT, 0, 0, 0],
-        held: std::collections::HashMap::from([(ME, MOB), (MOB, TOT), (TOT, 0)]),
-        ..Default::default()
-    });
-    script.set_unit_auras(
-        TOT,
-        Some(vec![AuraState {
-            spell_id: 589,
-            name: Some("Shadow Word: Pain".into()),
-            ..Default::default()
-        }]),
-    );
-    app.insert_non_send_resource(script);
-    app.update();
-
-    let script = app.world().non_send_resource::<UiScript>();
-    script
-        .run(
-            r#"
-            local a = CreateFrame("Button", "B"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
-            CreateFrame("GameTooltip", "TT")
-            local function lines()
-                local t = {}
-                for i = 1, TT:NumLines() do t[i] = getglobal("TTTextLeft" .. i):GetText() end
-                return table.concat(t, " | ")
-            end
-            TT:SetOwner(B, "ANCHOR_RIGHT"); TT:SetPetAction(1); PET = lines()
-            TT:SetOwner(B, "ANCHOR_RIGHT"); TT:SetTradeSkillItem(2); CRAFT = lines()
-            TT:SetOwner(B, "ANCHOR_RIGHT"); TT:SetUnitDebuff("targettarget", 1); TOT = lines()
-            "#,
-        )
-        .unwrap();
-    assert_eq!(
-        script.eval::<String>("return PET").unwrap(),
-        "Firebolt | Deals Fire damage."
-    );
-    assert_eq!(
-        script.eval::<String>("return CRAFT").unwrap(),
-        "Bite | Bite the enemy."
-    );
-    assert_eq!(
-        script.eval::<String>("return TOT").unwrap(),
-        "Shadow Word: Pain | Shadow damage over time."
-    );
-}
-
-/// The feed builds the pet's bar and book against the pet (the charm, else the summon), keeps the
-/// player's book on the player, and rebuilds only the pet views when the pet's level moves.
-#[test]
-fn the_feed_builds_the_pet_views_against_the_pet_and_rebuilds_them_on_its_level() {
-    use benilla_protocol::ObjectFields;
-    use benilla_ui::script::{PetActionView, PetBookState, SpellBookState, SpellSlotView};
-    const ME: u64 = 0x10;
-    const IMP: u64 = 0xF140_0000_0000_0077;
-    // `$s1` is 10 plus 1 a level, uncapped: the player, in no line of its own, reads 10.
-    let pact = benilla_formats::SpellDisplay {
-        id: 6307,
-        name: "Blood Pact".into(),
-        description: Some("Stamina by $s1.".into()),
-        effect_base_points: [9, 0, 0],
-        effect_base_dice: [1, 0, 0],
-        effect_die_sides: [1, 0, 0],
-        effect_real_points_per_level: [1.0, 0.0, 0.0],
-        ..Default::default()
-    };
-    let (tx, _rx) = crossbeam_channel::unbounded();
-    let mut app = App::new();
-    app.insert_resource(Spells {
-        catalog: benilla_formats::SpellCatalog::from_displays([(6307, pact)].into()),
-        ..Spells::empty_for_tests()
-    })
-    .insert_resource(NetCommands(tx))
-    .init_resource::<Items>()
-    .init_resource::<crate::net::GuidIndex>()
-    .init_resource::<crate::spell::SpellModifiers>()
-    .add_systems(Update, feed_spell_tooltips);
-    // The player summons the imp (`UNIT_FIELD_SUMMON`, 8-9).
-    let me = app
-        .world_mut()
-        .spawn((
-            SelfPlayer,
-            ObjectStore(ObjectFields::from_pairs(&[
-                (benilla_protocol::field::FIELD_UNIT_SUMMON, IMP as u32),
-                (
-                    benilla_protocol::field::FIELD_UNIT_SUMMON + 1,
-                    (IMP >> 32) as u32,
-                ),
-                (benilla_protocol::field::FIELD_UNIT_LEVEL, 60),
-            ])),
-        ))
-        .id();
-    let imp = app
-        .world_mut()
-        .spawn(ObjectStore(ObjectFields::from_pairs(&[(
-            benilla_protocol::field::FIELD_UNIT_LEVEL,
-            14,
-        )])))
-        .id();
-    let mut index = app.world_mut().resource_mut::<crate::net::GuidIndex>();
-    index.0.insert(ME, me);
-    index.0.insert(IMP, imp);
-
-    let mut script = UiScript::new().unwrap();
-    script.set_pet_actions(
-        true,
-        true,
-        true,
-        vec![PetActionView {
-            name: Some("Blood Pact".into()),
-            spell_id: Some(6307),
-            ..Default::default()
-        }],
-    );
-    let slot = SpellSlotView {
-        spell_id: 6307,
-        name: "Blood Pact".into(),
-        ..Default::default()
-    };
-    script.set_pet_book(PetBookState {
-        token: Some("DEMON".into()),
-        slots: vec![slot.clone()],
-    });
-    script.set_spellbook(SpellBookState {
-        tabs: Vec::new(),
-        slots: vec![slot],
-        ..Default::default()
-    });
-    script
-        .run(
-            r#"
-            local a = CreateFrame("Button", "B"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
-            CreateFrame("GameTooltip", "TT")
-            function DESC(set) TT:SetOwner(B, "ANCHOR_RIGHT"); set(); return TTTextLeft2:GetText() end
-            "#,
-        )
-        .unwrap();
-    app.insert_non_send_resource(script);
-    // The feed runs over the pet bar and book; the player's book's view is an ask on its hover.
-    app.update();
-    let descs = |app: &mut App| {
-        let mut script = app.world_mut().non_send_resource_mut::<UiScript>();
-        let d = script
-            .eval::<(String, String, Option<String>)>(
-                r#"return DESC(function() TT:SetPetAction(1) end),
-                    DESC(function() TT:SetSpell(1, "pet") end),
-                    DESC(function() TT:SetSpell(1, "spell") end)"#,
-            )
-            .unwrap();
-        assert!(script.take_errors().is_empty());
-        d
-    };
-    let _ = descs(&mut app);
-    app.update();
-    assert_eq!(
-        descs(&mut app),
-        (
-            "Stamina by 24.".to_string(),
-            "Stamina by 24.".to_string(),
-            Some("Stamina by 10.".to_string())
-        ),
-        "a level-14 imp's bar and book, and the player's own book"
-    );
-    // The imp dings: its views rebuild; the player's does not move.
-    app.world_mut()
-        .entity_mut(imp)
-        .insert(ObjectStore(ObjectFields::from_pairs(&[(
-            benilla_protocol::field::FIELD_UNIT_LEVEL,
-            15,
-        )])));
-    app.update();
-    assert_eq!(
-        descs(&mut app),
-        (
-            "Stamina by 25.".to_string(),
-            "Stamina by 25.".to_string(),
-            Some("Stamina by 10.".to_string())
-        )
-    );
 }

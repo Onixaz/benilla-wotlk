@@ -18,6 +18,7 @@ pub(super) fn update(
     sheath: &mut MessageWriter<crate::creature_anim::SheathRequest>,
     asks: &mut MessageReader<StandStateRequest>,
     server: &mut MessageReader<super::ServerStandState>,
+    barber: &mut crate::ui_barber::BarberStand,
     moving: bool,
     turned: bool,
 ) -> u8 {
@@ -40,11 +41,10 @@ pub(super) fn update(
     if player.stand_pending == Some(stand_byte) {
         player.stand_pending = None; // the echo landed
     }
-    // `SMSG_STANDSTATE_UPDATE` reaches the local apply directly, with no refusal gate and no
-    // `CMSG_STANDSTATECHANGE` back, before the volunteered logic below; the last packet wins.
+    // `SMSG_STANDSTATE_UPDATE`'s handler committed its state in its turn ([`server_stand_state`]);
+    // its weapon stow runs here, with the body, before the volunteered logic below.
     if let Some(s) = server.read().last().map(|m| m.state) {
         let stand_now = player.stand_pending.unwrap_or(stand_byte);
-        move_trace::posture("server", s, stand_now, player.move_flags());
         apply_locally(player, s, stand_now, body, sheath);
     }
     let stand_state = player.stand_pending.unwrap_or(stand_byte);
@@ -89,6 +89,16 @@ pub(super) fn update(
             state: u32::from(s),
         });
         apply_locally(player, s, stand_state, body, sheath);
+        // The setter's barber leg (`0x6e2bb6`), whose close stands us up through the same change
+        // (`0x52ea5f`).
+        if barber.stand_state_set(s)
+            && s != 0
+            && !state::stand_state_refused(reads_dead, player.move_flags(), 0)
+        {
+            move_trace::posture("commit", 0, s, player.move_flags());
+            let _ = net.0.send(ClientCommand::StandStateChange { state: 0 });
+            apply_locally(player, 0, s, body, sheath);
+        }
     }
     let stand_now = player.stand_pending.unwrap_or(stand_byte);
     // The sheath toggle (Z) cycles the anim layer's committed sheath state through its one setter
@@ -156,6 +166,23 @@ fn apply_locally(
                 });
             }
         }
+    }
+}
+
+/// `SMSG_STANDSTATE_UPDATE`'s local apply in its handler (`0x73f57a`), ungated and with no packet
+/// back: the prediction over `echoed`, then the setter's barber leg (`0x6e2bb6`), whose close
+/// stands us up (`0x52ea5f`) through the posture queue. The weapon stow waits for [`update`].
+pub(super) fn server_stand_state(
+    player: &mut Player,
+    s: u8,
+    echoed: u8,
+    barber: &mut crate::ui_barber::BarberStand,
+    asks: &mut MessageWriter<StandStateRequest>,
+) {
+    let stand_now = player.committed_stand_state(echoed);
+    move_trace::posture("server", s, stand_now, player.move_flags());
+    if predict(&mut player.stand_pending, s, stand_now) && barber.stand_state_set(s) && s != 0 {
+        asks.write(StandStateRequest { state: 0 });
     }
 }
 

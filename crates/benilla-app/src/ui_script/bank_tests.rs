@@ -3,8 +3,7 @@
 //! bag button's `GetID()`; `OpenBag` opens only a container that exists, so tests feed one at 5.
 
 use benilla_ui::script::{
-    BankState, ContainerSlot, ContainerState, ExtractedQuad, QuadContent, ScriptValue,
-    SoundRequest, UiScript,
+    ContainerSlot, ContainerState, ExtractedQuad, QuadContent, ScriptValue, SoundRequest, UiScript,
 };
 
 use super::test_ui::{bag_open, load_ui as load_xml, BAG_UI};
@@ -54,7 +53,7 @@ fn bankframe_opened_shows_and_sets_the_title() {
 
     s.set_money(0);
     s.set_container(0, empty_bag("Backpack", 16));
-    s.set_bank(Some(BankState::default()));
+    let _bank = super::test_ui::lend_bank(0, 0);
     s.set_unit(
         "npc",
         Some(benilla_ui::script::UnitState {
@@ -97,10 +96,9 @@ fn bankframe_closed_queues_close_closes_open_popouts_and_plays_the_close_kit() {
     s.set_money(0);
     // The first bank bag slot: container 5, `BankFrameBag1`'s `GetID()`.
     s.set_container(5, empty_bag("Bank Bag", 8));
-    s.set_bank(Some(BankState::default()));
+    let bank = super::test_ui::lend_bank(0, 0);
     s.fire_event("BANKFRAME_OPENED", vec![ScriptValue::Str("Banker".into())]);
     let _ = s.take_sounds();
-    let _ = s.take_bank_close();
 
     // A bank bag left open when the bank closes: what `CloseBankBagFrames` exists for.
     s.run("OpenBag(5)").unwrap();
@@ -119,8 +117,8 @@ fn bankframe_closed_queues_close_closes_open_popouts_and_plays_the_close_kit() {
         "closing the bank closes the bank bag it left open (CloseBankBagFrames)"
     );
     assert!(
-        s.take_bank_close(),
-        "OnHide queued CloseBankFrame() — the client-side close intent (no wire opcode)"
+        bank.with_view(|v| v.banker.is_none()),
+        "OnHide's CloseBankFrame() cleared the banker in its call (no wire opcode)"
     );
     assert!(
         s.eval::<bool>("return GetLeftFrame() == nil").unwrap(),
@@ -139,7 +137,7 @@ fn item_slot_paints_from_container_minus_one_and_repaints_on_playerbankslots_cha
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
     s.set_money(0);
-    s.set_bank(Some(BankState::default()));
+    let _bank = super::test_ui::lend_bank(0, 0);
     s.fire_event("BANKFRAME_OPENED", vec![]);
     s.resolve();
     assert!(
@@ -210,10 +208,7 @@ fn bag_buttons_tint_by_purchase_count_and_texture_from_the_bank_bag_band() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
     s.set_money(0);
-    s.set_bank(Some(BankState {
-        num_purchased: 2,
-        next_cost: 100_000,
-    }));
+    let _bank = super::test_ui::lend_bank(2, 100_000);
     // Bank bag slot 1 holds a bag: inventory id 64, where `BankFrameItemButton_OnUpdate` reads
     // the icon (`GetInventoryItemTexture`).
     let mut bags: benilla_ui::script::BankBagSlots = Default::default();
@@ -290,7 +285,7 @@ fn bag_buttons_tint_by_purchase_count_and_texture_from_the_bank_bag_band() {
 fn the_purse_row_splits_a_large_amount_across_three_coin_buttons() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
-    s.set_bank(Some(BankState::default()));
+    let _bank = super::test_ui::lend_bank(0, 0);
     s.fire_event("BANKFRAME_OPENED", vec![]);
     // 98765g 43s 21c.
     s.set_money(987_654_321);
@@ -318,10 +313,7 @@ fn purchase_flow_shows_popup_queues_the_intent_and_the_row_hides_when_full() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
     s.set_money(1_000_000);
-    s.set_bank(Some(BankState {
-        num_purchased: 2,
-        next_cost: 100_000,
-    }));
+    let bank = super::test_ui::lend_bank(2, 100_000);
     s.fire_event("BANKFRAME_OPENED", vec![]);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     assert!(
@@ -351,21 +343,19 @@ fn purchase_flow_shows_popup_queues_the_intent_and_the_row_hides_when_full() {
         s.eval::<i64>("return BankFrame.nextSlotCost").unwrap(),
         100_000
     );
-    assert!(!s.take_bank_purchase(), "nothing queued until accept");
+    let sent = || bank.with_view(|v| v.purchases.get());
+    assert_eq!(sent(), 0, "nothing sent until accept");
 
     s.run("StaticPopup1Button1:Click()").unwrap(); // Yes
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
-    assert!(
-        s.take_bank_purchase(),
-        "accepting the popup queued PurchaseSlot()'s intent"
+    assert_eq!(
+        sent(),
+        1,
+        "accepting the popup sent PurchaseSlot() from its call"
     );
-    assert!(!s.take_bank_purchase(), "drained");
 
     // Six is full. A successful buy has no reply packet: `PLAYERBANKBAGSLOTS_CHANGED` repaints.
-    s.set_bank(Some(BankState {
-        num_purchased: 6,
-        next_cost: 999_999_999,
-    }));
+    let _bank = super::test_ui::lend_bank(6, 999_999_999);
     s.fire_event("PLAYERBANKBAGSLOTS_CHANGED", vec![]);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     assert!(
@@ -385,7 +375,7 @@ fn a_bank_bag_button_answers_the_right_button_too() {
     let mut s = setup();
     // Bank bag slot 1: container 5, `BankFrameBag1:GetID()`.
     s.set_container(5, empty_bag("Bank Bag", 8));
-    s.set_bank(Some(BankState::default()));
+    let _bank = super::test_ui::lend_bank(0, 0);
     s.fire_event("BANKFRAME_OPENED", vec![]);
     s.resolve();
     let _ = s.take_sounds();
@@ -445,7 +435,7 @@ fn clicking_item_slot_one_with_an_empty_cursor_queues_the_pickup() {
             slots,
         }),
     );
-    s.set_bank(Some(BankState::default()));
+    let _bank = super::test_ui::lend_bank(0, 0);
     s.fire_event("BANKFRAME_OPENED", vec![]);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     s.resolve();
@@ -515,10 +505,7 @@ fn a_bank_bag_button_paints_the_drop_and_lets_go_of_the_lock() {
     let mut s = setup();
     s.set_money(0);
     s.set_container(0, empty_bag("Backpack", 16));
-    s.set_bank(Some(BankState {
-        num_purchased: 2,
-        next_cost: 10_000,
-    }));
+    let _bank = super::test_ui::lend_bank(2, 10_000);
     s.set_unit(
         "npc",
         Some(benilla_ui::script::UnitState {

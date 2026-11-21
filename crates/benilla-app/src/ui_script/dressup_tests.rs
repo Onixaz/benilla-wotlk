@@ -7,6 +7,7 @@ use benilla_ui::script::{
     UiScript, UnitState,
 };
 
+use super::test_live::VerbWritesExt;
 use super::test_ui::{bag_slot_button, click, load_ui as load_xml, BAG_UI, CHARACTER_UI};
 
 /// A real 1.12 item link: Tough Jerky (117), quality white.
@@ -74,6 +75,7 @@ fn load_room_with_bags(s: &UiScript) {
 /// (`PaperDollFrame.lua:100-104`).
 fn shown_paper_doll() -> UiScript {
     let mut s = UiScript::new().unwrap();
+    s.record_writes();
     s.set_screen_size(1024.0, 768.0);
     for file in crate::ui_script::test_ui::production_order(&[
         CHARACTER_UI,
@@ -148,6 +150,7 @@ fn backpack_with_jerky(s: &mut UiScript) -> String {
 fn ctrl_click_on_a_bag_item_opens_the_room_wearing_it() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
+    s.record_writes();
     s.set_screen_size(1024.0, 768.0);
     load_room_with_bags(&s);
     let btn = backpack_with_jerky(&mut s);
@@ -163,7 +166,7 @@ fn ctrl_click_on_a_bag_item_opens_the_room_wearing_it() {
         "ctrl-click opened the dressing room"
     );
     assert_eq!(
-        s.take_dressup_intents(),
+        s.take_dressup_edits(),
         vec![DressUpIntent::Dress, DressUpIntent::TryOn(117, [0; 4])],
         "re-dress first, then try the clicked item on"
     );
@@ -181,6 +184,7 @@ fn ctrl_click_on_a_bag_item_opens_the_room_wearing_it() {
 fn shift_click_posts_the_link_with_chat_open_and_splits_with_it_closed() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
+    s.record_writes();
     s.set_screen_size(1024.0, 768.0);
     load_room_with_bags(&s);
     let btn = backpack_with_jerky(&mut s);
@@ -222,6 +226,7 @@ fn shift_click_posts_the_link_with_chat_open_and_splits_with_it_closed() {
 fn ctrl_clicking_a_chat_link_previews_it() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
+    s.record_writes();
     s.set_screen_size(1024.0, 768.0);
     load_room(&s);
 
@@ -233,7 +238,7 @@ fn ctrl_clicking_a_chat_link_previews_it() {
     s.set_modifiers(false, false, false);
 
     assert_eq!(
-        s.take_dressup_intents(),
+        s.take_dressup_edits(),
         vec![DressUpIntent::Dress, DressUpIntent::TryOn(117, [0; 4])],
         "a chat link's id reached TryOn through DressUpItemLink's own gsub"
     );
@@ -269,14 +274,14 @@ fn the_paper_doll_slots_preview_and_post_what_you_wear() {
         "|cff1eff00|Hitem:1234:0:0:0|h[Test Helm]|h|r"
     );
     s.run(r#"ToggleCharacter("PaperDollFrame")"#).unwrap();
-    let _ = s.take_dressup_intents();
+    let _ = s.take_dressup_edits();
     s.resolve();
 
     s.set_modifiers(false, true, false);
     click(&mut s, "CharacterHeadSlot", "LeftButton");
     s.set_modifiers(false, false, false);
     assert_eq!(
-        s.take_dressup_intents(),
+        s.take_dressup_edits(),
         vec![DressUpIntent::Dress, DressUpIntent::TryOn(1234, [0; 4])]
     );
 
@@ -312,7 +317,7 @@ fn shift_clicking_an_unresolved_slot_posts_nothing_and_never_raises() {
     });
     s.set_inventory_slots(slots);
     s.run(r#"ToggleCharacter("PaperDollFrame")"#).unwrap();
-    let _ = s.take_dressup_intents();
+    let _ = s.take_dressup_edits();
     s.resolve();
     assert!(s.focus_editbox("ChatFrameEditBox"));
 
@@ -332,7 +337,7 @@ fn shift_clicking_an_unresolved_slot_posts_nothing_and_never_raises() {
     click(&mut s, "CharacterHeadSlot", "LeftButton");
     s.set_modifiers(false, false, false);
     assert!(
-        s.take_dressup_intents().is_empty(),
+        s.take_dressup_edits().is_empty(),
         "no try-on for an item we cannot even name yet"
     );
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
@@ -342,14 +347,15 @@ fn shift_clicking_an_unresolved_slot_posts_nothing_and_never_raises() {
 /// (`DressUpFrame.xml:220`), so one tap turns 0.06.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn reset_re_dresses_close_empties_and_the_arrows_spin_the_pane() {
+fn reset_re_dresses_hiding_edits_nothing_and_the_arrows_spin_the_pane() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
+    s.record_writes();
     s.set_screen_size(1024.0, 768.0);
     load_room(&s);
     s.run("ShowUIPanel(DressUpFrame)").unwrap();
     let _ = s.take_sounds();
-    let _ = s.take_dressup_intents();
+    let _ = s.take_dressup_edits();
     s.resolve();
 
     // `Model_OnLoad` seeds the default facing.
@@ -359,7 +365,7 @@ fn reset_re_dresses_close_empties_and_the_arrows_spin_the_pane() {
     );
 
     s.run("DressUpFrameResetButton:Click()").unwrap();
-    assert_eq!(s.take_dressup_intents(), vec![DressUpIntent::Dress]);
+    assert_eq!(s.take_dressup_edits(), vec![DressUpIntent::Dress]);
     assert_eq!(
         s.take_sounds(),
         vec![SoundRequest::KitName("gsTitleOptionOK".into())],
@@ -385,8 +391,11 @@ fn reset_re_dresses_close_empties_and_the_arrows_spin_the_pane() {
     );
 
     s.run("HideUIPanel(DressUpFrame)").unwrap();
-    // The app empties the booth off the frame's visibility; the stock `OnHide` queues nothing.
-    assert!(!s.frame_visible("DressUpFrame"), "the room is hidden");
-    assert!(s.take_dressup_intents().is_empty());
+    // The pane keeps its model while hidden and the booth draws none; the stock `OnHide` edits nothing.
+    assert!(
+        s.shown_model_pane("DressUpModel").is_none(),
+        "the room is hidden"
+    );
+    assert!(s.take_dressup_edits().is_empty());
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }

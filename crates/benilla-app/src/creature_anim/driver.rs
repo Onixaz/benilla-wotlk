@@ -312,6 +312,8 @@ type HostData = (
     // Read only by the debug trace.
     Has<SelfPlayer>,
     Has<benilla_world::model_fade::DespawnFade>,
+    // The rider's descriptor: its anim tier resolves the mount model's rows (`0x7176f0`).
+    Option<&'static ObjectStore>,
 );
 
 /// The per-unit animation state machine: death overrides; otherwise Specials as bracketed loops,
@@ -349,9 +351,13 @@ pub(super) fn drive_animations(
         MessageReader<BaseAnimRecompute>,
         // A rider's mount child, where a full-set request goes.
         Query<(&ObjectStore, &crate::entities::mount::MountChild)>,
-        // The open NPC session's unit: its state emote is passed over when the row's `EmoteFlags`
-        // carry `0x2000`.
-        Option<Res<crate::ui_session::InteractNpc>>,
+        // The interact target, whose state emote is passed over when the row's `EmoteFlags` carry
+        // `0x2000`, and the base re-picks its set and clear call (`0x51fdaf`, `0x518db0`).
+        (
+            Option<Res<crate::ui_session::InteractTarget>>,
+            Option<Res<crate::net::GuidIndex>>,
+            MessageReader<crate::ui_session::InteractCue>,
+        ),
         // The units' sheath-swap messages, written after the parallel pass.
         Local<bevy::utils::Parallel<Vec<SheathSwapMessage>>>,
         // Server-pushed kits and their anims, for the stage-0 special idle latch.
@@ -469,6 +475,16 @@ pub(super) fn drive_animations(
     for (child, req) in to_mount {
         pending.entry(child).or_default().push(req);
     }
+    let (interact, index, mut cues) = interact;
+    let entity_of = |guid: u64| index.as_deref().and_then(|i| i.0.get(&guid).copied());
+    let interact = interact.as_deref().and_then(|t| t.0).and_then(entity_of);
+    let repicks: bevy::ecs::entity::EntityHashSet = cues
+        .read()
+        .filter_map(|c| match *c {
+            crate::ui_session::InteractCue::RePick(guid) => entity_of(guid),
+            _ => None,
+        })
+        .collect();
     // In `PlaySeq` order.
     for reqs in pending.values_mut() {
         reqs.sort_by_key(|&(_, seq)| seq);
@@ -513,7 +529,8 @@ pub(super) fn drive_animations(
         emote_sounds: emote_sounds.as_deref(),
         loot_kneel: loot_kneel.as_deref(),
         names: names.as_deref(),
-        interact: interact.as_deref(),
+        interact,
+        repicks: &repicks,
         session_rng: &session_rng,
         dt,
         anim_cost,
@@ -552,7 +569,10 @@ struct UnitCx<'a, 'w, 's> {
     emote_sounds: Option<&'a EmoteSounds>,
     loot_kneel: Option<&'a crate::ui_loot::LootKneel>,
     names: Option<&'a crate::names::NameCache>,
-    interact: Option<&'a crate::ui_session::InteractNpc>,
+    /// The interact target's unit.
+    interact: Option<Entity>,
+    /// The units whose base the interact target's set or clear re-picked this frame.
+    repicks: &'a bevy::ecs::entity::EntityHashSet,
     session_rng: &'a benilla_assets::AnimRng,
     dt: f32,
     anim_cost: bool,
@@ -590,6 +610,7 @@ fn drive_unit(
         loot_kneel,
         names,
         interact,
+        repicks,
         session_rng,
         dt,
         anim_cost,
@@ -649,12 +670,26 @@ fn drive_unit(
         move_modes,
         host_scale,
         ridden_by_self,
+        anim_tier,
     ) = match mount_body {
+        // The mount model resolves on the rider's tier, the unit's own (`0x7176f0`): a fly-tier
+        // rider's drake asks for FlyStand. Deviation: the reference resolves the request on the
+        // rider's own model first and hands that result to the mount's resolve; this resolves once,
+        // on the mount, which differs only where the rider's model folds the request elsewhere.
         Some(mb) => match mount_hosts.get(mb.host) {
-            Ok((s, r, m, sp, f, sw, md, t, host_self, _)) => {
-                (s, r, m, sp, f, sw, md, t.scale.x, host_self)
-            }
-            Err(_) => (None, None, None, None, None, false, None, 1.0, false),
+            Ok((s, r, m, sp, f, sw, md, t, host_self, _, host_store)) => (
+                s,
+                r,
+                m,
+                sp,
+                f,
+                sw,
+                md,
+                t.scale.x,
+                host_self,
+                host_store.map_or(0, |s| s.0.unit_anim_tier()),
+            ),
+            Err(_) => (None, None, None, None, None, false, None, 1.0, false, 0),
         },
         None => (
             spline,
@@ -666,6 +701,7 @@ fn drive_unit(
             move_modes,
             1.0,
             false,
+            store.map_or(0, |s| s.0.unit_anim_tier()),
         ),
     };
     // The rate divisor's `|modelScale|`: a mount child's display column composes under the rider's
@@ -801,7 +837,7 @@ fn drive_unit(
 
     // Death overrides every state: the dead pose, armed on an edge and held.
     if dead {
-        let tier = store.map_or(0, |s| s.0.unit_anim_tier());
+        let tier = anim_tier;
         let torso = drv.gait;
         let lying = torso.is_some_and(|g| g == DEATH || select::is_dead_or_dying(g, catalog));
         // The pick's own pose past the raw kit, on the model holding DeathStart as its tier asks
@@ -1069,7 +1105,7 @@ fn drive_unit(
     });
     // In `PlaySeq` order, defense last: the reference plays it from the deferred impact scan,
     // after every message handler.
-    let tier = store.map_or(0, |s| s.0.unit_anim_tier());
+    let tier = anim_tier;
     let mut requests: Vec<Arm> = pending
         .get(&entity)
         .map(|v| {
@@ -1430,18 +1466,13 @@ fn drive_unit(
         }
     }
 
-    // The interact-NPC setter re-picks the base at once on open and on clear, over a live one-shot
-    // as any base arm; in Gait the per-frame pick already follows. A player's open and clear skip
-    // it, a pose under the one-shot re-picks to its own id and an airborne unit to the freeze,
-    // which cut nothing.
-    let target = interact.as_ref().filter(|i| i.0 == Some(entity));
-    let interacting = target.is_some();
-    if let Some(guid) = target.and_then(|i| i.1) {
-        drv.interact_player = benilla_protocol::guid::is_player(guid);
-    }
-    if std::mem::replace(&mut drv.interacting, interacting) != interacting && !drv.interact_player {
-        // Opening re-picks with the NPC named, so it ends a hold; clearing re-picks with it
-        // still named, so the state stays passed over until the next re-pick.
+    // The interact target's set and clear re-pick the base at once (`0x51fdaf`, `0x518db0`), over a
+    // live one-shot as any base arm; in Gait the per-frame pick already follows. A pose under the
+    // one-shot re-picks to its own id and an airborne unit to the freeze, which cut nothing.
+    let interacting = interact == Some(entity);
+    if repicks.contains(&entity) {
+        // The set re-picks with the NPC named, so it ends a hold; the clear re-picks with it still
+        // named, so the state stays passed over until the next re-pick.
         drv.interact_hold = !interacting;
         if matches!(drv.mode, Mode::Swing { under: None, .. }) && !airborne_frozen {
             drv.deferred = None;
@@ -1524,6 +1555,7 @@ fn drive_unit(
             cast_start: cast_start.map(|(_, a)| a),
             wielded,
             store,
+            anim_tier,
             emote_sounds,
             interacting: interacting || drv.interact_hold,
             walk,

@@ -67,22 +67,15 @@ pub(super) fn service_item_link(
 }
 
 /// `GetTrainerServiceDescription`'s second leg (`0x5959d0`): a tradeskill recipe (`Attributes &
-/// 0x20`) with no description of its own reads its cached product's description.
-pub(super) fn service_item_description(
-    wire_spell: u32,
-    spells: &SpellCatalog,
-    items: &Items,
-    commands: &NetCommands,
-) -> Option<String> {
+/// 0x20`) with no description of its own reads its product's cached description.
+pub(super) fn description_product(wire_spell: u32, spells: &SpellCatalog) -> Option<u32> {
     let d = spells.get(wire_spell)?;
     if d.attributes & SPELL_ATTR_IS_TRADESKILL == 0
         || d.description.as_deref().is_some_and(|t| !t.is_empty())
     {
         return None;
     }
-    let product = product_item(wire_spell, spells)?;
-    let t = items.template(product, 0, commands)?;
-    Some(t.description.clone()).filter(|t| !t.is_empty())
+    product_item(wire_spell, spells)
 }
 
 /// `SetTrainerService` (`0x62e900`): the first learn slot (36 or 57) whose taught spell has a

@@ -87,7 +87,6 @@ fn one_quest() -> benilla_ui::script::QuestLogState {
     };
     QuestLogState {
         entries: vec![header, quest],
-        num_quests: 1,
         daily_completed: 0,
     }
 }
@@ -102,7 +101,7 @@ fn the_quest_log_control_panel_buttons_take_their_clicks() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut s = loaded("clicks-questlog");
-    s.set_quest_log(one_quest());
+    s.seed_quest_log(one_quest());
     s.fire_event("QUEST_LOG_UPDATE", Vec::<ScriptValue>::new());
     s.run("ShowUIPanel(QuestLogFrame) QuestLog_SetSelection(2)")
         .unwrap();

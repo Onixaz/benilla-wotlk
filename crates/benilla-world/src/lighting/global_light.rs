@@ -22,14 +22,16 @@ use crate::view::WorldCamera;
 /// The shared light, std430-packed as `vec4<f32>` rows (all `vec4`, so std430 equals std140). Every
 /// shader that binds the buffer (`wow_model`, `terrain`, `liquid`, `wdl`, `wow_effect`,
 /// `static_gx`) mirrors this row order as a prefix; keep them in sync.
-///   0 light_ambient (w=Mod2x 1.0) · 1 light_diffuse (w=clamp on) · 2 light_sun (w=dir/SH enable) ·
+///   0 light_ambient (w=the character ambient, a unit's ambient multiplier) · 1 light_diffuse
+///   (w=clamp on) · 2 light_sun (w=dir/SH enable) ·
 ///   3 light_spec (w=terrain shininess 20) · 4 fog_color (w=enable) ·
 ///   5 fog_params (x=start y=end z=cutoff w=farclip) · 6-8 sh_c10_{r,g,b} · 9-11 sh_c13_{r,g,b} ·
 ///   12 sh_c16 · 13-14 water river {shallow,deep} (w=alpha) · 15-16 water ocean (the same) ·
 ///   17 grade: `.x` the SIDN night fraction, `.yzw` the sun's SH DC at intensity 1 ·
 ///   18 wmo_fog_color · 19 wmo_fog_params (x=start y=end): the interior fog triple, read by
 ///      interior-tagged content in place of 4-5 ·
-///   20 point_count (x = live entries) · 21+ the point-light table, two rows per light,
+///   20 point_count (x = live entries, y = the horizon's far plane, read by `wdl`, z = the scene
+///      fog's rate, w = the interior fog's) · 21+ the point-light table, two rows per light,
 ///      `[pos.xyz, range]` and `[rgb, 0]`, here because Bevy's clusterable buffer is
 ///      fragment-only in the view layout and the point term is per vertex.
 ///
@@ -58,7 +60,7 @@ pub fn pack_model_core_rows(
     diffuse: [f32; 3],
     sun_dir: Vec3,
 ) {
-    rows[0] = [ambient[0], ambient[1], ambient[2], 1.0]; // 0 light_ambient (w=Mod2x 1.0)
+    rows[0] = [ambient[0], ambient[1], ambient[2], 1.0]; // 0 light_ambient (w=character ambient 1)
     rows[1] = [diffuse[0], diffuse[1], diffuse[2], 1.0]; // 1 light_diffuse (w=clamp on)
     rows[2] = [sun_dir.x, sun_dir.y, sun_dir.z, 1.0]; // 2 light_sun (w=dir/SH enable 1.0)
     let sun = sh::prop_probe_coeffs([0.0; 3], &[(-sun_dir, diffuse)]);
@@ -195,6 +197,7 @@ fn build_light_data(
     light: Res<WowLighting>,
     debug: Res<DebugState>,
     view: Res<ViewDistance>,
+    character_ambient: Option<Res<super::CharacterAmbient>>,
     terrain: Option<Res<crate::terrain_stream::TerrainOptions>>,
     quality: Option<Res<ExtShadowQuality>>,
     viewer: Option<Res<Viewer>>,
@@ -243,6 +246,8 @@ fn build_light_data(
     ];
     // Rows 0-2, 6-12.xyz and 17.yzw: the model-light core.
     pack_model_core_rows(rows, l.ambient, l.diffuse, l.sun_dir);
+    // Row 0 `.w`: the factor on a unit's ambient (`0x7c1968`); off-world blobs keep the 1.
+    rows[0][3] = character_ambient.map_or(1.0, |c| c.factor);
     // The point table: lights within [`POINT_PACK_RADIUS`], nearest first past capacity. Dividing
     // by 4π undoes the spawn's premultiply, so the colour is the authored `colour × intensity`,
     // committed raw. Entries past the count stay stale; the count row guards every reader.
@@ -276,7 +281,10 @@ fn build_light_data(
         .collect();
     pts.sort_by(|a, b| a.0.total_cmp(&b.0));
     pts.truncate(MAX_POINT_LIGHTS);
-    fresh.rows[20] = [pts.len() as f32, 0.0, 0.0, 0.0];
+    fresh.rows[20] = [pts.len() as f32, view.horizon_far(), 0.0, 0.0];
+    // The fog curves' exponents, `factor = linear^rate` in every world shader (`0x7ecd80`).
+    fresh.rows[20][2] = l.fog_rate;
+    fresh.rows[20][3] = l.wmo_fog_rate;
     for (i, (_, p, range, rgb)) in pts.iter().enumerate() {
         fresh.points[2 * i] = [p.x, p.y, p.z, *range];
         fresh.points[2 * i + 1] = [rgb[0], rgb[1], rgb[2], 0.0];

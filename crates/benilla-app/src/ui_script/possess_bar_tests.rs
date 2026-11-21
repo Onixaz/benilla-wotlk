@@ -4,6 +4,8 @@
 
 use benilla_ui::script::{AuraState, PossessView, SpellTooltipView, UiScript, UnitGuids};
 
+use super::test_live::PetAnswersExt;
+
 const ME: u64 = 0x10;
 const SPELL: u32 = 9001;
 
@@ -135,7 +137,13 @@ fn a_pet_change_away_from_a_stable_raises_nothing() {
         .filter(|e| e.contains("PetStable"))
         .collect();
     assert!(stable.is_empty(), "runtime errors: {stable:#?}");
-    s.set_stable(Some(benilla_ui::script::StableState::default()));
+    s.set_stable(
+        benilla_ui::script::StableList {
+            master: 0x42,
+            ..Default::default()
+        },
+        Vec::new(),
+    );
     assert_eq!(
         s.eval::<String>("local v = IsAtStableMaster() return type(v) .. ' ' .. tostring(v)")
             .unwrap(),

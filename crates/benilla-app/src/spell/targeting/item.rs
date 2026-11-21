@@ -4,6 +4,8 @@
 
 use bevy::prelude::*;
 
+use crate::ui_action::CastRefusals;
+
 use crate::net::SelfPlayer;
 
 use super::TargetingWants;
@@ -130,21 +132,20 @@ pub(crate) fn item_bind_verdict(
 /// `ReplaceEnchant` calls directly. An empty slot (the reference's null-item guard), a refusal or a
 /// confirm keeps the mode.
 pub(crate) fn commit_item_cast_on_pick(
-    (script, _live): (
+    (script, mut live): (
         Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
+        crate::ui_script::LendLive<crate::ui_script::OwnsCooldowns>,
     ),
     self_q: Query<&crate::net::ObjectStore, With<SelfPlayer>>,
     enchants: Option<Res<crate::items::Enchants>>,
     mut parked: ResMut<EnchantConfirmItem>,
     windows: (
-        Res<crate::ui_socket::RefundRecords>,
         Res<crate::net::PlayedClock>,
         Option<Res<crate::ui_trade::TradeSession>>,
     ),
     mut ladder: crate::spell::CastLadder,
 ) {
-    let (refunds, played, trade) = windows;
+    let (played, trade) = windows;
     let played_now = played.now();
     let Some(mut script) = script else {
         return;
@@ -155,7 +156,8 @@ pub(crate) fn commit_item_cast_on_pick(
         let Some(current) = trade.as_deref().and_then(|t| t.their_enchant_slot()) else {
             continue;
         };
-        let Some((spell_id, commit)) = ladder.ground.pending_for(TargetingWants::Item) else {
+        let held = ladder.ground.read().pending_for(TargetingWants::Item);
+        let Some((spell_id, commit)) = held else {
             continue;
         };
         let replaced = (!accepted && current != 0)
@@ -185,6 +187,8 @@ pub(crate) fn commit_item_cast_on_pick(
                 crate::spell::cast_send::TargetedBind::TradeItem,
             ),
         }
+        // The commit's cast-bar edges, fired as it returns (`0x80b556`).
+        ladder.press.fire(&mut script, &mut live);
     }
     // Fresh clicks, then the bind popup's Yes, go through the gate; the replace popup's Yes does
     // not.
@@ -227,6 +231,7 @@ pub(crate) fn commit_item_cast_on_pick(
                     crate::spell::CastCommit::Spell,
                     crate::spell::cast_send::TargetedBind::Item(item),
                 );
+                ladder.press.fire(&mut script, &mut live);
             }
             continue;
         }
@@ -239,7 +244,10 @@ pub(crate) fn commit_item_cast_on_pick(
     }
 
     for (item_guid, confirmed) in asks {
-        let Some((spell_id, commit)) = ladder.ground.pending_for(TargetingWants::Item) else {
+        // The last commit's cast-bar edges, fired before this pick's popup can run Lua.
+        ladder.press.fire(&mut script, &mut live);
+        let held = ladder.ground.read().pending_for(TargetingWants::Item);
+        let Some((spell_id, commit)) = held else {
             continue; // a click raced a cancel
         };
         // An unresolved template binds ungated and the server judges.
@@ -277,7 +285,13 @@ pub(crate) fn commit_item_cast_on_pick(
             already_bound: fields.is_some_and(|f| crate::items::already_bound(f, cat)),
             existing_enchant: [0u8, 1]
                 .map(|slot| fields.and_then(|f| crate::items::live_enchant(f, slot, cat))),
-            refund_open: refunds.open(item_guid, played_now),
+            // The record on the item (`item+0x3d4`), read through the lent view.
+            refund_open: live
+                .view()
+                .lent
+                .refunds
+                .get()
+                .is_some_and(|r| r.open(item_guid, played_now)),
             bound_tradeable: fields.is_some_and(|f| {
                 crate::ui_socket::bound_tradeable(
                     f,
@@ -301,7 +315,7 @@ pub(crate) fn commit_item_cast_on_pick(
                     "ui_action: cast {spell_id} refused at the item bind ({reason:#x}) — \
                      the cursor stays up"
                 );
-                ladder.cast_errors.push_local(spell_id, reason);
+                ladder.press.push_local(spell_id, reason);
             }
             ItemBind::ConfirmBind => {
                 debug!("ui_action: item bind confirm for {spell_id} on item {item_guid:#x}");
@@ -351,7 +365,8 @@ pub(crate) fn commit_item_cast_on_pick(
 
     // `ReplaceEnchant`: bind the parked guid with no gate re-run.
     for item_guid in bind_outright {
-        let Some((spell_id, commit)) = ladder.ground.pending_for(TargetingWants::Item) else {
+        let held = ladder.ground.read().pending_for(TargetingWants::Item);
+        let Some((spell_id, commit)) = held else {
             continue;
         };
         debug!("ui_action: replace-enchant accepted — cast {spell_id} at item {item_guid:#x}");
@@ -361,6 +376,8 @@ pub(crate) fn commit_item_cast_on_pick(
             crate::spell::cast_send::TargetedBind::Item(item_guid),
         );
     }
+    // The commits' cast-bar edges, fired as they return (`0x80b556`).
+    ladder.press.fire(&mut script, &mut live);
 }
 
 #[cfg(test)]

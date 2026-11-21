@@ -104,6 +104,11 @@ pub(super) fn slot_usable(
 }
 
 impl PetUnit<'_, '_> {
+    /// The "pet" token's guid: our charm, else our summon (`0x60acc3`-`0x60acd3`).
+    pub(crate) fn token_guid(&self) -> Option<u64> {
+        self.player_store()?.0.unit_pet_guid()
+    }
+
     /// [`actions_usable`] for the bar as it stands: the pet's object when the predicate holds,
     /// `None` when it does not. A caller past the gate holds the pet the predicate resolved.
     pub(crate) fn usable_pet(&self, bar: &PetBar) -> Option<&ObjectStore> {

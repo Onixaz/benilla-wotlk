@@ -138,7 +138,7 @@ fn render_unit(lua: &Lua, this: &Table, token: &str) -> mlua::Result<bool> {
         let model = crate::script::model_mut_of(lua);
         (
             model.unit(token).cloned().filter(|u| u.exists),
-            model.player_req.level,
+            crate::script::item_stats::player_level(),
         )
     };
     {

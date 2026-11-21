@@ -204,7 +204,7 @@ fn role_token(roles: u32) -> &'static str {
 
 /// An aura check for a unit token: nothing for nobody or a unit with no aura list.
 fn unit_has_aura(model: &Model, token: &str, spell: u32) -> Option<bool> {
-    model.unit_guids.guid_of(token).filter(|&g| g != 0)?;
+    model.token_guid(token).filter(|&g| g != 0)?;
     crate::script::aura::auras_of(model, token).map(|list| list.iter().any(|a| a.spell_id == spell))
 }
 
@@ -219,11 +219,15 @@ fn player_aura_end(model: &Model, spell: u32) -> MultiValue {
 /// `LFG_UPDATE_RANDOM_INFO` (`0x552950`).
 fn reward_name(lua: &Lua, item: u32) -> String {
     let mut model = crate::script::model_mut_of(lua);
-    if let Some(t) = model.item_templates.get(&item) {
-        return t.name.clone();
+    if let Some(t) = crate::script::item_stats::item_record(&model, item) {
+        return t.name;
     }
-    model.item_stat_asks.insert(item);
-    model.lfg.reward_item_waits.insert(item);
+    crate::script::item_stats::wait_item_record(
+        &mut model,
+        item,
+        crate::script::ItemRecordWait::LfgReward,
+    );
+    crate::script::item_stats::ask_item_record(&mut model, item);
     String::new()
 }
 
@@ -260,7 +264,7 @@ fn join(lua: &Lua) {
 }
 
 fn ui_error(lua: &Lua, key: &'static str) {
-    crate::script::model_mut_of(lua).ui_errors.push(key);
+    crate::script::ui_errors::show_now(lua, key);
 }
 
 pub(super) fn fire(lua: &Lua, event: &str) {
@@ -603,7 +607,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             if accept {
                 roles = filter_roles(&model.lfg, selected) as u8;
                 if roles & 0xe == 0 {
-                    model.ui_errors.push("ERR_LFG_NO_ROLES_SELECTED");
+                    drop(model);
+                    crate::script::ui_errors::show_now(lua, "ERR_LFG_NO_ROLES_SELECTED");
                     return Ok(values(vec![Value::Boolean(false)]));
                 }
             }
@@ -1407,13 +1412,13 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             let link = {
                 let mut model = crate::script::model_mut_of(lua);
-                let level = model.player_req.level;
-                match model.item_templates.get(&item.item) {
+                let level = crate::script::item_stats::player_level();
+                match crate::script::item_stats::item_record(&model, item.item) {
                     Some(t) => Some(crate::script::item_stats::item_link(
                         item.item, &t.name, t.quality, level,
                     )),
                     None => {
-                        model.item_stat_asks.insert(item.item);
+                        crate::script::item_stats::ask_item_record(&mut model, item.item);
                         None
                     }
                 }

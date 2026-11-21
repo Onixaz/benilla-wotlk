@@ -134,12 +134,12 @@ impl Plugin for UiTradeSkillPlugin {
             .add_systems(
                 Update,
                 (
-                    // Opens after the press that cast the opener and before the feed, so the
-                    // window shows in the press's frame; the drain after the input pass, so a
-                    // Create click casts this frame.
+                    // Opens after the press that cast the opener and before the feeds, which read
+                    // the open book through the lent view, so the window shows in the press's
+                    // frame; the drain after the input pass, so a Create click casts this frame.
                     open_trade_skill
-                        .before(feed_trade_skill)
-                        .after(crate::ui_script::UiPress),
+                        .after(crate::ui_script::UiPress)
+                        .before(crate::ui_script::UiFeed),
                     feed_trade_skill.in_set(UnitFeed),
                     drain_trade_skill.in_set(UiDrain),
                 ),
@@ -451,8 +451,11 @@ pub(crate) fn list_link(
 /// Build the book: the known recipes of the open line, banded against the current rank.
 #[allow(clippy::too_many_arguments)] // a Bevy system's full input set
 fn feed_trade_skill(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut open: ResMut<TradeSkillOpen>,
+    (script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsTradeSkill>,
+    ),
+    mut open: crate::ui_script::OwnedMut<TradeSkillOpen>,
     actions: Res<PlayerActions>,
     data: BookData,
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
@@ -469,8 +472,12 @@ fn feed_trade_skill(
     let Some(mut script) = script else {
         return;
     };
+    let (open_line, opener) = {
+        let o = open.read();
+        (o.line, o.spell_id)
+    };
     let me = self_store.single().ok();
-    let reads = me.zip(open.line).map(|(s, line)| {
+    let reads = me.zip(open_line).map(|(s, line)| {
         (
             line,
             crate::spell::skill_snapshot(Some(s)),
@@ -485,7 +492,7 @@ fn feed_trade_skill(
     *last_reads.get(&script) = reads;
 
     let fresh = (|| -> Option<TradeSkillState> {
-        let line = open.line?;
+        let line = open_line?;
         let spells = data.spells.as_deref()?;
         let skill_lines = data.skill_lines.as_deref()?;
         let store = me?;
@@ -726,7 +733,7 @@ fn feed_trade_skill(
             store.0.unit_class().unwrap_or(0),
             self_guid.0.unwrap_or(0),
         );
-        let list_link = spells.catalog.get(open.spell_id).and_then(|opener| {
+        let list_link = spells.catalog.get(opener).and_then(|opener| {
             list_link(
                 opener,
                 line,
@@ -748,15 +755,20 @@ fn feed_trade_skill(
     })();
 
     let last = last.get(&script);
-    let show = std::mem::take(&mut open.show);
-    let close = std::mem::take(&mut open.close);
+    let (show, close) = {
+        let mut o = open.write();
+        (std::mem::take(&mut o.show), std::mem::take(&mut o.close))
+    };
     if fresh != *last {
         script.set_trade_skill(fresh.clone());
-        // The link verbs never query, so the feed asks for the missing templates here.
+        // The link verbs never query, so the feed asks the item cache for the missing records here.
         if let Some(f) = &fresh {
-            script.ask_item_templates(f.recipes.iter().flat_map(|r| {
+            let ids = f.recipes.iter().flat_map(|r| {
                 std::iter::once(r.product_item).chain(r.reagents.iter().map(|re| re.item))
-            }));
+            });
+            for id in ids.filter(|&id| id != 0) {
+                items.template(id, 0, &commands);
+            }
         }
         // Every rebuild fires TRADE_SKILL_UPDATE (`0x5de0d5`).
         if fresh.is_some() && !show {
@@ -782,8 +794,14 @@ fn feed_trade_skill(
 /// Drain the Lua intents and run the engine's repeat on our own cast edges: a start commits a
 /// pending repeat, a go may cast again, a failure stops it.
 fn drain_trade_skill(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut open: ResMut<TradeSkillOpen>,
+    (script, mut live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<(
+            crate::ui_script::OwnsCooldowns,
+            crate::ui_script::OwnsTradeSkill,
+        )>,
+    ),
+    mut open: crate::ui_script::OwnedMut<TradeSkillOpen>,
     mut cast_events: MessageReader<CastEvent>,
     targeting: cast_target::CastTargeting,
     mut ladder: CastLadder,
@@ -793,12 +811,14 @@ fn drain_trade_skill(
     };
 
     for spell_id in script.take_trade_skill_casts() {
-        if open.line.is_none() {
+        if open.read().line.is_none() {
             debug!("ui_tradeskill: DoTradeSkill({spell_id}) with no open book — ignored");
             continue;
         }
         debug!("ui_tradeskill: DoTradeSkill({spell_id})");
         ladder.send(spell_id, &targeting.context(), CastCommit::Spell);
+        // The send's cast-bar edges, fired as it returns (`0x80b556`).
+        ladder.press.fire(&mut script, &mut live);
     }
 
     let self_entity = ladder.self_player.single().ok().map(|(e, _)| e);
@@ -812,6 +832,7 @@ fn drain_trade_skill(
                 if script.trade_skill_cast_done(ev.spell_id) {
                     debug!("ui_tradeskill: recast {}", ev.spell_id);
                     ladder.send(ev.spell_id, &targeting.context(), CastCommit::Spell);
+                    ladder.press.fire(&mut script, &mut live);
                 }
             }
             CastEventKind::Fail { .. } => script.trade_skill_cast_failed(ev.spell_id),
@@ -821,7 +842,7 @@ fn drain_trade_skill(
 
     if script.take_trade_skill_close() {
         debug!("ui_tradeskill: client-side close (no packet)");
-        open.line = None;
+        open.write().line = None;
     }
 }
 

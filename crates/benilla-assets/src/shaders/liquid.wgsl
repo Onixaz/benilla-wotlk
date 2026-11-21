@@ -45,7 +45,7 @@ struct LiquidParams {
 
 // The prefix of the shared global light (`lighting::global_light`); it must match row for row.
 struct WowLight {
-    light_ambient: vec4<f32>,      // 0  rgb = ambient; w = Mod2x scale
+    light_ambient: vec4<f32>,      // 0  rgb = ambient; w = the character ambient (unread)
     light_diffuse: vec4<f32>,      // 1  rgb = sun diffuse; w = clamp flag
     light_sun: vec4<f32>,          // 2  xyz = sun travel direction (to-light = −xyz)
     light_spec: vec4<f32>,         // 3  rgb = row-9 specular colour; w = terrain shininess, unread
@@ -58,6 +58,7 @@ struct WowLight {
     _grade: vec4<f32>,             // 17
     wmo_fog_color: vec4<f32>,      // 18 rgb = interior fog (block 2); w = enable
     wmo_fog_params: vec4<f32>,     // 19 x = start yd; y = end yd
+    point_count: vec4<f32>,        // 20 z = the scene fog's rate, w = the interior fog's
 };
 @group(#{MATERIAL_BIND_GROUP}) @binding(90) var<storage, read> wow_light: WowLight;
 
@@ -108,7 +109,16 @@ fn apply_scroll(uv: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(uv.x, uv.y + w.anim.z * fract(anim_time() / 10.0));
 }
 
-// Planar eye-Z GL_LINEAR fog in gamma space, as terrain.wgsl; GL_FOG defaults on and
+// The reference's fog curve (every world vertex program, `0x7ecd80`): the linear factor
+// `(end - z) / (end - start)` clamped to [0, 1], raised to the rate (row 20; 0 reads as 1). The
+// reference raises per vertex and interpolates; per pixel here, which agrees exactly only at rate 1.
+fn fog_curve(span: vec2<f32>, rate: f32, eye_z: f32) -> f32 {
+    let linear = clamp((span.y - eye_z) / max(span.y - span.x, 0.001), 0.0, 1.0);
+    let r = select(1.0, rate, rate > 0.0);
+    return select(pow(linear, r), linear, r == 1.0);
+}
+
+// Planar eye-Z fog in gamma space through `fog_curve`, as terrain.wgsl; GL_FOG defaults on and
 // no liquid pass turns it off. Block 1 (`+0x70/74/78`) is the scene fog; block 2
 // (`+0x80/84/88`) is the interior haze, eased toward the MFOG or zone target over about 4 s
 //. Only the WMO geometry pass and the WMO liquid pass
@@ -117,16 +127,21 @@ fn apply_scroll(uv: vec2<f32>) -> vec2<f32> {
 fn apply_fog(rgb: vec3<f32>, world_pos: vec3<f32>, room_fog: u32) -> vec3<f32> {
     var fog_color = wow_light.fog_color;
     var fog_span = wow_light.fog_params.xy;
+    var fog_rate = wow_light.point_count.z;
     if (w.kind.z > 0.5 && room_fog != 0u) {
         fog_color = wow_light.wmo_fog_color;
         fog_span = wow_light.wmo_fog_params.xy;
+        fog_rate = wow_light.point_count.w;
+    }
+    // The interior WMO arm is fixed-function there, with no vertex program: its fog stays linear.
+    if (w.kind.z > 0.5) {
+        fog_rate = 1.0;
     }
     if (fog_color.w <= 0.5) {
         return rgb;
     }
     let eye_z = -(view.view_from_world * vec4<f32>(world_pos, 1.0)).z;
-    let denom = max(fog_span.y - fog_span.x, 0.001);
-    let factor = clamp((fog_span.y - eye_z) / denom, 0.0, 1.0);
+    let factor = fog_curve(fog_span, fog_rate, eye_z);
     return mix(fog_color.xyz, rgb, factor);
 }
 

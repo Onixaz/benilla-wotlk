@@ -387,6 +387,7 @@ fn left_clicking_the_player_frame_targets_self() {
         loot_threshold: 2,
         real_party_members: 0,
         real_raid_members: 0,
+        real_leader_guid: 0,
         loot_master_guid: 0,
         member_assignments: [0; 4],
     });
@@ -477,6 +478,7 @@ fn raid_mark_clicks_through_the_nested_level() {
         loot_threshold: 2,
         real_party_members: 0,
         real_raid_members: 0,
+        real_leader_guid: 0,
         loot_master_guid: 0,
         member_assignments: [0; 4],
     });
@@ -896,18 +898,16 @@ fn flagged_friendly_player_plate_is_green() {
 #[test]
 fn an_exalted_npc_target_reads_revered_and_its_plate_is_green() {
     use crate::net::ObjectStore;
-    use crate::target::{stormwind_fixture, HUMAN_WARRIOR};
+    use crate::target::{human_warrior_fields, stormwind_fixture};
     use benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE;
     use benilla_protocol::ObjectFields;
 
-    /// `UNIT_FIELD_BYTES_0`, absolute descriptor index.
-    const BYTES_0: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_0;
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
     load_unit_frames(&mut s);
-    let me = ObjectStore(ObjectFields::from_pairs(&[(BYTES_0, HUMAN_WARRIOR)]));
+    let me = ObjectStore(ObjectFields::from_pairs(&human_warrior_fields()));
 
     for total in [21_000, 42_000] {
         let (factions, template, reps) = stormwind_fixture(&mut chain, total);
@@ -1199,6 +1199,7 @@ fn the_party_art_paints_over_the_bars() {
         loot_threshold: 2,
         real_party_members: 0,
         real_raid_members: 0,
+        real_leader_guid: 0,
         loot_master_guid: 0,
         member_assignments: [0; 4],
     });
@@ -1809,6 +1810,7 @@ fn the_player_frame_wears_the_leader_and_master_looter_icons() {
         loot_threshold: 2,
         real_party_members: 0,
         real_raid_members: 0,
+        real_leader_guid: 0,
         loot_master_guid: 0,
         member_assignments: [0; 4],
     };

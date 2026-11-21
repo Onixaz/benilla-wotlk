@@ -87,7 +87,7 @@ fn a_pet_book_hover_reads_the_pets_book_not_the_players() {
         }],
         ..Default::default()
     });
-    s.set_pet_book(PetBookState {
+    let _book = s.set_pet_book(PetBookState {
         token: Some("DEMON".into()),
         slots: vec![SpellSlotView {
             spell_id: 3110,
@@ -400,7 +400,7 @@ fn action_hover_delegates_by_kind() {
         25,
         Some(ActionSlot {
             kind: 0x00,
-            action: 5143, // not in the store: the ask channel fires
+            action: 5143, // no view: a total miss
             ..Default::default()
         }),
     );
@@ -418,7 +418,6 @@ fn action_hover_delegates_by_kind() {
     "#,
     )
     .unwrap();
-    assert_eq!(s.take_spell_tooltip_asks(), vec![5143], "the miss asked");
     assert!(s.take_errors().is_empty());
 }
 
@@ -805,7 +804,7 @@ fn quest_reward_spell_getters_and_hovers() {
         "Fireball"
     );
 
-    s.set_quest_log(QuestLogState {
+    s.seed_quest_log(QuestLogState {
         entries: vec![QuestLogEntryView {
             quest_id: 7,
             detail: Some(QuestLogDetail {
@@ -895,78 +894,6 @@ fn firebolt() -> SpellTooltipView {
     }
 }
 
-/// Pet-bar tokens and recipes that hover their product name no spell, so they are left out.
-#[test]
-fn the_spell_subjects_are_what_the_setters_read_from_the_vm() {
-    let mut s = script();
-    s.set_pet_actions(
-        true,
-        true,
-        true,
-        vec![
-            PetActionView {
-                name: Some("PET_ACTION_ATTACK".into()),
-                is_token: true,
-                ..Default::default()
-            },
-            firebolt_slot(),
-        ],
-    );
-    s.set_pet_book(PetBookState {
-        token: Some("DEMON".into()),
-        slots: vec![SpellSlotView {
-            spell_id: 6307,
-            name: "Blood Pact".into(),
-            ..Default::default()
-        }],
-    });
-    let reward = |spell_id| {
-        Some(QuestRewardSpell {
-            spell_id,
-            ..Default::default()
-        })
-    };
-    s.set_quest(Some(QuestState {
-        panel: QuestPanel::Reward,
-        reward_spell: reward(133),
-        ..QuestState::default()
-    }));
-    s.set_quest_log(QuestLogState {
-        entries: vec![QuestLogEntryView {
-            quest_id: 7,
-            detail: Some(QuestLogDetail {
-                reward_spell: reward(116),
-                ..Default::default()
-            }),
-            ..Default::default()
-        }],
-        ..Default::default()
-    });
-    let mut book = enchant_book(&[(17253, "Bite"), (7421, "Runed Copper Rod")]);
-    book.recipes[1].creates_item = true;
-    book.recipes[1].product_item = 6218;
-    s.set_trade_skill(Some(book));
-    let aura = |spell_id| AuraState {
-        spell_id,
-        ..Default::default()
-    };
-    s.set_player_auras(vec![aura(1459)]);
-    // The pet's, the target-of-target's and party1's lists, by guid.
-    s.set_unit_auras(0xF140_0000_0000_0077, Some(vec![aura(172)]));
-    s.set_unit_auras(0x21, Some(vec![aura(589)]));
-    s.set_unit_auras(0x22, Some(vec![aura(8921)]));
-    s.set_tracking_spells(vec![find_minerals()], 1);
-    s.set_tracking_spell(2580);
-
-    let mut subjects = s.spell_tooltip_subjects();
-    subjects.sort_unstable();
-    assert_eq!(subjects, vec![116, 133, 172, 589, 1459, 2580, 8921, 17253]);
-    // The pet's bar and book are read through the builder's unit selector: the pet's views.
-    let mut pet_subjects = s.pet_spell_tooltip_subjects();
-    pet_subjects.sort_unstable();
-    assert_eq!(pet_subjects, vec![3110, 6307]);
-}
-
 /// The builder's unit selector picks the view built against the pet: `SetPetAction` passes it,
 /// `SetAction` on a pet-action slot, `SetSpell` on the pet book and a pet-learn
 /// `SetTrainerService`; the player's book, a class service and a recipe pass 0.
@@ -981,7 +908,7 @@ fn the_unit_selector_setters_read_the_pet_view() {
     };
     s.set_spell_tooltip(7812, view("absorb 305 damage"));
     s.set_pet_spell_tooltip(7812, view("absorb 318 damage"));
-    s.set_pet_actions(
+    let _pets = crate::script::live::lend_pets(
         true,
         true,
         true,
@@ -1003,7 +930,7 @@ fn the_unit_selector_setters_read_the_pet_view() {
         name: "Sacrifice".into(),
         ..Default::default()
     };
-    s.set_pet_book(PetBookState {
+    let _book = s.set_pet_book(PetBookState {
         token: Some("DEMON".into()),
         slots: vec![slot.clone()],
     });
@@ -1079,66 +1006,27 @@ fn the_unit_selector_setters_read_the_pet_view() {
     assert_eq!(got("BOOK"), "absorb 305 damage");
     assert_eq!(got("SERVICE"), "absorb 305 damage");
     assert_eq!(got("CRAFT"), "absorb 305 damage");
-    assert!(s.take_spell_tooltip_asks().is_empty());
-    assert!(s.take_pet_spell_tooltip_asks().is_empty());
     assert!(s.take_errors().is_empty());
 }
 
-/// A pet view's miss asks the pet's store, and only the pet view's answer re-renders it.
+/// The unit selector reads the pet's view alone: with only the player's view of the id, the pet
+/// bar's hover is the slot's name.
 #[test]
-fn a_pet_view_miss_waits_on_the_pet_store() {
+fn the_pet_selector_never_reads_the_players_view() {
     let mut s = script();
     s.set_screen_size(800.0, 600.0);
-    s.set_pet_actions(true, true, true, vec![firebolt_slot()]);
-    s.run(
-        r#"
-        local a = CreateFrame("Button", "PB1"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
-        CreateFrame("GameTooltip", "TT")
-        TT:SetOwner(PB1, "ANCHOR_RIGHT")
-        TT:SetPetAction(1)
-    "#,
-    )
-    .unwrap();
-    assert!(s.take_spell_tooltip_asks().is_empty());
-    assert_eq!(s.take_pet_spell_tooltip_asks(), vec![3110]);
-    // The player's view of the same id is not the one the selector renders.
+    let _pets = crate::script::live::lend_pets(true, true, true, vec![firebolt_slot()]);
     s.set_spell_tooltip(3110, firebolt());
-    assert_eq!(left_lines(&mut s), vec!["Firebolt"]);
-    s.set_pet_spell_tooltip(3110, firebolt());
-    assert_eq!(
-        left_lines(&mut s),
-        vec![
-            "Firebolt",
-            "10 Mana",
-            "1 sec cast",
-            "Deals 7 to 10 Fire damage to a target."
-        ]
-    );
-    assert!(s.take_errors().is_empty());
-}
-
-/// No second hover and no `OnTooltipCleared` for the empty first render: the reference builds the
-/// tooltip at the call, and the answer's silent clear finds no lines after that render.
-#[test]
-fn a_missed_view_re_renders_the_tooltip_when_the_app_answers() {
-    let mut s = script();
-    s.set_screen_size(800.0, 600.0);
-    s.set_pet_actions(true, true, true, vec![firebolt_slot()]);
-    s.run(
-        r#"
-        local a = CreateFrame("Button", "PB1"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
-        CreateFrame("GameTooltip", "TT")
+    let hover = r#"
+        local a = PB1 or CreateFrame("Button", "PB1"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
+        local tt = TT or CreateFrame("GameTooltip", "TT")
         TT:SetOwner(PB1, "ANCHOR_RIGHT")
-        CLEARED = 0
-        TT:SetScript("OnTooltipCleared", function() CLEARED = CLEARED + 1 end)
         TT:SetPetAction(1)
-    "#,
-    )
-    .unwrap();
+    "#;
+    s.run(hover).unwrap();
     assert_eq!(left_lines(&mut s), vec!["Firebolt"]);
-    assert_eq!(s.take_pet_spell_tooltip_asks(), vec![3110]);
-
     s.set_pet_spell_tooltip(3110, firebolt());
+    s.run(hover).unwrap();
     assert_eq!(
         left_lines(&mut s),
         vec![
@@ -1148,37 +1036,26 @@ fn a_missed_view_re_renders_the_tooltip_when_the_app_answers() {
             "Deals 7 to 10 Fire damage to a target."
         ]
     );
-    assert!(s.eval::<bool>("return TT:IsShown() == 1").unwrap());
-    assert!(
-        s.take_pet_spell_tooltip_asks().is_empty(),
-        "the re-render found the view"
-    );
-    assert_eq!(
-        s.eval::<i64>("return CLEARED").unwrap(),
-        0,
-        "empty setter and silent answer clear do not fire OnTooltipCleared"
-    );
     assert!(s.take_errors().is_empty());
 }
 
-/// A recipe's spell hover has no fallback name, so its miss is a hidden plate.
+/// A recipe's spell hover has no fallback name, so its miss is a hidden plate; with the views
+/// there, the same hovers show them.
 #[test]
-fn a_hidden_miss_shows_and_an_enchant_link_fills_when_answered() {
+fn a_hidden_miss_shows_nothing_and_a_view_fills_the_next_hover() {
     let mut s = script();
     s.set_screen_size(800.0, 600.0);
     s.set_trade_skill(Some(enchant_book(&[(17253, "Bite")])));
-    s.run(
-        r#"
-        local a = CreateFrame("Button", "CI"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
-        CreateFrame("GameTooltip", "TT")
-        CreateFrame("GameTooltip", "REF")
+    let hover = r#"
+        local a = CI or CreateFrame("Button", "CI"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
+        local _ = TT or CreateFrame("GameTooltip", "TT")
+        local _ = REF or CreateFrame("GameTooltip", "REF")
         TT:SetOwner(CI, "ANCHOR_RIGHT")
         TT:SetTradeSkillItem(2)
         REF:SetOwner(CI, "ANCHOR_PRESERVE")
         REF:SetHyperlink("|cffffd000|Henchant:20034|h[Enchant Weapon - Crusader]|h|r")
-    "#,
-    )
-    .unwrap();
+    "#;
+    s.run(hover).unwrap();
     assert_eq!(s.eval::<i64>("return TT:NumLines()").unwrap(), 0);
     assert!(!s.eval::<bool>("return TT:IsShown() == 1").unwrap());
     assert_eq!(
@@ -1204,6 +1081,7 @@ fn a_hidden_miss_shows_and_an_enchant_link_fills_when_answered() {
             ..Default::default()
         },
     );
+    s.run(hover).unwrap();
     assert!(s.eval::<bool>("return TT:IsShown() == 1").unwrap());
     assert_eq!(
         s.eval::<(String, String)>("return TTTextLeft1:GetText(), TTTextLeft2:GetText()")
@@ -1218,55 +1096,13 @@ fn a_hidden_miss_shows_and_an_enchant_link_fills_when_answered() {
     assert!(s.take_errors().is_empty());
 }
 
-/// A new hover, a hide, an added line or a running fade leaves the tooltip as it is.
-#[test]
-fn new_content_or_an_added_line_ends_the_wait() {
-    let mut s = script();
-    s.set_screen_size(800.0, 600.0);
-    s.set_pet_actions(true, true, true, vec![firebolt_slot()]);
-    s.run(
-        r#"
-        local a = CreateFrame("Button", "PB1"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
-        CreateFrame("GameTooltip", "TT")
-        CreateFrame("GameTooltip", "HID")
-        CreateFrame("GameTooltip", "ADD")
-        TT:SetOwner(PB1, "ANCHOR_RIGHT")
-        TT:SetPetAction(1)
-        TT:SetOwner(PB1, "ANCHOR_RIGHT")
-        TT:SetText("Attack")
-        HID:SetOwner(PB1, "ANCHOR_RIGHT")
-        HID:SetPetAction(1)
-        HID:Hide()
-        ADD:SetOwner(PB1, "ANCHOR_RIGHT")
-        ADD:SetPetAction(1)
-        ADD:AddLine("an addon's line")
-        CreateFrame("GameTooltip", "FAD")
-        FAD:SetOwner(PB1, "ANCHOR_RIGHT")
-        FAD:SetPetAction(1)
-        FAD:FadeOut()
-    "#,
-    )
-    .unwrap();
-    s.set_pet_spell_tooltip(3110, firebolt());
-    assert_eq!(left_lines(&mut s), vec!["Attack"]);
-    assert_eq!(s.eval::<i64>("return HID:NumLines()").unwrap(), 0);
-    assert!(!s.eval::<bool>("return HID:IsShown() == 1").unwrap());
-    assert_eq!(
-        s.eval::<(i64, String)>("return ADD:NumLines(), ADDTextLeft2:GetText()")
-            .unwrap(),
-        (2, "an addon's line".to_string())
-    );
-    assert_eq!(s.eval::<i64>("return FAD:NumLines()").unwrap(), 1);
-    assert!(s.take_errors().is_empty());
-}
-
 /// What Lua wrote after the miss is kept: a line rewritten in place, by `AppendText` or a cell's
 /// `SetTextColor`, or new content that reads the same as the miss's line.
 #[test]
 fn a_line_rewritten_in_place_ends_the_wait() {
     let mut s = script();
     s.set_screen_size(800.0, 600.0);
-    s.set_pet_actions(true, true, true, vec![firebolt_slot()]);
+    let _pets = crate::script::live::lend_pets(true, true, true, vec![firebolt_slot()]);
     s.run(
         r#"
         local a = CreateFrame("Button", "PB1"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
@@ -1300,41 +1136,6 @@ fn a_line_rewritten_in_place_ends_the_wait() {
         (1, 1.0, 0.0)
     );
     assert_eq!(s.eval::<i64>("return SAM:NumLines()").unwrap(), 1);
-    assert!(s.take_errors().is_empty());
-}
-
-/// A re-render's `OnShow` can move another waiting tooltip onto a new spell.
-#[test]
-fn a_wait_replaced_by_an_earlier_re_render_is_not_replayed() {
-    let mut s = script();
-    s.set_screen_size(800.0, 600.0);
-    s.set_trade_skill(Some(enchant_book(&[(3110, "Firebolt")])));
-    s.run(
-        r#"
-        local a = CreateFrame("Button", "PB1"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
-        CreateFrame("GameTooltip", "A")
-        CreateFrame("GameTooltip", "B")
-        A:SetOwner(PB1, "ANCHOR_RIGHT")
-        A:SetTradeSkillItem(2)
-        B:SetOwner(PB1, "ANCHOR_RIGHT")
-        B:SetTradeSkillItem(2)
-        A:SetScript("OnShow", function()
-            B:SetOwner(PB1, "ANCHOR_RIGHT")
-            B:SetHyperlink("|cffffd000|Henchant:20034|h[Enchant Weapon - Crusader]|h|r")
-        end)
-    "#,
-    )
-    .unwrap();
-    s.set_spell_tooltip(3110, firebolt());
-    assert_eq!(
-        s.eval::<(i64, String)>("return B:NumLines(), BTextLeft1:GetText()")
-            .unwrap(),
-        (1, "Enchant Weapon - Crusader".to_string())
-    );
-    assert_eq!(
-        s.eval::<String>("return ATextLeft1:GetText()").unwrap(),
-        "Firebolt"
-    );
     assert!(s.take_errors().is_empty());
 }
 

@@ -168,6 +168,39 @@ fn the_stock_buttons_walk_every_level() {
     assert!(errors.is_empty(), "map errors: {errors:#?}");
 }
 
+/// Quest 33's POI lines at the call, for the stock map's quest pass.
+struct PoiLines(benilla_ui::script::QuestPoiLines);
+
+impl benilla_ui::script::LiveState for PoiLines {
+    fn unit_flags(&self, _: u64) -> Option<u32> {
+        None
+    }
+
+    fn unit_health(&self, _: u64) -> Option<u32> {
+        None
+    }
+
+    fn active_player(&self) -> Option<u64> {
+        None
+    }
+
+    fn has_control(&self) -> bool {
+        true
+    }
+
+    fn far_sight(&self) -> bool {
+        false
+    }
+
+    fn quest_poi_lines(
+        &self,
+        quest_id: u32,
+        _get: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<Option<benilla_ui::script::QuestPoiLines>> {
+        Some((quest_id == 33).then(|| self.0.clone()))
+    }
+}
+
 /// The stock map's quest pass and its Show Map path: `WorldMapFrame_UpdateQuests` places the
 /// quest's icon through `QuestPOIUpdateIcons` and reads it back, and `WorldMap_OpenToQuest` asks
 /// `GetQuestWorldMapAreaID`; neither raises, and the icon sits on Elwynn.
@@ -183,8 +216,7 @@ fn the_stock_map_places_and_opens_a_quest_poi() {
     let (mut s, _) = session();
     let _ = s.take_errors();
     const QUEST: u32 = 33;
-    s.set_quest_log(QuestLogState {
-        num_quests: 1,
+    s.seed_quest_log(QuestLogState {
         entries: vec![
             QuestLogEntryView {
                 title: "Elwynn Forest".into(),
@@ -215,16 +247,13 @@ fn the_stock_map_places_and_opens_a_quest_poi() {
             priority: 0,
         }],
     }]);
-    s.set_quest_poi_lines(
-        [(
-            QUEST,
-            QuestPoiLines {
-                top_area: 12,
-                ..Default::default()
-            },
-        )]
-        .into(),
-    );
+    // SAFETY: the test drops its loan on its own thread.
+    let _lines = unsafe {
+        benilla_ui::script::LiveLoan::new(PoiLines(QuestPoiLines {
+            top_area: 12,
+            ..Default::default()
+        }))
+    };
     s.run("ToggleFrame(WorldMapFrame) WorldMapFrame_UpdateQuests()")
         .unwrap();
     let errors = map_errors(s.take_errors());
@@ -268,8 +297,7 @@ fn the_stock_map_draws_and_hovers_a_quest_blob() {
     let (mut s, _) = session();
     let _ = s.take_errors();
     const QUEST: u32 = 54;
-    s.set_quest_log(QuestLogState {
-        num_quests: 1,
+    s.seed_quest_log(QuestLogState {
         entries: vec![
             QuestLogEntryView {
                 title: "Elwynn Forest".into(),
@@ -381,8 +409,7 @@ fn the_quest_log_show_map_button_leaves_the_map_updating() {
     let (mut s, _) = session();
     let _ = s.take_errors();
     const QUEST: u32 = 60;
-    s.set_quest_log(QuestLogState {
-        num_quests: 1,
+    s.seed_quest_log(QuestLogState {
         entries: vec![
             QuestLogEntryView {
                 title: "Elwynn Forest".into(),

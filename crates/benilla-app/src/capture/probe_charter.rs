@@ -36,8 +36,6 @@ use crate::player::Player;
 use crate::target::cursor_mode::npc_flags;
 use crate::ui_gossip::GossipState;
 use crate::ui_items::{find_item, ItemSearch, PACK_SLOTS};
-use crate::ui_petition::GuildRegistrarState;
-use crate::ui_session::NpcSession;
 
 /// Aldwin Laughlin's spawn, the `.go xyz` target.
 const REGISTRAR_AT: [f32; 3] = [-8885.25, 614.395, 95.2576];
@@ -74,8 +72,7 @@ const SETTLE_SECS: f64 = 3.0;
 const GUILD_CLEAR_TIMEOUT_SECS: f64 = 20.0;
 const SCAN_TIMEOUT_SECS: f64 = 25.0;
 const MENU_TIMEOUT_SECS: f64 = 20.0;
-/// How long step 4 waits for the portrait's `"npc"` token, reported, not asserted:
-/// `feed_interact_npc` is unordered against the apply pass, so it resolves a frame late.
+/// How long step 4 waits for the portrait's `"npc"` token, reported, not asserted.
 const REGISTRAR_TOKEN_SETTLE_SECS: f64 = 1.0;
 
 const REGISTRAR_TIMEOUT_SECS: f64 = 15.0;
@@ -154,7 +151,7 @@ enum Phase {
         sent_at: f64,
     },
     /// Step 4: the charter row selected; waiting for `SMSG_PETITION_SHOWLIST` to reach
-    /// [`GuildRegistrarState`] and `GUILD_REGISTRAR_SHOW` to open the window.
+    /// the registrar held and `GUILD_REGISTRAR_SHOW` to open the window.
     Registrar {
         since: f64,
     },
@@ -244,12 +241,26 @@ fn charter_tooltip_lines(script: &UiScript, pos: Option<(i64, u32)>) -> Vec<Stri
         .unwrap_or_default()
 }
 
-/// `BENILLA_GOSSIP_ICONS.petition` in the live VM, `""` when absent. The stock
-/// `GossipFrame.lua:123` builds the icon path from the type string and defines no such table.
-fn vm_petition_texture(script: &UiScript) -> String {
-    script
-        .eval::<String>("return (BENILLA_GOSSIP_ICONS and BENILLA_GOSSIP_ICONS.petition) or \"\"")
-        .unwrap_or_default()
+/// The icon texture the stock gossip frame drew beside the shown title button reading `label`,
+/// `""` when no button reads it: `GossipFrame.lua` sets it from the row's type string.
+fn vm_row_icon(script: &UiScript, label: &str) -> String {
+    let chunk = format!(
+        "for i = 1, NUMGOSSIPBUTTONS or 32 do \
+           local b = _G['GossipTitleButton' .. i] \
+           if b and b:IsShown() and b:GetText() == {label:?} then \
+             local t = _G[b:GetName() .. 'GossipIcon'] \
+             return (t and t:GetTexture()) or '' \
+           end \
+         end \
+         return ''"
+    );
+    script.eval::<String>(&chunk).unwrap_or_default()
+}
+
+/// Whether `texture` is the stock icon for gossip type `ty`, `Interface\GossipFrame\<Type>GossipIcon`.
+fn is_type_icon(texture: &str, ty: &str) -> bool {
+    let want = format!("interface\\gossipframe\\{ty}gossipicon");
+    texture.to_ascii_lowercase().replace('/', "\\") == want
 }
 
 /// Is a named frame visible in the live UI; a missing global reads `false`.
@@ -312,24 +323,27 @@ fn lua_bag_pos(bag_index: u8, slot: u8) -> Option<(i64, u32)> {
     }
 }
 
-/// A fresh guild name: a 13-character prefix, a space and the low 8 digits of the wall clock, 22
-/// characters within `MAX_CHARTER_NAME` (24); `IsValidCharterName` allows digits and spaces.
+/// A fresh guild name: a 13-character prefix, a space and the low 8 digits of the wall clock spelt
+/// as letters (`0` is `a`), 22 characters within `MAX_CHARTER_NAME` (24); the server refuses digits
+/// ("That name contains invalid characters").
 fn probe_guild_name(prefix: &str) -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
         % 100_000_000;
-    format!("{prefix} {secs:08}")
+    let letters: String = format!("{secs:08}")
+        .bytes()
+        .map(|d| char::from(b'a' + (d - b'0')))
+        .collect();
+    format!("{prefix} {letters}")
 }
 
 fn charter_probe(
     time: ProbeClock,
     mut probe: ResMut<CharterProbe>,
-    gossip: Res<GossipState>,
-    registrar: Res<GuildRegistrarState>,
     objects: Objects,
     items: Res<Items>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     player: Res<Player>,
     units: Query<(&Guid, &NetEntity, &ObjectStore, &Transform), Without<SelfPlayer>>,
@@ -342,6 +356,8 @@ fn charter_probe(
     let Some(script) = script else {
         return; // no UI VM (headless net-only)
     };
+    // The gossip globals as the verbs read them, through the view this system lends.
+    let gossip = live.with_gossip(|g| g.cloned().unwrap_or_default());
     let now = time.elapsed_secs_f64();
     let phase = probe.phase;
 
@@ -496,7 +512,9 @@ fn charter_probe(
                 return;
             };
             let open = gossip.npc == Some(npc) && !gossip.options.is_empty();
-            let pushed = vm_gossip_values(&script) as usize == gossip.options.len() * 2;
+            // The rows are drawn once the frame is shown (`GOSSIP_SHOW`), not when the menu reads.
+            let pushed = vm_gossip_values(&script) as usize == gossip.options.len() * 2
+                && vm_visible(&script, "GossipFrame");
             if open && pushed {
                 probe.pass(
                     2,
@@ -536,13 +554,12 @@ fn charter_probe(
                 probe.phase = Phase::Done;
                 return;
             };
-            let parked = registrar.npc() == Some(npc);
+            let parked = live.registrar() == Some(npc);
             let visible = vm_visible(&script, "GuildRegistrarFrame");
             let cost = vm_charter_cost(&script);
             if parked && visible && cost == CHARTER_COST_COPPER {
                 // The portrait's `"npc"` token is reported, not asserted, and sampled up to
-                // `REGISTRAR_TOKEN_SETTLE_SECS` late: `feed_interact_npc` is unordered against
-                // the apply pass, so it is empty on the frame the window opens.
+                // `REGISTRAR_TOKEN_SETTLE_SECS` late.
                 let token = script
                     .eval::<String>("return UnitName(\"npc\") or \"\"")
                     .unwrap_or_default();
@@ -583,12 +600,12 @@ fn charter_probe(
                     "registrar",
                     format!(
                         "no registrar window within {REGISTRAR_TIMEOUT_SECS}s of the select: \
-                         GuildRegistrarState npc={:?} (wanted {npc:#x}), \
+                         registrar npc={:?} (wanted {npc:#x}), \
                          GuildRegistrarFrame:IsVisible()={visible}, GetGuildCharterCost()={cost}. \
                          An SMSG_PETITION_SHOWLIST with no parse arm at all \
                          falls through to ServerPacket::Other — that is what this reading looks \
                          like. Lines seen: {:?}",
-                        registrar.npc(),
+                        live.registrar(),
                         probe_lines(&script)
                     ),
                 );
@@ -1104,16 +1121,14 @@ fn assert_icon_and_select(
         probe.phase = Phase::Done;
         return;
     }
-    // The stock interface defines no `BENILLA_GOSSIP_ICONS` (see `vm_petition_texture`).
-    let texture = vm_petition_texture(script);
-    if texture.is_empty() {
+    let texture = vm_row_icon(script, &opt.message);
+    if !is_type_icon(&texture, ICON_TYPE_PETITION) {
         probe.fail(
             3,
             "icon",
             format!(
-                "the app maps the row to {ICON_TYPE_PETITION:?} but BENILLA_GOSSIP_ICONS.petition \
-                 resolves to nothing in the live VM, so the row would still draw the fallback \
-                 bubble"
+                "the app maps the row to {ICON_TYPE_PETITION:?} but the stock frame \
+                 drew {texture:?} beside the row"
             ),
         );
         probe.phase = Phase::Done;
@@ -1124,7 +1139,7 @@ fn assert_icon_and_select(
         "icon",
         format!(
             "row {} {:?}: wire icon={ICON_PETITION} index={} → type {ty:?}, \
-             BENILLA_GOSSIP_ICONS.petition = {texture:?}",
+             the stock frame drew {texture:?}",
             pos + 1,
             opt.message,
             opt.index

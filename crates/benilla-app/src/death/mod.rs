@@ -5,6 +5,8 @@
 
 use bevy::prelude::*;
 
+use crate::ui_action::CastRefusals;
+
 use benilla_assets::coords::{bevy_to_wow, wow_to_bevy};
 use benilla_ui::script::{DeathAction, ScriptValue, UiScript};
 
@@ -51,6 +53,9 @@ pub(crate) struct ResurrectOffer {
     pub(crate) has_timer: bool,
     /// An unnamed caster whose name query is still out (`0x6dbc60` answers it).
     pub(crate) awaiting_name: bool,
+    /// The caster's name in the player name cache, which `ResurrectGetOfferer` answers
+    /// (`0x515950`, by guid, whatever the packet's name); `None` until the cache answers.
+    pub(crate) offerer: Option<String>,
 }
 
 /// The death state the descriptor does not carry, filled from the wire and cleared at session
@@ -127,8 +132,11 @@ impl DeathGlobals {
 
 /// Milliseconds from `now` to `at`, 0 when unset or passed.
 fn left_ms(at: Option<f64>, now: f64) -> u32 {
+    // Whole milliseconds, as 12340 keeps the deadline and subtracts the clock (`0x513a8b`, `0x516298`): the float error never shaves one off.
     at.map_or(0.0, |at| {
-        ((at - now) * 1000.0).clamp(0.0, f64::from(u32::MAX))
+        ((at - now) * 1000.0)
+            .round()
+            .clamp(0.0, f64::from(u32::MAX))
     }) as u32
 }
 
@@ -192,6 +200,11 @@ impl DeathView<'_, '_> {
     /// Outside an arena alone (`0x515a00`, the battlefield word `[0xbea570] == 4`).
     pub(crate) fn resurrect_has_timer(&self) -> bool {
         !self.arena.active() && self.offer().is_some_and(|o| o.has_timer)
+    }
+
+    /// `ResurrectGetOfferer` (`0x515950`): the offer's caster as the name cache holds it.
+    pub(crate) fn resurrect_offerer(&self) -> Option<String> {
+        self.offer()?.offerer.clone()
     }
 
     fn offer(&self) -> Option<&ResurrectOffer> {
@@ -379,11 +392,12 @@ const UNIT_DYNFLAG_DEAD: u32 = 0x20;
 /// `PLAYER_FLAGS_GHOST`.
 const PLAYER_FLAGS_GHOST: u32 = 0x10;
 
-/// Our death (`0x729220`): the player's half derives the release timer unless the dead bit is set
-/// (`0x6dc0f0`), then the death anim refreshes the dead or alive signal (`0x7561e0`).
+/// Our death (`0x729220`): the player's half derives the release timer and clears the interact target unless the dead bit is set (`0x6dc0f0`), then the death anim refreshes the dead or alive signal (`0x7561e0`).
 fn on_death(fields: &benilla_protocol::ObjectFields, dead_flag: bool, cx: &mut DeathCx) {
     if !dead_flag {
         cx.globals.update_repop_timer(fields, cx.now);
+        // The interact target's clear (`0x6dc17a` -> `0x512e60`): the window holding it closes.
+        cx.ui.world(crate::ui_session::clear_held_interact_target);
     }
     refresh_active_player(fields.unit_health().unwrap_or(0), cx.ui);
 }
@@ -880,13 +894,15 @@ pub(crate) fn ghost_probe() -> Option<bool> {
 
 /// Map the queued Lua death intents onto the wire, after `UiInput` so a click drains that frame.
 fn drain_death(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, mut live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsCooldowns>,
+    ),
     death_net: Res<DeathNet>,
     mut commands: Commands,
     net: Res<NetCommands>,
     targeting: crate::spell::cast_target::CastTargeting,
     mut ladder: crate::spell::CastLadder,
-    mut ui_errors: ResMut<crate::ui_action::UiErrorKeys>,
     self_auras: Query<&crate::unit_auras::UnitAuras, With<SelfPlayer>>,
     // The soulstone's item leg is an item use, so it carries the bind gate.
     mut gate: crate::ui_bind_confirm::BindGate,
@@ -935,7 +951,7 @@ fn drain_death(
                         match refusal {
                             // The check's custom line; nothing goes out.
                             Some(id) => {
-                                ladder.cast_errors.push_local_arg(
+                                ladder.press.push_local_arg(
                                     spell,
                                     crate::ui_action::cast_fail::CUSTOM_ERROR,
                                     id as u32,
@@ -974,7 +990,6 @@ fn drain_death(
                             &mut script,
                             &mut gate,
                             false,
-                            &mut ui_errors,
                         );
                         Ok(())
                     }
@@ -983,6 +998,8 @@ fn drain_death(
                 }
             }
         };
+        // The press's cast-bar edges, fired as it returns (`0x80b556`).
+        ladder.press.fire(&mut script, &mut live);
     }
 }
 
@@ -1072,6 +1089,18 @@ mod tests {
     /// 360 s unless out of bounds, anything else sets the no-timer flag; a UI load zeroes both,
     /// and the reclaim deadline with them.
     #[test]
+    fn a_deadline_read_in_its_own_frame_answers_its_whole_delay() {
+        // `R + 30 - R` lands a hair under 30 for many clock readings; the answer is still 30 s.
+        for i in 0..2_000 {
+            let now = 0.137 + f64::from(i) * 1.618_033;
+            assert_eq!(left_ms(Some(now + 30.0), now), 30_000, "at {now}");
+            assert_eq!(left_ms(Some(now + 30.0), now) / 1000, 30);
+        }
+        assert_eq!(left_ms(Some(1.0), 2.0), 0, "a past deadline reads 0");
+        assert_eq!(left_ms(None, 2.0), 0);
+    }
+
+    #[test]
     fn the_release_timer_derives_from_the_window_bits_and_the_bounds_flag() {
         // `PLAYER_FIELD_BYTES` and `PLAYER_FLAGS`.
         let player = |bytes: u32, flags: u32| {
@@ -1108,7 +1137,8 @@ mod tests {
         let dead = [(FIELD_UNIT_MAXHEALTH, 100), (FIELD_UNIT_HEALTH, 0)];
         assert_eq!(
             rig.changed(&dead, &[(FIELD_UNIT_HEALTH, 100, 0)]),
-            ["PLAYER_DEAD", "<clear cursor>"]
+            ["<world>", "PLAYER_DEAD", "<clear cursor>"],
+            "the interact target's clear (the bank's leg) ahead of the death anim's signal"
         );
         assert_eq!(
             rig.globals.release_left_ms(10.0),
@@ -1229,6 +1259,7 @@ mod tests {
                 sickness: true,
                 has_timer: true,
                 awaiting_name: false,
+                offerer: None,
             }),
             ..Default::default()
         });

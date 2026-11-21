@@ -81,17 +81,6 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
         "CALENDAR_ACTION_PENDING",
         "benilla-ui/src/script/calendar/engine.rs",
     ),
-    // The close intent empties the window's snapshot; the feed fires on the open edge falling.
-    (
-        "CloseGuildRegistrar",
-        "GUILD_REGISTRAR_CLOSED",
-        "benilla-app/src/ui_petition/feed.rs",
-    ),
-    (
-        "ClosePetStables",
-        "PET_STABLE_CLOSED",
-        "benilla-app/src/ui_stable/mod.rs",
-    ),
     // `pickup_item` puts the item on the cursor and queues the cursor's transition event.
     (
         "PickupItem",

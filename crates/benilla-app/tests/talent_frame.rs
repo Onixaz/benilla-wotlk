@@ -240,7 +240,7 @@ fn tooltip_is_complete_on_the_first_hover() {
 fn tooltip_miss_still_shows_the_rank_line() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut script = open_window(10);
-    // An empty store: the fallback still shows the talent head and records the ask.
+    // No view: the fallback still shows the talent head.
     hover(&mut script, "TalentFrameTalent2");
     script
         .run(
@@ -251,11 +251,6 @@ fn tooltip_miss_still_shows_the_rank_line() {
             "#,
         )
         .expect("miss hover");
-    let asks = script.take_spell_tooltip_asks();
-    assert!(
-        asks.contains(&301),
-        "the miss records the ask, got {asks:?}"
-    );
 }
 
 #[test]

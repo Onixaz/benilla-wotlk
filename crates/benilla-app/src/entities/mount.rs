@@ -32,8 +32,8 @@ pub(super) fn register(app: &mut App) {
 
 /// `SMSG_DISMOUNT` (`0x741a40`): the unit's own mount copy (`[unit+0x9c0]`) goes to 0 now, so
 /// [`reseat_mounts`] tears the mount down this frame, ahead of the descriptor. A unit with no
-/// mount is left alone (`0x741a76`), and a mount carrying passengers stays until they are off
-/// (`0x741a7f`).
+/// mount is left alone (`0x741a76`), and a mount carrying passengers stays, held, the unit reading
+/// unmounted (`0x741a7f`).
 fn on_dismount(
     In(ev): In<benilla_protocol::SessionEvent>,
     index: Res<crate::net::GuidIndex>,
@@ -47,12 +47,14 @@ fn on_dismount(
     let Some(&entity) = index.0.get(&guid) else {
         return;
     };
-    if riders.iter().any(|p| p.vehicle == guid) {
-        return;
-    }
     let Ok(mut store) = stores.get_mut(entity) else {
         return;
     };
+    if riders.iter().any(|p| p.vehicle == guid) {
+        let mount = store.0.unit_mount_copy();
+        store.0.hold_mount(mount);
+        return;
+    }
     let mount = store.0.unit_mount_display_id();
     if store.bypass_change_detection().0.drop_mount() {
         store.set_changed();

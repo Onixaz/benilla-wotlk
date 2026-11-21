@@ -77,16 +77,14 @@ pub(super) fn world_section(ui: &mut egui::Ui, world: &mut WorldReadout) {
         if world.interior.0.is_some() {
             line.push_str("  ·  indoors");
         }
-        // The WMO skybox or the Light.dbc gradient, from the same down-ray as the interior claim.
-        // The weight is the 4-second crossfade: `w 0.00` beside a name is a published skybox not
-        // yet engaged, which is correct standing outside the gate.
-        match world.skybox.0.as_deref() {
-            Some(path) => {
-                let leaf = path.rsplit('\\').next().unwrap_or(path);
-                line.push_str(&format!(
-                    "  ·  skybox {leaf} w {:.2}",
-                    world.skybox_weight.0
-                ));
+        // The drawn skies (zone, WMO, ghost) with their weights, or the Light.dbc gradient alone.
+        // A WMO sky's weight is the 4-second crossfade; a zone sky's the area-light blend.
+        match world.skybox.summary() {
+            Some(skies) => {
+                line.push_str(&format!("  ·  skybox {skies}"));
+                if world.skybox_weight.replaces_celestial() {
+                    line.push_str(" (sky pass off)");
+                }
             }
             None => line.push_str("  ·  sky gradient"),
         }

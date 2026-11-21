@@ -52,8 +52,8 @@ pub struct LootRow {
     /// `GetLootSlotLink`'s answer; `None` for the coin row and while the template is in flight.
     pub link: Option<String>,
     /// The drop's random-suffix roll (`randomPropertyId`, 0 unrolled), resolved by the tooltip
-    /// against [`super::Model::random_properties`]. A loot slot is no item object, so this is its
-    /// only enchant source (`SetLootItem` copies it from the loot record's `+0x14`).
+    /// against [`super::ItemTables::random_properties`]. A loot slot is no item object, so this
+    /// is its only enchant source (`SetLootItem` copies it from the loot record's `+0x14`).
     pub random_property_id: u32,
 }
 

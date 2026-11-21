@@ -19,6 +19,14 @@ pub struct FrameHandle {
     generation: u32,
 }
 
+impl FrameHandle {
+    /// Index and generation in one integer, a host's key for the frame's own state.
+    #[inline]
+    pub fn bits(self) -> u64 {
+        (u64::from(self.generation) << 32) | u64::from(self.index)
+    }
+}
+
 /// A generational handle to a [`Region`] (a texture or fontstring leaf).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RegionHandle {

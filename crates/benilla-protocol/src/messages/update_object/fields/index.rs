@@ -155,6 +155,8 @@ pub const FIELD_PLAYER_BYTES_2: u16 = UNIT_END + 0x6;
 /// Gender, drunkenness, PvP title and arena faction, bytes 0 to 3.
 pub const FIELD_PLAYER_BYTES_3: u16 = UNIT_END + 0x7;
 pub const FIELD_PLAYER_DUEL_TEAM: u16 = UNIT_END + 0x8;
+/// Read at player block `+0x24` by its watch (`0x6e1c90`).
+pub const FIELD_PLAYER_GUILD_TIMESTAMP: u16 = UNIT_END + 0x9;
 /// 25 slots of [`QUEST_LOG_SLOT_FIELDS`]: 12340 reads slot `i` at `(i*5 + 10)*4` into the player
 /// block (`0x5e1561`), the counters as `u16` at `+8` (`0x5e161c`).
 pub const FIELD_PLAYER_QUEST_LOG_1_1: u16 = UNIT_END + 0xa;

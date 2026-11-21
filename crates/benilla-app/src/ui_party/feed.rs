@@ -358,6 +358,7 @@ pub(super) fn feed_party(
         loot_threshold,
         real_party_members: group.real_party_members,
         real_raid_members: group.real_raid_members,
+        real_leader_guid: group.real_leader,
         // The loot master under master loot (method 2), which `GetRaidRosterInfo`'s isML compares.
         loot_master_guid: group.loot.filter(|l| l.method == 2).map_or(0, |l| l.master),
         member_assignments: std::array::from_fn(|i| {

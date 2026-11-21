@@ -46,6 +46,7 @@ macro_rules! drain_option {
 }
 
 /// Drain a set or map field into a `Vec`.
+#[cfg(any(test, feature = "fixtures"))]
 macro_rules! drain_set {
     ($self:expr, $($field:ident).+) => {{
         if $self.model_ref().$($field).+.is_empty() {
@@ -70,6 +71,7 @@ macro_rules! set_field {
 
 mod action;
 mod action_bar_toggles;
+mod action_slots;
 mod addon_message;
 mod arena_team;
 mod auction;
@@ -133,6 +135,7 @@ pub(crate) mod anim;
 mod client;
 mod clock;
 mod cvars;
+mod debug_verbs;
 mod dressup;
 mod duel;
 pub(crate) mod event;
@@ -200,7 +203,10 @@ mod layout_cache;
 mod level_grant;
 mod lfg;
 pub(crate) mod live;
-pub use live::{read_live, LiveLoan, LiveState};
+pub use live::{
+    owner_write, read_live, shared_read, write_live, GlobalStrings, LiveLoan, LiveState,
+    OwnerWrite, SharedRead, ViewRef,
+};
 mod loot;
 mod loot_roll;
 mod lua51;
@@ -258,6 +264,7 @@ pub(crate) mod slider;
 mod social;
 mod sound;
 mod spell_info;
+mod spell_predicates;
 mod spellbook;
 mod stable;
 pub(crate) mod statusbar;
@@ -295,7 +302,7 @@ mod worldstate;
 mod worn_display;
 mod zone_text;
 
-pub use action::{ActionSlot, ActionState, ActionUse};
+pub use action::{ActionIcon, ActionSlot, ActionState, ActionUse};
 pub use addon::AddOnInfo;
 pub use addon_enable::{EnableHash, EnableLists};
 pub use addon_message::{AddonDistribution, AddonSend};
@@ -310,8 +317,7 @@ pub use auction::{
 pub use aura::AuraState;
 pub(crate) use backdrop::set_edge_blend as backdrop_set_edge_blend;
 pub use backdrop::{inset_atlas_bleed, pieces, Backdrop, BackdropPiece, Insets};
-pub use bank::BankState;
-pub use barber::{BarberHost, BarberIntent, BarberStyle};
+pub use barber::{BarberRead, BarberStyle};
 pub use battlefield_positions::{BattlefieldFlagLive, BattlefieldPositionLive};
 pub use battlefield_queue::{
     BattlefieldInstance, BattlefieldJoin, BattlefieldListPush, BattlefieldMgrRequest,
@@ -364,7 +370,7 @@ pub use dressup::DressUpIntent;
 pub use duel::DuelRequest;
 pub use follow::FollowRequest;
 pub use gm_ticket::{GmTicketIntent, SurveySubmission, SurveyTables};
-pub use gossip::{GossipMenu, GossipOptionView, GossipQuestRow};
+pub use gossip::{GossipOptionView, GossipQuestRow, GossipRead};
 pub use guild::{
     GuildEventView, GuildMemberInfo, GuildRankEdit, GuildRankInfo, GuildRequest, GuildState,
     LastOnline, UnitGuild, MAX_RANKS, MIN_RANKS, RANK_RIGHT_BITS,
@@ -379,14 +385,13 @@ pub use macro_options::{EquippedForMacros, EquippedRow, OptionState};
 pub use mirror_timer::{MirrorTimer, MIRROR_TIMER_TOKENS};
 pub use modelframe::ModelPaneFrame;
 pub use petition::{
-    petition_type_name, validate_guild_name, ArenaBannerChoice, PetitionButtonItem,
-    PetitionRecordView, PetitionRequest, PetitionState, PetitionVendorItem, PetitionVendorState,
+    petition_type_name, validate_guild_name, ArenaBannerChoice, PetitionArg, PetitionButtonItem,
+    PetitionOutcome, PetitionRecordView, PetitionRequest, PetitionState, PetitionStep,
+    PetitionVendorItem, PetitionVendorState, GUILD_REGISTRAR_CLOSED_EVENT,
+    PETITION_VENDOR_CLOSED_EVENT,
 };
-pub use tabard::{
-    emblem_mask_path, TabardHost, TabardIntent, EMBLEM_MASK_TOKEN, TABARD_COUNTS,
-    TABARD_CREATION_COST,
-};
-pub use tooltip_quest::QuestTooltipView;
+pub use tabard::{emblem_mask_path, EMBLEM_MASK_TOKEN, TABARD_COUNTS, TABARD_CREATION_COST};
+pub use tooltip_quest::{QuestRecord, QuestTooltipRead, QuestTooltipView};
 pub use unit_cast::UnitCast;
 pub use video_pairs::VIDEO_PAIR_CVARS;
 pub use worldmap_arrow::ARROW_MODEL;
@@ -421,9 +426,10 @@ pub use item_scaling::{ScalingDistributionView, ScalingTables, ScalingValuesView
 pub use item_stats::equip_loc_token;
 pub use item_stats::{
     item_usable, item_use_refusal, EnchantEffectView, EnchantRowView, GemView, ItemLimitView,
-    ItemSetMember, ItemSetView, ItemSpellView, ItemTemplateView, PlayerReqState, RandomSuffixView,
+    ItemRecordWait, ItemSetMember, ItemSetView, ItemSpellView, ItemTables, ItemTemplateView,
+    PlayerFields, PlayerReqState, RandomSuffixView, ReqFields,
 };
-pub use item_text::ItemTextState;
+pub use item_text::ItemTextRead;
 pub use layout_cache::PlacedFrame;
 pub use lfg::{
     EncounterView, LfgBootView, LfgCatalogView, LfgCompletionRewardView, LfgDungeonRewardView,
@@ -444,30 +450,31 @@ pub use mail::{
 };
 pub use measure::TextMeasure;
 pub use merchant::{
-    CostItem, ExtendedCost, ItemStatsHead, MerchantItem, MerchantState, RepairCosts,
+    CostItem, ExtendedCost, ItemStatsHead, MerchantAct, MerchantItem, MerchantList,
+    MerchantOutcome, MerchantState, RepairAt, RepairCosts,
 };
 pub(crate) use minimap::apply_model_attrs as apply_minimap_model_attrs;
 pub use model::{FontProbe, MacroIconSource, TextureProbe, TextureSizeProbe};
 pub(crate) use model::{Model, ModelCell};
-pub use multicast::MultiCastView;
 pub use party::{PartyMemberInfo, PartyRequest, PartyState, RaidMemberInfo, SavedInstanceInfo};
-pub use pet::{PetActionView, PetStats, PossessView};
+pub use pet::{PetActionView, PetBarLive, PetMenuOutcome, PetMenuVerb, PetStats, PossessView};
 pub use pvp::{
     pvp_name_global_keys, HonorState, InspectArenaTeamWords, InspectHonorData, RankTitle,
     PLAYER_FLAGS_PVP_TIMER,
 };
 pub use quest::{
-    QuestAction, QuestItemView, QuestPanel, QuestRewardExtras, QuestRewardSpell, QuestSelect,
-    QuestState,
+    QuestActOutcome, QuestAction, QuestItemRecord, QuestItemView, QuestPanel, QuestRewardExtras,
+    QuestRewardSpell, QuestSelect, QuestState,
 };
 pub use quest_log::{
-    fold_quest_log, QuestLogDetail, QuestLogEntryView, QuestLogObjectiveView, QuestLogState,
+    carry_collapse_filter, fold_quest_log, remap_selection, QuestLogDetail, QuestLogEntryView,
+    QuestLogObjectiveView, QuestLogPlan, QuestLogRow, QuestLogState,
 };
 pub use quest_poi::QuestPoiLines;
 pub use quest_watch::{QuestPoiRegion, QuestPoiView, QuestSpecialItemView};
 pub(crate) use region::{apply_font_parts, implicit_creation_anchor_lua, store_text};
 pub use reputation::{FactionEntry, ReputationSend, ReputationState};
-pub use rune::{RuneEvent, RuneState, MAX_RUNES, RUNE_KINDS};
+pub use rune::{RuneEvent, RuneRegen, RuneState, MAX_RUNES, RUNE_KINDS};
 pub use session::SessionRequest;
 pub use shapeshift::ShapeshiftFormView;
 pub(crate) use simplehtml::{
@@ -479,24 +486,27 @@ pub use social::{FriendInfo, SocialRequest, SocialState, WhoInfo, WhoRecords};
 pub use sound::{MusicRequest, SoundRequest};
 pub use spell_info::{SpellInfo, SpellInfoSource, SpellStatEffect, SpellStatEffects};
 pub use spellbook::{
-    resolve_spell_by_name, PetBookState, SpellBookState, SpellSlotView, SpellTabView,
+    resolve_spell_by_name, PetBookState, PlayerBook, SpellBookState, SpellSlotView, SpellTabView,
+    SpellTargetingLive,
 };
-pub use stable::{StableIntent, StablePetSlot, StableState, NUM_STABLE_SLOTS};
+pub use stable::{
+    StableCallback, StableFamily, StableIntent, StableList, StableRow, NUM_STABLE_SLOTS,
+};
 pub use talent::{
     TalentGroupView, TalentPrereqView, TalentRankView, TalentTabView, TalentUiState, TalentView,
 };
-pub use taxi::{TaxiNodeType, TaxiUiNode, TaxiUiState};
+pub use taxi::{TaxiAct, TaxiNodeType, TaxiOutcome, TaxiUiNode, TaxiUiState};
 pub use threat::{ThreatEntry, ThreatList, ThreatReading, ThreatView};
 pub use title::{chosen_title_name, title_row, PlayerTitles, TitleRow};
 pub use tooltip_spell::SpellTooltipView;
-pub use totem::{TotemSlots, TotemView, MAX_TOTEM_SLOTS};
+pub use totem::{TotemView, MAX_TOTEM_SLOTS};
 pub use trade::{TradeSideState, TradeSlotItem, TradeState, TRADE_SLOTS};
 pub use tradeskill::{
     TradeSkillDifficulty, TradeSkillGroup, TradeSkillReagent, TradeSkillRecipe, TradeSkillState,
 };
 pub use trainer::{
-    TrainerAbilityReq, TrainerGroup, TrainerService, TrainerServiceCategory, TrainerSkillReq,
-    TrainerState, TrainerTooltip,
+    trainer_type_filter, TrainerAbilityReq, TrainerGroup, TrainerService, TrainerServiceCategory,
+    TrainerServiceLive, TrainerSkillReq, TrainerState, TrainerTooltip, TrainerWindow,
 };
 pub use types::{
     BlendMode, EditAction, EditBoxAdvanceRequest, EditBoxTextUi, EditOutcome, EditUnit,
@@ -505,8 +515,9 @@ pub use types::{
 };
 pub(crate) use types::{FontExplicit, MeasuredText, RegionData};
 pub use unit::{
-    grey_band, level_reads_unknown, parse_unit_token, power_token, unit_is_grey, PlayerRecord,
-    SelectionRequest, UnitBase, UnitGuids, UnitState, UnitTokenParse,
+    grey_band, level_reads_unknown, parse_unit_token, power_token, split_name, unit_is_grey, Hop,
+    Hops, PlayerRecord, SelectionRequest, UnitBase, UnitGuids, UnitState, UnitTokenParse,
+    PET_OF_ANYONE,
 };
 pub use vehicle::{
     AimRec, AimUnit, PowerDisplayView, VehicleIndicatorView, VehicleRequest, VehicleSeatView,
@@ -1228,6 +1239,8 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     worldmap::install(lua)?;
     worldstate::install(lua)?;
     net_stats::install(lua)?;
+    debug_verbs::install(lua)?;
+    spell_predicates::install(lua)?;
     Ok(())
 }
 
@@ -1261,6 +1274,7 @@ impl UiScript {
     }
 
     fn host(lua: Lua) -> UiScript {
+        item_stats::clear_fixture_player();
         UiScript {
             lua,
             instructions: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -1368,12 +1382,23 @@ impl UiScript {
 
     /// Push the modifier state behind `IsShiftKeyDown`/`IsControlKeyDown`/`IsAltKeyDown`; the app
     /// calls it before the frame's mouse events, so a click handler reads the state of its click.
+    /// With no side known, a held modifier reads as its left key.
     pub fn set_modifiers(&mut self, shift: bool, ctrl: bool, alt: bool) {
-        if self.model_ref().modifiers == (shift, ctrl, alt) {
+        let keys = u8::from(shift) | u8::from(ctrl) << 2 | u8::from(alt) << 4;
+        self.set_modifier_keys(keys);
+    }
+
+    /// Push the six modifier keys by side, as [`Model::modifier_keys`] lays them out (left shift
+    /// `0x1`, right shift `0x2`, left control `0x4`, right control `0x8`, left alt `0x10`, right
+    /// alt `0x20`); `IsShiftKeyDown` and its siblings read either side.
+    pub fn set_modifier_keys(&mut self, keys: u8) {
+        let sides = (keys & 0x3 != 0, keys & 0xc != 0, keys & 0x30 != 0);
+        if self.model_ref().modifiers == sides && self.model_ref().modifier_keys == keys {
             return;
         }
         let mut model = self.model_mut();
-        model.modifiers = (shift, ctrl, alt);
+        model.modifiers = sides;
+        model.modifier_keys = keys;
     }
 
     /// Push the player's WMO-containment state onto every Minimap: it picks which persisted zoom

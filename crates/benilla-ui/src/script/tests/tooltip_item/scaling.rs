@@ -58,11 +58,24 @@ fn chest() -> ItemTemplateView {
     }
 }
 
-fn setup(level: u32, class_flags: u32, proficiency: u32) -> UiScript {
+fn setup(
+    level: u32,
+    class_flags: u32,
+    proficiency: u32,
+) -> (
+    UiScript,
+    crate::script::live::LiveLoan<crate::script::live::TestView>,
+) {
     let mut s = script();
     s.set_screen_size(800.0, 600.0);
     s.run(STRINGS).unwrap();
-    s.set_scaling_tables(tables());
+    let loan = crate::script::live::lend_test(crate::script::live::TestView {
+        item_tables: Some(ItemTables {
+            scaling: tables(),
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
     s.set_item_template(9100, chest());
     s.set_player_req_state(PlayerReqState {
         level,
@@ -78,7 +91,7 @@ fn setup(level: u32, class_flags: u32, proficiency: u32) -> UiScript {
         "#,
     )
     .unwrap();
-    s
+    (s, loan)
 }
 
 fn texts(s: &mut UiScript) -> Vec<String> {
@@ -89,7 +102,7 @@ fn texts(s: &mut UiScript) -> Vec<String> {
 /// the range line names it, and the rating and spell power lines read the same row.
 #[test]
 fn a_linked_heirloom_reads_the_links_level() {
-    let mut s = setup(40, 0, 1 << 4);
+    let (mut s, _tables) = setup(40, 0, 1 << 4);
     let read = |s: &mut UiScript, level: u32| {
         s.run(&format!(
             r#"TT:SetOwner(Slot, "ANCHOR_RIGHT")
@@ -128,7 +141,7 @@ fn a_linked_heirloom_reads_the_links_level() {
 /// any other source (a chest, a bobber) leaves the player's.
 #[test]
 fn a_looted_heirloom_reads_the_source_units_level() {
-    let mut s = setup(40, 0, 1 << 4);
+    let (mut s, _tables) = setup(40, 0, 1 << 4);
     let read = |s: &mut UiScript, source_unit: bool, source_level: u32| {
         s.set_loot(Some(LootState {
             source_unit,
@@ -174,7 +187,7 @@ fn a_flagged_class_reads_scaling_plate_as_the_armor_it_wears() {
         (0, 1 << 3, "Plate", true),
         (0x20, 1 << 4, "Plate", false),
     ] {
-        let mut s = setup(10, flags, proficiency);
+        let (mut s, _tables) = setup(10, flags, proficiency);
         s.run(r#"TT:SetOwner(Slot, "ANCHOR_RIGHT"); SetItemByIdForTest(TT, 9100)"#)
             .unwrap();
         let right: String = s.eval("return TTTextRight3:GetText()").unwrap();
@@ -191,7 +204,7 @@ fn a_flagged_class_reads_scaling_plate_as_the_armor_it_wears() {
 /// headerless; shift, a closed vendor or a plain item answer nil.
 #[test]
 fn the_compare_offset_three_shows_the_heirloom_at_a_vendor() {
-    let mut s = setup(40, 0, 1 << 4);
+    let (mut s, _tables) = setup(40, 0, 1 << 4);
     s.set_unit(
         "player",
         Some(UnitState {
@@ -233,7 +246,7 @@ fn the_compare_offset_three_shows_the_heirloom_at_a_vendor() {
 /// without one.
 #[test]
 fn get_item_stats_follows_the_links_level() {
-    let s = setup(30, 0, 1 << 4);
+    let (s, _tables) = setup(30, 0, 1 << 4);
     s.run(
         r#"
         local function stam(level)
@@ -306,7 +319,7 @@ fn the_bind_line_follows_the_account_flag_and_skips_class_ten() {
 /// Bonus armor: an armor damage modifier above 0 greens the template's armor line (`0x629089`).
 #[test]
 fn bonus_armor_reads_green() {
-    let mut s = setup(10, 0, 0);
+    let (mut s, _tables) = setup(10, 0, 0);
     for (id, modifier) in [(9200, 0.0), (9201, 1.0)] {
         s.set_item_template(
             id,

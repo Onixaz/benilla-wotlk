@@ -1996,7 +1996,6 @@ mod tests {
         const UNPRODUCED: &[(&str, &str)] = &[
             // ── The stock `UIParent.lua`'s listeners first, then the other files' ──
             ("FRIENDLIST_SHOW", R_1),
-            ("ITEM_UNLOCKED", R_1),
             ("MAIL_LOCK_SEND_ITEMS", R_1),
             ("MODIFIER_STATE_CHANGED", R_1),
             ("PARTY_CONVERTED_TO_RAID", R_1),
@@ -2004,11 +2003,7 @@ mod tests {
             ("PET_SPELL_POWER_UPDATE", R_1),
             ("PLAYER_ENTERING_BATTLEGROUND", R_1),
             ("PLAYER_ROLES_ASSIGNED", R_1),
-            ("RAISED_AS_GHOUL", R_1),
             ("TRADE_POTENTIAL_BIND_ENCHANT", R_1),
-            ("UPDATE_SHAPESHIFT_COOLDOWN", R_1),
-            ("UPDATE_SHAPESHIFT_FORM", R_1),
-            ("UPDATE_SHAPESHIFT_USABLE", R_1),
             ("UPDATE_STEALTH", R_1),
             ("WORLD_STATE_UI_TIMER_UPDATE", R_1),
             ("WOW_MOUSE_NOT_FOUND", R_1),
@@ -2093,7 +2088,6 @@ mod tests {
                  hide path only",
             ),
             ("DISPLAY_SIZE_CHANGED", "the four paperdoll files"),
-            ("PET_UI_CLOSE", "PetPaperDollFrame.lua"),
             (
                 "SHOW_COMPARE_TOOLTIP",
                 "PaperDollFrame.lua — the second `TRADE_REQUEST`: event 377 is \
@@ -2466,10 +2460,7 @@ mod tests {
     }
 
     /// 1.12.1 producers still to remove, each with what replaces it; the list only shrinks.
-    const STILL_1_12_EVENTS: &[(&str, &str)] = &[(
-        "CONFIRM_PET_UNLEARN",
-        "1.12.1's pet trainer prompt: 12340 has no handler for 0x2F1 and no ConfirmPetUnlearn",
-    )];
+    const STILL_1_12_EVENTS: &[(&str, &str)] = &[];
 
     /// Every event benilla fires exists in the 3.3.5a client: an event it can dispatch is a
     /// NUL-terminated string in `WoW.exe`, and a name missing there no stock listener can ever

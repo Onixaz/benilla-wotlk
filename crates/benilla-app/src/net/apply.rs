@@ -3,7 +3,6 @@
 //! streamed entity, and [`enter_world_on_self_create`] runs what its create starts. Nothing is
 //! applied here: every packet's handler lives with its subsystem.
 
-use benilla_protocol::SessionEvent;
 use bevy::prelude::*;
 
 use super::{
@@ -21,8 +20,8 @@ mod world_enter_tests;
 /// handler's commands applied before the next, before anything else in
 /// [`benilla_world::schedule::WorldStage::Net`] runs.
 pub(crate) fn apply_net_updates(world: &mut World) {
-    let events: Vec<SessionEvent> = world.resource::<NetEvents>().0.try_iter().collect();
-    super::handlers::dispatch(world, events);
+    let rx = world.resource::<NetEvents>().0.clone();
+    super::handlers::dispatch_until_entry(world, &rx);
 }
 
 /// Tags our own streamed entity with [`SelfPlayer`] by matching [`Guid`] against [`SelfGuid`].

@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use benilla_ui::script::{
-    BankBagSlots, BankState, ContainerSlot, ContainerState, InvSlotView, ScriptValue, UiScript,
+    BankBagSlots, ContainerSlot, ContainerState, InvSlotView, ScriptValue, UiScript,
 };
 
 /// Errors from the two windows' own code; the production load carries unrelated 3.3.5a gaps.
@@ -71,10 +71,7 @@ fn the_stock_bank_shows_28_slots_and_seven_bags() {
         });
     }
     s.set_bank_bag_slots(bags);
-    s.set_bank(Some(BankState {
-        num_purchased: 7,
-        next_cost: 0,
-    }));
+    let _bank = super::test_ui::lend_bank(7, 0);
     s.fire_event("BANKFRAME_OPENED", vec![]);
     let errors = bank_errors(s.take_errors());
     assert!(errors.is_empty(), "bank errors: {errors:#?}");

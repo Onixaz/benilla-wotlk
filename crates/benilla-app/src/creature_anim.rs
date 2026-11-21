@@ -126,11 +126,6 @@ impl Wielded {
 #[derive(Component)]
 pub(crate) struct Engaged(pub(crate) u64);
 
-/// Our player's attack starts (`true`) and stops (`false`) in packet order, each one
-/// `PLAYER_ENTER_COMBAT` or `PLAYER_LEAVE_COMBAT` for the UI to fire (`0x756800`).
-#[derive(Resource, Default)]
-pub(crate) struct PlayerCombatEdges(pub(crate) Vec<bool>);
-
 /// The local player's auto-repeat is armed: the reference's `[+0xd58] & 0x200`, set only by the
 /// local cast-send; with the ranged sheath drawn a standing unit idles on the Load clip. Cleared
 /// by the auto-repeat cancel, and by `SMSG_CANCEL_AUTO_REPEAT` for the unit it names. A remote shooter plays LoadBow once
@@ -192,8 +187,9 @@ pub(crate) fn cancel_auto_repeat_local(
     auto_repeat: &mut crate::spell::AutoRepeatActive,
     commands: &mut Commands,
     net: &crate::net::NetCommands,
+    sink: &mut dyn crate::ui_action::signals::SignalSink,
 ) {
-    if clear_auto_repeat(entity, auto_repeat, commands) {
+    if clear_auto_repeat(entity, auto_repeat, commands, sink) {
         let _ = net.0.send(crate::net::ClientCommand::CancelAutoRepeat);
     }
 }
@@ -204,12 +200,12 @@ pub(crate) fn clear_auto_repeat(
     entity: Option<Entity>,
     auto_repeat: &mut crate::spell::AutoRepeatActive,
     commands: &mut Commands,
+    sink: &mut dyn crate::ui_action::signals::SignalSink,
 ) -> bool {
-    if auto_repeat.0.is_none() {
-        // The reference's early-out: nothing running, nothing sent.
+    // The reference's early-out: nothing running, nothing sent.
+    if !auto_repeat.clear(sink) {
         return false;
     }
-    auto_repeat.0 = None;
     if let Some(e) = entity {
         commands
             .entity(e)
@@ -226,11 +222,9 @@ pub(crate) fn end_ranged_mode(entity: Entity, commands: &mut Commands) {
         .try_remove::<(AutoRepeatArmed, NockedAmmo, NockLatch)>();
 }
 
-/// The dismount ahead of a mounted swing, loot or use (`0x7412e0`): nothing on foot or on a taxi.
+/// The dismount ahead of a mounted swing, loot or use (`0x51a230`, `0x7412e0`): nothing on foot, held for passengers or on a taxi.
 pub(crate) fn dismount_first(own: &crate::net::ObjectStore, net: &crate::net::NetCommands) {
-    if own.0.unit_mount_display_id() > 0
-        && own.0.unit_flags() & crate::player::UNIT_FLAG_TAXI_FLIGHT == 0
-    {
+    if own.0.unit_is_mounted() && own.0.unit_flags() & crate::player::UNIT_FLAG_TAXI_FLIGHT == 0 {
         debug!("dismounts first (CMSG_CANCEL_MOUNT_AURA)");
         let _ = net.0.send(crate::net::ClientCommand::CancelMountAura);
     }
@@ -273,6 +267,7 @@ pub(crate) fn start_attack_local(
     sheath: &mut MessageWriter<SheathRequest>,
     commands: &mut Commands,
     net: &crate::net::NetCommands,
+    sink: &mut dyn crate::ui_action::signals::SignalSink,
 ) {
     // Starting an attack stands you up, after the attackability check but before the range logic
     // and the already-attacking skip, so a re-issued or out-of-reach attack stands you too.
@@ -288,7 +283,7 @@ pub(crate) fn start_attack_local(
         state: 1,
         ceremony: false,
     });
-    cancel_auto_repeat_local(Some(entity), auto_repeat, commands, net);
+    cancel_auto_repeat_local(Some(entity), auto_repeat, commands, net, sink);
 }
 
 /// The Attack toggle, as in the reference (the Attack pseudo-spell): stop when attacking, else
@@ -303,6 +298,7 @@ pub(crate) fn toggle_attack_local(
     sheath: &mut MessageWriter<SheathRequest>,
     commands: &mut Commands,
     net: &crate::net::NetCommands,
+    sink: &mut dyn crate::ui_action::signals::SignalSink,
 ) {
     if engaged {
         stop_attack_local(engaged, queued_melee, net);
@@ -316,6 +312,7 @@ pub(crate) fn toggle_attack_local(
             sheath,
             commands,
             net,
+            sink,
         );
     }
 }
@@ -325,8 +322,8 @@ pub(crate) fn toggle_attack_local(
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct AttackSeam<'w, 's> {
     pub(crate) net: Res<'w, crate::net::NetCommands>,
-    pub(crate) queued_melee: ResMut<'w, crate::spell::QueuedMeleeSpell>,
-    pub(crate) auto_repeat: ResMut<'w, crate::spell::AutoRepeatActive>,
+    pub(crate) queued_melee: crate::ui_script::OwnedMut<'w, crate::spell::QueuedMeleeSpell>,
+    pub(crate) auto_repeat: crate::ui_script::OwnedMut<'w, crate::spell::AutoRepeatActive>,
     pub(crate) sheath: MessageWriter<'w, SheathRequest>,
     pub(crate) ecs: Commands<'w, 's>,
     /// Our own entity.
@@ -361,29 +358,46 @@ impl AttackSeam<'_, '_> {
         self.stop_on_change.as_deref().is_some_and(|s| s.0)
     }
 
-    /// The auto-repeat cancel (`0x807560`).
-    pub(crate) fn cancel_auto_repeat(&mut self) {
+    /// The auto-repeat cancel (`0x807560`), its stop fired into `sink`.
+    pub(crate) fn cancel_auto_repeat(
+        &mut self,
+        sink: &mut dyn crate::ui_action::signals::SignalSink,
+    ) {
         let me = self.me.single().ok();
-        cancel_auto_repeat_local(me, &mut self.auto_repeat, &mut self.ecs, &self.net);
+        cancel_auto_repeat_local(
+            me,
+            &mut self.auto_repeat.write(),
+            &mut self.ecs,
+            &self.net,
+            sink,
+        );
     }
 
     /// StopAttack.
     pub(crate) fn stop(&mut self, engaged: bool) {
-        stop_attack_local(engaged, &mut self.queued_melee, &self.net);
+        stop_attack_local(engaged, &mut self.queued_melee.write(), &self.net);
     }
 
-    /// StartAttack; a no-op before our own entity streams in.
-    pub(crate) fn start(&mut self, target: u64, engaged: bool, stop_in_flight: bool) {
+    /// StartAttack; a no-op before our own entity streams in. Its auto-repeat cancel fires into
+    /// `sink`.
+    pub(crate) fn start(
+        &mut self,
+        target: u64,
+        engaged: bool,
+        stop_in_flight: bool,
+        sink: &mut dyn crate::ui_action::signals::SignalSink,
+    ) {
         let Ok(e) = self.me.single() else { return };
         start_attack_local(
             e,
             target,
             engaged,
             stop_in_flight,
-            &mut self.auto_repeat,
+            &mut self.auto_repeat.write(),
             &mut self.sheath,
             &mut self.ecs,
             &self.net,
+            sink,
         );
     }
 }
@@ -909,12 +923,6 @@ pub(crate) struct AnimDriver {
     /// The movement flags the base was last armed for: the reference has no per-one-shot latch,
     /// so a root landing with a cast one-shot (Ice Block) still lets the base overwrite bone 0.
     gait_flags: u32,
-    /// Whether the unit was the interact NPC last frame: the interact-NPC setter re-picks its base
-    /// on open and on clear, so a flip cuts a one-shot.
-    interacting: bool,
-    /// Whether the interaction in `interacting` (or the one just cleared) targets a player, whose
-    /// open and clear skip the re-pick (the PLAYER typemask bit).
-    interact_player: bool,
     /// The clear's re-pick runs while the reference's interact-NPC global still names the NPC, so
     /// it picks Stand; the global is zeroed after. The state returns at the next re-pick: the Stand
     /// window's end, a movement-flag edge, or leaving Gait.
@@ -1079,8 +1087,6 @@ impl Default for AnimDriver {
             mode: Mode::Gait,
             gait: None,
             gait_flags: 0,
-            interacting: false,
-            interact_player: false,
             interact_hold: false,
             base_lock: driver::play::BaseAnimLock::default(),
             sheath_cur: None,
@@ -1199,7 +1205,6 @@ impl Plugin for CreatureAnimPlugin {
             .add_message::<DefenseAnim>()
             .add_message::<SwingSlowdown>()
             .init_resource::<PendingImpacts>()
-            .init_resource::<PlayerCombatEdges>()
             .init_resource::<PlaySeq>()
             .init_resource::<gesture::GestureQueue>()
             .add_message::<EmoteAnim>()
@@ -1381,6 +1386,7 @@ mod attack_stand_tests {
                     &mut sheath,
                     &mut commands,
                     &net,
+                    &mut Vec::new(),
                 );
             },
         );

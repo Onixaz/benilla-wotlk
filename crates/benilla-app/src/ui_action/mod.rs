@@ -14,7 +14,9 @@ use crate::ui_script::UiDrain;
 use crate::ui_unit::UnitFeed;
 use benilla_assets::{AssetSet, LockRecover, WorldAssets};
 
+pub(crate) mod bonus;
 pub(crate) mod cast_fail;
+mod cast_refusal;
 mod drain;
 mod equipment_sets;
 // A `UseAction` press, applied in call order by `crate::script_calls`.
@@ -27,20 +29,16 @@ mod feed;
 #[cfg(test)]
 mod feed_tests;
 mod net;
-mod ranks;
-mod state;
-// The press-frame tests run the state feed as a system of their own.
 #[cfg(test)]
-pub(crate) use state::feed_action_state;
+mod queue_census_tests;
+mod ranks;
+pub(crate) mod signals;
+pub(crate) mod slots;
 pub(crate) mod toggle;
+pub(crate) mod usable_cache;
+#[cfg(test)]
+mod verb_tests;
 mod weapon_icon;
-
-/// Every feed that pushes cooldown triples runs `.before` this set: [`state::feed_action_state`]
-/// fires the cooldown events synchronously, so a triple pushed later goes unread until the next
-/// cooldown change. The pet list's flush, `ui_pet::bar::fire_pet_cooldown_events`, runs `.after`
-/// it on the same rule.
-#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct CooldownEvents;
 
 /// The slot-identity feed ([`feed::feed_actions`]), which fires `ACTIONBAR_SLOT_CHANGED`. The
 /// spellbook feed runs `.before` it: the registrar `0x542030` re-sorts the book and fires
@@ -53,10 +51,13 @@ pub(crate) struct SlotIdentityFeed;
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct ActionRanks;
 
+#[cfg(test)]
+pub(crate) use cast_refusal::take_refusals;
+pub(crate) use cast_refusal::{show_refusal, CastFailShow, CastRefusals, RefusalsSeen, WaitRecord};
 pub(crate) use errors::{
-    attack_actor_blocked, attack_actor_refusal, keyed_line, keyed_line_s, reagent_totem_refusal,
-    show_in_turn, show_messages, ui_error_text, CastErrors, CastFail, Caster, FillArg, MessageSink,
-    MountErrors, PetTameFailures, Shown, ToolCheck, UiError, UiErrorKeys, UiErrorTexts,
+    attack_actor_blocked, attack_actor_refusal, keyed_line, reagent_totem_refusal, show_in_turn,
+    show_line_in_world, show_messages, ui_error_text, CastFail, Caster, FillArg, MessageSink,
+    Shown, ToolCheck, UiError, UiErrorKeys, UiErrorTexts,
 };
 pub(crate) use weapon_icon::{melee_auto_attack_icon, ranged_weapon_icon};
 
@@ -71,24 +72,24 @@ pub(crate) const ACTION_KIND_PET: u8 = 0x10;
 /// The first temporary bar slot (wire 120, `0x5ab800`), twelve long.
 pub(crate) const TEMP_BAR_FIRST_SLOT: u8 = 120;
 
-/// The temporary bar's owners (`CGActionBar::m_tempPageActiveFlags`, `0x5a7c20`): bit `0x1` the
-/// pet's bar (`0x5d4ad0`). Any set pages the bonus bar to 5 (`0x5a83c0`) and pins
-/// `GetActionBarPage` to 1 (`0x5a7fd0`).
+/// The bar's pages, which the verbs read at the call ([`bonus`]).
 #[derive(Resource, Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct TempActionBar {
+    /// The temporary bar's owners `[0xc1e5a0]` (`0x5a7c20`): bit `0x1` the pet's bar
+    /// (`0x5d4ad0`), `0x2` a form's preset bar (`0x5abac0`), `0x4` the override bar (`0x5abb40`).
+    /// Any set pages the bonus bar to 5 (`0x5a83c0`) and pins `GetActionBarPage` to 1
+    /// (`0x5a7fd0`).
     pub(crate) flags: u32,
+    /// The bonus offset `[0xc1e59c]` the bonus update stores (`0x5a83c0`), `GetBonusBarOffset`.
+    pub(crate) bonus_offset: u8,
 }
 
 /// The pet bar's temporary-bar flag.
 pub(crate) const TEMP_BAR_PET: u32 = 0x1;
 
-/// The action slots (wire 0..143) and the known spells. The bar is client-authoritative:
-/// [`drain::drain_action_sets`] writes it directly, and vmangos stores a slot without a reply
-/// (`MasterPlayer::addActionButton`).
+/// The known spells and the saved equipment sets, which the packet handlers write.
 #[derive(Resource, Default)]
 pub(crate) struct PlayerActions {
-    /// Wire slot (0-based) to its packed action; the Lua action id is slot + 1.
-    pub buttons: HashMap<u8, ActionButton>,
     /// The spell book (`SMSG_INITIAL_SPELLS`), ordered on purpose: the reference's first-hit scans
     /// pick between equal spells, 6478 and 22810 "Opening", by array order, which is ascending id:
     /// the server sends the book from a `std::map`.
@@ -97,9 +98,18 @@ pub(crate) struct PlayerActions {
     pub equipment_sets: Vec<benilla_protocol::messages::EquipmentSet>,
     /// A list has arrived this session, empty or not: a new VM starts loaded from it.
     pub equipment_sets_listed: bool,
-    /// Set by every book or bar change, cleared once the feed re-resolves slot identity, which a
-    /// landed item template ([`crate::items::Items::template_epoch`]) also triggers. Item counts
-    /// refresh every frame regardless.
+    /// Set by every book change, cleared by the rank pass ([`ranks`]) that it wakes.
+    pub dirty: bool,
+}
+
+/// The action slots (wire 0..143), lent to every VM holder: the verbs read them at the call and
+/// the bar verbs write them in it ([`ActionSlots::write_slot`]). The bar is client-authoritative:
+/// the server stores a slot without a reply.
+#[derive(Resource, Default)]
+pub(crate) struct ActionSlots {
+    /// Wire slot (0-based) to its packed action; the Lua action id is slot + 1.
+    pub buttons: HashMap<u8, ActionButton>,
+    /// Set by every bar change, cleared by the rank pass ([`ranks`]) that it wakes.
     pub dirty: bool,
     /// The last `SMSG_ACTION_BUTTONS` table (`0xad9f6c`), which the player's init puts on the bar.
     pub table: Option<Vec<ActionButton>>,
@@ -108,7 +118,7 @@ pub(crate) struct PlayerActions {
     pub locked: bool,
 }
 
-impl PlayerActions {
+impl ActionSlots {
     /// A local write that the server never hears of, as the temporary bar's (`0x5ab800`); returns
     /// whether the slot moved.
     pub(crate) fn set_local(&mut self, slot: u8, packed: u32) -> bool {
@@ -132,14 +142,19 @@ impl PlayerActions {
         true
     }
 
-    /// One button write, the tail every `PlaceAction` shares (`0x5aae80`, then
-    /// `CMSG_SET_ACTION_BUTTON`): the store, `dirty` for the feed (which fires
-    /// `ACTIONBAR_SLOT_CHANGED`), and the send. `packed == 0` clears; vmangos and AzerothCore
-    /// store the slot without a reply.
-    pub(crate) fn write_slot(&mut self, slot: u8, packed: u32, net: &crate::net::NetCommands) {
+    /// One button write (`0x5aae80`, `0x5aaa90` for 0, then `CMSG_SET_ACTION_BUTTON`): the store,
+    /// `dirty` for the rank pass, and the send; whether it was written, as a locked bar refuses
+    /// (`0x5aaec1`, `0x5aaac2`). The caller signals `ACTIONBAR_SLOT_CHANGED`. AzerothCore stores
+    /// the slot without a reply.
+    pub(crate) fn write_slot(
+        &mut self,
+        slot: u8,
+        packed: u32,
+        net: &crate::net::NetCommands,
+    ) -> bool {
         if self.locked {
             debug!("ui_action: bar locked — slot {slot} write refused");
-            return;
+            return false;
         }
         if packed == 0 {
             self.buttons.remove(&slot);
@@ -158,6 +173,7 @@ impl PlayerActions {
             button: slot,
             packed,
         });
+        true
     }
 }
 
@@ -447,11 +463,10 @@ impl Plugin for UiActionPlugin {
         net::register(app);
         equipment_sets::register(app);
         app.init_resource::<PlayerActions>()
+            .init_resource::<ActionSlots>()
+            .init_resource::<usable_cache::UsableCaches>()
             .init_resource::<TempActionBar>()
             .init_resource::<LearnedAbilities>()
-            .init_resource::<CastErrors>()
-            .init_resource::<MountErrors>()
-            .init_resource::<PetTameFailures>()
             .init_resource::<UiErrorKeys>()
             .init_resource::<UiErrorTexts>()
             .init_resource::<GoOpenerCasts>()
@@ -460,23 +475,14 @@ impl Plugin for UiActionPlugin {
             .add_systems(
                 Update,
                 (
-                    // The feeds ride with the unit feed, before the VM ticks: the rank pass before
-                    // the identity feed that consumes its `dirty`, the state feed after it, so a
-                    // slot's rank fix and first state land the same frame. The drains follow the
+                    // The rank pass writes the store every lent view reads, so it runs ahead of
+                    // every VM holder, after the packets that dirty it. The drains follow the
                     // input pass, in any order: a gesture fills only one of their queues.
                     ranks::normalize_action_ranks
-                        .in_set(UnitFeed)
                         .in_set(ActionRanks)
-                        .before(feed::feed_actions),
+                        .after(benilla_world::schedule::WorldStage::Net)
+                        .before(crate::ui_script::UiPress),
                     feed::feed_actions.in_set(UnitFeed).in_set(SlotIdentityFeed),
-                    state::feed_action_state
-                        .in_set(UnitFeed)
-                        .in_set(CooldownEvents)
-                        .after(feed::feed_actions),
-                    state::fire_combat_edges
-                        .in_set(UnitFeed)
-                        .after(state::feed_action_state),
-                    drain::drain_action_sets.in_set(UiDrain),
                     equipment_sets::drain_equipment_sets.in_set(UiDrain),
                     // The target chain queues the openers earlier in the frame.
                     drain::drain_go_openers.in_set(UiDrain),

@@ -140,6 +140,9 @@ pub struct UnitCombatStats {
     pub combat_rating_bonus: [f32; 25],
     /// Mana regen per second out of casting and while casting, with no mana `None`.
     pub mana_regen: Option<[f32; 2]>,
+    /// Regen per second of the unit's own power type, out of casting and while casting: the
+    /// type's base (`0x4f5300`) plus its flat modifier field (`0x4f5390`).
+    pub power_regen: [f32; 2],
     /// The class's `ChrClasses` damage bonus stat, `None` with no class row.
     pub damage_bonus_stat: Option<u32>,
     /// Whether the form's `SpellShapeshiftForm` flags carry `0x20`: agility adds attack power.
@@ -210,6 +213,7 @@ impl Default for UnitCombatStats {
             combat_ratings: [0; 25],
             combat_rating_bonus: [0.0; 25],
             mana_regen: None,
+            power_regen: [0.0; 2],
             damage_bonus_stat: None,
             form_agility_attack_power: false,
             crit_from_agility: 0.0,
@@ -593,7 +597,7 @@ impl Model {
             }
             if KEYRING_INV_SLOTS.contains(&slot) {
                 let n = (slot - KEYRING_INV_SLOTS.start() + 1) as u32;
-                let keyring = self.containers.get(&KEYRING_CONTAINER)?;
+                let keyring = super::container::live_bag(self, KEYRING_CONTAINER)?;
                 return keyring.slots.get(&n).map(InvSlotView::from_container_slot);
             }
             return self.inventory_slots.get(slot)?.clone();
@@ -609,24 +613,24 @@ impl Model {
     /// The player's repair cost at live id `slot`, the vault and keyring bands by their container
     /// slots.
     pub(super) fn inv_repair_cost(&self, slot: usize) -> u32 {
-        let costs = &self.repair_costs;
-        let cost = if BANK_INV_SLOTS.contains(&slot) {
+        let at = if BANK_INV_SLOTS.contains(&slot) {
             let n = (slot - BANK_INV_SLOTS.start() + 1) as u32;
-            costs.bags.get(&(BANK_CONTAINER, n))
+            super::RepairAt::Bag(BANK_CONTAINER, n)
         } else if KEYRING_INV_SLOTS.contains(&slot) {
             let n = (slot - KEYRING_INV_SLOTS.start() + 1) as u32;
-            costs.bags.get(&(KEYRING_CONTAINER, n))
+            super::RepairAt::Bag(KEYRING_CONTAINER, n)
         } else {
-            u32::try_from(slot)
-                .ok()
-                .and_then(|s| costs.equipped.get(&s))
+            let Ok(slot) = u32::try_from(slot) else {
+                return 0;
+            };
+            super::RepairAt::Worn(slot)
         };
-        cost.copied().unwrap_or(0)
+        super::merchant::repair_cost(self, at)
     }
 
     fn bank_inv_slot(&self, slot: usize) -> Option<InvSlotView> {
         if BANK_INV_SLOTS.contains(&slot) {
-            let vault = self.containers.get(&BANK_CONTAINER)?;
+            let vault = super::container::live_bag(self, BANK_CONTAINER)?;
             let n = (slot - BANK_INV_SLOTS.start() + 1) as u32;
             return vault.slots.get(&n).map(InvSlotView::from_container_slot);
         }
@@ -1076,7 +1080,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let is_weapon = model.inventory_slots[17]
                 .as_ref()
                 .filter(|v| v.item_id != 0)
-                .and_then(|v| model.item_templates.get(&v.item_id))
+                .and_then(|v| super::item_stats::item_record(&model, v.item_id))
                 .is_some_and(|t| t.class == 2);
             Ok(is_weapon.then_some(1i64))
         })?,

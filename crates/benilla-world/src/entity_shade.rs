@@ -17,7 +17,9 @@ use bevy::mesh::MeshTag;
 use bevy::prelude::*;
 
 use crate::interior::{classify_entity_interior, InteriorLit};
-use crate::mesh_tag::{exterior_payload, shade_of, with_shade, InteriorProbePayload};
+use crate::mesh_tag::{
+    exterior_payload, shade_of, unit_light_of, with_shade, with_unit_light, InteriorProbePayload,
+};
 use crate::terrain_stream::{doodad_ground_shade, ShadeResolve, TerrainStreamer};
 
 /// The rate of `t` (0 = intensity 2.5, 1 = 0.5): the reference's linear step, 3.3333 intensity
@@ -69,9 +71,9 @@ pub struct GroundShade {
     pub(crate) ambient_target: Vec3,
     /// The last target `WOW_INTERIOR_LOG` printed; starts off-scale so the first one prints.
     logged_target: f32,
-    /// The byte the walk last pushed to the parts; while it matches and no other lane rewrote a
-    /// tag, the walk is skipped. `None` when fresh or hidden, so a wake re-asserts.
-    asserted: Option<u8>,
+    /// The byte and unit bit the walk last pushed to the parts; while they match and no other lane
+    /// rewrote a tag, the walk is skipped. `None` when fresh or hidden, so a wake re-asserts.
+    asserted: Option<(u8, bool)>,
 }
 
 impl Default for GroundShade {
@@ -246,6 +248,8 @@ pub(crate) fn update_ground_shade(
         Option<&crate::world_unit::ViewerUnit>,
         // The election's verdict; `Option`, since a fixed doodad's shade root has no `Visibility`.
         Option<&Visibility>,
+        // A unit body's parts carry the unit bit, its ambient taking the character ambient.
+        Option<&crate::world_unit::WorldUnit>,
     )>,
     children: Query<&Children>,
     // A fading part is walked (shade and fade own disjoint fields); a probe-slot one is not.
@@ -271,8 +275,8 @@ pub(crate) fn update_ground_shade(
         Without<crate::model_render::park::ParkedMesh>,
     >,
     mut unparked_cards: RemovedComponents<crate::model_render::park::ParkedMesh>,
-    // Each shaded root's byte, kept across frames (entity ids are generational).
-    mut root_shade: Local<bevy::ecs::entity::EntityHashMap<u8>>,
+    // Each shaded root's byte and unit bit, kept across frames (entity ids are generational).
+    mut root_shade: Local<bevy::ecs::entity::EntityHashMap<(u8, bool)>>,
     // The card pass's up-walk: a card can follow a deep joint, which is not a shade root.
     child_of: Query<&ChildOf>,
     dirty_roots: Res<ShadeDirtyRoots>,
@@ -287,7 +291,8 @@ pub(crate) fn update_ground_shade(
     let ambient_step = AMBIENT_RAMP_PER_SEC * time.delta_secs();
     // A root's byte moved (or first landed) this frame: every card re-resolves.
     let mut bytes_moved = false;
-    for (root, gt, mut shade, is_self, root_vis) in &mut roots {
+    for (root, gt, mut shade, is_self, root_vis, unit) in &mut roots {
+        let is_unit = unit.is_some_and(|u| u.character_light);
         if shade.maps_lit != maps_lit {
             shade.maps_lit = maps_lit;
         }
@@ -303,7 +308,7 @@ pub(crate) fn update_ground_shade(
                 && if hidden {
                     s.asserted.is_none()
                 } else {
-                    s.asserted == Some(shade_byte(s.t)) && !dirty_roots.0.contains(&root)
+                    s.asserted == Some((shade_byte(s.t), is_unit)) && !dirty_roots.0.contains(&root)
                 }
                 && !(is_self.is_some() && interior_log_enabled())
             {
@@ -372,10 +377,11 @@ pub(crate) fn update_ground_shade(
             ramp_toward(a.z, at.z, ambient_step),
         );
         let byte = shade_byte(shade.t);
+        let stamp = (byte, is_unit);
         // Before the hidden skip: a hidden body's card must still find its root here.
-        if root_shade.get(&root) != Some(&byte) {
+        if root_shade.get(&root) != Some(&stamp) {
             bytes_moved = true;
-            root_shade.insert(root, byte);
+            root_shade.insert(root, stamp);
         }
         // A hidden root skips the walk; its ramps kept stepping, and the cleared `asserted` makes
         // the wake frame's walk unconditional.
@@ -384,10 +390,10 @@ pub(crate) fn update_ground_shade(
             continue;
         }
         // Settled: every part already carries this byte and no other lane rewrote a tag since.
-        if shade.asserted == Some(byte) && !dirty_roots.0.contains(&root) {
+        if shade.asserted == Some(stamp) && !dirty_roots.0.contains(&root) {
             continue;
         }
-        shade.asserted = Some(byte);
+        shade.asserted = Some(stamp);
         // Every part below the root, held items on deeper joints included, written on a change.
         for part in children.iter_descendants(root) {
             let Ok((mut tag, lit, own_probe, own_def)) = parts.get_mut(part) else {
@@ -404,6 +410,9 @@ pub(crate) fn update_ground_shade(
             };
             if shade_of(tag.0, ext) != byte {
                 tag.0 = with_shade(tag.0, byte, ext);
+            }
+            if unit_light_of(tag.0, ext) != is_unit {
+                tag.0 = with_unit_light(tag.0, is_unit, ext);
             }
         }
     }
@@ -423,11 +432,14 @@ pub(crate) fn update_ground_shade(
         let Some(ext) = exterior_payload(lit.is_some_and(InteriorLit::is_bake), own_probe) else {
             continue;
         };
-        let Some(byte) = card_root_shade(&root_shade, &child_of, card.follows()) else {
+        let Some((byte, is_unit)) = card_root_shade(&root_shade, &child_of, card.follows()) else {
             continue; // a fixed terrain doodad's card: its shade rides the material selector
         };
         if shade_of(tag.0, ext) != byte {
             tag.0 = with_shade(tag.0, byte, ext);
+        }
+        if unit_light_of(tag.0, ext) != is_unit {
+            tag.0 = with_unit_light(tag.0, is_unit, ext);
         }
     }
 }
@@ -437,16 +449,16 @@ fn shade_byte(t: f32) -> u8 {
     (t * 255.0).round().clamp(0.0, 255.0) as u8
 }
 
-/// The byte of the nearest shaded root at or above `follows`, the owner itself first.
+/// The byte and unit bit of the nearest shaded root at or above `follows`, the owner itself first.
 fn card_root_shade(
-    root_shade: &bevy::ecs::entity::EntityHashMap<u8>,
+    root_shade: &bevy::ecs::entity::EntityHashMap<(u8, bool)>,
     child_of: &Query<&ChildOf>,
     follows: Option<Entity>,
-) -> Option<u8> {
+) -> Option<(u8, bool)> {
     let mut node = follows?;
     loop {
-        if let Some(&byte) = root_shade.get(&node) {
-            return Some(byte);
+        if let Some(&stamp) = root_shade.get(&node) {
+            return Some(stamp);
         }
         node = child_of.get(node).ok()?.parent();
     }
@@ -475,8 +487,63 @@ mod tests {
 
     /// Run the card resolve against a world's live `ChildOf` topology.
     fn resolve(world: &mut World, map: &EntityHashMap<u8>, follows: Option<Entity>) -> Option<u8> {
+        let stamps: EntityHashMap<(u8, bool)> =
+            map.iter().map(|(&e, &b)| (e, (b, false))).collect();
         let mut state: SystemState<Query<&ChildOf>> = SystemState::new(world);
-        card_root_shade(map, &state.get(world), follows)
+        card_root_shade(&stamps, &state.get(world), follows).map(|(byte, _)| byte)
+    }
+
+    /// A unit body's parts and cards carry the unit bit; a GameObject's do not, and a unit that
+    /// stops being one has it cleared.
+    #[test]
+    fn a_unit_bodys_parts_and_cards_carry_the_unit_bit() {
+        let mut world = World::new();
+        world.init_resource::<Time>();
+        world.init_resource::<TerrainStreamer>();
+        world.init_resource::<Assets<AdtTile>>();
+        world.init_resource::<ShadeDirtyRoots>();
+        let body = |character_light| crate::world_unit::WorldUnit {
+            wades: character_light,
+            character_light,
+            scale: 1.0,
+            height: 2.0,
+            bound: None,
+        };
+        let shaded = || GroundShade {
+            sampled: true,
+            ..GroundShade::default()
+        };
+        let unit = world
+            .spawn((GlobalTransform::default(), shaded(), body(true)))
+            .id();
+        let chest = world
+            .spawn((GlobalTransform::default(), shaded(), body(false)))
+            .id();
+        let unit_part = world.spawn((MeshTag(0), ChildOf(unit))).id();
+        let chest_part = world.spawn((MeshTag(0), ChildOf(chest))).id();
+        let card = world
+            .spawn((
+                crate::billboard::BillboardCard::frame_following(
+                    benilla_formats::BillboardKind::Spherical,
+                    Vec3::ZERO,
+                    unit,
+                ),
+                MeshTag(0),
+            ))
+            .id();
+        let mut sys = IntoSystem::into_system(update_ground_shade);
+        sys.initialize(&mut world);
+        sys.run((), &mut world).unwrap();
+        let ext = exterior_payload(false, false).unwrap();
+        let bit = |w: &World, e| unit_light_of(w.get::<MeshTag>(e).unwrap().0, ext);
+        assert!(bit(&world, unit_part) && bit(&world, card));
+        assert!(
+            !bit(&world, chest_part),
+            "a GameObject takes the scene ambient"
+        );
+        world.entity_mut(unit).insert(body(false));
+        sys.run((), &mut world).unwrap();
+        assert!(!bit(&world, unit_part) && !bit(&world, card));
     }
 
     #[test]

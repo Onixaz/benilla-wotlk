@@ -357,7 +357,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let party = &model.party;
                 let grouped = !party.members.is_empty() || !party.raid.is_empty();
                 if grouped && party.leader_guid != party.own_guid {
-                    model.ui_errors.push("ERR_NOT_LEADER");
+                    drop(model);
+                    crate::script::ui_errors::show_now(lua, "ERR_NOT_LEADER");
                     return Ok(());
                 }
                 model.party_requests.push(if raid {
@@ -553,6 +554,6 @@ mod tests {
         });
         s.run("SetDungeonDifficulty(1)").unwrap();
         assert!(s.take_party_requests().is_empty());
-        assert_eq!(s.take_ui_errors(), ["ERR_NOT_LEADER"]);
+        assert_eq!(s.take_shown(), ["ERR_NOT_LEADER"]);
     }
 }

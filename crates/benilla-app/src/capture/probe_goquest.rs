@@ -3,14 +3,14 @@
 //! beside creatures. It then refuses each GameObject's entry: its handler resolves the guid with
 //! typemask 8, a GameObject's `0x21` misses bit 3, and the entry dies, so without the refusal a
 //! wanted poster would wear a `!`. The probe tells "asked and refused" from "never asked" through
-//! [`QuestGiver::refused_for`], keyed by guid since one drain answers several quest objects.
+//! [`QuestStatuses::refused_for`], keyed by guid since one drain answers several quest objects.
 //!
 //! Four readings:
 //!
 //! 1. LOW: at level [`LOW_LEVEL`], below the quest's `MinLevel`, the server answers 1
 //!    (`UNAVAILABLE`) and we refuse it.
 //! 2. HIGH: past `MinLevel` the answer changes to 5 (`AVAILABLE`), so it is a live query.
-//! 3. NO STATUS: `QuestGiver::status()` for the poster stays `None` every frame; the marker layer
+//! 3. NO STATUS: `QuestStatuses::status()` for the poster stays `None` every frame; the marker layer
 //!    and the minimap dot both draw from it.
 //! 4. UNIT CONTROL: a creature questgiver in the same scene still gets and keeps its status.
 //!
@@ -33,7 +33,7 @@ use benilla_protocol::EntityKind;
 use super::probes::ProbeClock;
 use crate::net::{ChatKind, ClientCommand, Guid, NetCommands, NetEntity, ObjectStore, SelfPlayer};
 use crate::player::Player;
-use crate::ui_quest::QuestGiver;
+use crate::ui_quest::QuestStatuses;
 
 /// The probe's default object: the `Wanted Poster` outside the Goldshire inn (`gameobject` 26843,
 /// template 68, quest 176). `[x, y, z, map]`.
@@ -176,7 +176,7 @@ fn goquest_probe(
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
     player: Res<Player>,
     objects: Query<(&Guid, &NetEntity, &ObjectStore, &Transform), Without<SelfPlayer>>,
-    mut quest: ResMut<QuestGiver>,
+    mut quest: ResMut<QuestStatuses>,
     net: Res<NetCommands>,
     mut exit: MessageWriter<AppExit>,
 ) {

@@ -266,6 +266,21 @@ impl UiScript {
         super::event::fire_visibility_changes(lua, effects.visibility);
     }
 
+    /// The unit's plate back to the pool, hidden, for the next sync to bind afresh (`0x725840`): its slot freed (`0x725865`), the plate hidden (`0x725870`).
+    pub fn release_nameplate(&mut self, key: u64) {
+        let lua = self.lua();
+        let effects = {
+            let mut model = crate::script::model_mut_of(lua);
+            let Some(i) = model.nameplates.assigned.remove(&key) else {
+                return;
+            };
+            let mut effects = SyncEffects::default();
+            Plate::retire(&mut model, i, &mut effects);
+            effects
+        };
+        super::event::fire_visibility_changes(lua, effects.visibility);
+    }
+
     /// How many plate widgets the pool holds.
     pub fn nameplate_pool_len(&self) -> usize {
         let lua = self.lua();

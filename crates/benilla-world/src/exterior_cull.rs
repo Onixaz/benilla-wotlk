@@ -533,6 +533,7 @@ mod tests {
                     GlobalTransform::from_translation(*at),
                     crate::world_unit::WorldUnit {
                         wades: true,
+                        character_light: true,
                         scale: 1.0,
                         height: 2.0,
                         bound: Some(*bound),
@@ -708,6 +709,7 @@ mod tests {
                 GlobalTransform::from_translation(Vec3::new(0.0, 0.0, -50.0)),
                 crate::world_unit::WorldUnit {
                     wades: true,
+                    character_light: true,
                     scale: 1.0,
                     height: 2.0,
                     bound: Some(creature_box()),

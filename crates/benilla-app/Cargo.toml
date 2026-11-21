@@ -12,7 +12,7 @@ workspace = true
 # `dev` compiles in the instruments; the player build (`scripts/check.sh`) has no defaults.
 default = ["dev"]
 # The asset, format and world crates default `dev` on, so they come in without it, forwarded here.
-dev = ["benilla-assets/dev", "benilla-formats/dev", "benilla-world/dev"]
+dev = ["benilla-assets/dev", "benilla-formats/dev", "benilla-world/dev", "benilla-ui/fixtures"]
 tracy = ["bevy/trace_tracy"]
 # Writes every system's per-run span to `trace-<ts>.json` in the cwd.
 trace_chrome = ["bevy/trace_chrome"]
@@ -119,6 +119,8 @@ windows-sys = { version = "0.59", features = [
 
 # The login cycle's fake realmd runs the server half of SRP6 (`net::io::cycle_tests`).
 [dev-dependencies]
+# The tests' stand-in player, in the player build's tests too.
+benilla-ui = { path = "../benilla-ui", features = ["fixtures"] }
 benilla-srp = { path = "../benilla-srp" }
 num-bigint = "0.4.6"
 sha1.workspace = true

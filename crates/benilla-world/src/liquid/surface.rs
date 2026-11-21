@@ -1,5 +1,5 @@
-//! The animated liquid surfaces: one shared material per (kind, [`LiquidPath`], scroll) over a
-//! `texture_2d_array` of the kind's frames, the two spawn paths (an ADT chunk's MCLQ, a WMO
+//! The animated liquid surfaces: one shared material per (frame sheet, [`LiquidPath`], scroll) over
+//! a `texture_2d_array` of the sheet's frames, the sheet the surface's `LiquidType` row names, the two spawn paths (an ADT chunk's MCLQ, a WMO
 //! group's MLIQ) and the flat mesh. The 24 fps frame flip and the lava scroll run in the shader
 //! off the wall clock, so no CPU mutates a material; a deterministic run bakes the clock off
 //! (frame 0, scroll 0). Day and night follow server time.
@@ -19,13 +19,68 @@ use avian3d::prelude::{Collider, RigidBody};
 use benilla_assets::coords::wow_to_bevy;
 use benilla_assets::materials::{LiquidExt, LiquidMaterial};
 use benilla_assets::LockRecover;
-use benilla_assets::{liquid_frame_array, RenderConfig, WorldAssets};
-use benilla_formats::{read_texture_mip_chain, BlpMipChain, LiquidKind, LiquidMesh};
+use benilla_assets::{liquid_frame_array, LiquidTables, RenderConfig, WorldAssets};
+use benilla_formats::{
+    read_texture_mip_chain, BlpMipChain, LiquidKind, LiquidMesh, LiquidTypeRow, LiquidTypes,
+};
 
 /// The shared liquid materials by [`LiquidKey`]; absent without client data.
 #[derive(Resource, Default)]
 pub(crate) struct LiquidAssets {
     materials: HashMap<LiquidKey, LiquidEntry>,
+    /// Each `LiquidType` id's own sheet, with the kind it was built for: the reference binds the
+    /// row's `Texture[0]` (`0x8a28f0`), so Outland's magma (15) is green, not the base lava.
+    type_sheets: HashMap<u32, (LiquidKind, usize)>,
+    /// Each kind's base sheet ([`FRAME_SETS`]), for a type with no row or no sheet of its own.
+    kind_sheets: HashMap<LiquidKind, usize>,
+    /// The `LiquidType` rows, which decide how a liquid draws ([`TypeSettings`]).
+    types: LiquidTypes,
+}
+
+/// What a liquid's `LiquidType` row decides about how it draws: a WMO pool's environment
+/// (`0x793d20`), its depth texture and the sheet's texture matrix, terrain water's too (`0x8a5590`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct TypeSettings {
+    /// `Flags & 0x200`: the exterior environment in any group.
+    exterior: bool,
+    /// `Texture[1]` is a depth swatch, colour and alpha both by V.
+    swatch: bool,
+    /// The sheet's texture-coordinate matrix, rows `a` and `b`: `RotZ(Float[1]·57.29578)` scaled
+    /// by `Float[0]`, applied as `uv·M` (`0x8a5590`, constants `c[9..12]` of `vsLiquidWater`).
+    sheet: [[f32; 2]; 2],
+    /// `Float[2]`, the depth texture's V factor (`0x8a5590`), on the water program's surfaces only.
+    depth_v: f32,
+}
+
+impl Default for TypeSettings {
+    /// A type with no row: an interior-capable pool on the band texture, its sheet unscaled.
+    fn default() -> Self {
+        TypeSettings {
+            exterior: false,
+            swatch: false,
+            sheet: [[1.0, 0.0], [0.0, 1.0]],
+            depth_v: 1.0,
+        }
+    }
+}
+
+impl TypeSettings {
+    pub(crate) fn from_row(row: &LiquidTypeRow) -> Self {
+        let (sin, cos) = row.sheet_rotation.sin_cos();
+        let scale = row.sheet_scale;
+        TypeSettings {
+            exterior: row.exterior_pool(),
+            swatch: row.depth_texture.is_some_and(|t| t.is_swatch()),
+            sheet: [[cos * scale, sin * scale], [-sin * scale, cos * scale]],
+            depth_v: row.depth_v_scale,
+        }
+    }
+
+    /// `uv` through the sheet matrix, row-vector order as the vertex program applies it.
+    fn sheet_uv(&self, [u, v]: [f32; 2]) -> [f32; 2] {
+        let [a, b] = self.sheet;
+        [u * a[0] + v * b[0], u * a[1] + v * b[1]]
+    }
 }
 
 /// Which of the reference's three liquid renderers draws a surface: its dispatch sends the type
@@ -37,7 +92,8 @@ pub(crate) struct LiquidAssets {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum LiquidPath {
     /// An ADT chunk's MCLQ: two stages, the depth swatch at `tc0 = (0.5, LUT[depthByte])` and the
-    /// sheet at `tc1 = (col·¼, row·¼)`; no vertex colour.
+    /// sheet at `tc1 = (col·¼, row·¼)`; no vertex colour. Also an exterior WMO pool whose type binds
+    /// a depth swatch (WMO Ocean): 12340 draws both with the one water program (`0x8a5590`).
     Adt,
     /// A WMO group's MLIQ, exterior or exterior-lit (`MOGP.flags & 0x48 != 0`): one stage, a
     /// 9-float vertex with an up normal and a colour dword, `MapObjExtWater0.bls` bound.
@@ -48,10 +104,14 @@ pub(crate) enum LiquidPath {
 }
 
 impl LiquidPath {
-    /// A WMO group's own class, as the reference's `[owner+0x10] & 0x48` test reads it.
-    pub(crate) fn wmo(interior: bool) -> Self {
-        if interior {
+    /// A WMO pool's renderer: interior only in an interior group (`MOGP.flags & 0x48 == 0`) and for
+    /// a type without `LiquidType.Flags & 0x200`, the reference's exterior test (`0x793d20`); an
+    /// exterior pool whose type binds a depth swatch draws the swatch, as terrain water does.
+    pub(crate) fn wmo(group_interior: bool, pool: TypeSettings) -> Self {
+        if group_interior && !pool.exterior {
             Self::WmoInterior
+        } else if pool.swatch {
+            Self::Adt
         } else {
             Self::WmoExterior
         }
@@ -81,7 +141,8 @@ impl LiquidPath {
 /// [`LiquidKind`] collapses (2 and 6 are both `Magma`), so it keys the material too.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 struct LiquidKey {
-    kind: LiquidKind,
+    /// The frame sheet, built for one kind ([`LiquidAssets::sheet`]).
+    sheet: usize,
     path: LiquidPath,
     /// This surface takes the animated stage-0 texture matrix ([`scrolls`]).
     scroll: bool,
@@ -94,6 +155,20 @@ struct LiquidKey {
 /// Blackrock 6). ADT liquid never scrolls, though open-world lava is nibble 6: its kernel zeroes
 /// element 13, so the caller gates the path. The phase runs off the reference's uptime clock; only
 /// its rate and period are reproducible. Keyed by `LiquidType` id, the nibble + 1.
+/// The `LiquidType` a WMO pool draws as: an interior pool of a water type (1, 5, 9, 13, 17: ids
+/// below 21 with `(id − 1) & 3 == 0`) takes WMO Water - Interior's row, 17, for its material
+/// (`0x793d20`); every other pool, and every pool's sound and swim, keep the authored type.
+fn drawn_type(path: LiquidPath, liquid_type: u32) -> u32 {
+    if path == LiquidPath::WmoInterior
+        && (1..21).contains(&liquid_type)
+        && (liquid_type - 1) & 3 == 0
+    {
+        17
+    } else {
+        liquid_type
+    }
+}
+
 fn scrolls(liquid_type: u32) -> bool {
     matches!(liquid_type, 7 | 8)
 }
@@ -103,16 +178,39 @@ struct LiquidEntry {
 }
 
 impl LiquidAssets {
-    /// The shared material for a kind, renderer and scroll, if one was built and its frames loaded.
+    /// The sheet a surface of `liquid_type` and `kind` draws: the type's own where it was built for
+    /// that kind, else the kind's base sheet.
+    fn sheet(&self, liquid_type: u32, kind: LiquidKind) -> Option<usize> {
+        match self.type_sheets.get(&liquid_type) {
+            Some(&(built_for, sheet)) if built_for == kind => Some(sheet),
+            _ => self.kind_sheets.get(&kind).copied(),
+        }
+    }
+
+    /// The shared material for a surface's type and kind, renderer and scroll, if one was built and
+    /// its frames loaded.
     pub(crate) fn material(
         &self,
+        liquid_type: u32,
         kind: LiquidKind,
         path: LiquidPath,
         scroll: bool,
     ) -> Option<Handle<LiquidMaterial>> {
+        let sheet = self.sheet(liquid_type, kind)?;
         self.materials
-            .get(&LiquidKey { kind, path, scroll })
+            .get(&LiquidKey {
+                sheet,
+                path,
+                scroll,
+            })
             .map(|e| e.material.clone())
+    }
+
+    /// What a liquid of `liquid_type` takes from its row; the default for a type with no row.
+    fn type_settings(&self, liquid_type: u32) -> TypeSettings {
+        self.types
+            .get(liquid_type)
+            .map_or_else(TypeSettings::default, TypeSettings::from_row)
     }
 }
 
@@ -152,15 +250,24 @@ pub(crate) fn spawn_liquids<'a>(
     for lq in liquids {
         // The scene fog (the ADT passes submit none and draw under the scene submit), and never a
         // scroll, though ADT magma is nibble 6: its kernel zeroes the v-translate.
-        let Some(material) = liquid.material(lq.kind, LiquidPath::Adt, false) else {
+        let Some(material) = liquid.material(lq.liquid_type, lq.kind, LiquidPath::Adt, false)
+        else {
             continue; // this kind's frames failed to load (warned at setup)
         };
         let info = wet_footprint(lq, &Transform::IDENTITY, LiquidSource::AdtChunk);
         let foam = !lq.kind.is_fullbright(); // white surf is a water thing
+        let water = foam.then(|| liquid.type_settings(lq.liquid_type));
         entities.push(
             commands
                 .spawn((
-                    Mesh3d(meshes.add(liquid_bevy_mesh(lq, None))),
+                    // Water through its type's sheet and depth matrices (Orange Slime's sheet is ×2,
+                    // its depth V ×8.5); magma keeps its own coordinates.
+                    Mesh3d(meshes.add(liquid_bevy_mesh(
+                        lq,
+                        None,
+                        water.as_ref(),
+                        water.map_or(1.0, |t| t.depth_v),
+                    ))),
                     MeshMaterial3d(material),
                     Transform::IDENTITY,
                     LiquidSurface,
@@ -217,8 +324,14 @@ fn liquid_collider(lq: &LiquidMesh) -> Option<Collider> {
 }
 
 /// The render mesh for one [`LiquidMesh`] in its own space (absolute for MCLQ, model-local for WMO
-/// liquid): a flat up normal, the tiling UVs, and the per-vertex depth `V` in UV1.x.
-fn liquid_bevy_mesh(lq: &LiquidMesh, body_color: Option<[f32; 3]>) -> Mesh {
+/// liquid): a flat up normal, the tiling UVs (through a water type's `sheet` matrix), and the
+/// per-vertex depth `V` in UV1.x, times `depth_v` (the water program's depth-texture matrix).
+fn liquid_bevy_mesh(
+    lq: &LiquidMesh,
+    body_color: Option<[f32; 3]>,
+    sheet: Option<&TypeSettings>,
+    depth_v: f32,
+) -> Mesh {
     let positions: Vec<[f32; 3]> = lq
         .positions
         .iter()
@@ -232,8 +345,12 @@ fn liquid_bevy_mesh(lq: &LiquidMesh, body_color: Option<[f32; 3]>) -> Mesh {
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     // WoW up (0, 0, 1) is Bevy up (0, 1, 0).
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 1.0, 0.0]; n]);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, lq.uvs.clone());
-    let uv1: Vec<[f32; 2]> = lq.depths.iter().map(|&d| [d, 0.0]).collect();
+    let uvs = match sheet {
+        Some(pool) => lq.uvs.iter().map(|&uv| pool.sheet_uv(uv)).collect(),
+        None => lq.uvs.clone(),
+    };
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    let uv1: Vec<[f32; 2]> = lq.depths.iter().map(|&d| [d * depth_v, 0.0]).collect();
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, uv1);
     // An interior pool's `MOMT.diffColor` rides the vertex colour, where the reference's interior
     // vertex carries it, keeping one material per lane; other lanes take the shader's white.
@@ -246,7 +363,8 @@ fn liquid_bevy_mesh(lq: &LiquidMesh, body_color: Option<[f32; 3]>) -> Mesh {
 
 /// Spawn a WMO group's liquid surfaces at the building's placement `transform`, pushed onto
 /// `entities` to despawn with the placement. `interior` is the group's `MOGI & 0x48 == 0` class,
-/// which picks the renderer and the fog block; `pool` scopes each surface to its room and floor.
+/// which with the pool's type picks the renderer and the fog block ([`LiquidPath::wmo`]); `pool`
+/// scopes each surface to its room and floor.
 pub(crate) fn spawn_wmo_liquids<'a>(
     commands: &mut Commands,
     liquids: impl Iterator<Item = &'a LiquidMesh>,
@@ -262,10 +380,13 @@ pub(crate) fn spawn_wmo_liquids<'a>(
     let Some(liquid) = liquid_assets else {
         return;
     };
-    let path = LiquidPath::wmo(interior);
     for lq in liquids {
+        let path = LiquidPath::wmo(interior, liquid.type_settings(lq.liquid_type));
+        // The type the pool draws as: an interior water pool takes 17's row (`0x793d20`).
+        let draw_type = drawn_type(path, lq.liquid_type);
+        let type_settings = liquid.type_settings(draw_type);
         // The one path that can scroll, decided by the type, not the kind (`scrolls`).
-        let scroll = scrolls(lq.liquid_type);
+        let scroll = scrolls(draw_type);
         // The interior arm's body colour via the pool's MLIQ `materialId`; none when fullbright.
         let body_color = (path.takes_material_body_color() && !lq.kind.is_fullbright())
             .then(|| {
@@ -274,7 +395,7 @@ pub(crate) fn spawn_wmo_liquids<'a>(
                     .copied()
             })
             .flatten();
-        let Some(material) = liquid.material(lq.kind, path, scroll) else {
+        let Some(material) = liquid.material(draw_type, lq.kind, path, scroll) else {
             continue; // this kind's frames failed to load (warned at setup)
         };
         if scroll {
@@ -285,7 +406,19 @@ pub(crate) fn spawn_wmo_liquids<'a>(
         }
         let surface = commands
             .spawn((
-                Mesh3d(meshes.add(liquid_bevy_mesh(lq, body_color))),
+                // The sheet matrix is the water material's; magma and slime keep their own UVs.
+                // The depth matrix is the water program's (`LiquidPath::Adt`); the WMO programs read
+                // the depth as their alpha ramp, untransformed.
+                Mesh3d(meshes.add(liquid_bevy_mesh(
+                    lq,
+                    body_color,
+                    (!lq.kind.is_fullbright()).then_some(&type_settings),
+                    if path == LiquidPath::Adt {
+                        type_settings.depth_v
+                    } else {
+                        1.0
+                    },
+                ))),
                 MeshMaterial3d(material),
                 transform,
                 LiquidSurface,
@@ -317,21 +450,26 @@ pub(crate) fn spawn_wmo_liquids<'a>(
     }
 }
 
-/// Each kind's frames, `XTextures\<dir>\<stem>.<1..=count>.blp`, as `(kind, dir, stem, count)`.
-const FRAME_SETS: &[(LiquidKind, &str, &str, u32)] = &[
-    (LiquidKind::Still, "river", "lake_a", 30),
-    (LiquidKind::Rapids, "river", "fast_a", 16),
-    (LiquidKind::Ocean, "ocean", "ocean_h", 30),
+/// Each kind's base sheet, the `Texture[0]` of its base `LiquidType` row (1–4, and 9 for rapids), as
+/// `(kind, template)`; a type whose row names a sheet draws that one instead ([`LiquidAssets`]).
+const FRAME_SETS: &[(LiquidKind, &str)] = &[
+    (LiquidKind::Still, "XTextures\\river\\lake_a.%d.blp"),
+    (LiquidKind::Rapids, "XTextures\\river\\fast_a.%d.blp"),
+    (LiquidKind::Ocean, "XTextures\\ocean\\ocean_h.%d.blp"),
     // Fullbright: the sheet is the opaque, unlit, fogged body. Magma comes from both the WMO pools
     // and the ADT magma queue; the reference has no ADT queue for slime.
-    (LiquidKind::Magma, "lava", "lava", 30),
-    (LiquidKind::Slime, "slime", "slime", 30),
+    (LiquidKind::Magma, "XTextures\\lava\\lava.%d.blp"),
+    (LiquidKind::Slime, "XTextures\\slime\\slime.%d.blp"),
 ];
+
+/// The frames `0x8a2450` loads for a `%d` sheet: 1 to 30.
+const SHEET_FRAMES: u32 = 30;
 
 pub(super) fn setup_liquid(
     mut commands: Commands,
     config: Option<Res<RenderConfig>>,
     world_assets: Option<ResMut<WorldAssets>>,
+    tables: Option<Res<LiquidTables>>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<LiquidMaterial>>,
 ) {
@@ -340,13 +478,103 @@ pub(super) fn setup_liquid(
     };
     // Light, fog and the water swatches come off the shared global-light buffer, as for terrain.
     let mut assets = LiquidAssets::default();
-    for &(kind, dir, stem, count) in FRAME_SETS {
-        let Some((frames, frame_count)) =
-            load_frame_array(&mut world_assets, &mut images, kind, dir, stem, count)
-        else {
-            warn!("liquid: no frames for {stem} — {kind:?} water will not render");
-            continue;
-        };
+    if let Some(tables) = &tables {
+        assets.types = tables.0.types.clone();
+    }
+    let mut builder = SheetBuilder {
+        world_assets: &mut world_assets,
+        images: &mut images,
+        materials: &mut materials,
+        built: HashMap::new(),
+        frames: HashMap::new(),
+    };
+    for &(kind, template) in FRAME_SETS {
+        match builder.sheet(&mut assets, template, kind) {
+            Some(sheet) => {
+                assets.kind_sheets.insert(kind, sheet);
+            }
+            None => warn!("liquid: no frames for {template} — {kind:?} water will not render"),
+        }
+    }
+    // Each type's own `Texture[0]` (`0x8a27c0`), built for the kind its class draws.
+    if let Some(tables) = tables {
+        let types = &tables.0.types;
+        for (id, row) in types.iter() {
+            let (Some(template), Some(kind)) = (row.sheet.as_deref(), types.kind(id)) else {
+                continue;
+            };
+            match builder.sheet(&mut assets, template, kind) {
+                Some(sheet) => {
+                    assets.type_sheets.insert(id, (kind, sheet));
+                }
+                None => {
+                    warn!("liquid: no frames for {template} — LiquidType {id} takes {kind:?}'s")
+                }
+            }
+        }
+    }
+    info!(
+        "liquid: loaded {} frame sheet(s) for {} liquid type(s)",
+        builder.built.values().flatten().count(),
+        assets.type_sheets.len()
+    );
+    commands.insert_resource(assets);
+}
+
+/// Builds each distinct (sheet, kind) once: its frame array and its materials, one per renderer
+/// and scroll lane the kind can take.
+struct SheetBuilder<'a> {
+    world_assets: &'a mut WorldAssets,
+    images: &'a mut Assets<Image>,
+    materials: &'a mut Assets<LiquidMaterial>,
+    /// By lowercased template and kind; `None` where the frames failed to load.
+    built: HashMap<(String, LiquidKind), Option<usize>>,
+    /// The frame arrays by lowercased template and DC flattening, shared across kinds.
+    frames: HashMap<(String, bool), Option<FrameArray>>,
+}
+
+/// A sheet's frame array and how many frames it holds.
+type FrameArray = (Handle<Image>, u32);
+
+impl SheetBuilder<'_> {
+    fn sheet(
+        &mut self,
+        assets: &mut LiquidAssets,
+        template: &str,
+        kind: LiquidKind,
+    ) -> Option<usize> {
+        let name = template.to_ascii_lowercase();
+        if let Some(&built) = self.built.get(&(name.clone(), kind)) {
+            return built;
+        }
+        // Deviation: water frames have their per-frame mean flattened (`flatten_frame_dc`), because
+        // mipping turns the shipped frames' drifting means into a flicker on distant water; magma
+        // and slime keep theirs, the body's intended pulse.
+        let normalize_dc = !kind.is_fullbright();
+        let frames = self
+            .frames
+            .entry((name.clone(), normalize_dc))
+            .or_insert_with(|| {
+                load_frame_array(self.world_assets, self.images, template, normalize_dc)
+            })
+            .clone();
+        let sheet = frames.map(|(frames, frame_count)| {
+            let sheet = self.built.values().flatten().count();
+            self.add_materials(assets, sheet, kind, &frames, frame_count);
+            sheet
+        });
+        self.built.insert((name, kind), sheet);
+        sheet
+    }
+
+    fn add_materials(
+        &mut self,
+        assets: &mut LiquidAssets,
+        sheet: usize,
+        kind: LiquidKind,
+        frames: &Handle<Image>,
+        frame_count: u32,
+    ) {
         // Blend per kind, over the device defaults every reference setter pushes and pops against.
         // Water and ocean: blend mode 2 (`SRC_ALPHA / INV_SRC_ALPHA`), depth write off (which is
         // not modelled). Magma and slime: blend stays 0 (disabled) with depth test and write on
@@ -373,7 +601,7 @@ pub(super) fn setup_liquid(
         .into_iter()
         .flat_map(|p| scroll_lanes.iter().map(move |s| (p, s)))
         {
-            let material = materials.add(ExtendedMaterial {
+            let material = self.materials.add(ExtendedMaterial {
                 base: StandardMaterial {
                     // The shader does the WoW lighting.
                     unlit: true,
@@ -413,39 +641,34 @@ pub(super) fn setup_liquid(
                             1.0
                         },
                     ),
-                    light_buf: world_assets.shared_light.clone(),
+                    light_buf: self.world_assets.shared_light.clone(),
                 },
             });
-            assets
-                .materials
-                .insert(LiquidKey { kind, path, scroll }, LiquidEntry { material });
+            assets.materials.insert(
+                LiquidKey {
+                    sheet,
+                    path,
+                    scroll,
+                },
+                LiquidEntry { material },
+            );
         }
     }
-    // Frame sets, not materials.
-    info!(
-        "liquid: loaded {} water frame set(s)",
-        FRAME_SETS
-            .iter()
-            .filter(|(k, ..)| assets.material(*k, LiquidPath::Adt, false).is_some())
-            .count()
-    );
-    commands.insert_resource(assets);
 }
 
-/// Decode frames `1..=count` with their authored mips into one repeating, anisotropic array,
-/// stopping at the first missing, non-square or mis-sized frame; returns it and the count loaded.
+/// Decode a `%d` sheet's frames `1..=30` with their authored mips into one repeating, anisotropic
+/// array, stopping at the first missing, non-square or mis-sized frame; returns it and the count
+/// loaded.
 fn load_frame_array(
     world_assets: &mut WorldAssets,
     images: &mut Assets<Image>,
-    kind: LiquidKind,
-    dir: &str,
-    stem: &str,
-    count: u32,
-) -> Option<(Handle<Image>, u32)> {
+    template: &str,
+    normalize_dc: bool,
+) -> Option<FrameArray> {
     let mut frames: Vec<BlpMipChain> = Vec::new();
     let mut size = 0u32;
-    for i in 1..=count {
-        let path = format!("XTextures\\{dir}\\{stem}.{i}.blp");
+    for i in 1..=SHEET_FRAMES {
+        let path = template.replacen("%d", &i.to_string(), 1);
         let Ok(chain) = read_texture_mip_chain(&mut world_assets.chain.lock_recover(), &path)
         else {
             break;
@@ -464,10 +687,6 @@ fn load_frame_array(
         return None;
     }
     let loaded = frames.len() as u32;
-    // Deviation: water frames have their per-frame mean flattened (`flatten_frame_dc`), because
-    // mipping turns the shipped frames' drifting means into a flicker on distant water; magma and
-    // slime keep theirs, the body's intended pulse.
-    let normalize_dc = !kind.is_fullbright();
     Some((images.add(liquid_frame_array(frames, normalize_dc)), loaded))
 }
 
@@ -536,7 +755,7 @@ mod tests {
         LiquidAssets {
             materials: HashMap::from([(
                 LiquidKey {
-                    kind: LiquidKind::Still,
+                    sheet: 0,
                     path: LiquidPath::Adt,
                     scroll: false,
                 },
@@ -544,7 +763,103 @@ mod tests {
                     material: Handle::default(),
                 },
             )]),
+            type_sheets: HashMap::new(),
+            kind_sheets: HashMap::from([(LiquidKind::Still, 0)]),
+            types: LiquidTypes::default(),
         }
+    }
+
+    /// The reference's exterior test (`0x793d20`): an exterior group's pool is exterior, and so is
+    /// an interior group's pool whose type carries `LiquidType.Flags & 0x200`. An exterior pool on a
+    /// depth swatch draws the swatch.
+    #[test]
+    fn a_wmo_pool_is_interior_only_in_an_interior_group_without_the_exterior_flag() {
+        let pool = |exterior, swatch| TypeSettings {
+            exterior,
+            swatch,
+            ..TypeSettings::default()
+        };
+        assert_eq!(
+            LiquidPath::wmo(true, pool(false, false)),
+            LiquidPath::WmoInterior
+        );
+        assert_eq!(
+            LiquidPath::wmo(true, pool(true, false)),
+            LiquidPath::WmoExterior
+        );
+        assert_eq!(
+            LiquidPath::wmo(false, pool(false, false)),
+            LiquidPath::WmoExterior
+        );
+        assert_eq!(
+            LiquidPath::wmo(false, pool(true, false)),
+            LiquidPath::WmoExterior
+        );
+        assert_eq!(LiquidPath::wmo(true, pool(true, true)), LiquidPath::Adt);
+        assert_eq!(LiquidPath::wmo(false, pool(false, true)), LiquidPath::Adt);
+    }
+
+    /// An interior water pool draws as 17 (`0x793d20`); ocean, magma and slime, any exterior pool,
+    /// and an id past the base twenty keep their own type.
+    #[test]
+    fn an_interior_water_pool_draws_as_wmo_water_interior() {
+        for id in [1, 5, 9, 13, 17] {
+            assert_eq!(drawn_type(LiquidPath::WmoInterior, id), 17, "type {id}");
+            assert_eq!(drawn_type(LiquidPath::WmoExterior, id), id, "type {id}");
+        }
+        for id in [0, 2, 3, 4, 14, 19, 20, 21, 41, 181] {
+            assert_eq!(drawn_type(LiquidPath::WmoInterior, id), id, "type {id}");
+        }
+    }
+
+    /// The sheet matrix is `RotZ(θ)·s` in row-vector order: a quarter turn at scale ½ sends
+    /// `(1, 0)` to `(0, ½)` and `(0, 1)` to `(−½, 0)`.
+    #[test]
+    fn the_sheet_matrix_rotates_and_scales_uvs_row_vector_first() {
+        let row = LiquidTypeRow {
+            flags: 0,
+            class: 1,
+            sound_id: 0,
+            vertex_format: None,
+            depth_ramp: None,
+            sheet: None,
+            depth_texture: None,
+            sheet_scale: 0.5,
+            sheet_rotation: std::f32::consts::FRAC_PI_2,
+            depth_v_scale: 1.0,
+        };
+        let pool = TypeSettings::from_row(&row);
+        let close =
+            |[a, b]: [f32; 2], [c, d]: [f32; 2]| (a - c).abs() < 1e-6 && (b - d).abs() < 1e-6;
+        assert!(close(pool.sheet_uv([1.0, 0.0]), [0.0, 0.5]));
+        assert!(close(pool.sheet_uv([0.0, 1.0]), [-0.5, 0.0]));
+        assert_eq!(TypeSettings::default().sheet_uv([3.0, 4.0]), [3.0, 4.0]);
+    }
+
+    /// A type draws its own row's sheet (Outland's green magma, 15), but only for the kind it was
+    /// built for; a type with no sheet of its own, or a kind it was not built for, takes the kind's.
+    #[test]
+    fn a_liquid_type_draws_its_own_sheet() {
+        const BASE_LAVA: usize = 0;
+        const GREEN_LAVA: usize = 1;
+        const BASE_WATER: usize = 2;
+        let assets = LiquidAssets {
+            materials: HashMap::new(),
+            type_sheets: HashMap::from([(15, (LiquidKind::Magma, GREEN_LAVA))]),
+            kind_sheets: HashMap::from([
+                (LiquidKind::Magma, BASE_LAVA),
+                (LiquidKind::Still, BASE_WATER),
+            ]),
+            types: LiquidTypes::default(),
+        };
+        assert_eq!(assets.sheet(15, LiquidKind::Magma), Some(GREEN_LAVA));
+        assert_eq!(assets.sheet(3, LiquidKind::Magma), Some(BASE_LAVA));
+        assert_eq!(assets.sheet(15, LiquidKind::Still), Some(BASE_WATER));
+        assert_eq!(
+            assets.sheet(15, LiquidKind::Slime),
+            None,
+            "no slime sheet loaded"
+        );
     }
 
     /// An ADT surface carries `ExteriorScene` and none of the components `UnownedSceneFilter`
@@ -596,9 +911,48 @@ mod tests {
 /// The scroll and fog-block rules against the real client files.
 #[cfg(test)]
 mod real_data {
-    use super::LiquidKind;
+    use super::{LiquidKind, LiquidPath, TypeSettings};
     use benilla_formats::{parse_wmo_root, wmo_group_liquid_mesh, WmoLiquidRule};
     use std::collections::HashMap;
+
+    /// Daggercap Bay's cave pool is the one interior-group pool of type 14 (WMO Ocean) in the
+    /// install, so it draws exterior on the ocean swatch; Drak'Tharon's interior water (13) stays interior.
+    #[test]
+    fn the_daggercap_cave_pool_draws_exterior_on_the_ocean_swatch() {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let types = benilla_formats::load_liquid_types(&chain).expect("LiquidType loads");
+        let mut pool_path = |root_path: &str, gi: usize| -> (u32, LiquidPath) {
+            let bytes = chain.read_file(root_path).expect("root readable");
+            let root = parse_wmo_root(&bytes).expect("parse root");
+            let stem = root_path.strip_suffix(".wmo").expect("a .wmo path");
+            let gb = chain
+                .read_file(&format!("{stem}_{gi:03}.wmo"))
+                .expect("group readable");
+            let lq = wmo_group_liquid_mesh(&gb, WmoLiquidRule::for_root(&root)).expect("a pool");
+            let interior = root.group_infos().get(gi).expect("group info").interior;
+            (
+                lq.liquid_type,
+                LiquidPath::wmo(
+                    interior,
+                    types
+                        .get(lq.liquid_type)
+                        .map_or_else(TypeSettings::default, TypeSettings::from_row),
+                ),
+            )
+        };
+        assert_eq!(
+            pool_path("world\\wmo\\northrend\\howlingfjord\\daggercapcave.wmo", 0),
+            (14, LiquidPath::Adt),
+            "the cave's ocean is exterior water on the ocean swatch; the interior arm adds its \
+             white MOMT colour and saturates it",
+        );
+        assert_eq!(
+            pool_path("world\\wmo\\dungeon\\draktharon\\draktharon.wmo", 2),
+            (13, LiquidPath::WmoInterior),
+            "interior WMO water keeps the interior arm",
+        );
+    }
 
     /// The scroll gate over the shipped pools, where both behaviours share buildings: Ironforge has
     /// 9 static nibble-2 and 2 scrolling nibble-6 magma groups, Blackrock is nibble 6 throughout,

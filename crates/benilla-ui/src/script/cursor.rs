@@ -18,6 +18,7 @@ pub(crate) use bar::use_action_places;
 pub(crate) use drag::{
     abandon_drag, arm_drag, maybe_start_drag, take_drag, DragGesture, DragRelease,
 };
+pub(crate) use pet::toggle_cursor_fork;
 
 /// Sentinel bag id for the player's equipped slots, whose `slot` is a 1-based inventory slot id
 /// (`GetInventorySlotInfo`'s, HeadSlot = 1). Never a Lua value, and disjoint from every real bag
@@ -123,10 +124,7 @@ pub(super) fn held_count(model: &super::Model, item: &CursorItem) -> u32 {
     if let Some(n) = item.count {
         return n.max(1);
     }
-    model
-        .containers
-        .get(&item.bag)
-        .and_then(|c| c.slots.get(&item.slot))
+    super::container::live_slot(model, item.bag, item.slot)
         .filter(|s| s.item_id == item.item_id)
         .map_or(1, |s| s.count.max(1))
 }
@@ -189,6 +187,16 @@ pub struct CursorMacro {
 /// Queue `CURSOR_UPDATE`, once per payload transition, plus a grid event when what the bars can
 /// take changes. Call it after `model.cursor` holds the new payload; an action hop keeps the grid
 /// up rather than hiding and reshowing it.
+/// The bar's grid edge [`queue_cursor_update`] queued last, taken out to fire inside a bar verb's
+/// call ahead of its slot signal, as the cursor setters signal it before the slot write.
+pub(crate) fn take_grid_edge(model: &mut Model) -> Option<String> {
+    let at = model
+        .pending_events
+        .iter()
+        .rposition(|(e, _)| e == "ACTIONBAR_SHOWGRID" || e == "ACTIONBAR_HIDEGRID")?;
+    Some(model.pending_events.remove(at).0)
+}
+
 pub(crate) fn queue_cursor_update(model: &mut Model) {
     model
         .pending_events
@@ -352,7 +360,7 @@ pub(crate) fn split_container_item(model: &mut Model, bag: i64, slot: u32, count
     if model.cursor.is_some() || count < 1 {
         return false;
     }
-    let Some(s) = model.containers.get(&bag).and_then(|c| c.slots.get(&slot)) else {
+    let Some(s) = super::container::index_slot(model, bag, slot) else {
         return false;
     };
     if s.item_id == 0 || s.locked {
@@ -437,19 +445,6 @@ impl super::UiScript {
 // The targeting cursor's item pick and the enchant confirms
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 impl super::UiScript {
-    /// Arm or disarm the targeting cursor's item half: while armed, a bag or paper-doll click
-    /// queues its `(bag, slot)` as a pick instead of picking up, as the reference's two pickups do.
-    pub fn set_item_pick_armed(&mut self, armed: bool) {
-        set_field!(self, item_pick_armed, armed);
-    }
-
-    /// Push the guids of the units for which the armed word's unit checks all pass.
-    /// `SpellCanTargetUnit` resolves its token to a guid, as the reference does, and asks this set,
-    /// so a chain such as `"party1target"` reads the unit it ends on.
-    pub fn set_spell_targetable_units(&mut self, guids: impl IntoIterator<Item = u64>) {
-        set_field!(self, spell_targetable_units, guids.into_iter().collect());
-    }
-
     /// Drain the `(bag, slot)` picks since the last call; a paper-doll pick reports as
     /// [`EQUIPMENT_BAG`] and its 1-based inventory slot.
     pub fn take_item_picks(&mut self) -> Vec<(i64, u32)> {
@@ -500,15 +495,15 @@ fn cursor_info(lua: &Lua, model: &Model) -> mlua::Result<MultiValue> {
     let str = |s: &str| lua.create_string(s).map(Value::String);
     let int = |n: u32| Value::Integer(i64::from(n));
     let spell = |spell_id: u32, fallback: Option<(u32, &str)>| -> mlua::Result<Vec<Value>> {
-        if let Some((ty, at)) = model.companions.find(spell_id) {
+        if let Some((ty, at)) = super::companion::find(spell_id) {
             return Ok(vec![
                 str("companion")?,
                 int(at as u32 + 1),
                 str(ty.token())?,
             ]);
         }
-        let in_book = model
-            .spellbook
+        let in_book = super::spellbook::live_book()
+            .book
             .slots
             .iter()
             .position(|s| s.spell_id == spell_id)
@@ -537,24 +532,28 @@ fn cursor_info(lua: &Lua, model: &Model) -> mlua::Result<MultiValue> {
         Some(CursorPayload::Merchant(m)) => vec![str("merchant")?, int(m.row + 1)],
         Some(CursorPayload::Macro(m)) => vec![str("macro")?, int(m.index)],
         // Mode 13 (`0x515200`): the set's name, nothing once the set is gone.
-        Some(CursorPayload::EquipmentSet(e)) => match model.equipment_sets.get(&e.id) {
-            Some(name) => vec![str("equipmentset")?, str(name)?],
-            None => Vec::new(),
-        },
-        Some(CursorPayload::Action(a)) => match a.kind & 0xf0 {
-            super::action::ACTION_KIND_ITEM => match model.item_templates.get(&a.action) {
-                Some(t) => vec![
-                    str("item")?,
-                    int(a.action),
-                    str(&super::item_stats::item_link(
-                        a.action,
-                        &t.name,
-                        t.quality,
-                        model.player_req.level,
-                    ))?,
-                ],
+        Some(CursorPayload::EquipmentSet(e)) => {
+            match model.equipment_manager.sets.iter().find(|s| s.id == e.id) {
+                Some(set) => vec![str("equipmentset")?, str(&set.name)?],
                 None => Vec::new(),
-            },
+            }
+        }
+        Some(CursorPayload::Action(a)) => match a.kind & 0xf0 {
+            super::action::ACTION_KIND_ITEM => {
+                match super::item_stats::item_record(model, a.action) {
+                    Some(t) => vec![
+                        str("item")?,
+                        int(a.action),
+                        str(&super::item_stats::item_link(
+                            a.action,
+                            &t.name,
+                            t.quality,
+                            crate::script::item_stats::player_level(),
+                        ))?,
+                    ],
+                    None => Vec::new(),
+                }
+            }
             super::action::ACTION_KIND_MACRO => vec![str("macro")?, int(a.action)],
             super::action::ACTION_KIND_SPELL => spell(a.action, None)?,
             _ => Vec::new(),

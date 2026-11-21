@@ -29,7 +29,7 @@ pub(crate) mod idle;
 mod input;
 /// The language gate: the exemptions and fluency lookup behind the chat garble.
 mod language;
-pub(crate) use language::{feed_language_skills, load_language_words, ChatLanguages};
+pub(crate) use language::{language_skill, ChatLanguages};
 /// `LoggingChat`/`LoggingCombat`: the two log files `/chatlog` and `/combatlog` toggle.
 pub(crate) mod logging;
 mod net;
@@ -93,16 +93,17 @@ impl Plugin for UiChatPlugin {
             )
             // The slash-command table needs the VM's globals and the emote catalog, both `Startup`.
             .add_systems(PostStartup, commands::build_slash_commands)
-            // The language gate's feeds, ahead of the chat drain that reads them.
+            // The language gate's feeds, ahead of the chat drain and the calls that read them.
             .add_systems(
                 Update,
                 (
                     language::load_language_words,
-                    // After the totem refill, the frame's other book-side writer.
-                    language::feed_language_skills.after(crate::spell::multicast::run_refill),
+                    language::feed_language_skills,
                     language::feed_default_language,
                 )
-                    .before(feed::feed_chat),
+                    .before(feed::feed_chat)
+                    // Ahead of every call into Lua, whose item-text verbs read the tables at the call.
+                    .before(crate::ui_script::UiPress),
             )
             // Before the drain, so a broadcast lands on the frame it decodes.
             .add_systems(
@@ -173,7 +174,9 @@ impl Plugin for UiChatPlugin {
                     recruitment::guild_recruitment_cascade.in_set(crate::char_select::InWorldGated),
                 )
                     .chain()
-                    .after(benilla_world::terrain_stream::AreaAuthoritySet),
+                    .after(benilla_world::terrain_stream::AreaAuthoritySet)
+                    // The selection and the pet's words its lent view reads are the clicks'.
+                    .after(crate::target::TargetUpdate),
             )
             .add_systems(
                 OnExit(crate::char_select::ClientState::InWorld),

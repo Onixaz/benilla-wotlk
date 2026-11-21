@@ -1,10 +1,8 @@
 //! Each unit's running cast and channel, behind `UnitCastingInfo` and `UnitChannelInfo`, and the
-//! `UNIT_SPELLCAST_*` fan-out. The app pushes a unit's cast as its packets start, delay and end
-//! it (the reference keeps them on the unit: the cast at `+0xa6c`/`+0xa78`/`+0xa7c`, its
-//! `castCount` at `+0xa5c`, the channel at `+0xa80`..`+0xa88`), and fires each event through
+//! `UNIT_SPELLCAST_*` fan-out. The verbs read the cast the unit holds through the lent view when
+//! called (the reference keeps them on the unit: the cast at `+0xa6c`/`+0xa78`/`+0xa7c`, its
+//! `castCount` at `+0xa5c`, the channel at `+0xa80`..`+0xa88`); the app fires each event through
 //! [`super::UiScript::fire_unit_event`], once per token naming the caster (`0x60bb70`).
-
-use std::collections::HashMap;
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -16,10 +14,11 @@ pub struct UnitCast {
     pub name: String,
     /// `NameSubtext`, `""` when the spell has none.
     pub rank: String,
-    /// The bar's text: the name, `""` under `AttributesEx3 & 4` (`0x611e81`); a channel's, as the
-    /// `"player"` token reads it, is the name only with `AttributesEx` bit 29 (`0x612151`), else
-    /// `CHANNELING`; every other token reads the name.
+    /// The bar's text: the name, `""` under `AttributesEx3 & 4` (`0x611e81`); a channel's is the
+    /// name, which the `"player"` token reads as `CHANNELING` under [`Self::channeling_text`].
     pub text: String,
+    /// A channel the `"player"` token names `CHANNELING`: no `AttributesEx` bit 29 (`0x612151`).
+    pub channeling_text: bool,
     pub texture: Option<String>,
     /// On the `GetTime` clock, in milliseconds (`+0xa78`/`+0xa7c`, `+0xa84`/`+0xa88`).
     pub start_ms: f64,
@@ -32,39 +31,7 @@ pub struct UnitCast {
     pub not_interruptible: bool,
 }
 
-/// The pushed casts, by caster guid.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct UnitCasts {
-    casts: HashMap<u64, UnitCast>,
-    channels: HashMap<u64, UnitCast>,
-}
-
-impl UnitCasts {
-    /// The unit's pushed channel, running or not.
-    pub(crate) fn channel_of(&self, guid: u64) -> Option<&UnitCast> {
-        self.channels.get(&guid)
-    }
-}
-
 impl super::UiScript {
-    /// Push (or clear) a unit's cast, or with `channel` its channel.
-    pub fn set_unit_cast(&mut self, guid: u64, channel: bool, cast: Option<UnitCast>) {
-        let mut model = self.model_mut();
-        let map = if channel {
-            &mut model.unit_casts.channels
-        } else {
-            &mut model.unit_casts.casts
-        };
-        match cast {
-            Some(c) => {
-                map.insert(guid, c);
-            }
-            None => {
-                map.remove(&guid);
-            }
-        }
-    }
-
     /// Fire `event` once for each token naming `guid`, the token first, then `args`
     /// (`0x60bf60`: `%s%s%s%d`, unit, name, rank, castCount).
     pub fn fire_unit_event(&mut self, guid: u64, event: &str, args: Vec<ScriptValue>) {
@@ -85,7 +52,7 @@ fn unit_of(lua: &Lua, unit: Value, usage: &'static str) -> mlua::Result<(Option<
     let model = lua
         .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data");
-    Ok((model.unit_guids.resolve(&token).ok().flatten(), token))
+    Ok((model.resolve_token(&token).ok().flatten(), token))
 }
 
 /// The cast's values while it runs: `now` before its end (`0x611e75`), else none.
@@ -123,12 +90,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(MultiValue::new());
             };
             let now_ms = super::clock::now(lua) * 1000.0;
-            let cast = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                model.unit_casts.casts.get(&guid).cloned()
-            };
+            let cast = super::live::read_live(|l| l.unit_cast(guid, false)).flatten();
             match cast.filter(|c| now_ms < c.end_ms) {
                 Some(c) => info(lua, &c, true),
                 None => Ok(MultiValue::new()),
@@ -137,8 +99,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // UnitChannelInfo("unit") (`0x612090`): name, nameSubtext, text, texture, startTime, endTime,
-    // isTradeSkill, notInterruptible while the unit channels, else nothing. The pushed text is
-    // the `"player"` token's; any other token reads the name.
+    // isTradeSkill, notInterruptible while the unit channels, else nothing. Only the literal
+    // `"player"` token reads `CHANNELING` for a channel without its own text (`0x612151`).
     g.set(
         "UnitChannelInfo",
         lua.create_function(|lua, unit: Value| {
@@ -147,21 +109,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(MultiValue::new());
             };
             let now_ms = super::clock::now(lua) * 1000.0;
-            let cast = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                model.unit_casts.channels.get(&guid).cloned()
-            };
+            let cast = super::live::read_live(|l| l.unit_cast(guid, true)).flatten();
             match cast.filter(|c| now_ms < c.end_ms) {
-                Some(c) if !token.eq_ignore_ascii_case("player") => info(
-                    lua,
-                    &UnitCast {
-                        text: c.name.clone(),
-                        ..c
-                    },
-                    false,
-                ),
+                Some(c) if c.channeling_text && token.eq_ignore_ascii_case("player") => {
+                    let text = lua
+                        .globals()
+                        .get::<String>("CHANNELING")
+                        .unwrap_or_default();
+                    info(lua, &UnitCast { text, ..c }, false)
+                }
                 Some(c) => info(lua, &c, false),
                 None => Ok(MultiValue::new()),
             }
@@ -174,7 +130,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::UnitCast;
+    use crate::script::live::{lend_test, LiveLoan, TestView};
     use crate::script::{ScriptValue, UiScript, UnitGuids};
+
+    /// `casts` lent as the units' held casts and channels, by `(guid, channel)`.
+    fn lend(casts: Vec<((u64, bool), UnitCast)>) -> LiveLoan<TestView> {
+        lend_test(TestView {
+            unit_casts: casts.into_iter().collect(),
+            ..Default::default()
+        })
+    }
 
     const ME: u64 = 0x10;
     const MOB: u64 = 0xF130_0000_0000_0001;
@@ -201,6 +166,7 @@ mod tests {
             trade_skill: false,
             cast_count: 7,
             not_interruptible: false,
+            channeling_text: false,
         }
     }
 
@@ -208,7 +174,7 @@ mod tests {
     fn casting_info_answers_nine_values_while_the_cast_runs() {
         let mut s = script();
         assert_eq!(s.arity(r#"UnitCastingInfo("player")"#).unwrap(), 0);
-        s.set_unit_cast(ME, false, Some(heal()));
+        let _view = lend(vec![((ME, false), heal())]);
         assert_eq!(s.arity(r#"UnitCastingInfo("player")"#).unwrap(), 9);
         assert_eq!(
             s.eval::<String>(
@@ -232,8 +198,8 @@ mod tests {
 
     #[test]
     fn channel_info_answers_eight_values() {
-        let mut s = script();
-        s.set_unit_cast(MOB, true, Some(heal()));
+        let s = script();
+        let _view = lend(vec![((MOB, true), heal())]);
         assert_eq!(s.arity(r#"UnitChannelInfo("target")"#).unwrap(), 8);
     }
 
@@ -247,14 +213,14 @@ mod tests {
             target: ME,
             ..Default::default()
         });
-        s.set_unit_cast(
-            ME,
-            true,
-            Some(UnitCast {
-                text: "Channeling".into(),
+        s.run("CHANNELING = 'Channeling'").unwrap();
+        let _view = lend(vec![(
+            (ME, true),
+            UnitCast {
+                channeling_text: true,
                 ..heal()
-            }),
-        );
+            },
+        )]);
         let text = |s: &UiScript, token: &str| {
             s.eval::<String>(&format!("return (select(3, UnitChannelInfo({token:?})))"))
                 .unwrap()

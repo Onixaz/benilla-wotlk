@@ -83,6 +83,11 @@ impl super::super::UiScript {
         self.model_mut().vehicle_indicators = indicators;
     }
 
+    /// Queue a request a verb the app ran made, behind the verbs' own.
+    pub fn push_vehicle_request(&mut self, request: VehicleRequest) {
+        self.model_mut().vehicle_requests.push(request);
+    }
+
     /// Drain the verbs' requests.
     pub fn take_vehicle_requests(&mut self) -> Vec<VehicleRequest> {
         drain_field!(self, vehicle_requests)
@@ -235,7 +240,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if seat_flag_set(&model, 0x200_0000) {
                 model.vehicle_requests.push(VehicleRequest::Exit);
             } else {
-                model.ui_errors_s.push(("ERR_SPELL_FAILED_S", refusal));
+                {
+                    drop(model);
+                    crate::script::ui_errors::show_now_s(lua, "ERR_SPELL_FAILED_S", refusal);
+                }
             }
             Ok(())
         })?,
@@ -506,7 +514,7 @@ mod tests {
         s.run("VehicleNextSeat(); VehicleExit()").unwrap();
         assert_eq!(s.take_vehicle_requests(), [VehicleRequest::NextSeat]);
         assert_eq!(
-            s.model_ref().ui_errors_s,
+            s.take_shown_s(),
             [("ERR_SPELL_FAILED_S", String::new())],
             "no GlobalStrings loaded: the empty text"
         );

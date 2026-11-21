@@ -1,11 +1,4 @@
-//! The pet paper-doll feed: `PetPaperDollFrame`'s combat stats and its model booth.
-//!
-//! The pet's [`UnitCombatStats`] come from the character sheet's descriptor-only core and
-//! bindings, as in the reference, whose page calls the `PaperDollFrame_Set*` setters with `"pet"`
-//! (`PetPaperDollFrame.lua:73-81`). The stat events fire with `arg1 = "pet"` for the page's
-//! registrations (`PetPaperDollFrame.lua:12-20`) except `UNIT_DEFENSE`, which nothing fires.
-//! `UNIT_LEVEL` and the `UNIT_PET*` events come from [`crate::ui_pet`] and
-//! [`crate::ui_pet_stats`]; nothing fires `PET_UI_UPDATE` or `PET_UI_CLOSE`.
+//! The pet paper-doll feed: `PetPaperDollFrame`'s combat stats from the character sheet's descriptor-only core under `"pet"` (`PetPaperDollFrame.lua:12-20`, `:73-81`) and its model booth; `PET_UI_CLOSE` fires from [`crate::ui_pet::set_pet_tail`] and `PET_UI_UPDATE` from the pet number's field handler; nothing fires the page's `UNIT_DEFENSE`.
 
 use bevy::prelude::*;
 
@@ -13,7 +6,7 @@ use benilla_ui::script::{UiScript, UnitCombatStats};
 
 use crate::portrait::PetDollBooth;
 use crate::ui_char::{fire_stat_transitions, unit_combat_stats};
-use crate::ui_pet::{PetBar, PetUnit};
+use crate::ui_pet::PetUnit;
 use crate::ui_unit::UnitFeed;
 
 pub(crate) struct UiPetDollPlugin;
@@ -21,15 +14,31 @@ pub(crate) struct UiPetDollPlugin;
 impl Plugin for UiPetDollPlugin {
     fn build(&self, app: &mut App) {
         // In the unit feed, so the page repaints in the pass that pushes the pet's health.
-        app.add_systems(Update, feed_pet_doll.in_set(UnitFeed));
+        app.add_systems(Update, (sync_pet_booth, feed_pet_doll).in_set(UnitFeed));
     }
 }
 
-fn feed_pet_doll(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    bar: Res<PetBar>,
+/// The booth `PetModelFrame` draws, read each frame as the model frame renders (`0x960240`): its facing, which the rotate buttons write (`0x9606e0`), and the pet's model.
+fn sync_pet_booth(
+    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
     pet: PetUnit,
     mut booth: ResMut<PetDollBooth>,
+) {
+    let Some(script) = script else {
+        return;
+    };
+    // Written every frame, pet or not, so a new pet does not snap to a stale yaw.
+    booth.yaw = script.model_pane_facing("PetModelFrame");
+    // The "pet" token's unit, our charm else our summon (`0x60acc3`-`0x60acd3`).
+    let pet_guid = pet.token_guid().unwrap_or(0);
+    // A guid whose object never streamed is no pet: `None` empties the booth.
+    booth.unit = (pet_guid != 0).then(|| pet.entity(pet_guid)).flatten();
+}
+
+/// The pet page's stats pushed under `"pet"` and their `UNIT_*` fan-out, the units' (#1289).
+fn feed_pet_doll(
+    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    pet: PetUnit,
     mut last: Local<crate::ui_script::VmMemo<Option<UnitCombatStats>>>,
     tables: Option<Res<crate::ui_char::SheetTables>>,
     names: Res<crate::names::NameCache>,
@@ -39,14 +48,9 @@ fn feed_pet_doll(
         return;
     };
     let last = last.get(&script);
-    // The pane's rotate buttons own the yaw. Written every frame, pet or not, so a new pet does
-    // not snap to a stale one.
-    booth.yaw = script.model_pane_facing("PetModelFrame");
-
-    let pet_guid = bar.spells.pet_guid;
+    // The "pet" token's unit, our charm else our summon (`0x60acc3`-`0x60acd3`).
+    let pet_guid = pet.token_guid().unwrap_or(0);
     let store = (pet_guid != 0).then(|| pet.store(pet_guid)).flatten();
-    // A guid whose object never streamed is no pet: `None` empties the booth.
-    booth.unit = (pet_guid != 0).then(|| pet.entity(pet_guid)).flatten();
 
     let owner_class = self_q
         .iter()

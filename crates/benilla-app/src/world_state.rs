@@ -19,20 +19,16 @@ use bevy::prelude::*;
 #[derive(Resource)]
 pub(crate) struct WorldStates {
     values: HashMap<u32, u32>,
-    generation: u64,
     scope: Option<(u32, u32, u32)>,
     phase_mask: u32,
-    owed: Vec<WorldStateEvent>,
 }
 
 impl Default for WorldStates {
     fn default() -> Self {
         Self {
             values: HashMap::new(),
-            generation: 0,
             scope: None,
             phase_mask: DEFAULT_PHASE_MASK,
-            owed: Vec::new(),
         }
     }
 }
@@ -41,12 +37,6 @@ impl Default for WorldStates {
 const DEFAULT_PHASE_MASK: u32 = 1;
 
 impl WorldStates {
-    /// Bumped per write and per init, not per pair, the edge readers rebuild on: the reference's
-    /// handler re-runs the world-map landmark builder once per packet.
-    pub(crate) fn generation(&self) -> u64 {
-        self.generation
-    }
-
     /// The reference's getter: a missing key reads 0. Signed, as the reference prints it through
     /// `"%d"`.
     pub(crate) fn get(&self, key: u32) -> i32 {
@@ -70,14 +60,13 @@ impl WorldStates {
         self.phase_mask
     }
 
-    /// `SMSG_SET_PHASE_SHIFT`'s setter (`0x513960`): a moved mask rebuilds the world-state UI and
-    /// owes `UPDATE_WORLD_STATES`; the same mask again does nothing.
-    pub(crate) fn set_phase_mask(&mut self, mask: u32) {
-        if mask != self.phase_mask {
+    /// `SMSG_SET_PHASE_SHIFT`'s setter (`0x513960`): true when the mask moved, which rebuilds the world-state UI and fires `UPDATE_WORLD_STATES` (`0x51397f`); the same mask again does nothing.
+    pub(crate) fn set_phase_mask(&mut self, mask: u32) -> bool {
+        let moved = mask != self.phase_mask;
+        if moved {
             self.phase_mask = mask;
-            self.generation = self.generation.wrapping_add(1);
-            self.owe_update();
         }
+        moved
     }
 
     /// The next game starts in phase 1 (`0x52b8f5`), with no event: no UI is up to hear it.
@@ -90,63 +79,35 @@ impl WorldStates {
     pub(crate) fn init_scope(&mut self, map: u32, zone: u32, area: u32) -> bool {
         let moved = self.scope != Some((map, zone, area));
         self.scope = Some((map, zone, area));
-        self.generation = self.generation.wrapping_add(1);
         moved
     }
 
     /// Writes `(id, value)` pairs, the reference's setter for both opcodes. Init's trailing
     /// `(0, 0)` is written as data; a zero value is stored, not deleted (`edx` is never tested); a
-    /// repeated key overwrites in place. True when any value moved (`0x549440` returns 1 only
-    /// then; a new key starts at 0), and a moved arena season owes its event (`0x5494c9`).
-    pub(crate) fn write(&mut self, states: &[(u32, u32)]) -> bool {
-        let mut moved = false;
+    /// repeated key overwrites in place. `moved` when any value moved (`0x549440` returns 1 only then; a new key starts at 0); `seasons` counts the arena season's moves, each of which the setter signals as it writes (`0x5494db`).
+    pub(crate) fn write(&mut self, states: &[(u32, u32)]) -> Written {
+        let mut written = Written::default();
         for &(key, value) in states {
             if self.values.insert(key, value).unwrap_or(0) != value {
-                moved = true;
-                if key == ARENA_SEASON {
-                    self.owed.push(WorldStateEvent::ArenaSeason);
-                }
+                written.moved = true;
+                written.seasons += usize::from(key == ARENA_SEASON);
             }
         }
-        self.generation = self.generation.wrapping_add(1);
-        moved
+        written
     }
+}
 
-    /// Owes `UPDATE_WORLD_STATES`, which the packet handler fires after its writes.
-    pub(crate) fn owe_update(&mut self) {
-        self.owed.push(WorldStateEvent::Update);
-    }
-
-    pub(crate) fn has_owed(&self) -> bool {
-        !self.owed.is_empty()
-    }
-
-    /// The events owed, in packet order.
-    pub(crate) fn take_owed(&mut self) -> Vec<WorldStateEvent> {
-        std::mem::take(&mut self.owed)
-    }
+/// What one write moved.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Written {
+    /// Any value moved.
+    pub(crate) moved: bool,
+    /// How many times the arena season moved, each firing `ARENA_SEASON_WORLD_STATE`.
+    pub(crate) seasons: usize,
 }
 
 /// The arena season's world state, `0xc77`, whose change fires `ARENA_SEASON_WORLD_STATE`.
 const ARENA_SEASON: u32 = 0xc77;
-
-/// An event a world-state packet owes the UI.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum WorldStateEvent {
-    /// `UPDATE_WORLD_STATES`: every update, and an init that moved anything (`0x526530`).
-    Update,
-    /// `ARENA_SEASON_WORLD_STATE`, from the setter when state `0xc77` moves.
-    ArenaSeason,
-}
-
-impl WorldStateEvent {
-    pub(crate) fn name(self) -> &'static str {
-        match self {
-            Self::Update => "UPDATE_WORLD_STATES",
-            Self::ArenaSeason => "ARENA_SEASON_WORLD_STATE",
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -176,14 +137,12 @@ mod tests {
     fn a_phase_shift_rebuilds_and_fires_only_when_it_moves() {
         let mut table = WorldStates::default();
         assert_eq!(table.phase_mask(), 1, "the game's init");
-        let generation = table.generation();
-        table.set_phase_mask(1);
-        assert_eq!(table.generation(), generation);
-        assert!(table.take_owed().is_empty(), "the same mask: no event");
-        table.set_phase_mask(0x41);
+        assert!(!table.set_phase_mask(1), "the same mask: no event");
+        assert!(
+            table.set_phase_mask(0x41),
+            "the UI list rebuilds and the event fires"
+        );
         assert_eq!(table.phase_mask(), 0x41);
-        assert_ne!(table.generation(), generation, "the UI list rebuilds");
-        assert_eq!(table.take_owed(), [WorldStateEvent::Update]);
     }
 
     #[test]

@@ -540,8 +540,8 @@ pub(crate) fn drive_nameplates(
         Local<ImageCasters>,
     ),
     names: Res<NameCache>,
-    // The guild cache, the a5 line's text; `ResMut` because a miss sends `CMSG_GUILD_QUERY`.
-    mut guilds: ResMut<crate::ui_guild::GuildState>,
+    // The guild cache, the a5 line's text; a miss sends `CMSG_GUILD_QUERY`.
+    guilds: Res<crate::ui_guild::GuildCache>,
     net_commands: Res<NetCommands>,
     factions: Option<Res<Factions>>,
     reputations: Res<Reputations>,
@@ -772,7 +772,7 @@ pub(crate) fn drive_nameplates(
                 // An empty subname is no line (`0x72d852`).
                 .filter(|s| !s.trim().is_empty()),
             EntityKind::Player if name_cfg.has(name_bit::PLAYER_GUILD) => line_store
-                .and_then(|s| crate::ui_guild::unit_guild_name(&s.0, &mut guilds, &net_commands)),
+                .and_then(|s| crate::ui_guild::unit_guild_name(&s.0, &guilds, &net_commands)),
             _ => None,
         };
         // The highlight colour (`0x718ac0`), the ring's own: the combat flash first, while we

@@ -1402,6 +1402,7 @@ fn area_row(name: &str) -> benilla_formats::AreaTableRow {
         faction_group_mask: 0,
         exploration_level: -1,
         name: name.into(),
+        ambient_multiplier: 0.0,
     }
 }
 

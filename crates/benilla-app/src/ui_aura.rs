@@ -385,13 +385,12 @@ fn shown_in_aura_ui(ctx: ListCtx, spell_id: u32, flags: u8, caster: u64) -> bool
 #[derive(bevy::ecs::system::SystemParam)]
 struct AuraUnits<'w> {
     selection: Res<'w, Selection>,
-    pet: Res<'w, crate::ui_pet::PetBar>,
+    pet: crate::ui_script::LentRef<'w, crate::ui_pet::PetBar>,
     // `Option`: a UI-only harness lacks their plugins; without the party's no group token names
     // anyone.
     group: Option<Res<'w, crate::ui_party::GroupState>>,
     hovered: Option<Res<'w, crate::target::Hovered>>,
     hovered_go: Option<Res<'w, crate::target::HoveredObject>>,
-    interact: Option<Res<'w, crate::ui_session::InteractNpc>>,
     encounter: Option<Res<'w, crate::ui_instance::EncounterUnits>>,
     arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
 }
@@ -430,7 +429,9 @@ fn feed_auras(
     };
 
     let bevy_now = time.elapsed_secs_f64();
-    let pet_guid = units.pet.spells.pet_guid;
+    // Read until the pushes below, before any call into Lua.
+    let pet_read = units.pet.get();
+    let pet_guid = pet_read.as_ref().map_or(0, |b| b.spells.pet_guid);
     // A plain borrow, so the dispel list and the trace clock borrow apart.
     let mem: &mut AuraFeedMemory = &mut mem;
     if let (Some(actions), Some(sp)) = (actions.as_ref(), spells.as_deref()) {
@@ -444,7 +445,7 @@ fn feed_auras(
             .zip(mem.dispel_types.as_deref())
             .map(|(actions, dispel_types)| RaidBook {
                 known: &actions.spells,
-                pet: &units.pet.spells.spells,
+                pet: pet_read.as_ref().map_or(&[], |b| &b.spells.spells[..]),
                 dispel_types,
             });
     let ctx = ListCtx {
@@ -541,6 +542,10 @@ fn feed_auras(
         let pet_of = crate::ui_arena::pet_of(&index, &stores);
         (a.opponents(), a.pets(&pet_of), a.count())
     });
+    // The interact target through the lent view (`0x60af67`).
+    let interact = crate::ui_script::live::interact_target()
+        .flatten()
+        .unwrap_or(0);
     let unit_changed = memo.units.feed(
         &mut script,
         units::Inputs {
@@ -556,8 +561,9 @@ fn feed_auras(
                     h.mouseover(&units.hovered_go.as_deref().copied().unwrap_or_default())
                 })
                 .map_or(0, |(_, guid)| guid),
-            npc: units.interact.as_deref().and_then(|i| i.1).unwrap_or(0),
+            npc: interact,
             focus: focus_guid,
+            interact,
             // The player's transport while seated (`0x60ac87`).
             vehicle: seated
                 .filter(|p| p.state == crate::vehicle::SEATED)
@@ -591,6 +597,7 @@ fn feed_auras(
         }
     }
 
+    drop(pet_read);
     script.set_player_auras(list);
     if changed {
         script.fire_event("UNIT_AURA", vec![ScriptValue::Str("player".into())]);

@@ -21,7 +21,7 @@ use benilla_ui::script::UiScript;
 use super::probes::ProbeClock;
 use crate::net::{ChatKind, ClientCommand, Guid, NetCommands, NetEntity, ObjectStore, SelfPlayer};
 use crate::player::Player;
-use crate::ui_bank::{BankOpen, BankPrices};
+use crate::ui_bank::BankPrices;
 
 /// Soleil Stonemantle's spawn (vmangos `creature` guid 12629, map 0).
 const BANKER_AT: [f32; 3] = [-4895.64, -1004.66, 504.024];
@@ -150,7 +150,6 @@ fn find_bank_slot(store: &ObjectStore, guid: u64) -> Option<u8> {
 fn bank_probe(
     time: ProbeClock,
     mut probe: ResMut<BankProbe>,
-    open: Res<BankOpen>,
     prices: Option<Res<BankPrices>>,
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_player: Query<(), With<SelfPlayer>>,
@@ -234,7 +233,7 @@ fn bank_probe(
             }
         }
         Phase::Activating { sent_at } => {
-            if open.is_open() {
+            if benilla_ui::script::read_live(|l| l.banker().is_some()).unwrap_or(false) {
                 info!("PROBE_BANK: PASS (2 activate) — BankOpen is_open (SMSG_SHOW_BANK landed)");
                 probe.passes += 1;
                 probe.phase = Phase::EnsureItem {

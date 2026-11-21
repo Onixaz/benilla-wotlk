@@ -1,7 +1,7 @@
 //! The world-mouseover tooltip and the spell tooltip views. The world tooltip rebuilds once per
 //! hover-target change and a lost hover arms a fade; the pick is [`Hovered`] or
-//! [`HoveredObject`], arbitrated by [`go_is_nearest`] as the click router does. The spell views
-//! are built and pushed ahead of a hover by [`spell_feed`].
+//! [`HoveredObject`], arbitrated by [`go_is_nearest`] as the click router does. A spell view is
+//! built at the hover by [`spell_view`].
 
 use bevy::prelude::*;
 
@@ -11,32 +11,15 @@ use benilla_ui::strings::Arg;
 use crate::names::NameCache;
 use crate::net::{NetCommands, ObjectStore, SelfPlayer};
 use crate::target::{go_is_nearest, Hovered, HoveredObject, GO_FLAG_LOCKED};
-use crate::ui_script::UiFeed;
-use crate::ui_trainer::TrainerFeed;
 use crate::ui_unit::{enrich_unit, snapshot, unit_reaction, SnapshotTables, UnitFeed};
 
-mod spell_deps;
-mod spell_feed;
-use spell_feed::feed_spell_tooltips;
+pub(crate) mod spell_view;
 
 pub struct UiTooltipPlugin;
 
 impl Plugin for UiTooltipPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            Update,
-            (
-                drive_mouseover_tooltip.in_set(UnitFeed),
-                // After the trainer and quest feeds, so a list that lands this frame is hoverable
-                // in its tick; outside `UnitFeed`, which the trainer feed follows, so it takes that
-                // set's gate.
-                feed_spell_tooltips
-                    .in_set(UiFeed)
-                    .after(TrainerFeed)
-                    .after(crate::ui_quest::feed_quest)
-                    .run_if(crate::ui_script::ingame_ui_up),
-            ),
-        );
+        app.add_systems(Update, drive_mouseover_tooltip.in_set(UnitFeed));
     }
 }
 
@@ -372,11 +355,5 @@ fn drive_mouseover_tooltip(
     }
 }
 
-#[cfg(test)]
-mod bench;
-#[cfg(test)]
-mod deps_tests;
-#[cfg(test)]
-mod feed_tests;
 #[cfg(test)]
 mod tests;

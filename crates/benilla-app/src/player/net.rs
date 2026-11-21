@@ -1,5 +1,6 @@
-//! The player's packet handlers: `SMSG_STANDSTATE_UPDATE` goes to [`super::posture`] as a
-//! [`ServerStandState`], applied in `control`, which holds the body query and sheath queue;
+//! The player's packet handlers: `SMSG_STANDSTATE_UPDATE` commits its state here and hands its
+//! weapon stow to [`super::posture`] as a [`ServerStandState`], run in `control`, which holds the
+//! body query and sheath queue;
 //! `SMSG_TIME_SYNC_REQ` is answered here.
 
 use benilla_protocol::{SessionEvent, SessionEventKind};
@@ -108,8 +109,27 @@ fn on_collision_height_changed(
     }
 }
 
-fn on_stand_state_update(In(ev): In<SessionEvent>, mut out: MessageWriter<ServerStandState>) {
+fn on_stand_state_update(
+    In(ev): In<SessionEvent>,
+    mut out: MessageWriter<ServerStandState>,
+    // `Option`: a client built without the player plugin holds no mover.
+    player: Option<ResMut<Player>>,
+    me: Query<&crate::net::ObjectStore, With<SelfPlayer>>,
+    mut barber: crate::ui_barber::BarberStand,
+    mut asks: MessageWriter<super::StandStateRequest>,
+) {
     if let SessionEvent::StandStateUpdate { state } = ev {
+        // With our player held (`0x73f571`).
+        let (Some(mut player), Ok(store)) = (player, me.single()) else {
+            return;
+        };
+        super::posture::server_stand_state(
+            &mut player,
+            state,
+            store.0.unit_stand_state(),
+            &mut barber,
+            &mut asks,
+        );
         out.write(ServerStandState { state });
     }
 }

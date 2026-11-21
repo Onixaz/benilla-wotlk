@@ -1,5 +1,6 @@
 //! The `Unit*` binding tests.
 
+use crate::script::live::TestTargeting;
 use crate::script::{PartyState, PlayerRecord, UiScript, UnitGuids, UnitState};
 
 fn player() -> UnitState {
@@ -62,6 +63,7 @@ fn spell_can_target_unit_answers_per_validated_token() {
         target: 0x30,
         ..Default::default()
     });
+    s.set_spell_targeting(true);
     s.set_spell_targetable_units([0x10, 0x21]);
     assert!(s
         .eval::<bool>(r#"return SpellCanTargetUnit("player") == 1"#)
@@ -1091,14 +1093,14 @@ fn the_death_verbs_read_the_held_unit_live() {
             .unwrap()
     };
     // A corpse, a feigning stranger, a feigning party member and a ghost.
-    let live = crate::script::live::TestView {
+    let mut live = crate::script::live::TestView {
         player: Some(1),
         units: [(1, (0, 1)), (2, (0, 50)), (3, (0, 50))].into(),
         dynamic_flags: [(2, 0x20), (3, 0x20)].into(),
         player_flags: [(1, 0x10), (3, 0)].into(),
         ..Default::default()
     };
-    s.with_live(&live, |s| {
+    s.with_live(&mut live, |s| {
         assert_eq!(
             ask(s, r#"UnitIsDead("player")"#),
             "nil",
@@ -1120,13 +1122,13 @@ fn the_death_verbs_read_the_held_unit_live() {
         );
         assert_eq!(ask(s, r#"UnitIsDeadOrGhost("party1")"#), "nil");
     });
-    let dead = crate::script::live::TestView {
+    let mut dead = crate::script::live::TestView {
         player: Some(1),
         units: [(1, (0, 0))].into(),
         player_flags: [(1, 0)].into(),
         ..Default::default()
     };
-    s.with_live(&dead, |s| {
+    s.with_live(&mut dead, |s| {
         assert_eq!(ask(s, r#"UnitIsDead("player")"#), "1");
         assert_eq!(ask(s, r#"UnitIsGhost("player")"#), "nil");
         assert_eq!(ask(s, r#"UnitIsDeadOrGhost("player")"#), "1");
@@ -1154,11 +1156,11 @@ fn unit_affecting_combat_is_one_or_nil_and_hides_the_missing_unit() {
             .unwrap(),
         "no view lent reads nobody"
     );
-    let live = crate::script::live::TestView {
+    let mut live = crate::script::live::TestView {
         units: [(1, (1 << 19, 72)), (2, (1 << 20, 1))].into(),
         ..Default::default()
     };
-    s.with_live(&live, |s| {
+    s.with_live(&mut live, |s| {
         assert_eq!(
             s.eval::<String>(r#"return type(UnitAffectingCombat("player"))"#)
                 .unwrap(),
@@ -2171,11 +2173,11 @@ fn unit_on_taxi_is_one_or_nil_and_raises_the_reference_usage() {
     assert!(s
         .eval::<bool>(r#"return UnitOnTaxi("player") == nil"#)
         .unwrap());
-    let riding = crate::script::live::TestView {
+    let mut riding = crate::script::live::TestView {
         units: [(1, (1 << 20, 72)), (2, (0, 1))].into(),
         ..Default::default()
     };
-    s.with_live(&riding, |s| {
+    s.with_live(&mut riding, |s| {
         assert_eq!(
             s.eval::<String>(r#"return type(UnitOnTaxi("player"))"#)
                 .unwrap(),
@@ -2805,4 +2807,126 @@ fn tapped_by_all_threat_list_reads_its_dynamic_flag() {
         );
     }
     assert!(s.run("UnitIsTappedByAllThreatList({})").is_err());
+}
+
+/// The per-token fan-out compares against the interact target itself (`0x60bece`): the held target names `"npc"` over the guid last pushed; none held, nothing does, the last window's NPC included; no view lent, the pushed guid alone.
+#[test]
+fn the_fan_out_names_npc_by_the_interact_target() {
+    use crate::script::LiveState;
+    const VENDOR: u64 = 0xF130_0000_0000_0036;
+    const QUESTER: u64 = 0xF130_0000_0000_0097;
+    struct Target(Option<u64>);
+    impl LiveState for Target {
+        fn unit_flags(&self, _: u64) -> Option<u32> {
+            None
+        }
+        fn unit_health(&self, _: u64) -> Option<u32> {
+            None
+        }
+        fn active_player(&self) -> Option<u64> {
+            None
+        }
+        fn has_control(&self) -> bool {
+            true
+        }
+        fn far_sight(&self) -> bool {
+            false
+        }
+        fn interact_target(&self) -> Option<u64> {
+            self.0
+        }
+    }
+    let mut s = UiScript::new().unwrap();
+    s.set_unit_guids(&UnitGuids {
+        npc: QUESTER,
+        ..Default::default()
+    });
+    let naming = |s: &mut UiScript, held: Option<u64>, guid: u64| {
+        s.with_live(&mut Target(held), |s| s.unit_tokens(guid))
+    };
+    assert_eq!(naming(&mut s, Some(VENDOR), VENDOR), ["npc"]);
+    assert!(
+        naming(&mut s, Some(VENDOR), QUESTER).is_empty(),
+        "the held target wins"
+    );
+    assert!(
+        naming(&mut s, None, QUESTER).is_empty(),
+        "none held: the last pushed NPC is nobody's, as after a window's close"
+    );
+    assert!(s.unit_tokens(VENDOR).is_empty(), "no view lent");
+    assert_eq!(s.unit_tokens(QUESTER), ["npc"]);
+}
+
+/// `"npc"` is the interact target read at the call (`0xbd07a8`): a window's show reads the NPC its open just took, found by guid among the snapshots, though the pushed `"npc"` snapshot still names the last window's; with no target held, nobody, the last window's NPC still pushed included; no view lent, the pushed one.
+#[test]
+fn the_npc_token_reads_the_interact_target_at_the_call() {
+    use crate::script::LiveState;
+    const OLD: u64 = 0xF130_0000_0000_0097;
+    const NEW: u64 = 0xF130_0000_0000_0036;
+    struct Target(Option<u64>);
+    impl LiveState for Target {
+        fn unit_flags(&self, _: u64) -> Option<u32> {
+            None
+        }
+        fn unit_health(&self, _: u64) -> Option<u32> {
+            None
+        }
+        fn active_player(&self) -> Option<u64> {
+            None
+        }
+        fn has_control(&self) -> bool {
+            true
+        }
+        fn far_sight(&self) -> bool {
+            false
+        }
+        fn interact_target(&self) -> Option<u64> {
+            self.0
+        }
+    }
+    let named = |guid: u64, name: &str| UnitState {
+        exists: true,
+        guid,
+        name: Some(name.into()),
+        ..Default::default()
+    };
+    let mut s = UiScript::new().unwrap();
+    s.set_unit("npc", Some(named(OLD, "Brog Hamfist")));
+    s.set_unit("target", Some(named(NEW, "Corina Steele")));
+    let read = |s: &mut UiScript, held: Option<u64>| {
+        s.with_live(&mut Target(held), |s| {
+            s.eval::<(Option<String>, Option<String>)>(r#"return UnitName("npc"), UnitGUID("npc")"#)
+                .unwrap()
+        })
+    };
+    assert_eq!(
+        read(&mut s, Some(NEW)),
+        (
+            Some("Corina Steele".into()),
+            Some("0xF130000000000036".into())
+        ),
+        "the target the open just took, ahead of the snapshot's push"
+    );
+    // 12340 reads the zeroed target as nobody (`0x60af67`): the snapshot's last NPC is not the token's.
+    assert_eq!(
+        read(&mut s, None),
+        (None, None),
+        "no target held, no fallback window"
+    );
+    s.set_unit_guids(&UnitGuids {
+        npc: OLD,
+        ..Default::default()
+    });
+    assert_eq!(
+        read(&mut s, None),
+        (None, None),
+        "a window just closed: its NPC, still the guid last pushed, is not the token's (`0x512e89`)"
+    );
+    assert_eq!(
+        s.eval::<Option<String>>(r#"return UnitName("npc")"#)
+            .unwrap()
+            .as_deref(),
+        Some("Brog Hamfist"),
+        "no view lent: the pushed snapshot"
+    );
 }

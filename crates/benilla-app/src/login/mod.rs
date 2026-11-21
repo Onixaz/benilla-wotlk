@@ -43,7 +43,8 @@ impl Plugin for LoginPlugin {
                         .after(crate::realm_select::RealmSelectSet),
                     // Off the roster and the screen the manager and the tick just moved.
                     crate::ui_script::glue_scene::feed_stock_glue_preview
-                        .in_set(crate::portrait::GluePreviewFeed),
+                        .in_set(crate::portrait::GluePreviewFeed)
+                        .after(crate::target::TargetUpdate),
                     crate::ui_script::server_alert::open_launched
                         // Reads only its message, so no state orders it but the sets.
                         .after(benilla_world::schedule::WorldStage::Stream),

@@ -92,6 +92,9 @@ const CELLS: usize = 8;
 const DRY_NIBBLE: u8 = 0x0f;
 /// The reference's scale on a vertex's authored `u16` texcoords, `3/256` (`0x7ce390`).
 const TEXCOORD_SCALE: f32 = 0.011_718_75;
+/// The reference's scale on a vertex's world X and Y for its sheet coordinates when it has no
+/// authored pair (`0x7ce390`): 0.25 per cell.
+const WORLD_TEXCOORD_SCALE: f32 = 0.060_000_002;
 /// Verts under no liquid carry FLT_MAX (`0x7F7FFFFF`), which is finite, so gate on magnitude.
 const HEIGHT_SENTINEL: f32 = 1.0e9;
 /// The map whose third MCLQ header bit is `LiquidType` 15 rather than 3 (`0x7c5764`): Outland.
@@ -181,17 +184,18 @@ fn build_grid_mesh(
         } else {
             grid.min_height
         };
-        positions.push([
+        let (x, y) = (
             snap_to_lattice(wx - row * UNIT_SIZE),
             snap_to_lattice(wy - col * UNIT_SIZE),
-            h,
-        ]);
+        );
+        positions.push([x, y, h]);
         uvs.push(if authored_uvs {
             // Unsigned: the reference widens the `u16`, so 0xffff is 65535, never −1.
             let [s, t] = (grid.texcoord)(n);
             [f32::from(s) * TEXCOORD_SCALE, f32::from(t) * TEXCOORD_SCALE]
         } else {
-            [col * 0.25, row * 0.25]
+            // u along world X and v along world Y: a cell's column steps −Y, so not `(col, row)`.
+            [x * WORLD_TEXCOORD_SCALE, y * WORLD_TEXCOORD_SCALE]
         });
         depths.push(ramp.map_or(0.0, |r| r.v((grid.depth)(n))));
     }
@@ -390,6 +394,11 @@ mod tests {
             sound_id: 1,
             vertex_format: Some(lvf),
             depth_ramp: (lvf != VertexFormat::HeightUv).then_some(ramp),
+            sheet: None,
+            depth_texture: None,
+            sheet_scale: 1.0,
+            sheet_rotation: 0.0,
+            depth_v_scale: 1.0,
         }
     }
 
@@ -450,7 +459,18 @@ mod tests {
             (m.depths[0] - 0.5).abs() < 1e-3,
             "depth 21 on the river ramp"
         );
-        assert_eq!(m.uvs[0], [0.5, 1.25], "world-continuous cell UVs");
+        // u from world X, v from world Y, 0.06 per yard: 0.25 per cell.
+        let [u, v] = m.uvs[0];
+        assert!(
+            (u - x * 0.06).abs() < 1e-3 && (v - y * 0.06).abs() < 1e-3,
+            "{u} {v}"
+        );
+        let [u1, v1] = m.uvs[1];
+        assert!(
+            (u1 - u).abs() < 1e-4,
+            "the next column keeps u: it steps along Y"
+        );
+        assert!((v - v1 - 0.25).abs() < 1e-3, "and lowers v by a quarter");
         assert_eq!(m.liquid_type, 1);
         assert_eq!(m.kind, LiquidKind::Still);
     }

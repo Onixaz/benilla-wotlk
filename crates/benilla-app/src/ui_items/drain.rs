@@ -1,7 +1,9 @@
 //! The per-frame drains that send the queued Lua container intents as `ClientCommand`s, locking
-//! the slots each send touches in [`crate::pending_item_ops::PendingItemOps`].
+//! the items each send touches in [`crate::pending_item_ops::PendingItemOps`].
 
 use bevy::prelude::*;
+
+use crate::ui_action::signals::SignalSink;
 
 use benilla_protocol::messages::BAG_PLAYER_INVENTORY;
 use benilla_ui::script::{item_lock_args, UiScript, EQUIPMENT_BAG};
@@ -151,21 +153,18 @@ pub(crate) struct ScriptItemUse<'w, 's> {
     aim: Local<'s, Option<crate::spell::cast_target::Aim>>,
     trade: Option<Res<'w, crate::ui_trade::TradeSession>>,
     self_q: Query<'w, 's, &'static ObjectStore, With<SelfPlayer>>,
-    merchant: Res<'w, crate::ui_merchant::MerchantOpen>,
-    bank: Res<'w, crate::ui_bank::BankOpen>,
     equip_sound: MessageWriter<'w, crate::sound::AutoEquipSound>,
-    item_text: ResMut<'w, crate::ui_item_text::ItemTextOpen>,
+    /// The read call's queue, which runs it with the world once the use returns.
+    queue: Commands<'w, 's>,
     targeting: crate::spell::cast_target::CastTargeting<'w, 's>,
-    pending_items: ResMut<'w, PendingItemOps>,
+    pending_items: crate::ui_script::OwnedMut<'w, PendingItemOps>,
     // The loot latch the open arm sets, so `SMSG_LOOT_RESPONSE` admits an item loot.
     loot_latch: ResMut<'w, crate::ui_loot::LootLatch>,
     // The open arm's `CloseLoot(1, 0, 0)` and auto-loot flag (`0x6dcd9c`-`0x6dcdc7`).
     loot: ResMut<'w, crate::ui_loot::LootState>,
     loot_cfg: Res<'w, crate::ui_loot::LootConfig>,
-    lock_cleared: ResMut<'w, crate::pending_item_ops::LockTransitions>,
     deselect: MessageWriter<'w, crate::target::DeselectGuid>,
     ladder: crate::spell::CastLadder<'w, 's>,
-    ui_errors: ResMut<'w, crate::ui_action::UiErrorKeys>,
     gate: crate::ui_bind_confirm::BindGate<'w>,
 }
 
@@ -186,11 +185,11 @@ pub(crate) fn send_equip_to_slot(
     items: &Items,
     commands: &NetCommands,
     store: Option<&ObjectStore>,
-    pending: &mut PendingItemOps,
+    pending: &mut crate::ui_script::OwnedMut<PendingItemOps>,
     (bag, slot, dst): (i64, u32, u8),
     suppress: bool,
 ) {
-    let (guid, count) = slot_guid_count(store, bag, slot, objects);
+    let (guid, _) = slot_guid_count(store, bag, slot, objects);
     if guid == 0 {
         return;
     }
@@ -201,7 +200,10 @@ pub(crate) fn send_equip_to_slot(
         );
         return;
     }
-    pending.add([(bag, slot, guid, count)]);
+    // The lock before the send (`0x6e0136` -> `0x513740`), its edge signalled at its place.
+    if pending.write().lock(guid) {
+        super::watch::fire_lock_edge_now(script, true, item_lock_args(bag, slot));
+    }
     let _ = commands.0.send(ClientCommand::AutoEquipItemSlot {
         item: guid,
         slot: dst,
@@ -255,9 +257,9 @@ impl ScriptItemUse<'_, '_> {
             return;
         };
         if self.trade.as_deref().is_some_and(|t| t.offers(bag, slot)) {
-            self.ui_errors
-                .0
-                .push(crate::ui_action::UiError::key("ERR_EQUIP_TRADE_ITEM"));
+            self.ladder
+                .press
+                .line(crate::ui_action::UiError::key("ERR_EQUIP_TRADE_ITEM"));
             return;
         }
         send_equip_to_slot(
@@ -282,7 +284,6 @@ impl ScriptItemUse<'_, '_> {
             self_q,
             targeting,
             ladder,
-            ui_errors,
             gate,
             ..
         } = self;
@@ -324,45 +325,53 @@ impl ScriptItemUse<'_, '_> {
             script,
             gate,
             false,
-            ui_errors,
         );
     }
 
     /// `UseContainerItem(bag, slot)` outside repair mode: a sale with a merchant open, a bank
     /// move with the bank open, else the reference's equip-vs-use fork and use dispatcher.
-    pub(crate) fn use_container_item(&mut self, script: &mut UiScript, bag: i64, slot: u32) {
-        self.use_at(script, bag, slot, false);
+    pub(crate) fn use_container_item(
+        &mut self,
+        script: &mut UiScript,
+        bag: i64,
+        slot: u32,
+        vendor: Option<u64>,
+    ) {
+        self.use_at(script, bag, slot, vendor, false);
     }
 
     /// The direct item use (`0x708c20`) on a bag item, `UseQuestLogSpecialItem`'s path: the use
     /// dispatcher alone, with no sale, bank move or equip.
     pub(crate) fn use_item(&mut self, script: &mut UiScript, bag: i64, slot: u32) {
-        self.use_at(script, bag, slot, true);
+        self.use_at(script, bag, slot, None, true);
     }
 
-    fn use_at(&mut self, script: &mut UiScript, bag: i64, slot: u32, direct: bool) {
+    fn use_at(
+        &mut self,
+        script: &mut UiScript,
+        bag: i64,
+        slot: u32,
+        vendor: Option<u64>,
+        direct: bool,
+    ) {
         let Self {
             aim,
             trade: _,
             self_q,
-            merchant,
-            bank,
             equip_sound,
-            item_text,
+            queue,
             targeting,
             pending_items,
             loot_latch,
             loot,
             loot_cfg,
-            lock_cleared,
             deselect,
             ladder,
-            ui_errors,
             gate,
         } = self;
         let slot0 = u8::try_from(slot.saturating_sub(1)).ok();
         // With a merchant open, the click sells the whole stack (`CMSG_SELL_ITEM`, count 0).
-        if let (false, true, Some(vendor)) = (direct, merchant.is_open(), merchant.vendor) {
+        if let (false, Some(vendor)) = (direct, vendor) {
             let item_guid = self_q
                 .iter()
                 .next()
@@ -388,7 +397,9 @@ impl ScriptItemUse<'_, '_> {
         // any other deposits (`CMSG_AUTOBANK_ITEM`): the reference's bank flag, set for bags -1
         // and 5..11, picks the opcode. Doll clicks come through `use_inventory_item`, so worn gear
         // keeps its plain use.
-        if !direct && bank.is_open() {
+        // The banker through the lent view, as the bank flag reads it (`0xbeb9a0`).
+        let bank_open = benilla_ui::script::read_live(|l| l.banker().is_some()).unwrap_or(false);
+        if !direct && bank_open {
             let withdrawing = bag == super::BANK_CONTAINER
                 || (super::BANK_BAG_ID_FIRST..=super::BANK_BAG_ID_LAST).contains(&bag);
             if withdrawing {
@@ -507,7 +518,6 @@ impl ScriptItemUse<'_, '_> {
                 script,
                 gate,
                 false,
-                ui_errors,
             );
             return;
         }
@@ -518,37 +528,14 @@ impl ScriptItemUse<'_, '_> {
                 .objects
                 .object(c.guid)
                 .and_then(|f| crate::items::use_enchant_skill(f, ladder.trade_window.1.as_deref()));
-            if super::refuse_item_use(script, c.entry, enchant_skill, ui_errors) {
+            if super::refuse_item_use(script, c.entry, enchant_skill, &mut ladder.press) {
                 return;
             }
         }
-        // A book, a template with `PageText`, opens the reader with no packet. It precedes the open
-        // arm, the inverse of the tooltip: an item both readable and lootable shows
-        // `<Right Click to Open>` and reads on click.
-        if let Some(c) = clicked.filter(|c| c.page_text != 0) {
-            if item_text.toggle_closed(c.guid) {
-                debug!("ui_items: re-click closes the book {:#x}", c.guid);
-            } else {
-                debug!(
-                    "ui_items: read book {:#x} (page {}, lua bag {bag} slot {slot})",
-                    c.guid, c.page_text
-                );
-                item_text.open_pages(c.guid);
-            }
-            return;
-        }
-        // A letter copied from mail (`ITEM_FIELD_FLAGS & 0x200`) opens the reader with no packet,
-        // its text asked by item guid (`0x58a1a0`).
-        if let Some(c) = clicked.filter(|c| c.has_text) {
-            if item_text.toggle_closed(c.guid) {
-                debug!("ui_items: re-click closes the letter {:#x}", c.guid);
-            } else {
-                debug!(
-                    "ui_items: read letter {:#x} (lua bag {bag} slot {slot})",
-                    c.guid
-                );
-                item_text.open_letter(c.guid);
-            }
+        // A book (a template with `PageText`) or a copied letter (`ITEM_FIELD_FLAGS & 0x200`) runs the read call with flag 0, so the open one closes, with no packet (`0x708f60`). It precedes the open arm, the inverse of the tooltip: an item both readable and lootable shows `<Right Click to Open>` and reads on click.
+        if let Some(c) = clicked.filter(|c| c.page_text != 0 || c.has_text) {
+            debug!("ui_items: read {:#x} (lua bag {bag} slot {slot})", c.guid);
+            crate::ui_item_text::read_from_click(queue, c.guid);
             return;
         }
         // A lootable template sends `CMSG_OPEN_ITEM`, which the server answers with a loot window
@@ -568,21 +555,27 @@ impl ScriptItemUse<'_, '_> {
             {
                 deselect.write(crate::target::DeselectGuid(g));
             }
+            // Each unlock signals at the item's place as it clears (`0x707020`).
             for item in loot.take_unlocks() {
-                lock_cleared.0.extend(pending_items.clear_by_guid(item));
+                if pending_items.write().unlock(item) {
+                    if let Some(args) = super::watch::lock_args(&ladder.objects, item) {
+                        super::watch::fire_lock_edge_now(script, false, args);
+                    }
+                }
             }
             let auto = crate::ui_loot::is_auto_looting(loot_cfg, Some(&*script));
             loot.set_auto_loot(auto, loot_latch, &ladder.commands);
             // The latch on the item, before the send (`0x6dcdd4`), so its type-1 response passes.
             loot_latch.0 = Some(c.guid);
             // The grey lock, before the send (`0x6dcded`), until the loot closes.
-            let (guid, count) = self_q
+            let (guid, _) = self_q
                 .iter()
                 .next()
                 .map(|store| slot_guid_count(Some(store), bag, slot, &ladder.objects))
                 .unwrap_or((0, 0));
-            pending_items.add([(bag, slot, guid, count)]);
-            script.fire_event("ITEM_LOCK_CHANGED", item_lock_args(bag, slot));
+            if pending_items.write().lock(guid) {
+                super::watch::fire_lock_edge_now(script, true, item_lock_args(bag, slot));
+            }
             let _ = ladder.commands.0.send(ClientCommand::OpenItem {
                 bag_index,
                 slot: wire_slot,
@@ -607,16 +600,14 @@ impl ScriptItemUse<'_, '_> {
             script,
             gate,
             false,
-            ui_errors,
         );
     }
 }
 
 /// Sends the repair-mode clicks, bag and paper doll, as `CMSG_REPAIR_ITEM`.
 pub(super) fn drain_container_repairs(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
-    merchant: Res<crate::ui_merchant::MerchantOpen>,
     objects: Objects,
     commands: Res<NetCommands>,
     mut purse: crate::ui_merchant::RepairPurse,
@@ -628,13 +619,13 @@ pub(super) fn drain_container_repairs(
     // Repair-mode clicks repair the one item: the purse test first, then `ITEM_REPAIR` as it goes
     // out.
     for (bag, slot) in script.take_container_repairs() {
-        let (Some(vendor), Some(me)) = (merchant.vendor, me) else {
+        let (Some(vendor), Some(me)) = (live.merchant_vendor(), me) else {
             continue;
         };
         let slot0 = u8::try_from(slot.saturating_sub(1)).unwrap_or(0);
         match slot_guid(&me.0, bag, slot0, &objects) {
             Some(guid) => {
-                if purse.refuses(&mut script, &merchant, me, [guid]) {
+                if purse.refuses(&mut script, Some(vendor), me, [guid]) {
                     continue;
                 }
                 debug!("ui_items: repair lua bag {bag} slot {slot} (item {guid:#x})");
@@ -650,7 +641,7 @@ pub(super) fn drain_container_repairs(
     }
     // The paper doll's repair clicks, the same arm on a worn item.
     for id in script.take_inventory_repairs() {
-        let (Some(vendor), Some(me)) = (merchant.vendor, me) else {
+        let (Some(vendor), Some(me)) = (live.merchant_vendor(), me) else {
             continue;
         };
         let item_guid = u8::try_from(id.wrapping_sub(1))
@@ -658,7 +649,7 @@ pub(super) fn drain_container_repairs(
             .and_then(|slot0| slot_guid(&me.0, EQUIPMENT_BAG, slot0, &objects));
         match item_guid {
             Some(guid) if (1..=19).contains(&id) => {
-                if purse.refuses(&mut script, &merchant, me, [guid]) {
+                if purse.refuses(&mut script, Some(vendor), me, [guid]) {
                     continue;
                 }
                 debug!("ui_items: repair worn lua slot {id} (item {guid:#x})");
@@ -702,12 +693,15 @@ struct Clicked {
 /// Sends the gift wraps and the moves `PickupContainerItem`/`SplitContainerItem` queued, the moves
 /// through [`send_container_move`].
 pub(super) fn drain_container_moves(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsPending>,
+    ),
     commands: Res<NetCommands>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     objects: Objects,
     items: Res<Items>,
-    mut pending: ResMut<PendingItemOps>,
+    mut pending: crate::ui_script::OwnedMut<PendingItemOps>,
     mut gate: crate::ui_bind_confirm::BindGate,
 ) {
     let Some(mut script) = script else {
@@ -770,7 +764,7 @@ pub(crate) fn send_container_move(
     items: &Items,
     commands: &NetCommands,
     store: Option<&ObjectStore>,
-    pending: &mut PendingItemOps,
+    pending: &mut crate::ui_script::OwnedMut<PendingItemOps>,
     mv: benilla_ui::script::ContainerMove,
     suppress: bool,
 ) -> bool {
@@ -852,20 +846,11 @@ pub(crate) fn send_container_move(
                 });
             }
         }
-        // Both ends lock on their current (guid, count), which the resolving clear watches.
-        let (src_guid, src_count) = slot_guid_count(store, mv.src_bag, mv.src_slot, objects);
-        let (dst_guid, dst_count) = slot_guid_count(store, mv.dst_bag, mv.dst_slot, objects);
-        pending.add([
-            (mv.src_bag, mv.src_slot, src_guid, src_count),
-            (mv.dst_bag, mv.dst_slot, dst_guid, dst_count),
-        ]);
-        // One event per end that holds an item: the reference locks items, not slots (`0x706fe0`).
-        for (bag, slot, guid) in [
-            (mv.src_bag, mv.src_slot, src_guid),
-            (mv.dst_bag, mv.dst_slot, dst_guid),
-        ] {
-            if guid != 0 {
-                script.fire_event("ITEM_LOCK_CHANGED", item_lock_args(bag, slot));
+        // The item at each end locks, its edge signalled at its place (`0x706fe0`).
+        for (bag, slot) in [(mv.src_bag, mv.src_slot), (mv.dst_bag, mv.dst_slot)] {
+            let (guid, _) = slot_guid_count(store, bag, slot, objects);
+            if pending.write().lock(guid) {
+                super::watch::fire_lock_edge_now(script, true, item_lock_args(bag, slot));
             }
         }
     }
@@ -875,11 +860,14 @@ pub(crate) fn send_container_move(
 /// Sends the destroys `DeleteCursorItem` queued as `CMSG_DESTROYITEM` (count 0 is the whole stack
 /// on both sides) and locks the one slot.
 pub(super) fn drain_container_destroys(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsPending>,
+    ),
     commands: Res<NetCommands>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     objects: Objects,
-    mut pending: ResMut<PendingItemOps>,
+    mut pending: crate::ui_script::OwnedMut<PendingItemOps>,
 ) {
     let Some(mut script) = script else {
         return;
@@ -897,9 +885,10 @@ pub(super) fn drain_container_destroys(
             slot: wire_slot,
             count,
         });
-        let (guid, stack) = slot_guid_count(store, bag, slot, &objects);
-        pending.add([(bag, slot, guid, stack)]);
-        script.fire_event("ITEM_LOCK_CHANGED", item_lock_args(bag, slot));
+        let (guid, _) = slot_guid_count(store, bag, slot, &objects);
+        if pending.write().lock(guid) {
+            super::watch::fire_lock_edge_now(&mut script, true, item_lock_args(bag, slot));
+        }
     }
 }
 
@@ -912,11 +901,17 @@ fn run_container_clicks(world: &mut World) {
     world.run_system_once(drain_container_repairs).unwrap();
     world
         .run_system_once(
-            |(mut script, _live): (NonSendMut<UiScript>, crate::ui_script::LendLive),
+            |(mut script, _live): (
+                NonSendMut<UiScript>,
+                crate::ui_script::LendLive<(
+                    crate::ui_script::OwnsCooldowns,
+                    crate::ui_script::OwnsPending,
+                )>,
+            ),
              mut items: ScriptItemUse| {
                 crate::script_calls::in_call_order(&mut script, |script, call| {
                     if let ScriptCall::UseContainerItem { bag, slot } = call {
-                        items.use_container_item(script, bag, slot);
+                        items.use_container_item(script, bag, slot, None);
                     }
                 });
             },
@@ -944,15 +939,14 @@ mod tests {
         app.add_message::<crate::sound::AutoEquipSound>()
             .add_message::<crate::creature_anim::SheathRequest>()
             .init_resource::<crate::ui_merchant::MerchantOpen>()
-            .init_resource::<crate::ui_bank::BankOpen>()
-            .init_resource::<crate::ui_item_text::ItemTextOpen>()
+            .init_non_send_resource::<crate::ui_bank::BankOpen>()
+            .init_resource::<crate::ui_item_text::ItemText>()
             .init_resource::<PendingItemOps>()
             .init_resource::<crate::ui_bind_confirm::PendingEquips>()
             .init_resource::<crate::ui_bind_confirm::PendingBindOnUse>()
             .init_resource::<crate::ui_loot::LootLatch>()
             .init_resource::<crate::ui_loot::LootState>()
             .init_resource::<crate::ui_loot::LootConfig>()
-            .init_resource::<crate::pending_item_ops::LockTransitions>()
             .add_message::<crate::target::DeselectGuid>()
             .init_resource::<crate::target::Selection>()
             .init_resource::<crate::net::SelfGuid>()
@@ -963,7 +957,7 @@ mod tests {
             .init_resource::<crate::spell::QueuedMeleeSpell>()
             .init_resource::<crate::spell::Cooldowns>()
             .init_resource::<crate::spell::SpellModifiers>()
-            .init_resource::<crate::ui_action::CastErrors>()
+            .init_resource::<crate::ui_action::RefusalsSeen>()
             .init_resource::<crate::ui_action::UiErrorKeys>()
             .init_resource::<crate::ui_chat::ChatLog>()
             .init_resource::<crate::sound::MessageSounds>()
@@ -1027,7 +1021,7 @@ mod tests {
         );
         // The grey lock, the reference's other pre-send write.
         assert!(
-            app.world().resource::<PendingItemOps>().contains(0, 1),
+            app.world().resource::<PendingItemOps>().is_locked(CLAM),
             "the slot greys at the click"
         );
     }
@@ -1306,17 +1300,57 @@ mod tests {
     }
 }
 
-/// The answers to `EquipPendingItem`/`CancelPendingEquip`. Accept re-runs the original sender with
-/// `suppress` set, as the reference's does: 1.12 has no confirm opcode, and a slot that changed
-/// under the dialog is judged afresh. Cancel sends nothing and frees the record.
-///
-/// Deviation: the reference's cancel also unlocks both occupants, which its deferral locked; ours
-/// locks nothing while the question is up, because a [`PendingItemOps`] lock clears only against a
-/// wire op and a deferred action has none.
+/// The item at a wire position: the player's slot under bag 255, else the slot of the bag in that player slot.
+fn wire_item(store: Option<&ObjectStore>, objects: &Objects, (bag, slot): (u8, u8)) -> u64 {
+    let Some(me) = store else {
+        return 0;
+    };
+    if bag == BAG_PLAYER_INVENTORY {
+        return me.0.player_slot(slot).unwrap_or(0);
+    }
+    me.0.player_slot(bag)
+        .and_then(|g| objects.object(g))
+        .and_then(|b| b.container_slot(slot))
+        .unwrap_or(0)
+}
+
+/// The cancel's two unlocks (`0x6e0273`, `0x6e02cd`): the record's source and destination occupants; a slotted equip files its equip slot as the source slot in the item's own container (`0x6e00d7`), and an auto-equip has no destination.
+fn cancel_occupants(
+    store: Option<&ObjectStore>,
+    objects: &Objects,
+    rec: &crate::ui_bind_confirm::PendingEquip,
+) -> Vec<u64> {
+    use crate::ui_bind_confirm::PendingEquip;
+    let at = |pos: Option<(u8, u8)>| pos.map_or(0, |p| wire_item(store, objects, p));
+    match *rec {
+        PendingEquip::Swap {
+            src_bag,
+            src_slot,
+            dst_bag,
+            dst_slot,
+        } => vec![
+            at(wire_pos(src_bag, src_slot)),
+            at(wire_pos(dst_bag, dst_slot)),
+        ],
+        PendingEquip::Slot { bag, slot, dst } => {
+            vec![at(
+                wire_pos(bag, slot).map(|(container, _)| (container, dst))
+            )]
+        }
+        PendingEquip::AutoEquip {
+            bag_index, slot, ..
+        } => vec![at(Some((bag_index, slot)))],
+    }
+}
+
+/// The answers to `EquipPendingItem`/`CancelPendingEquip` (`0x6e01a0`): accept re-runs the original sender with `suppress` set, a slot that changed under the dialog judged afresh; cancel unlocks the record's two occupants, which its deferral never locked, so only an item another send locked fires.
 pub(super) fn drain_bind_confirm_answers(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, _live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsPending>,
+    ),
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
-    mut pending: ResMut<PendingItemOps>,
+    mut pending: crate::ui_script::OwnedMut<PendingItemOps>,
     objects: Objects,
     items: Res<Items>,
     commands: Res<NetCommands>,
@@ -1337,6 +1371,13 @@ pub(super) fn drain_bind_confirm_answers(
         };
         if !answer.accept {
             debug!("ui_items: pending equip {} cancelled", answer.index);
+            for guid in cancel_occupants(store, &objects, &rec) {
+                if pending.write().unlock(guid) {
+                    if let Some(args) = super::watch::lock_args(&objects, guid) {
+                        super::watch::fire_lock_edge_now(&mut script, false, args);
+                    }
+                }
+            }
             continue;
         }
         match rec {
@@ -1401,10 +1442,12 @@ pub(super) fn drain_bind_confirm_answers(
 /// `ConfirmBindOnUse()`: re-issues the pending use through the cast ladder with `suppress` set.
 /// The pending state is one cell, taken on the first accept, so a doubled accept does nothing.
 pub(super) fn drain_bind_on_use_confirms(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    (script, mut live): (
+        Option<NonSendMut<UiScript>>,
+        crate::ui_script::LendLive<crate::ui_script::OwnsCooldowns>,
+    ),
     targeting: crate::spell::cast_target::CastTargeting,
     mut ladder: crate::spell::CastLadder,
-    mut ui_errors: ResMut<crate::ui_action::UiErrorKeys>,
     mut gate: crate::ui_bind_confirm::BindGate,
 ) {
     let Some(mut script) = script else {
@@ -1427,8 +1470,9 @@ pub(super) fn drain_bind_on_use_confirms(
         &mut script,
         &mut gate,
         true,
-        &mut ui_errors,
     );
+    // The use's cast-bar edges, fired as it returns (`0x80b556`).
+    ladder.press.fire(&mut script, &mut live);
 }
 
 #[cfg(test)]
@@ -1919,15 +1963,14 @@ mod bind_confirm_tests {
         app.add_message::<crate::sound::AutoEquipSound>()
             .add_message::<crate::creature_anim::SheathRequest>()
             .init_resource::<crate::ui_merchant::MerchantOpen>()
-            .init_resource::<crate::ui_bank::BankOpen>()
-            .init_resource::<crate::ui_item_text::ItemTextOpen>()
+            .init_non_send_resource::<crate::ui_bank::BankOpen>()
+            .init_resource::<crate::ui_item_text::ItemText>()
             .init_resource::<PendingItemOps>()
             .init_resource::<crate::ui_bind_confirm::PendingEquips>()
             .init_resource::<crate::ui_bind_confirm::PendingBindOnUse>()
             .init_resource::<crate::ui_loot::LootLatch>()
             .init_resource::<crate::ui_loot::LootState>()
             .init_resource::<crate::ui_loot::LootConfig>()
-            .init_resource::<crate::pending_item_ops::LockTransitions>()
             .add_message::<crate::target::DeselectGuid>()
             .init_resource::<crate::target::Selection>()
             .init_resource::<crate::net::SelfGuid>()
@@ -1938,7 +1981,7 @@ mod bind_confirm_tests {
             .init_resource::<crate::spell::QueuedMeleeSpell>()
             .init_resource::<crate::spell::Cooldowns>()
             .init_resource::<crate::spell::SpellModifiers>()
-            .init_resource::<crate::ui_action::CastErrors>()
+            .init_resource::<crate::ui_action::RefusalsSeen>()
             .init_resource::<crate::ui_action::UiErrorKeys>()
             .init_resource::<crate::ui_chat::ChatLog>()
             .init_resource::<crate::sound::MessageSounds>()
@@ -2047,5 +2090,56 @@ mod bind_confirm_tests {
             "the reference's bind arm sits BELOW the on-use lookup's failure exits, not above them"
         );
         assert!(rx.try_iter().next().is_none());
+    }
+}
+
+#[cfg(test)]
+mod cancel_tests {
+    use super::*;
+    use crate::ui_bind_confirm::PendingEquip;
+    use benilla_protocol::field::{FIELD_PLAYER_INV_SLOT_HEAD, FIELD_PLAYER_PACK_SLOT_1};
+    use benilla_protocol::ObjectFields;
+    use bevy::ecs::system::RunSystemOnce;
+
+    const ITEM: u64 = 0x4000_0000_0000_0101;
+    const SWORD: u64 = 0x4000_0000_0000_0102;
+
+    /// The cancel unlocks the record's occupants as 12340 files them: a swap's two ends, a slotted equip's equip slot in the item's own container, an auto-equip's source.
+    #[test]
+    fn a_cancel_names_the_records_occupants() {
+        let mut world = World::new();
+        world.init_resource::<crate::net::GuidIndex>();
+        let pair = |f: u16, g: u64| [(f, g as u32), (f + 1, (g >> 32) as u32)];
+        let mut fields = pair(FIELD_PLAYER_PACK_SLOT_1, ITEM).to_vec();
+        fields.extend(pair(FIELD_PLAYER_INV_SLOT_HEAD + 2 * 15, SWORD));
+        world.spawn((SelfPlayer, ObjectStore(ObjectFields::from_pairs(&fields))));
+        let occupants = |world: &mut World, rec: PendingEquip| {
+            world
+                .run_system_once(
+                    move |q: Query<&ObjectStore, With<SelfPlayer>>, objects: Objects| {
+                        cancel_occupants(q.iter().next(), &objects, &rec)
+                    },
+                )
+                .unwrap()
+        };
+        let swap = PendingEquip::Swap {
+            src_bag: 0,
+            src_slot: 1,
+            dst_bag: EQUIPMENT_BAG,
+            dst_slot: 16,
+        };
+        assert_eq!(occupants(&mut world, swap), [ITEM, SWORD]);
+        let slotted = PendingEquip::Slot {
+            bag: 0,
+            slot: 1,
+            dst: 15,
+        };
+        assert_eq!(occupants(&mut world, slotted), [SWORD]);
+        let auto = PendingEquip::AutoEquip {
+            bag_index: BAG_PLAYER_INVENTORY,
+            slot: 23,
+            guid: ITEM,
+        };
+        assert_eq!(occupants(&mut world, auto), [ITEM]);
     }
 }

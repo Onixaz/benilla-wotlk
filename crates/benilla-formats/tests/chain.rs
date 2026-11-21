@@ -945,6 +945,31 @@ fn decodes_azeroth_wdl_against_apitrace_ground_truth() {
 
 /// Magma and slime submersion read the fixed global `LightParams` rows 7 and 6, which no
 /// `Light.dbc` row references; they decode to the dense orange and green views.
+/// Outland takes the rate law and the old world does not: at the Dark Portal in Hellfire Peninsula
+/// the fog end is the far clip and the curve's rate is the zone span's, in Elwynn both stand.
+#[test]
+fn outland_fog_takes_the_rate_law_and_the_old_world_stays_linear() {
+    let data = benilla_formats::wow_data_or_skip!();
+    let mut chain = open_chain(&data).expect("open vanilla patch chain");
+    let cat = benilla_formats::LightCatalog::load(&mut chain).expect("load Light DBCs");
+    let dry = benilla_formats::Submersion::Dry;
+    let portal = [-248.0_f32, 922.0, 84.0];
+    let hellfire = cat.sample_blended(530, portal, 1440, false, dry, false, 1277.0);
+    assert_eq!(
+        hellfire.fog_end, 1277.0,
+        "the zone end moves to the far clip"
+    );
+    assert!(
+        (1.5..=7.0).contains(&hellfire.fog_rate),
+        "the rate is 0x7ecd00's, got {}",
+        hellfire.fog_rate
+    );
+    assert!(hellfire.fog_start_frac >= 0.0);
+    let elwynn = cat.sample_blended(0, [-9449.0, 64.0, 56.0], 1440, false, dry, false, 1277.0);
+    assert_eq!(elwynn.fog_rate, 1.0, "mode 0 keeps the linear curve");
+    assert!(elwynn.fog_end < 1277.0, "and the zone's own end");
+}
+
 #[test]
 fn magma_and_slime_submersion_read_the_fixed_global_light_params() {
     let data = benilla_formats::wow_data_or_skip!();
@@ -969,7 +994,7 @@ fn magma_and_slime_submersion_read_the_fixed_global_light_params() {
     ] {
         let sampled: Vec<_> = pins
             .iter()
-            .map(|(map, pos)| cat.sample_blended(*map, *pos, 1440, false, kind, false))
+            .map(|(map, pos)| cat.sample_blended(*map, *pos, 1440, false, kind, false, 777.0))
             .collect();
         assert_eq!(
             to255(sampled[0].fog_color),
@@ -990,6 +1015,7 @@ fn magma_and_slime_submersion_read_the_fixed_global_light_params() {
         false,
         benilla_formats::Submersion::Magma,
         false,
+        777.0,
     );
     assert_eq!(
         to255(magma.fog_color),
@@ -1016,6 +1042,7 @@ fn magma_and_slime_submersion_read_the_fixed_global_light_params() {
         false,
         benilla_formats::Submersion::Slime,
         false,
+        777.0,
     );
     assert_eq!(
         to255(slime.fog_color),
@@ -1042,6 +1069,7 @@ fn magma_and_slime_submersion_read_the_fixed_global_light_params() {
         false,
         benilla_formats::Submersion::Water,
         false,
+        777.0,
     );
     assert_ne!(
         to255(water.fog_color),
@@ -1060,6 +1088,7 @@ fn magma_and_slime_submersion_read_the_fixed_global_light_params() {
         false,
         benilla_formats::Submersion::Dry,
         false,
+        777.0,
     );
     assert_ne!(
         to255(dry.fog_color),
@@ -1082,15 +1111,17 @@ fn the_wdl_window_contains_the_cameras_own_tile() {
     assert_eq!(own, (39, 42), "the reported tile for Weazel's Crater");
     assert!(wdl.is_present(own.0, own.1), "the own tile is authored");
 
-    let window = wdl.tiles_in_ring(x, y, 5);
+    // The minimum view distance at the default scale: 4 × 550/3 × 0.03 = 22 chunks.
+    let window = wdl.tiles_in_walk(x, y, 22);
     assert!(
         window.contains(&own),
         "the camera's own WDL tile must be in the window — without it the near horizon is a hole"
     );
-    // A full (2r+1)² window, not a ring: every present tile within the radius.
-    let expected = (-5i32..=5)
-        .flat_map(|dy| (-5i32..=5).map(move |dx| (own.0 as i32 + dx, own.1 as i32 + dy)))
-        .filter(|&(tx, ty)| (0..64).contains(&tx) && (0..64).contains(&ty))
+    // A full box, not a ring: every present tile in the walk's ranges.
+    let walk = benilla_formats::horizon_walk(x, y, 22);
+    let expected = walk
+        .rows
+        .flat_map(|ty| walk.cols.clone().map(move |tx| (tx, ty)))
         .filter(|&(tx, ty)| wdl.is_present(tx as u32, ty as u32))
         .count();
     assert_eq!(window.len(), expected, "every present tile in the window");

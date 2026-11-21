@@ -141,13 +141,8 @@ enum Step {
     ScriptCalls,
     /// The world click's select.
     WorldSelect,
-    /// The action bar's state feed: `GetActionCooldown` and the cooldown events.
-    ActionState,
     /// The spellbook's feed: `GetSpellCooldown`.
-    SpellBook,
     /// The pet bar's feed and its cooldown flush: `GetPetActionCooldown`.
-    PetBar,
-    PetFlush,
     /// The VM's tick: the `OnUpdate` scripts and the cooldown widgets' update.
     Tick,
 }
@@ -160,10 +155,6 @@ impl Step {
             Step::BindingDispatch => "::bindings::latch_and_dispatch",
             Step::ScriptCalls => "::script_calls::apply_script_calls",
             Step::WorldSelect => "::click::select_on_click",
-            Step::ActionState => "::state::feed_action_state",
-            Step::SpellBook => "::ui_spellbook::feed_spellbook",
-            Step::PetBar => "::bar::feed_pet_bar",
-            Step::PetFlush => "::bar::fire_pet_cooldown_events",
             Step::Tick => "::extract::tick_script",
         }
     }
@@ -178,16 +169,6 @@ impl Step {
             Step::ScriptCalls => schedule.add_systems(super::apply_script_calls.in_set(self)),
             Step::WorldSelect => {
                 schedule.add_systems(crate::target::click::select_on_click.in_set(self))
-            }
-            Step::ActionState => {
-                schedule.add_systems(crate::ui_action::feed_action_state.in_set(self))
-            }
-            Step::SpellBook => {
-                schedule.add_systems(crate::ui_spellbook::feed_spellbook.in_set(self))
-            }
-            Step::PetBar => schedule.add_systems(crate::ui_pet::feed_pet_bar.in_set(self)),
-            Step::PetFlush => {
-                schedule.add_systems(crate::ui_pet::fire_pet_cooldown_events.in_set(self))
             }
             Step::Tick => schedule.add_systems(crate::ui_script::extract::tick_script.in_set(self)),
         };
@@ -234,7 +215,9 @@ const INSTRUMENT: &str = r#"
         cd:SetPoint("BOTTOMLEFT", nil, "BOTTOMLEFT", 100 * i, 100)
         cd:Hide()
     end
+    PROBE_START = {}
     local function set_timer(cd, start, duration, enable)
+        PROBE_START[cd:GetName()] = start
         if start > 0 and duration > 0 and enable > 0 then
             cd:SetCooldown(start, duration)
         else
@@ -378,9 +361,9 @@ impl Rig {
             ..crate::ui_action::Spells::empty_for_tests()
         });
         {
-            let mut actions = world.resource_mut::<crate::ui_action::PlayerActions>();
+            let mut bar = world.resource_mut::<crate::ui_action::ActionSlots>();
             for (slot, spell) in [(0, BOLT), (1, NOVA)] {
-                actions.buttons.insert(
+                bar.buttons.insert(
                     slot,
                     ActionButton {
                         slot,
@@ -389,7 +372,9 @@ impl Rig {
                     },
                 );
             }
-            actions.spells = [BOLT, NOVA].into();
+            world
+                .resource_mut::<crate::ui_action::PlayerActions>()
+                .spells = [BOLT, NOVA].into();
         }
         world
             .resource_mut::<crate::spell::Cooldowns>()
@@ -408,7 +393,7 @@ impl Rig {
         ));
         let mut script = UiScript::new().expect("a VM");
         script.set_now(NOW);
-        script.set_spellbook(SpellBookState {
+        world.insert_resource(crate::ui_spellbook::SpellBook::of(SpellBookState {
             tabs: vec![SpellTabView {
                 name: "General".into(),
                 texture: None,
@@ -421,7 +406,7 @@ impl Rig {
                 ..Default::default()
             }],
             ..Default::default()
-        });
+        }));
         script.set_default_bindings(benilla_ui::script::keybind::parse_bindings_wtf(
             "bind J PROBEPRESS\r\n",
         ));
@@ -654,14 +639,11 @@ fn a_press_is_applied_in_the_frame_it_is_made() {
     }
 }
 
-/// What reads the script calls' work still follows them: the pet bar's and the pet book's drains,
-/// the two item legs, and the rest of the target chain behind them.
+/// What reads the script calls' work still follows them: the two item legs and the target chain.
 #[test]
 fn what_follows_the_script_calls_still_follows_them() {
     let g = graph_or_skip!();
     for after in [
-        "::drain_pet_actions",
-        "::drain_pet_book",
         "::drop_item_on_unit",
         "::drop_on_world_click",
         "::target_by_name_requests",
@@ -727,7 +709,6 @@ fn a_bound_key_sends_one_cast_per_press() {
         Step::BindingSync,
         Step::BindingDispatch,
         Step::ScriptCalls,
-        Step::ActionState,
         Step::Tick,
     ]);
     rig.lua("function PROBE_PRESS() UseAction(1) end");
@@ -916,7 +897,7 @@ fn a_macros_target_then_cast_casts_at_the_new_target() {
     let index: u32 = rig.vm().eval("return MACRO_INDEX").expect("an index");
     rig.app
         .world_mut()
-        .resource_mut::<crate::ui_action::PlayerActions>()
+        .resource_mut::<crate::ui_action::ActionSlots>()
         .buttons
         .insert(
             2,
@@ -941,8 +922,6 @@ fn a_pet_bar_press_reaches_the_pet_and_its_bar() {
         Step::BindingSync,
         Step::BindingDispatch,
         Step::ScriptCalls,
-        Step::PetBar,
-        Step::PetFlush,
         Step::Tick,
     ]);
     rig.lua("function PROBE_PRESS() CastPetAction(1) end");
@@ -962,7 +941,7 @@ fn a_pet_bar_press_reaches_the_pet_and_its_bar() {
             .world()
             .resource::<crate::ui_pet::PetBar>()
             .cooldowns
-            .live_count()
+            .record_count()
             > 0,
         "the pet's GCD is on its list"
     );
@@ -981,7 +960,6 @@ fn a_bag_item_use_is_sent_once_and_its_gcd_reaches_the_bar() {
         Step::BindingSync,
         Step::BindingDispatch,
         Step::ScriptCalls,
-        Step::ActionState,
         Step::Tick,
     ]);
     rig.water_in_the_backpack();
@@ -1004,42 +982,20 @@ fn a_bag_item_use_is_sent_once_and_its_gcd_reaches_the_bar() {
     assert_eq!(uses, [DRINK], "one use for one press");
     let log = rig.log();
     assert!(
-        in_frame(&log, 3).contains(&"OnUpdate action swept pet cold book cold".to_string()),
+        in_frame(&log, 3).contains(&"OnUpdate action swept pet cold book swept".to_string()),
         "the GCD reaches the bar by the frame after the press: {log:?}"
     );
 }
 
 // ── B: #1215, the press before the frame's cooldown publication and its tick ───────────────────
 
-/// Every feed that publishes cooldowns runs after the press and before the tick, so a GCD a press
-/// arms reaches the frame's `OnUpdate` and its cooldown widgets: the action bar's, the spellbook's,
-/// the bags', the pet bar's and book's, the runes', the forms' and the companions', and the pet's
-/// flush.
+/// No feed publishes cooldowns: the bar, the pet bar, the spellbook, the forms, the companions
+/// and the bags read them at the call and the presses fire their signals inside the press; the
+/// runes' regen tick runs before the UI's tick as the player's update does (`0x728aa6`).
 #[test]
-fn the_press_runs_before_every_cooldown_feed_and_each_feed_before_the_tick() {
+fn the_rune_regen_runs_before_the_tick() {
     let g = graph_or_skip!();
-    for feed in [
-        Step::ActionState.suffix(),
-        Step::SpellBook.suffix(),
-        "::feed_containers",
-        Step::PetBar.suffix(),
-        "::feed_pet_book",
-        "::feed_runes",
-        "::feed_shapeshift_bar",
-        "::feed_companions",
-        Step::PetFlush.suffix(),
-    ] {
-        for press in [Step::UiInput, Step::BindingDispatch, Step::ScriptCalls] {
-            assert!(
-                g.before(press.suffix(), feed),
-                "{press:?} runs before {feed}"
-            );
-        }
-        assert!(
-            g.before(feed, Step::Tick.suffix()),
-            "{feed} runs before the tick"
-        );
-    }
+    assert!(g.before("::tick_runes", Step::Tick.suffix()));
 }
 
 /// A cast pressed in a frame shows its GCD in that frame: `ACTIONBAR_UPDATE_COOLDOWN` and
@@ -1051,7 +1007,6 @@ fn a_pressed_cast_shows_its_gcd_in_the_frame_of_the_press() {
         Step::BindingSync,
         Step::BindingDispatch,
         Step::ScriptCalls,
-        Step::ActionState,
         Step::Tick,
     ]);
     rig.lua("function PROBE_PRESS() UseAction(1) end");
@@ -1066,21 +1021,20 @@ fn a_pressed_cast_shows_its_gcd_in_the_frame_of_the_press() {
         [
             "ACTIONBAR_UPDATE_COOLDOWN",
             "SPELL_UPDATE_COOLDOWN",
-            "OnUpdate action swept pet cold book cold",
+            "OnUpdate action swept pet cold book swept",
         ],
         "{log:?}"
     );
 }
 
 /// The spellbook's sweep of the same press, in the same frame: `GetSpellCooldown` reads the GCD
-/// from the frame's `OnUpdate`.
+/// from the history at the call in the frame's `OnUpdate` (`0x809000`).
 #[test]
 fn a_pressed_cast_shows_its_gcd_on_the_spellbook_in_the_frame_of_the_press() {
     let mut rig = rig_or_skip!(&[
         Step::BindingSync,
         Step::BindingDispatch,
         Step::ScriptCalls,
-        Step::SpellBook,
         Step::Tick,
     ]);
     rig.lua("function PROBE_PRESS() UseAction(1) end");
@@ -1091,7 +1045,11 @@ fn a_pressed_cast_shows_its_gcd_on_the_spellbook_in_the_frame_of_the_press() {
     let log = rig.log();
     assert_eq!(
         in_frame(&log, 2),
-        ["OnUpdate action cold pet cold book swept"],
+        [
+            "ACTIONBAR_UPDATE_COOLDOWN",
+            "SPELL_UPDATE_COOLDOWN",
+            "OnUpdate action swept pet cold book swept"
+        ],
         "{log:?}"
     );
 }
@@ -1104,8 +1062,6 @@ fn a_pet_bar_press_shows_the_pets_gcd_in_the_frame_of_the_press() {
         Step::BindingSync,
         Step::BindingDispatch,
         Step::ScriptCalls,
-        Step::PetBar,
-        Step::PetFlush,
         Step::Tick,
     ]);
     rig.lua("function PROBE_PRESS() CastPetAction(1) end");
@@ -1135,7 +1091,6 @@ fn a_running_cooldown_set_again_in_the_press_frame_draws_at_its_elapsed_time() {
         Step::BindingSync,
         Step::BindingDispatch,
         Step::ScriptCalls,
-        Step::ActionState,
         Step::Tick,
     ]);
     rig.lua("function PROBE_PRESS() UseAction(1) end");
@@ -1148,10 +1103,14 @@ fn a_running_cooldown_set_again_in_the_press_frame_draws_at_its_elapsed_time() {
         in_frame(&log, 2).contains(&"ACTIONBAR_UPDATE_COOLDOWN".to_string()),
         "the press frame's handler sets the running cooldown again: {log:?}"
     );
-    let (start, duration): (f64, f64) = rig
-        .vm()
-        .eval("local s, d = GetActionCooldown(2) return s, d")
-        .expect("Nova's triple");
+    // The start the frame was handed: a later `GetActionCooldown` reads the recovery off the wall
+    // clock against the rig's pinned UI clock, so it drifts by however long the frame took.
+    let (start, duration): (f64, f64) =
+        crate::ui_script::live::with_live_world(rig.app.world_mut(), |s| {
+            s.eval("local _, d = GetActionCooldown(2) return PROBE_START.ProbeCooldown2, d")
+                .expect("Nova's triple")
+        })
+        .expect("the VM");
     assert!(duration == 30.0, "Nova is running: {start} {duration}");
     let elapsed_ms = (NOW * 1000.0) as u32 - (start * 1000.0) as u32;
     let expected = benilla_ui::widget::CooldownState {

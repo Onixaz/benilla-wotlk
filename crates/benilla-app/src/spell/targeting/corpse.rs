@@ -128,7 +128,8 @@ pub(super) fn bind_target_corpse(
     entity: Entity,
     guid: u64,
 ) {
-    let Some((spell_id, commit, word)) = ladder.ground.pending() else {
+    let held = ladder.ground.read().pending();
+    let Some((spell_id, commit, word)) = held else {
         return;
     };
     let Some(bit) = checks.corpse_facts(entity).and_then(|f| bind_arm(word, f)) else {

@@ -159,6 +159,10 @@ fn fire_sites() -> Vec<(String, Vec<char>, String)> {
                 concat!("pending_events.push", "(("),
                 // An event a packet handler fires after its changes apply.
                 concat!(".fire", "("),
+                // A unique signal, which fires with no arguments at the frame's flush.
+                concat!(".unique_signal", "("),
+                // A verb's unique signal, queued through the model.
+                concat!("live::unique_signal", "("),
             ] {
                 let mut from = 0;
                 while let Some(i) = text[from..].find(call) {
@@ -166,11 +170,19 @@ fn fire_sites() -> Vec<(String, Vec<char>, String)> {
                     from = at;
                     let rest = text[at..].trim_start();
                     let rest = rest.strip_prefix("lua,").map_or(rest, str::trim_start);
+                    let rest = ["&mut model,", "model,"]
+                        .iter()
+                        .find_map(|p| rest.strip_prefix(p))
+                        .map_or(rest, str::trim_start);
                     let Some(body) = rest.strip_prefix('"') else {
                         continue;
                     };
                     let Some(end) = body.find('"') else { continue };
                     let (name, after) = (&body[..end], &body[end + 1..]);
+                    if call.contains("unique_signal") && after.trim_start().starts_with(')') {
+                        out.push((name.to_string(), Vec::new(), p.display().to_string()));
+                        continue;
+                    }
                     let Some(args) = after.trim_start().strip_prefix(',') else {
                         continue;
                     };

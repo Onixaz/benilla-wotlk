@@ -1,10 +1,6 @@
 //! M2 skeleton and animation parsing: the rest skeleton and each sequence's per-bone keyframes.
 
-use std::collections::HashMap;
-
 use benilla_m2::{M2Model, M2Track};
-
-use crate::BoneSpin;
 
 /// A rest-skeleton bone, raw WoW model space. An M2 has no inverse bind matrices: the rest pose
 /// is identity and the pivot is the bind position.
@@ -161,38 +157,6 @@ pub struct PlayableAnim {
 /// the AnimationLookup (header `0x24`) resolved through its hash (`M2Model::sequence_slot`).
 pub fn parse_m2_animation_lookup(model: &M2Model) -> Vec<u16> {
     model.sequence_slots_by_id()
-}
-
-/// The bones that spin rigidly ([`BoneSpin`]) in anim 0, which the load arms play. How a WMO
-/// skybox is armed is untraced; both shipped ones have one clip.
-pub fn m2_bone_spins(model: &M2Model) -> HashMap<u16, BoneSpin> {
-    let mut out = HashMap::new();
-    let skeleton = parse_m2_skeleton(model);
-    let anims = parse_m2_animations(model);
-    let Some(seq) = anims.iter().find(|a| a.anim_id == 0) else {
-        return out;
-    };
-    for keys in &seq.bones {
-        let idx = keys.bone as usize;
-        // Rotation only and at least two keys: one key is a pose, not a spin.
-        if keys.rotation.len() < 2 || !keys.translation.is_empty() || !keys.scale.is_empty() {
-            continue;
-        }
-        // Parentless: nothing above composes another motion in.
-        let Some(bone) = skeleton.bones.get(idx).filter(|b| b.parent < 0) else {
-            continue;
-        };
-        out.insert(
-            keys.bone,
-            BoneSpin {
-                pivot: bone.pivot,
-                duration: seq.duration,
-                interp: model.bones.get(idx).is_some_and(|b| b.rotation.interp != 0),
-                keys: keys.rotation.clone(),
-            },
-        );
-    }
-    out
 }
 
 /// One bone's keys for a sequence, raw WoW model space, seconds from its start, rotations

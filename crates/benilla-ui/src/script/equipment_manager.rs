@@ -100,7 +100,6 @@ impl super::UiScript {
         mgr.sets = sets.into_iter().take(MAX_EQUIPMENT_SETS).collect();
         mgr.awaiting_guid.clear();
         mgr.loaded = true;
-        sync_bar_names(&mut model);
     }
 
     /// `SMSG_EQUIPMENT_SET_SAVED` (`0x5ae760`): a guid names the set; 0 refuses it and the set is
@@ -115,12 +114,13 @@ impl super::UiScript {
             }
         } else {
             mgr.sets.retain(|s| s.id != id);
-            sync_bar_names(&mut model);
         }
     }
 
     /// `SMSG_EQUIPMENT_SET_USE_RESULT` (`0x5af710`): the swap ends; `EQUIPMENT_SWAP_FINISHED`
-    /// carries whether it worked and the set's name, and a result of 4 adds the bags-full error.
+    /// carries whether it worked and the set's name, then a result of 4 fires `UI_ERROR_MESSAGE`
+    /// with the bags-full text itself, not through the message display, so it has no sound
+    /// (`0x5af7a6`, `0x5af7b6`).
     pub fn equipment_set_use_result(&mut self, result: u8) {
         let name = {
             let mut model = self.model_mut();
@@ -128,9 +128,6 @@ impl super::UiScript {
             mgr.swap_pending = false;
             let name = mgr.by_id(mgr.pending_set).map(|s| s.name.clone());
             mgr.pending_set = 0;
-            if result == 4 {
-                model.ui_errors.push("EQUIPMENT_MANAGER_BAGS_FULL");
-            }
             name
         };
         let name = name.map_or(super::ScriptValue::Nil, super::ScriptValue::Str);
@@ -138,6 +135,16 @@ impl super::UiScript {
             "EQUIPMENT_SWAP_FINISHED",
             vec![super::ScriptValue::Bool(result == 0), name],
         );
+        if result == 4 {
+            let text = self
+                .lua()
+                .globals()
+                .get::<Option<String>>("EQUIPMENT_MANAGER_BAGS_FULL")
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+            self.fire_event("UI_ERROR_MESSAGE", vec![super::ScriptValue::Str(text)]);
+        }
     }
 
     /// The sets as the client holds them, for the action bar's icons.
@@ -149,16 +156,6 @@ impl super::UiScript {
     pub fn take_equipment_set_requests(&mut self) -> Vec<EquipmentSetRequest> {
         drain_field!(self, equipment_set_requests)
     }
-}
-
-/// The action bar's id → name map follows the set list.
-fn sync_bar_names(model: &mut super::Model) {
-    model.equipment_sets = model
-        .equipment_manager
-        .sets
-        .iter()
-        .map(|s| (s.id, s.name.clone()))
-        .collect();
 }
 
 /// Where an item is, the player's slots and bags only.
@@ -208,13 +205,13 @@ fn equipped(model: &super::Model, slot0: usize) -> Option<&super::InvSlotView> {
 
 /// Every held item and its place, in the reference's search order: the equipment, the backpack,
 /// the worn bags, then with a banker open the vault and the bank bags (`0x5ae860`).
-fn held_items(model: &super::Model) -> Vec<(ItemPlace, u64, &ContainerSlot)> {
+fn held_items(model: &super::Model) -> Vec<(ItemPlace, u64, ContainerSlot)> {
     let mut out = Vec::new();
     let mut bag = |cid: i64, place: &dyn Fn(u32) -> ItemPlace| {
-        if let Some(c) = model.containers.get(&cid) {
-            let mut slots: Vec<_> = c.slots.iter().collect();
-            slots.sort_by_key(|(n, _)| **n);
-            for (&n, s) in slots {
+        if let Some(c) = super::container::live_bag(model, cid) {
+            let mut slots: Vec<_> = c.slots.into_iter().collect();
+            slots.sort_by_key(|(n, _)| *n);
+            for (n, s) in slots {
                 if s.guid != 0 {
                     out.push((place(n), s.guid, s));
                 }
@@ -225,7 +222,7 @@ fn held_items(model: &super::Model) -> Vec<(ItemPlace, u64, &ContainerSlot)> {
     for cid in 1..=4 {
         bag(cid, &|n| ItemPlace::Bag(cid, n));
     }
-    if model.bank.is_some() {
+    if super::bank::bank_open() {
         bag(-1, &|n| {
             ItemPlace::Player(BANK_VAULT_FIRST + i64::from(n) - 1)
         });
@@ -256,10 +253,9 @@ fn item_by_guid(model: &super::Model, guid: u64) -> Option<(u32, u32)> {
         .find(|v| v.guid == guid)
         .map(|v| (v.item_id, v.flags))
         .or_else(|| {
-            model
-                .containers
-                .values()
-                .flat_map(|c| c.slots.values())
+            super::container::live_bags(model)
+                .into_iter()
+                .flat_map(|(_, c)| c.slots.into_values())
                 .find(|s| s.guid == guid)
                 .map(|s| (s.item_id, s.flags))
         })
@@ -284,10 +280,10 @@ fn contains_locked(model: &super::Model, set: &EquipmentSetView) -> bool {
 }
 
 /// The set save (`0x5ade50`): the name, the icon and each slot's equipped item, or
-/// [`IGNORED_SLOT`]; a set still waiting for its guid takes nothing. Queues the save and fires
-/// `EQUIPMENT_SETS_CHANGED`.
+/// [`IGNORED_SLOT`]; a set still waiting for its guid takes nothing. The bar's slots naming the set
+/// signal (`0x5adf28`), then it queues the save and fires `EQUIPMENT_SETS_CHANGED`.
 fn save_set(lua: &Lua, index: usize, name: &str, icon: &str) {
-    {
+    let saved_id = {
         let mut model = super::model_mut_of(lua);
         let items: [u64; EQUIPMENT_SET_SLOTS] = std::array::from_fn(|s| {
             if model.equipment_manager.ignored[s] {
@@ -307,12 +303,28 @@ fn save_set(lua: &Lua, index: usize, name: &str, icon: &str) {
         set.icon = icon.to_owned();
         set.items = items;
         let saved = set.clone();
+        let id = saved.id;
         model
             .equipment_set_requests
             .push(EquipmentSetRequest::Save(saved));
-        sync_bar_names(&mut model);
+        id
+    };
+    for action in set_slots(lua, saved_id) {
+        super::action_slots::signal(lua, action);
     }
     super::tick::fire_event_into(lua, "EQUIPMENT_SETS_CHANGED", Vec::new());
+}
+
+/// The bar's slots naming set `id`, in slot order.
+fn set_slots(lua: &Lua, id: u32) -> Vec<u32> {
+    let model = super::model_mut_of(lua);
+    (1..=144)
+        .filter(|&a| {
+            super::action_slots::word(&model, a).is_some_and(|w| {
+                w.kind & 0xf0 == super::action::ACTION_KIND_EQUIPMENT_SET && w.action == id
+            })
+        })
+        .collect()
 }
 
 /// `SaveEquipmentSet`'s icon (`0x5afa72`): a positive index names a macro icon, a negative one
@@ -351,19 +363,24 @@ fn scrub_name(name: &str) -> Option<String> {
 /// swap, and the first other slot that would move warns once. A missing item warns once and leaves
 /// its slot. Queues the send and fires `EQUIPMENT_SWAP_PENDING`.
 fn use_set(lua: &Lua, set: &EquipmentSetView) -> bool {
-    let warn_s = |model: &mut super::Model, key: &'static str| {
-        model.ui_errors_s.push((key, set.name.clone()));
+    // A warning shows where the walk meets it (`0x5216f0`), the model released around the call.
+    let warn_s = |model: super::ModelGuard<'_>, key: &'static str| {
+        drop(model);
+        crate::script::ui_errors::show_now_s(lua, key, set.name.clone());
+        super::model_mut_of(lua)
     };
     {
         let mut model = super::model_mut_of(lua);
         if !can_use(&model) {
             if !model.equipment_manager.swap_pending {
-                model.ui_errors.push("EQUIPMENT_MANAGER_IS_DISABLED");
+                drop(model);
+                crate::script::ui_errors::show_now(lua, "EQUIPMENT_MANAGER_IS_DISABLED");
             }
             return false;
         }
         if model.cursor.is_some() {
-            model.ui_errors.push("SPELL_FAILED_CANT_DO_THAT_RIGHT_NOW");
+            drop(model);
+            crate::script::ui_errors::show_now(lua, "SPELL_FAILED_CANT_DO_THAT_RIGHT_NOW");
             return false;
         }
         let in_combat = model.unit("player").is_some_and(|u| u.in_combat);
@@ -375,7 +392,7 @@ fn use_set(lua: &Lua, set: &EquipmentSetView) -> bool {
             if (in_combat && !weapon) || guid == IGNORED_SLOT {
                 let worn = equipped(&model, slot).map_or(0, |v| v.guid);
                 if in_combat && !combat_warned && guid != IGNORED_SLOT && guid != worn {
-                    warn_s(&mut model, "EQUIPMENT_MANAGER_COMBAT_SWAP");
+                    model = warn_s(model, "EQUIPMENT_MANAGER_COMBAT_SWAP");
                     combat_warned = true;
                 }
             } else if guid == 0 {
@@ -387,7 +404,7 @@ fn use_set(lua: &Lua, set: &EquipmentSetView) -> bool {
                         *entry = (guid, bag, bag_slot);
                     }
                     None if !missing_warned => {
-                        warn_s(&mut model, "EQUIPMENT_MANAGER_MISSING_ITEM");
+                        model = warn_s(model, "EQUIPMENT_MANAGER_MISSING_ITEM");
                         missing_warned = true;
                     }
                     None => {}
@@ -518,13 +535,20 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             else {
                 return Ok(());
             };
+            // The bar's slots naming the set are removed, each sent and signalled (`0x5ae270`).
+            for action in set_slots(lua, set.id) {
+                let written =
+                    super::action_slots::write(&mut super::model_mut_of(lua), action, None, None);
+                if written {
+                    super::action_slots::signal(lua, action);
+                }
+            }
             {
                 let mut model = super::model_mut_of(lua);
                 model.equipment_manager.sets.retain(|s| s.id != set.id);
                 model
                     .equipment_set_requests
                     .push(EquipmentSetRequest::Delete(set.guid));
-                sync_bar_names(&mut model);
             }
             super::tick::fire_event_into(lua, "EQUIPMENT_SETS_CHANGED", Vec::new());
             Ok(())
@@ -921,12 +945,9 @@ fn install_item_verbs(lua: &Lua) -> mlua::Result<()> {
 /// A container slot's field, `None` for an empty slot or unknown bag.
 fn container_slot<T>(lua: &Lua, bag: i64, slot: u32, f: impl Fn(&ContainerSlot) -> T) -> Option<T> {
     let model = read(lua);
-    model
-        .containers
-        .get(&bag)
-        .and_then(|c| c.slots.get(&slot))
+    super::container::index_slot(&model, bag, slot)
         .filter(|s| s.item_id != 0 || s.guid != 0)
-        .map(f)
+        .map(|s| f(&s))
 }
 
 /// The three gem returns, nil per empty socket.
@@ -1210,7 +1231,10 @@ mod tests {
         assert_eq!(loc(&s, 16), 0x300000 | (1 << 8) | 3);
         assert_eq!(loc(&s, 17), -1, "the vault needs a banker");
         assert_eq!(loc(&s, 18), -1);
-        s.set_bank(Some(Default::default()));
+        let _bank = crate::script::live::lend_test(crate::script::live::TestView {
+            banker: Some(0x42),
+            ..Default::default()
+        });
         assert_eq!(loc(&s, 17), 0x400000 | 41, "vault slot 2 is player slot 40");
         let id = |s: &UiScript, i: u32| -> i64 {
             s.eval(&format!("return GetEquipmentSetItemIDs(\"Mix\")[{i}]"))
@@ -1237,8 +1261,10 @@ mod tests {
         s.set_equipment_set_list(vec![set(2, "Dps", items)]);
         s.run(
             r#"
+            EQUIPMENT_MANAGER_MISSING_ITEM = "Missing from %s."
             seen = {}
             local f = CreateFrame("Frame")
+            f:RegisterEvent("UI_ERROR_MESSAGE")
             f:RegisterEvent("EQUIPMENT_SWAP_PENDING")
             f:RegisterEvent("EQUIPMENT_SWAP_FINISHED")
             f:SetScript("OnEvent", function(_, e, ok, name)
@@ -1266,19 +1292,21 @@ mod tests {
         );
         assert_eq!(wire[16], (IGNORED_SLOT, 0, 0), "missing: left as it is");
         assert_eq!(
-            s.take_ui_errors_s(),
+            s.take_shown_s(),
             vec![("EQUIPMENT_MANAGER_MISSING_ITEM", "Dps".to_string())]
         );
         s.equipment_set_use_result(0);
         assert_eq!(
             s.eval::<String>("return table.concat(seen, \",\")")
                 .unwrap(),
-            "EQUIPMENT_SWAP_PENDING:nil:nil,EQUIPMENT_SWAP_FINISHED:true:Dps"
+            "UI_ERROR_MESSAGE:Missing from Dps.:nil,EQUIPMENT_SWAP_PENDING:nil:nil,\
+             EQUIPMENT_SWAP_FINISHED:true:Dps",
+            "the warning fires where the walk meets the slot, before the use's own event"
         );
         assert_eq!(s.eval::<i64>("return CanUseEquipmentSets()").unwrap(), 1);
         s.set_cvar_host("equipmentManager", "0");
         s.run(r#"UseEquipmentSet("Dps")"#).unwrap();
-        assert_eq!(s.take_ui_errors(), vec!["EQUIPMENT_MANAGER_IS_DISABLED"]);
+        assert_eq!(s.take_shown(), vec!["EQUIPMENT_MANAGER_IS_DISABLED"]);
     }
 
     /// Delete and rename edit the list, and a set on an action slot wears through
