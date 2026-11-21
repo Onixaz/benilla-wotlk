@@ -1,6 +1,6 @@
 //! `CreatureMovementInfo.dbc`: a creature template's smooth-facing chase rate, the row its
 //! `movementId` names. A row with a rate over `1e-5` turns the unit's display facing by a damped
-//! chase at that rate instead of the box filter (`0x735f60`).
+//! turn at that rate instead of the box filter (`0x735f60`).
 
 use std::collections::HashMap;
 

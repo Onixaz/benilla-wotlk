@@ -34,7 +34,7 @@ const STEP_FRACTION: f32 = 0.5;
 /// `UNIT_FLAG_STUNNED`, goal-chain row 4.
 const UNIT_FLAG_STUNNED: u32 = 0x0004_0000;
 
-/// The `UNIT_FIELD_FLAGS` bit that turns a non-player unit by the damped chase (`0x735f60`).
+/// The `UNIT_FIELD_FLAGS` bit that turns a non-player unit by the damped turn (`0x735f60`).
 const UNIT_FLAG_PLAYER_CONTROLLED: u32 = 0x0000_0008;
 
 /// The `UNIT_FIELD_FLAGS` bit the in-combat test reads beside auto-attack (`0x71afb0`).
@@ -47,7 +47,7 @@ const CHASE_RATE_FLOOR: f32 = 0.000_01;
 const CONTROLLED_CHASE_RATE: (f32, f32) = (30.0, 20.0);
 
 /// `CreatureMovementInfo.dbc`, the creature templates' smooth-facing chase rates; without it every
-/// creature takes the box filter or the player-controlled chase.
+/// creature takes the box filter or the player-controlled turn.
 #[derive(Resource)]
 pub(crate) struct ChaseRates(benilla_formats::CreatureMovementInfo);
 
@@ -84,8 +84,14 @@ pub(crate) struct DisplayFacing {
     wire: f32,
     /// A zero head means the next pump takes the ring-fill leg.
     hist: [f32; 4],
-    /// The damped chase's angular velocity (rad/s), which the box filter leaves alone.
+    /// The damped turn's angular velocity (rad/s), which the box filter leaves alone. It starts
+    /// at rest each time the unit stops, as the state is dropped while it moves (row 1); the
+    /// reference keeps it across movement and zeroes it only for the active mover (`0x735f60`).
     velocity: f32,
+    /// The yaw this pump last wrote, the pump's own `+0xc94` float: re-reading it off the
+    /// quaternion adds ulps each frame, and the damped turn, which has no dead band, would then
+    /// never settle bitwise.
+    shown: Option<f32>,
     /// A deck rider's display facing in its deck's frame, which `compose_riders` turns the shown
     /// yaw through; the pump steps it there (`0x7362e3`).
     deck: Option<f32>,
@@ -249,8 +255,8 @@ fn filter_step(cur: f32, goal: f32, hist: &mut [f32; 4]) -> f32 {
     (cur + step * STEP_FRACTION).rem_euclid(TAU)
 }
 
-/// How a unit's display facing steps toward its goal (`0x735f60`): a damped chase at its
-/// template's `CreatureMovementInfo` rate when that is over `1e-5`, else a damped chase at 30 in
+/// How a unit's display facing steps toward its goal (`0x735f60`): a damped turn at its
+/// template's `CreatureMovementInfo` rate when that is over `1e-5`, else a damped turn at 30 in
 /// combat and 20 out of it for a non-player unit with `UNIT_FLAG_PLAYER_CONTROLLED`, else the box
 /// filter.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -271,7 +277,7 @@ fn smoothing(template_rate: Option<f32>, unit_flags: u32, engaged: bool) -> Smoo
     Smoothing::Filter
 }
 
-/// One step of the critically damped chase (`0x7160b0`) toward `goal`, unfolded to within π of
+/// One step of the critically damped turn (`0x7160b0`) toward `goal`, unfolded to within π of
 /// `cur` first, over `dt` seconds; the result is wrapped to `[0, 2π)`.
 fn damped_step(cur: f32, goal: f32, rate: f32, dt: f32, velocity: &mut f32) -> f32 {
     use std::f32::consts::{PI, TAU};
@@ -315,8 +321,8 @@ fn damped_step(cur: f32, goal: f32, rate: f32, dt: f32, velocity: &mut f32) -> f
 /// bearing goal is taken off the deck's yaw (`0x7362e3`). Deviation: the reference reads row 5's
 /// world bearing (`0x7567ec`) as deck-local; benilla takes it off the deck's yaw too.
 ///
-/// The step toward the goal is [`Smoothing`]'s: the template's chase, the player-controlled
-/// chase, or the box filter.
+/// The step toward the goal is [`Smoothing`]'s: the template's damped turn, the player-controlled
+/// damped turn, or the box filter.
 #[allow(clippy::type_complexity)] // one Bevy system's full input set
 pub(crate) fn drive_display_facing(
     mut commands: Commands,
@@ -335,7 +341,7 @@ pub(crate) fn drive_display_facing(
             &NetEntity,
             &ObjectStore,
             Option<&crate::transport::TransportRider>,
-            Has<crate::creature_anim::Engaged>,
+            Option<&crate::creature_anim::Engaged>,
         ),
         (
             Without<Spline>,
@@ -375,9 +381,13 @@ pub(crate) fn drive_display_facing(
     // Collect goals first, then apply, so no transform is borrowed mutably while another is read.
     let mut goals: Vec<(Entity, Option<f32>, GoalSource, Riding, Smoothing)> = Vec::new();
     for (e, net, store, rider, engaged) in &candidates {
+        // A GameObject sits at its authored facing; a player is no `Unit`, which keeps
+        // `smoothing`'s player-controlled arm to non-players, as the reference's type test does.
         if net.kind != EntityKind::Unit {
-            continue; // a GameObject sits at its authored facing
+            continue;
         }
+        // In combat reads the auto-attack guid as non-zero (`0x71afb0`).
+        let engaged = engaged.is_some_and(|g| g.0 != 0);
         let riding = match rider {
             None => Riding::No,
             Some(r) => match index.0.get(&r.transport_guid).copied() {
@@ -459,6 +469,7 @@ pub(crate) fn drive_display_facing(
                 wire: yaw_of(tf.rotation).rem_euclid(TAU),
                 hist: [0.0; 4],
                 velocity: 0.0,
+                shown: None,
                 deck: deck.map(|d| d.wire),
             });
             continue;
@@ -471,7 +482,15 @@ pub(crate) fn drive_display_facing(
                 state.wire = yaw_of(tf.rotation).rem_euclid(TAU);
                 (state.wire, state.wire, 0.0)
             }
-            Riding::No => (yaw_of(tf.rotation).rem_euclid(TAU), state.wire, 0.0),
+            // Its own last yaw while the transform still holds it; anything else that turned the
+            // body since is read back off the quaternion.
+            Riding::No => {
+                let cur = state
+                    .shown
+                    .filter(|&y| tf.rotation == Quat::from_rotation_y(y))
+                    .unwrap_or_else(|| yaw_of(tf.rotation).rem_euclid(TAU));
+                (cur, state.wire, 0.0)
+            }
         };
         // The raw facing is a goal, not a freeze: it swings an NPC back when its window closes.
         let goal = goal.map_or(raw, |g| (g - frame).rem_euclid(TAU));
@@ -480,6 +499,7 @@ pub(crate) fn drive_display_facing(
             Smoothing::Filter => filter_step(cur, goal, &mut state.hist),
         };
         state.deck = deck.is_some().then_some(new);
+        state.shown = (riding == Riding::No).then_some(new);
         // Write only on change: a settled unit's `new` is bitwise the goal, so a standing crowd
         // stops tripping every downstream `Changed<Transform>` gate.
         let rot = Quat::from_rotation_y(new + frame);
@@ -603,10 +623,10 @@ mod tests {
     }
 
     /// The step picker's order (`0x735f60`): a template rate over `1e-5` first, then the
-    /// player-controlled chase at 30 in combat (the `0x800` flag or auto-attack) and 20 out of it,
+    /// player-controlled turn at 30 in combat (the `0x800` flag or auto-attack) and 20 out of it,
     /// else the box filter.
     #[test]
-    fn the_template_rate_then_player_control_pick_the_chase() {
+    fn the_template_rate_then_player_control_pick_the_damped_turn() {
         assert_eq!(smoothing(Some(5.0), 0, false), Smoothing::Damped(5.0));
         assert_eq!(smoothing(Some(5.0), 0x8, true), Smoothing::Damped(5.0));
         assert_eq!(smoothing(Some(0.0), 0, false), Smoothing::Filter);
@@ -617,10 +637,28 @@ mod tests {
         assert_eq!(smoothing(None, 0x800, true), Smoothing::Filter);
     }
 
-    /// The chase closes on the goal over time, the short way round the wrap, and holds still for
-    /// a zero `dt`.
+    /// Fed its own last yaw, as the pump keeps it, the damped turn comes to a bitwise rest, so a
+    /// settled unit stops writing its transform; north (0) at the combat rate included.
     #[test]
-    fn the_chase_closes_on_its_goal_the_short_way() {
+    fn the_damped_turn_settles_bitwise_on_its_own_yaw() {
+        for goal in [0.0, 1.0, 3.0, 6.2] {
+            for rate in [2.0, 20.0, 30.0] {
+                let (mut cur, mut velocity) = (goal + 2.5_f32, 0.0);
+                let settled = (0..2_000).any(|_| {
+                    let new = damped_step(cur, goal, rate, 1.0 / 60.0, &mut velocity);
+                    let still = new == cur;
+                    cur = new;
+                    still
+                });
+                assert!(settled, "goal {goal} rate {rate}: still turning at {cur}");
+            }
+        }
+    }
+
+    /// The damped turn closes on the goal over time, the short way round the wrap, and holds still
+    /// for a zero `dt`.
+    #[test]
+    fn the_damped_turn_closes_on_its_goal_the_short_way() {
         let mut v = 0.0;
         let mut cur = TAU - 0.1;
         for _ in 0..120 {
@@ -639,7 +677,7 @@ mod tests {
         assert_eq!(damped_step(1.0, 2.0, 10.0, 0.0, &mut v), 1.0);
     }
 
-    /// The reference's damped chase (`0x7160b0`) on known numbers: one 0.1 s step at rate 2 from
+    /// The reference's damped turn (`0x7160b0`) on known numbers: one 0.1 s step at rate 2 from
     /// rest, 1 rad short of the goal.
     #[test]
     fn one_damped_step_matches_the_reference_formula() {
