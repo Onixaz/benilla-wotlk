@@ -372,6 +372,12 @@ impl TradeSession {
         self.their_accept
     }
 
+    /// Our first trade slot offered from `(bag, slot)`.
+    #[cfg(test)]
+    pub(crate) fn offer_from_for_test(&mut self, bag: i64, slot: u32) {
+        self.our_sources[0] = Some((bag, slot));
+    }
+
     /// Our own offer as `(gold, which slots are filled)`.
     #[cfg(test)]
     pub(crate) fn own_offer_for_test(&self) -> (u32, [bool; TRADE_SLOT_COUNT]) {

@@ -199,13 +199,12 @@ pub(crate) fn send_equip_to_slot(
     store: Option<&ObjectStore>,
     pending: &mut crate::ui_script::OwnedMut<PendingItemOps>,
     (bag, slot, dst): (i64, u32, u8),
-    suppress: bool,
 ) {
     let (guid, _) = slot_guid_count(store, bag, slot, objects);
     if guid == 0 {
         return;
     }
-    if !suppress && gate.equip_binds(script, objects, items, commands, guid) {
+    if gate.equip_binds(script, objects, items, commands, guid) {
         gate.defer_equip(
             script,
             crate::ui_bind_confirm::PendingEquip::Slot { bag, slot, dst },
@@ -282,7 +281,6 @@ impl ScriptItemUse<'_, '_> {
             store,
             &mut self.pending_items,
             (bag, slot, dst),
-            false,
         );
     }
 
@@ -1421,8 +1419,30 @@ fn cancel_occupants(
     }
 }
 
-/// The answers to `EquipPendingItem`/`CancelPendingEquip` (`0x6e01a0`): accept re-runs the original sender with `suppress` set, a slot that changed under the dialog judged afresh; cancel unlocks the record's two occupants (`0x6e0273`, `0x6e02cd`), each signalling only if locked.
-pub(super) fn drain_bind_confirm_answers(
+/// One step of a pending equip's answer (`0x6e01a0`), each ending where the reference raises.
+#[derive(Clone, Copy)]
+pub(super) enum AnswerStep {
+    /// The answers given so far, taken.
+    Take,
+    /// The cancel's first or second occupant, read off the record as it stands (`0x6e0227`, `0x6e027b`).
+    Occupant(u32, usize),
+    /// The accept's re-run of the record's sender with `suppress` set (`0x6e01d4`, `0x6e01fa`, `0x6e021d`).
+    Accept(u32),
+    /// The record zeroed, after either arm (`0x6e02e2`).
+    Free(u32),
+}
+
+/// What a step hands back: the answers taken, or the occupant to unlock.
+#[derive(Default)]
+pub(super) struct AnswerOut {
+    answers: Vec<benilla_ui::script::PendingEquipAnswer>,
+    unlock: Option<u64>,
+}
+
+/// One [`AnswerStep`] over the record at its index; an unfiled index does nothing, as the reference bounds-checks it and a zeroed record names no item.
+#[allow(clippy::too_many_arguments)] // the senders' state, one parameter each
+pub(super) fn equip_answer_step(
+    In(step): In<AnswerStep>,
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     mut pending: crate::ui_script::OwnedMut<PendingItemOps>,
@@ -1430,38 +1450,34 @@ pub(super) fn drain_bind_confirm_answers(
     items: Res<Items>,
     commands: Res<NetCommands>,
     mut gate: crate::ui_bind_confirm::BindGate,
-) {
+    trade: Option<Res<crate::ui_trade::TradeSession>>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
+) -> AnswerOut {
+    use crate::ui_bind_confirm::PendingEquip;
+    let mut out = AnswerOut::default();
     let Some(mut script) = script else {
-        return;
+        return out;
     };
     let store = self_q.iter().next();
-    for answer in script.take_pending_equip_answers() {
-        // An unfiled index does nothing: the reference bounds-checks it and returns.
-        let Some(rec) = gate.equips.take(answer.index) else {
-            debug!(
-                "ui_items: bind answer for index {} — no such pending equip",
-                answer.index
-            );
-            continue;
-        };
-        if !answer.accept {
-            debug!("ui_items: pending equip {} cancelled", answer.index);
-            for guid in cancel_occupants(store, &objects, &rec) {
-                let moved = pending.write().unlock(guid);
-                let args = moved
-                    .then(|| super::watch::lock_args(&objects, guid))
-                    .flatten();
-                super::watch::lock_moved_now(&mut script, false, args);
-            }
-            continue;
+    match step {
+        AnswerStep::Take => out.answers = script.take_pending_equip_answers(),
+        AnswerStep::Occupant(index, which) => {
+            out.unlock = gate
+                .equips
+                .get(index)
+                .and_then(|rec| cancel_occupants(store, &objects, &rec).get(which).copied());
         }
-        match rec {
-            crate::ui_bind_confirm::PendingEquip::Swap {
+        AnswerStep::Free(index) => {
+            gate.equips.take(index);
+        }
+        AnswerStep::Accept(index) => match gate.equips.get(index) {
+            None => debug!("ui_items: bind answer for index {index} — no such pending equip"),
+            Some(PendingEquip::Swap {
                 src_bag,
                 src_slot,
                 dst_bag,
                 dst_slot,
-            } => {
+            }) => {
                 send_container_move(
                     &mut script,
                     &mut gate,
@@ -1479,24 +1495,41 @@ pub(super) fn drain_bind_confirm_answers(
                     true,
                 );
             }
-            crate::ui_bind_confirm::PendingEquip::Slot { bag, slot, dst } => {
-                send_equip_to_slot(
-                    &mut script,
-                    &mut gate,
-                    &objects,
-                    &items,
-                    &commands,
-                    store,
-                    &mut pending,
-                    (bag, slot, dst),
-                    true,
-                );
+            Some(PendingEquip::Slot { bag, slot, dst }) => {
+                let (guid, _) = slot_guid_count(store, bag, slot, &objects);
+                if guid == 0 {
+                    return out;
+                }
+                // An item in our trade offer is refused on the re-run too (`0x6dffb8`); the action gate `0x5191c0` after it is #1227.
+                if trade.as_deref().is_some_and(|t| t.offers(bag, slot)) {
+                    crate::ui_action::show_in_turn(
+                        &mut ui,
+                        "ui_items",
+                        crate::ui_action::UiError::key("ERR_EQUIP_TRADE_ITEM"),
+                    );
+                    return out;
+                }
+                // The lock, its edge and the usable update (`0x6e0136` -> `0x513740`), each at its place ahead of the send (`0x6e016e`).
+                if pending.write().lock(guid) {
+                    super::watch::fire_lock_edge(&mut ui, true, item_lock_args(bag, slot));
+                }
+                ui.world(crate::ui_action::usable_cache::step(
+                    crate::ui_action::usable_cache::Pass::Bar,
+                ));
+                ui.world(move |world| {
+                    if let Some(commands) = world.get_resource::<NetCommands>() {
+                        let _ = commands.0.send(ClientCommand::AutoEquipItemSlot {
+                            item: guid,
+                            slot: dst,
+                        });
+                    }
+                });
             }
-            crate::ui_bind_confirm::PendingEquip::AutoEquip {
+            Some(PendingEquip::AutoEquip {
                 bag_index,
                 slot,
                 guid,
-            } => {
+            }) => {
                 send_auto_equip(
                     &mut script,
                     &mut gate,
@@ -1509,7 +1542,55 @@ pub(super) fn drain_bind_confirm_answers(
                     true,
                 );
             }
+        },
+    }
+    out
+}
+
+/// The answers to `EquipPendingItem`/`CancelPendingEquip` (`0x6e01a0`), each raise fired at its step with the `World` lent: accept re-runs the record's sender with `suppress` set, a slot that changed under the dialog judged afresh; cancel unlocks the first occupant (`0x6e0273`) and then the second (`0x6e02cd`); the record is zeroed after either (`0x6e02e2`). `false` in a world without the senders' state, where the answers wait.
+pub(super) fn run_equip_answers(world: &mut World) -> bool {
+    use crate::script_calls::in_call_step;
+    fn step(world: &mut World, step: AnswerStep) -> Option<AnswerOut> {
+        in_call_step(world, |world| {
+            world.run_system_cached_with(equip_answer_step, step).ok()
+        })
+    }
+    let Some(taken) = step(world, AnswerStep::Take) else {
+        return false;
+    };
+    for answer in taken.answers {
+        if answer.accept {
+            step(world, AnswerStep::Accept(answer.index));
+        } else {
+            debug!("ui_items: pending equip {} cancelled", answer.index);
+            for which in 0..2 {
+                in_call_step(world, |world| {
+                    let occupant = world
+                        .run_system_cached_with(
+                            equip_answer_step,
+                            AnswerStep::Occupant(answer.index, which),
+                        )
+                        .ok()
+                        .and_then(|out| out.unlock);
+                    // The unlock (`0x513770`): a locked item's edge, then the usable update either way.
+                    if let Some(guid) = occupant {
+                        super::watch::unlock_item(world, guid);
+                    }
+                });
+            }
         }
+        step(world, AnswerStep::Free(answer.index));
+    }
+    true
+}
+
+/// The answers given where no `World` was lent to the verb, run as [`run_equip_answers`] runs them inside one.
+pub(super) fn drain_bind_confirm_answers(world: &mut World) {
+    let waiting = world
+        .get_non_send_resource::<UiScript>()
+        .is_some_and(UiScript::has_pending_equip_answers);
+    if waiting {
+        run_equip_answers(world);
     }
 }
 
@@ -1813,6 +1894,200 @@ mod bind_confirm_tests {
             .non_send_resource_mut::<UiScript>()
             .take_pending_equip_answers()
             .is_empty());
+    }
+
+    const SWORD_GUID: u64 = 0x4000_0000_0000_0872;
+
+    /// The axe's world with a sword in the main hand, both locked under a filed swap, and `Locked(guid)` reading an item's lock off the lent `World`.
+    fn a_filed_swap_with_both_ends_locked() -> (App, crossbeam_channel::Receiver<ClientCommand>) {
+        let (mut app, rx) = axe_world(Some(2), false);
+        let main_hand = benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD + 2 * 15;
+        let me = app
+            .world_mut()
+            .query_filtered::<Entity, With<SelfPlayer>>()
+            .single(app.world())
+            .unwrap();
+        app.world_mut()
+            .entity_mut(me)
+            .insert(ObjectStore(ObjectFields::from_pairs(&[
+                (F_PACK_SLOT_1, AXE_GUID as u32),
+                (F_PACK_SLOT_1 + 1, (AXE_GUID >> 32) as u32),
+                (main_hand, SWORD_GUID as u32),
+                (main_hand + 1, (SWORD_GUID >> 32) as u32),
+            ])));
+        crate::items::test_spawn_item(
+            app.world_mut(),
+            SWORD_GUID,
+            ObjectFields::from_pairs(&[(F_OBJECT_ENTRY, 25)]),
+            false,
+        );
+        let lua = app.world().non_send_resource::<UiScript>().lua().clone();
+        let locked = lua
+            .create_function(|_, which: String| {
+                let guid = if which == "axe" { AXE_GUID } else { SWORD_GUID };
+                Ok(benilla_ui::script::read_live(|l| l.item_locked(guid)).flatten())
+            })
+            .unwrap();
+        lua.globals().set("Locked", locked).unwrap();
+        crate::ui_script::live::with_live_world(app.world_mut(), |script| {
+            script
+                .run("PickupContainerItem(0, 1) PickupInventoryItem(16)")
+                .unwrap();
+        })
+        .unwrap();
+        let mut pending = app.world_mut().resource_mut::<PendingItemOps>();
+        pending.lock(AXE_GUID);
+        pending.lock(SWORD_GUID);
+        assert_eq!(
+            app.world()
+                .resource::<crate::ui_bind_confirm::PendingEquips>()
+                .live(),
+            1
+        );
+        (app, rx)
+    }
+
+    /// The cancel unlocks its first occupant and signals it (`0x6e0273` -> `0x707030`, `0x707041`) with the second still locked, then unlocks the second (`0x6e02cd`), and frees the record after both (`0x6e02e2`).
+    #[test]
+    fn a_cancel_signals_each_unlock_before_the_next() {
+        let (mut app, rx) = a_filed_swap_with_both_ends_locked();
+        let log = crate::ui_script::live::with_live_world(app.world_mut(), |script| {
+            script
+                .run(
+                    r#"Log = {}
+                       local f = CreateFrame("Frame")
+                       f:RegisterEvent("ITEM_LOCK_CHANGED")
+                       f:RegisterEvent("ITEM_UNLOCKED")
+                       f:SetScript("OnEvent", function(_, e, a, b)
+                           Log[#Log + 1] = table.concat({ e, tostring(a), tostring(b),
+                               tostring(Locked("axe")), tostring(Locked("sword")) }, " ")
+                       end)
+                       CancelPendingEquip(0) Log[#Log + 1] = "after""#,
+                )
+                .unwrap();
+            script.eval::<Vec<String>>("return Log").unwrap()
+        })
+        .unwrap();
+        assert_eq!(
+            log,
+            [
+                "ITEM_LOCK_CHANGED 0 1 false true",
+                "ITEM_UNLOCKED 0 1 false true",
+                "ITEM_LOCK_CHANGED 16 nil false false",
+                "ITEM_UNLOCKED 16 nil false false",
+                "after",
+            ]
+        );
+        assert_eq!(
+            app.world()
+                .resource::<crate::ui_bind_confirm::PendingEquips>()
+                .live(),
+            0
+        );
+        assert!(rx.try_iter().next().is_none());
+    }
+
+    /// The axe's world with a slotted equip filed for it and `Sent()` counting what has gone out.
+    fn a_filed_slotted_equip() -> (App, crossbeam_channel::Receiver<ClientCommand>) {
+        let (mut app, rx) = axe_world(Some(2), false);
+        let index = app
+            .world_mut()
+            .resource_mut::<crate::ui_bind_confirm::PendingEquips>()
+            .add(crate::ui_bind_confirm::PendingEquip::Slot {
+                bag: 0,
+                slot: 1,
+                dst: 15,
+            });
+        assert_eq!(index, 0);
+        let lua = app.world().non_send_resource::<UiScript>().lua().clone();
+        let out = rx.clone();
+        let sent = lua.create_function(move |_, ()| Ok(out.len())).unwrap();
+        lua.globals().set("Sent", sent).unwrap();
+        (app, rx)
+    }
+
+    const LOG_THE_LOCK: &str = r#"Log = {}
+        local f = CreateFrame("Frame")
+        f:RegisterEvent("ITEM_LOCK_CHANGED")
+        f:RegisterEvent("ITEM_LOCKED")
+        f:SetScript("OnEvent", function(_, e) Log[#Log + 1] = e .. " " .. Sent() end)
+        EquipPendingItem(0) Log[#Log + 1] = "after " .. Sent()"#;
+
+    /// A slotted equip's accept locks the item and signals the edge (`0x6e0136`) before its packet goes out (`0x6e016e`), and frees the record (`0x6e02e2`).
+    #[test]
+    fn a_slotted_accept_signals_its_lock_before_it_sends() {
+        let (mut app, rx) = a_filed_slotted_equip();
+        let log = crate::ui_script::live::with_live_world(app.world_mut(), |script| {
+            script.run(LOG_THE_LOCK).unwrap();
+            script.eval::<Vec<String>>("return Log").unwrap()
+        })
+        .unwrap();
+        assert_eq!(log, ["ITEM_LOCK_CHANGED 0", "ITEM_LOCKED 0", "after 1"]);
+        assert!(matches!(
+            rx.try_iter().next(),
+            Some(ClientCommand::AutoEquipItemSlot {
+                item: AXE_GUID,
+                slot: 15
+            })
+        ));
+        assert!(app.world().resource::<PendingItemOps>().is_locked(AXE_GUID));
+        assert_eq!(
+            app.world()
+                .resource::<crate::ui_bind_confirm::PendingEquips>()
+                .live(),
+            0
+        );
+    }
+
+    /// The accept's re-run refuses an item put in our trade offer since the question (`0x6dffb8`): no lock, no packet, the record freed.
+    #[test]
+    fn a_slotted_accept_refuses_an_item_in_our_trade_offer() {
+        let (mut app, rx) = a_filed_slotted_equip();
+        let mut trade = crate::ui_trade::TradeSession::default();
+        trade.offer_from_for_test(0, 1);
+        app.insert_resource(trade);
+        let log = crate::ui_script::live::with_live_world(app.world_mut(), |script| {
+            script.run(LOG_THE_LOCK).unwrap();
+            script.eval::<Vec<String>>("return Log").unwrap()
+        })
+        .unwrap();
+        assert_eq!(log, ["after 0"]);
+        assert!(rx.try_iter().next().is_none());
+        assert!(!app.world().resource::<PendingItemOps>().is_locked(AXE_GUID));
+        assert_eq!(
+            app.world()
+                .resource::<crate::ui_bind_confirm::PendingEquips>()
+                .live(),
+            0
+        );
+    }
+
+    /// A listener that cancels the same record inside the first unlock's signal finds it still filed (`0x6e02e2` comes last): its own cancel unlocks the second occupant, and the outer one then finds the record zeroed.
+    #[test]
+    fn a_cancel_from_the_first_unlocks_listener_finds_the_record_filed() {
+        let (mut app, _rx) = a_filed_swap_with_both_ends_locked();
+        let log = crate::ui_script::live::with_live_world(app.world_mut(), |script| {
+            script
+                .run(
+                    r#"Log = {}
+                       local f = CreateFrame("Frame")
+                       f:RegisterEvent("ITEM_UNLOCKED")
+                       f:SetScript("OnEvent", function(_, e, a)
+                           Log[#Log + 1] = "in " .. a
+                           if a == 0 then CancelPendingEquip(0) end
+                           Log[#Log + 1] = "out " .. a
+                       end)
+                       CancelPendingEquip(0) Log[#Log + 1] = "after""#,
+                )
+                .unwrap();
+            script.eval::<Vec<String>>("return Log").unwrap()
+        })
+        .unwrap();
+        assert_eq!(log, ["in 0", "in 16", "out 16", "out 0", "after"]);
+        assert!(!app
+            .world()
+            .resource::<PendingItemOps>()
+            .is_locked(SWORD_GUID));
     }
 
     /// The same put-down of an item that binds nothing sends and clears the cursor, the item locked until the answer (`0x6dfc04`, `0x6dfc0d`).

@@ -68,7 +68,7 @@ pub(crate) fn apply_in_call(lua: &mlua::Lua, call: ScriptCall) -> bool {
 /// Run `step`, a host step that holds the lent `World`, inside the Lua call that reached it: it
 /// raises nothing while it holds the `World`; its signals, lines and a press's edges queue, and
 /// fire as it returns with the `World` lent again, so a listener's own call applies nested.
-fn in_call_step<R>(world: &mut World, step: impl FnOnce(&mut World) -> R) -> R {
+pub(crate) fn in_call_step<R>(world: &mut World, step: impl FnOnce(&mut World) -> R) -> R {
     use crate::ui_script::live::UiEvents;
     // What an enclosing turn queued stays its own, fired by it.
     let earlier = world.get_resource_or_init::<UiEvents>().set_aside();
@@ -89,7 +89,7 @@ fn in_call_step<R>(world: &mut World, step: impl FnOnce(&mut World) -> R) -> R {
     out
 }
 
-/// Answer a verb's ask inside the Lua call that made it, over the lent `World`; `None` in a world without the state it reads, where the verb's request waits for its drain. A gate or a filing raises nothing here, and the verb signals what the answer leaves; the bind dialogs' answers run their drains as a step.
+/// Answer a verb's ask inside the Lua call that made it, over the lent `World`; `None` in a world without the state it reads, where the verb's request waits for its drain. A gate or a filing raises nothing here, and the verb signals what the answer leaves; the bind dialogs' answers run step by step, each raise fired at its own (`0x6e0273`, `0x6e02cd`).
 pub(crate) fn answer_in_call(
     _lua: &mlua::Lua,
     ask: &benilla_ui::script::HostAsk,
@@ -110,7 +110,7 @@ pub(crate) fn answer_in_call(
             .flatten()
             .map(HostAnswer::BindIndex),
         HostAsk::BindAnswers => {
-            in_call_step(world, crate::ui_items::run_bind_answers).then_some(HostAnswer::Done)
+            crate::ui_items::run_bind_answers(world).then_some(HostAnswer::Done)
         }
     })
     .flatten()

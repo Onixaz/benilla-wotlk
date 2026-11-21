@@ -22,6 +22,11 @@ impl super::UiScript {
         drain_field!(self, pending_equip_answers)
     }
 
+    /// Whether an equip answer waits for its drain.
+    pub fn has_pending_equip_answers(&self) -> bool {
+        !self.model_ref().pending_equip_answers.is_empty()
+    }
+
     /// `ConfirmBindOnUse()` calls since the last drain.
     pub fn take_bind_on_use_confirms(&mut self) -> u32 {
         drain_field!(self, bind_on_use_confirms)

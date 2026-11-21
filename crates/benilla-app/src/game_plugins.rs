@@ -1699,8 +1699,6 @@ pub(crate) mod schedule_tests {
          "`feed.vm: VmMemo<FedTicket>` counters restart per VM while `state.answers` keeps counting, so the latest answer is re-fired"),
         ("ui_inspect.rs", "feed_inspect", Because::MemoLatched,
          "the token is latched only by Lua's `NotifyInspect`, and the diffs ride a `VmMemo`"),
-        ("ui_items/drain.rs", "drain_bind_confirm_answers", Because::FilledByVm,
-         "`take_pending_equip_answers` is a VM-owned queue filled by Lua's `EquipPendingItem`/`CancelPendingEquip`"),
         ("ui_logout.rs", "feed_logout", Because::PlayerRoundTrip,
          "both packets answer the `CMSG_LOGOUT_REQUEST`/cancel the game menu sent"),
         ("ui_loot/mod.rs", "drain_loot", Because::Deliberate,

@@ -63,6 +63,11 @@ impl PendingEquips {
         u32::try_from(idx).unwrap_or(u32::MAX)
     }
 
+    /// The record at `index`, left filed: the answer reads it at each step and zeroes it last (`0x6e02e2`).
+    pub(crate) fn get(&self, index: u32) -> Option<PendingEquip> {
+        *self.slots.get(index as usize)?
+    }
+
     /// Frees the element. An index nobody filed does nothing, as the reference bounds-checks the
     /// index.
     pub(crate) fn take(&mut self, index: u32) -> Option<PendingEquip> {

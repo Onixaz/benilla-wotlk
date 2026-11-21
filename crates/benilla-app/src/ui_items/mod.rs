@@ -78,12 +78,13 @@ pub(super) const BAG_FAMILY_KEYS: u32 = 9;
 
 /// The bind dialogs' answers run inside the verb that gave them: `EquipPendingItem` and `CancelPendingEquip` (`0x6e01a0`), `ConfirmBindOnUse` (`0x7093f0`); `false` in a world without their state, where they wait for the drains.
 pub(crate) fn run_bind_answers(world: &mut World) -> bool {
-    let equips = world
-        .run_system_cached(drain::drain_bind_confirm_answers)
-        .is_ok();
-    let uses = world
-        .run_system_cached(drain::drain_bind_on_use_confirms)
-        .is_ok();
+    let equips = drain::run_equip_answers(world);
+    // The use's re-issue is one press, its edges fired as it returns (#1363).
+    let uses = crate::script_calls::in_call_step(world, |world| {
+        world
+            .run_system_cached(drain::drain_bind_on_use_confirms)
+            .is_ok()
+    });
     equips || uses
 }
 
