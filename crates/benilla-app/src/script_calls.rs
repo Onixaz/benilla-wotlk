@@ -44,7 +44,7 @@ pub(crate) fn apply_in_call(lua: &mlua::Lua, call: ScriptCall) -> bool {
     let applied = with_world(|world| {
         // What an enclosing turn queued stays its own, fired by it.
         let earlier = world.get_resource_or_init::<UiEvents>().set_aside();
-        let (applied, raised) = benilla_ui::script::world_loan::raises_in_turn(|| {
+        let (applied, raised) = benilla_ui::script::world_loan::raises_in_turn(lua, || {
             world.run_system_cached_with(apply_one, call).ok()
         });
         // The setter's tail at the selection write (`0x524f38`-`0x524f54`), ahead of what the call

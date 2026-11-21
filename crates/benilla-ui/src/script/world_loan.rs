@@ -13,50 +13,73 @@ use mlua::{AnyUserData, Lua};
 
 use super::LiveState;
 
+/// The loans live on this thread, innermost last, and the first borrow that failed under them.
+#[derive(Default)]
+struct Loans {
+    /// Each is a scoped userdata: once its scope ends mlua has destructed it, so a handle left
+    /// behind only ever fails to borrow.
+    live: Vec<AnyUserData>,
+    /// A borrow held across a raise, failed inside a listener whose guard may swallow the panic.
+    held_across: Option<String>,
+}
+
 thread_local! {
-    /// The loans live on this thread, innermost last. Each is a scoped userdata: once its scope ends
-    /// mlua has destructed it, so a handle left behind only ever fails to borrow.
-    static LOANS: RefCell<Vec<AnyUserData>> = const { RefCell::new(Vec::new()) };
+    static LOANS: RefCell<Loans> = RefCell::new(Loans::default());
     /// The host's view builder: turns the innermost loan into the verbs' [`LiveState`].
     static LIVE_ACCESS: RefCell<Option<LiveAccess>> = const { RefCell::new(None) };
-    /// The first borrow that failed under the loans live now: a borrow held across a raise.
-    static HELD_ACROSS: RefCell<Option<String>> = const { RefCell::new(None) };
-    /// The events a host step raised while it held the lent state, queued in turn.
-    static IN_TURN: RefCell<Option<Vec<Raised>>> = const { RefCell::new(None) };
-    /// The host steps that must not run Lua open on this thread ([`Quiet`]), innermost last.
-    static QUIET: RefCell<Vec<&'static std::panic::Location<'static>>> =
-        const { RefCell::new(Vec::new()) };
+}
+
+/// A VM's turn, kept in its app data: the raises the open host step queued, and the quiet steps
+/// open on it, innermost last.
+#[derive(Default)]
+struct TurnState {
+    queue: Option<Vec<Raised>>,
+    quiet: Vec<&'static std::panic::Location<'static>>,
+}
+
+/// `f` over `lua`'s turn state, made on first use.
+fn with_turn<R>(lua: &Lua, f: impl FnOnce(&mut TurnState) -> R) -> R {
+    if lua.app_data_ref::<TurnState>().is_none() {
+        lua.set_app_data(TurnState::default());
+    }
+    let mut state = lua
+        .app_data_mut::<TurnState>()
+        .expect("the turn state is set");
+    f(&mut state)
 }
 
 /// A host step that reaches the VM's model but must run no Lua (its raises queue in turn): while
-/// one is open, running a chunk or a script handler fails a debug build.
-pub struct Quiet(());
+/// one is open on the VM, running a chunk or a script handler on it fails a debug build.
+pub struct Quiet(Lua);
 
 impl Quiet {
-    /// Open a quiet step on this thread, named by its caller's place.
+    /// Open a quiet step on `lua`, named by its caller's place.
     #[track_caller]
-    pub fn begin() -> Self {
+    pub fn begin(lua: &Lua) -> Self {
         let at = std::panic::Location::caller();
-        QUIET.with_borrow_mut(|q| q.push(at));
-        Quiet(())
+        with_turn(lua, |t| t.quiet.push(at));
+        Quiet(lua.clone())
     }
 }
 
 impl Drop for Quiet {
     fn drop(&mut self) {
-        QUIET.with_borrow_mut(|q| {
-            q.pop();
+        with_turn(&self.0, |t| {
+            t.quiet.pop();
         });
     }
 }
 
-/// Fail a debug build when Lua is about to run inside a [`Quiet`] step.
-pub(crate) fn assert_not_quiet() {
+/// Fail a debug build when Lua is about to run on `lua` inside a [`Quiet`] step.
+pub(crate) fn assert_not_quiet(lua: &Lua) {
     if cfg!(debug_assertions) {
-        if let Some(at) = QUIET.with_borrow(|q| q.last().copied()) {
+        let at = lua
+            .app_data_ref::<TurnState>()
+            .and_then(|t| t.quiet.last().copied());
+        if let Some(at) = at {
             panic!(
-                "Lua or the live view ran inside a system that holds the VM in turn ({at}): a \
-                 system that runs Lua or reads the view is exclusive and lends the `World`"
+                "Lua ran inside a system that holds the VM in turn ({at}): a system that runs Lua \
+                 is exclusive and lends the `World`"
             );
         }
     }
@@ -96,8 +119,8 @@ pub fn in_turn_or_now(
     op: impl FnOnce(&mut super::UiScript) + Send + Sync + 'static,
 ) {
     let mut op = Some(op);
-    IN_TURN.with_borrow_mut(|q| {
-        if let Some(q) = q.as_mut() {
+    with_turn(script.lua(), |t| {
+        if let Some(q) = t.queue.as_mut() {
             q.extend(op.take().map(|op| Raised::Op(Box::new(op))));
         }
     });
@@ -106,52 +129,56 @@ pub fn in_turn_or_now(
     }
 }
 
-/// Puts the enclosing step's queue back on return and on unwind.
-struct Restore(Option<Vec<Raised>>);
-
-impl Drop for Restore {
-    fn drop(&mut self) {
-        let outer = self.0.take();
-        IN_TURN.with_borrow_mut(|q| *q = outer);
-    }
-}
-
-/// A host step's turn: from [`Turn::begin`] every event raised on this thread queues in turn
+/// A host step's turn on one VM: from [`Turn::begin`] every event raised on it queues in turn
 /// instead of firing, until the turn drops and the enclosing step's queue is put back (also on
 /// unwind). What is still queued at the drop is dropped: take it first ([`Turn::take`]).
 pub struct Turn {
-    _restore: Restore,
+    lua: Lua,
+    outer: Option<Vec<Raised>>,
 }
 
 impl Turn {
-    /// Begin queueing this thread's raises in turn.
-    pub fn begin() -> Self {
+    /// Begin queueing `lua`'s raises in turn.
+    pub fn begin(lua: &Lua) -> Self {
+        let outer = with_turn(lua, |t| t.queue.replace(Vec::new()));
         Turn {
-            _restore: Restore(IN_TURN.with_borrow_mut(|q| q.replace(Vec::new()))),
+            lua: lua.clone(),
+            outer,
         }
     }
 
     /// The raises queued so far, in order; the turn keeps queueing.
     pub fn take(&mut self) -> Vec<Raised> {
-        IN_TURN.with_borrow_mut(|q| q.as_mut().map(std::mem::take).unwrap_or_default())
+        with_turn(&self.lua, |t| {
+            t.queue.as_mut().map(std::mem::take).unwrap_or_default()
+        })
     }
 }
 
-/// Run `f`, a host step that holds the lent state, with every event it raises queued in turn
-/// instead of fired; the events, in order, for the caller to fire once its borrows end.
-pub fn raises_in_turn<R>(f: impl FnOnce() -> R) -> (R, Vec<Raised>) {
-    let mut turn = Turn::begin();
+impl Drop for Turn {
+    fn drop(&mut self) {
+        let outer = self.outer.take();
+        with_turn(&self.lua, |t| t.queue = outer);
+    }
+}
+
+/// Run `f`, a host step that holds the lent state, with every event it raises on `lua` queued in
+/// turn instead of fired; the events, in order, for the caller to fire once its borrows end.
+pub fn raises_in_turn<R>(lua: &Lua, f: impl FnOnce() -> R) -> (R, Vec<Raised>) {
+    let mut turn = Turn::begin(lua);
     let out = f();
     let raised = turn.take();
     (out, raised)
 }
 
-/// Queue `event` when a step raises in turn ([`raises_in_turn`]); the arguments back otherwise.
+/// Queue `event` when a step raises on `lua` in turn ([`raises_in_turn`]); the arguments back
+/// otherwise.
 pub(crate) fn queue_in_turn(
+    lua: &Lua,
     event: &str,
     args: Vec<super::ScriptValue>,
 ) -> Option<Vec<super::ScriptValue>> {
-    IN_TURN.with_borrow_mut(|q| match q {
+    with_turn(lua, |t| match t.queue.as_mut() {
         Some(q) => {
             q.push(Raised::Event(event.to_string(), args));
             None
@@ -176,7 +203,7 @@ struct Pop;
 impl Drop for Pop {
     fn drop(&mut self) {
         LOANS.with_borrow_mut(|l| {
-            l.pop();
+            l.live.pop();
         });
     }
 }
@@ -187,7 +214,7 @@ pub fn lend<W: 'static, R>(lua: &Lua, host: &mut W, f: impl FnOnce() -> R) -> R 
     let mut out = None;
     lua.scope(|scope| {
         let ud = scope.create_any_userdata_ref_mut(host)?;
-        LOANS.with_borrow_mut(|l| l.push(ud));
+        LOANS.with_borrow_mut(|l| l.live.push(ud));
         let _pop = Pop;
         out = f.take().map(|f| f());
         Ok(())
@@ -195,7 +222,7 @@ pub fn lend<W: 'static, R>(lua: &Lua, host: &mut W, f: impl FnOnce() -> R) -> R 
     .expect("a scoped loan is made");
     if !lent() {
         // A handler guard may have swallowed the panic as a script error: a debug build fails here.
-        if let Some(held) = HELD_ACROSS.with_borrow_mut(Option::take) {
+        if let Some(held) = LOANS.with_borrow_mut(|l| l.held_across.take()) {
             debug_assert!(false, "{held}");
         }
     }
@@ -205,7 +232,7 @@ pub fn lend<W: 'static, R>(lua: &Lua, host: &mut W, f: impl FnOnce() -> R) -> R 
 /// `f` over the innermost loan of a `W`, `None` with none lent (or the innermost lends another
 /// type). A borrow of a loan already borrowed panics: the caller holds it across a raise.
 pub fn with_lent<W: 'static, R>(f: impl FnOnce(&mut W) -> R) -> Option<R> {
-    let ud = LOANS.with_borrow(|l| l.last().cloned())?;
+    let ud = LOANS.with_borrow(|l| l.live.last().cloned())?;
     match ud.borrow_mut_scoped::<W, R>(f) {
         Ok(r) => Some(r),
         Err(mlua::Error::UserDataBorrowMutError | mlua::Error::UserDataBorrowError) => {
@@ -214,7 +241,7 @@ pub fn with_lent<W: 'static, R>(f: impl FnOnce(&mut W) -> R) -> Option<R> {
                  or lend the reborrow again",
                 std::any::type_name::<W>()
             );
-            HELD_ACROSS.with_borrow_mut(|h| h.get_or_insert_with(|| held.clone()).len());
+            LOANS.with_borrow_mut(|l| l.held_across.get_or_insert_with(|| held.clone()).len());
             panic!("{held}")
         }
         Err(_) => None,
@@ -228,7 +255,7 @@ pub fn lent() -> bool {
 
 /// How many loans live on this thread, each lent inside the one before it.
 pub fn depth() -> usize {
-    LOANS.with_borrow(Vec::len)
+    LOANS.with_borrow(|l| l.live.len())
 }
 
 /// [`super::read_live`]'s and [`super::write_live`]'s way to the host's view through the loan.
@@ -281,15 +308,16 @@ mod tests {
     }
 
     /// A step's raises queue in turn, in order, nested steps each keeping their own, and nothing
-    /// queues once the step returns.
+    /// queues once the step returns; a turn is one VM's.
     #[test]
     fn a_steps_raises_queue_in_turn_and_nest() {
-        let ((inner, ()), outer) = raises_in_turn(|| {
-            assert!(queue_in_turn("A", Vec::new()).is_none());
-            let inner = raises_in_turn(|| {
-                assert!(queue_in_turn("B", Vec::new()).is_none());
+        let lua = Lua::new();
+        let ((inner, ()), outer) = raises_in_turn(&lua, || {
+            assert!(queue_in_turn(&lua, "A", Vec::new()).is_none());
+            let inner = raises_in_turn(&lua, || {
+                assert!(queue_in_turn(&lua, "B", Vec::new()).is_none());
             });
-            assert!(queue_in_turn("C", Vec::new()).is_none());
+            assert!(queue_in_turn(&lua, "C", Vec::new()).is_none());
             (inner.1, ())
         });
         let names = |q: &[Raised]| {
@@ -299,6 +327,8 @@ mod tests {
         };
         assert_eq!(names(&inner), ["B"]);
         assert_eq!(names(&outer), ["A", "C"]);
-        assert!(queue_in_turn("D", Vec::new()).is_some());
+        assert!(queue_in_turn(&lua, "D", Vec::new()).is_some());
+        let _turn = Turn::begin(&lua);
+        assert!(queue_in_turn(&Lua::new(), "E", Vec::new()).is_some());
     }
 }

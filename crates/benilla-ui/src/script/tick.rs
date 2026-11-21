@@ -55,7 +55,7 @@ impl UiScript {
 /// [`UiScript::fire_event`] for a caller holding `&Lua`, such as a Lua binding.
 pub(crate) fn fire_event_into(lua: &Lua, event: &str, args: Vec<ScriptValue>) {
     // A host step that holds the lent state queues its raise in turn.
-    let Some(args) = super::world_loan::queue_in_turn(event, args) else {
+    let Some(args) = super::world_loan::queue_in_turn(lua, event, args) else {
         return;
     };
     let model_mut = || crate::script::model_mut_of(lua);

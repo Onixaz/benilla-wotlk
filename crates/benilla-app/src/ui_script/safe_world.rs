@@ -1,4 +1,4 @@
-//! The `World` lent into every call into Lua with no `unsafe`: an exclusive system lends its
+//! The `World` lent into every call into Lua through a scoped loan: an exclusive system lends its
 //! `&mut World` through [`lend`] for the length of its calls into Lua, and a verb, or the system
 //! itself between its calls, borrows it through [`with_world`] at the moment it reads or writes. A
 //! raise holds no borrow, so a listener's nested press takes the `World` itself, as 12340 re-enters
@@ -23,7 +23,7 @@ pub(crate) fn lend_to<R>(
 ) -> R {
     let lua = script.lua().clone();
     world_loan::set_live_access(live_access);
-    benilla_ui::script::set_apply(crate::script_calls::apply_in_call);
+    benilla_ui::script::set_apply(&lua, crate::script_calls::apply_in_call);
     world_loan::lend(&lua, world, || f(script))
 }
 

@@ -6,22 +6,18 @@
 //! ([`set_apply`]) wherever the host's state is lent ([`super::world_loan`]); with none lent it
 //! waits in one queue, in call order.
 
-use std::cell::Cell;
-
 use super::{world_loan, ActionUse, SelectionRequest, UiScript};
 
 /// The host's applier: one call applied with the lent state, inside the Lua call that made it;
 /// `false` when the host cannot apply it now, and it waits.
 pub type ApplyCall = fn(&mlua::Lua, ScriptCall) -> bool;
 
-thread_local! {
-    /// The host's applier, named once per thread.
-    static APPLY: Cell<Option<ApplyCall>> = const { Cell::new(None) };
-}
+/// The host's applier, kept in the VM's app data.
+struct HostApply(ApplyCall);
 
-/// Name the host's applier of every script call made on this thread.
-pub fn set_apply(apply: ApplyCall) {
-    APPLY.with(|a| a.set(Some(apply)));
+/// Name the host's applier of every script call `lua` makes.
+pub fn set_apply(lua: &mlua::Lua, apply: ApplyCall) {
+    lua.set_app_data(HostApply(apply));
 }
 
 /// Make `call`: applied before this returns where the host's state is lent, after the calls still
@@ -35,7 +31,7 @@ pub(crate) fn make(lua: &mlua::Lua, call: ScriptCall) {
 /// A call a listener makes while one applies is applied inside that listener, nested, as 12340
 /// re-enters its cast entry from a `UNIT_SPELLCAST_SENT` listener (`0x80b556`).
 pub fn apply_queued(lua: &mlua::Lua) {
-    let Some(apply) = APPLY.with(Cell::get) else {
+    let Some(apply) = lua.app_data_ref::<HostApply>().map(|a| a.0) else {
         return;
     };
     if !world_loan::lent() {

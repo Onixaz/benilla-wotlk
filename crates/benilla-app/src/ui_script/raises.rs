@@ -31,10 +31,11 @@ impl InTurn<'_> {
     #[track_caller]
     pub(crate) fn turn(&mut self) -> Option<VmTurn<'_>> {
         let script = self.vm.as_deref_mut()?;
+        let turn = Some((Turn::begin(script.lua()), Quiet::begin(script.lua())));
         Some(VmTurn {
             script,
             queue: self.queue.as_deref_mut(),
-            turn: Some((Turn::begin(), Quiet::begin())),
+            turn,
         })
     }
 
@@ -84,7 +85,10 @@ impl VmTurn<'_> {
             // A harness with no handler queue: the raises fire as the system ends.
             self.turn = None;
             run(self.script, raised);
-            self.turn = Some((Turn::begin(), Quiet::begin()));
+            self.turn = Some((
+                Turn::begin(self.script.lua()),
+                Quiet::begin(self.script.lua()),
+            ));
         }
     }
 }
