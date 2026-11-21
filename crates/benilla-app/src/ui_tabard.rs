@@ -114,11 +114,6 @@ impl TabardView<'_, '_> {
         self.target.as_ref().and_then(|t| t.0)
     }
 
-    /// Whether the interact target moved since the reading system last ran.
-    pub(crate) fn target_changed(&self) -> bool {
-        self.target.as_ref().is_some_and(|t| t.is_changed())
-    }
-
     /// The vendor held, read by a system between its calls into Lua.
     pub(crate) fn vendor(&self) -> Option<u64> {
         self.open.as_ref().and_then(|o| o.vendor)
@@ -219,10 +214,7 @@ pub(crate) fn enter_world(world: &mut World) {
 }
 
 /// The pane's yaw onto the booth while the designer shows: rendering, no event, as the model frame reads its facing on every frame render.
-fn sync_tabard_booth(
-    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
-    mut booth: ResMut<PaperDollBooth>,
-) {
+fn sync_tabard_booth(script: Option<NonSend<UiScript>>, mut booth: ResMut<PaperDollBooth>) {
     let Some(script) = script else {
         return;
     };

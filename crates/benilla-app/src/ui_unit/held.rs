@@ -7,12 +7,14 @@
 //! does, so the VM resolves it to a guid and reads that guid's snapshot, which [`feed_chain_units`]
 //! pushes for the guids [`UiScript::chain_end_guids`] lists.
 
+#[cfg(test)]
+use benilla_ui::script::UiScript;
 use std::collections::HashMap;
 
 use bevy::prelude::*;
 
 use benilla_formats::ChrClasses;
-use benilla_ui::script::{UiScript, UnitState};
+use benilla_ui::script::UnitState;
 
 use super::{enrich_unit, faction_group, faction_group_localized, snapshot, unit_reaction};
 use crate::creature_type::CreatureTypeSources;
@@ -39,6 +41,33 @@ pub(super) struct HeldUnits<'a> {
 }
 
 impl HeldUnits<'_> {
+    /// The `"target"` snapshot of the selection `(entity, guid)`: the held unit's, with its guild;
+    /// a group member or pet selected by guid alone reads its roster record.
+    pub(super) fn target(
+        &self,
+        stores: &Query<&ObjectStore>,
+        guild: &crate::ui_guild::GuildCache,
+        entity: Option<Entity>,
+        guid: Option<u64>,
+    ) -> Option<UnitState> {
+        match (entity, guid) {
+            (Some(e), Some(guid)) => stores.get(e).ok().map(|store| {
+                let mut s = self.state(store, guid);
+                s.guild = crate::ui_guild::unit_guild(&store.0, guild, self.commands);
+                s
+            }),
+            (None, Some(guid)) => crate::ui_party::unheld_group_state(
+                self.group,
+                guid,
+                self.self_store
+                    .and_then(|store| faction_group(store, self.factions)),
+                self.classes,
+                self.types,
+            ),
+            _ => None,
+        }
+    }
+
     /// The snapshot of the held unit `guid`, whose descriptor is `store`, as a token naming a unit
     /// other than the player carries it. It has no guild leg, so `GetGuildInfo` on a chain answers
     /// nothing, where the reference resolves the token and reads the object's guild.
@@ -124,7 +153,7 @@ pub(super) struct ChainMemo {
 /// or pet record, and `UnitName` from the pet record or the name cache, else `UNKNOWNOBJECT`; those
 /// legs are not built for a chain's end. A token without a hop reads its own push, not these.
 pub(super) fn feed_chain_units(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     tables: super::SnapshotTables,
     // The object manager's lookup on its own, not through [`super::UnitTokens`], whose pet-bar read
     // would order this feed against the pet feed it does not depend on.
@@ -141,7 +170,7 @@ pub(super) fn feed_chain_units(
     mut removed: RemovedComponents<Guid>,
     mut memo: Local<VmMemo<ChainMemo>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let (memo, vm_reset) = memo.get_reset(&script);

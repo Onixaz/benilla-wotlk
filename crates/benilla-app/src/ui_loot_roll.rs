@@ -17,9 +17,11 @@
 use benilla_protocol::messages::{
     LootAllPassed, LootRoll, LootRollWon, LootStartRoll, RollAnnounce,
 };
+#[cfg(test)]
+use benilla_ui::script::UiScript;
 use bevy::prelude::*;
 
-use benilla_ui::script::{LootRollEntry, LootRollsState, ScriptValue, UiScript};
+use benilla_ui::script::{LootRollEntry, LootRollsState, ScriptValue};
 use benilla_ui::strings::{fill, Arg};
 
 use crate::entities::ItemDisplays;
@@ -287,7 +289,7 @@ impl Plugin for UiLootRollPlugin {
                 // The feed before the input pass shows a new roll the same frame; the drain after
                 // it sends a vote the same frame.
                 feed_loot_rolls.in_set(UiFeed),
-                drain_loot_rolls.in_set(UiDrain),
+                crate::ui_script::raises::then_fire(drain_loot_rolls).in_set(UiDrain),
             ),
         );
     }
@@ -547,7 +549,7 @@ fn snapshot(
 /// Tick the open rolls, push them into the VM, fire their events and post their chat lines.
 #[allow(clippy::too_many_arguments)]
 fn feed_loot_rolls(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut rolls: ResMut<LootRolls>,
     items: Res<Items>,
     names: Res<NameCache>,
@@ -568,7 +570,7 @@ fn feed_loot_rolls(
 ) {
     rolls.tick(time.delta().as_millis() as u32);
 
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let last = last.get(&script);
@@ -667,11 +669,11 @@ fn feed_loot_rolls(
 /// confirm raises its popup, `CONFIRM_DISENCHANT_ROLL (id, 3)` for Disenchant, else
 /// `CONFIRM_LOOT_ROLL (id, rollType)` (`0x6fbc70`).
 fn drain_loot_rolls(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut rolls: ResMut<LootRolls>,
     commands: Res<NetCommands>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     for (roll_id, roll_type) in script.take_loot_roll_confirms() {

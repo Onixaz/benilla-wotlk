@@ -59,7 +59,7 @@ impl ScriptSelect<'_, '_> {
             SelectionRequest::Unit(token) => {
                 let guid = self.tokens.guid_of(
                     &token,
-                    &self.commit.selection.read(),
+                    self.commit.selection.as_ref(),
                     crate::ui_unit::VmUnits::of(script),
                 );
                 if let Some(guid) = guid {
@@ -72,7 +72,7 @@ impl ScriptSelect<'_, '_> {
             SelectionRequest::Assist(token) => {
                 let basis = self.tokens.resolve(
                     &token,
-                    &self.commit.selection.read(),
+                    self.commit.selection.as_ref(),
                     crate::ui_unit::VmUnits::of(script),
                 );
                 match basis {
@@ -142,7 +142,7 @@ impl ScriptSelect<'_, '_> {
     ) -> Option<(Entity, u64)> {
         let named = self.tokens.resolve(
             unit,
-            &self.commit.selection.read(),
+            self.commit.selection.as_ref(),
             crate::ui_unit::VmUnits::of(vm),
         );
         named.or_else(|| self.by_name.attackable(unit, exact))
@@ -168,7 +168,7 @@ impl ScriptSelect<'_, '_> {
             self.time.elapsed_secs_f64(),
             &self.scan,
             &mut self.history,
-            &mut self.commit.selection.write(),
+            self.commit.selection.as_mut(),
             &mut self.commit.seam,
             engaged,
             script,
@@ -179,7 +179,7 @@ impl ScriptSelect<'_, '_> {
     /// unit or a group member is committed (which stamps the outgoing target, swapping the two)
     /// and anything else is a no-op; an empty pair deselects.
     pub(crate) fn target_last_target(&mut self, script: &mut UiScript) {
-        let last = self.commit.selection.read().last;
+        let last = self.commit.selection.last;
         match last {
             Some(guid) => self.target_if_valid(guid, script),
             None => self.commit.clear(),
@@ -198,11 +198,9 @@ pub(super) fn target_by_name_requests(
     mut requests: MessageReader<by_name::TargetByNameRequest>,
     scan_params: ByNameScan,
     mut commit: SelectCommit,
-    (mut script, _live): (
-        Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsScriptCalls>,
-    ),
+    mut vm: crate::ui_script::InTurn,
 ) {
+    let mut script = vm.turn();
     for request in requests.read() {
         let unheld = with_sink(script.as_deref_mut(), |sink| {
             by_name::target_named(&scan_params, &mut commit, &request.name, false, sink)
@@ -218,11 +216,9 @@ pub(super) fn assist_requests(
     mut requests: MessageReader<by_name::AssistRequest>,
     scan_params: ByNameScan,
     mut commit: SelectCommit,
-    (mut script, _live): (
-        Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsScriptCalls>,
-    ),
+    mut vm: crate::ui_script::InTurn,
 ) {
+    let mut script = vm.turn();
     for request in requests.read() {
         let unheld = with_sink(script.as_deref_mut(), |sink| {
             by_name::assist_named(
@@ -1024,11 +1020,7 @@ mod tests {
                 .expect("the binding runs");
             world
                 .run_system_once(
-                    |(mut script, _live): (
-                        NonSendMut<UiScript>,
-                        crate::ui_script::LendLive<crate::ui_script::OwnsScriptCalls>,
-                    ),
-                     mut select: ScriptSelect| {
+                    |mut script: NonSendMut<UiScript>, mut select: ScriptSelect| {
                         for request in script.take_selection_requests() {
                             select.select(request, &mut script);
                         }

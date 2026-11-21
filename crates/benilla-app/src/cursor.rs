@@ -165,11 +165,8 @@ pub(crate) struct DisplayedCursor(pub(crate) crate::target::WorldCursor);
 fn drive_displayed_cursor(
     world: Res<crate::target::WorldCursor>,
     over_ui: Res<crate::ui_script::PointerOverUi>,
-    (script, _live): (
-        Option<bevy::ecs::system::NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
-    targeting: crate::ui_script::LentRef<crate::spell::targeting::SpellTargeting>,
+    script: Option<bevy::ecs::system::NonSendMut<benilla_ui::script::UiScript>>,
+    targeting: Option<Res<crate::spell::targeting::SpellTargeting>>,
     // The base last restored on entering the UI; `None` over the world, so re-entry restores.
     mut last: Local<crate::ui_script::VmMemo<Option<crate::target::WorldCursor>>>,
     mut displayed: ResMut<DisplayedCursor>,
@@ -200,7 +197,7 @@ fn drive_displayed_cursor(
             kind: CursorKind::Repair,
             unable: false,
         }
-    } else if targeting.get().is_some_and(|t| t.active())
+    } else if targeting.as_deref().is_some_and(|t| t.active())
         || script
             .as_ref()
             .is_some_and(|s| s.gift_wrap_armed().is_some())
@@ -368,10 +365,7 @@ mod other {
         mut sprite: Query<(&SoftwareCursor, &mut ImageNode)>,
         cursor: Res<super::DisplayedCursor>,
         cursors: Option<ResMut<CursorImages>>,
-        (script, _live): (
-            Option<NonSend<benilla_ui::script::UiScript>>,
-            crate::ui_script::LendLive,
-        ),
+        script: Option<NonSend<benilla_ui::script::UiScript>>,
         mut world_assets: Option<ResMut<WorldAssets>>,
         mut images: ResMut<Assets<Image>>,
         mut payload_cursors: ResMut<PayloadCursorImages>,
@@ -569,10 +563,7 @@ mod macos {
     pub(super) fn drive(
         cursors: Option<NonSendMut<NativeCursors>>,
         mut payload_cursors: NonSendMut<PayloadCursors>,
-        (script, _live): (
-            Option<NonSend<benilla_ui::script::UiScript>>,
-            crate::ui_script::LendLive,
-        ),
+        script: Option<NonSend<benilla_ui::script::UiScript>>,
         mut world_assets: Option<ResMut<WorldAssets>>,
         mode: Res<super::DisplayedCursor>,
         screen: Res<crate::loading_screen::LoadingScreen>,

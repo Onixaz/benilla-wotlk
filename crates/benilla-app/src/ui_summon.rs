@@ -134,7 +134,7 @@ fn may_accept(player: Option<&ObjectStore>) -> bool {
 /// Turn each answer into `CMSG_SUMMON_RESPONSE`, gated on a latched summoner, never the deadline:
 /// an Accept also on [`may_accept`], a Cancel on nothing more (`0x51b110`).
 fn drain_summon(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    script: Option<NonSendMut<UiScript>>,
     summon: Res<SummonState>,
     commands: Res<NetCommands>,
     self_guid: Res<SelfGuid>,

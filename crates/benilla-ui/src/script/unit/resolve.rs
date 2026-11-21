@@ -924,24 +924,27 @@ mod tests {
             unit_pets: HashMap::from([(ME, PET), (P1, P1_PET), (MOB, MOB_PET), (R3, 0x3355)]),
             ..Default::default()
         };
-        let _loan = crate::script::live::lend_test(view(0));
-        assert_eq!(at("playerpet"), Some(PET));
-        assert_eq!(at("party1pet"), Some(P1_PET));
-        assert_eq!(at("Party1Pet-Target"), Some(MOB));
-        assert_eq!(at("raid3pet"), Some(0x3355), "a raid member's");
-        assert_eq!(at("party2pet"), None, "a member not held has no pet");
-        assert_eq!(at("party1pettarget"), Some(MOB));
-        assert_eq!(
-            at("targettargetpet"),
-            Some(P1_PET),
-            "the hop's unit is the member"
-        );
-        assert_eq!(guids().resolve("targetpet"), Err(()), "not ours to read");
-        assert_eq!(guids().resolve("petpet"), Err(()));
-        drop(_loan);
-        let _loan = crate::script::live::lend_test(view(PET_OF_ANYONE));
-        assert_eq!(at("targetpet"), Some(MOB_PET), "any unit's under the flag");
-        assert_eq!(at("petpet"), None);
+        let mut loan_v = view(0);
+        crate::script::live::lending(&mut loan_v, || {
+            assert_eq!(at("playerpet"), Some(PET));
+            assert_eq!(at("party1pet"), Some(P1_PET));
+            assert_eq!(at("Party1Pet-Target"), Some(MOB));
+            assert_eq!(at("raid3pet"), Some(0x3355), "a raid member's");
+            assert_eq!(at("party2pet"), None, "a member not held has no pet");
+            assert_eq!(at("party1pettarget"), Some(MOB));
+            assert_eq!(
+                at("targettargetpet"),
+                Some(P1_PET),
+                "the hop's unit is the member"
+            );
+            assert_eq!(guids().resolve("targetpet"), Err(()), "not ours to read");
+            assert_eq!(guids().resolve("petpet"), Err(()));
+        });
+        let mut loan_v = view(PET_OF_ANYONE);
+        crate::script::live::lending(&mut loan_v, || {
+            assert_eq!(at("targetpet"), Some(MOB_PET), "any unit's under the flag");
+            assert_eq!(at("petpet"), None);
+        });
     }
 
     /// Names for the lookup: ours, party1's, party2's, our pet's and party1's pet's, and party1 is

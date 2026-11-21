@@ -647,17 +647,17 @@ fn pack_color(r: f64, g: f64, b: f64) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::script::live::{lend_test, TestView};
-    use crate::script::{LiveLoan, UiScript};
+    use crate::script::live::TestView;
+    use crate::script::UiScript;
 
-    /// A view lent for the test that records the charter acts the verbs make inside their calls.
-    fn acts() -> LiveLoan<TestView> {
-        lend_test(TestView::default())
+    /// A view that records the charter acts the verbs make inside their calls.
+    fn acts() -> TestView {
+        TestView::default()
     }
 
-    /// The acts recorded since the last take.
-    fn take(loan: &mut LiveLoan<TestView>) -> Vec<PetitionRequest> {
-        loan.with_view_mut(|v| std::mem::take(&mut v.petition_acts))
+    /// The acts the lent view recorded since the last take.
+    fn take() -> Vec<PetitionRequest> {
+        crate::script::live::test_view(|v| std::mem::take(&mut v.petition_acts))
     }
 
     fn record() -> PetitionRecordView {
@@ -824,51 +824,55 @@ mod tests {
     #[test]
     fn sign_petition_defaults_its_wire_byte_to_one() {
         let s = UiScript::new().unwrap();
-        let mut loan = acts();
-        s.run("SignPetition(); SignPetition(7); SignPetition(3.9)")
-            .unwrap();
-        assert_eq!(
-            take(&mut loan),
-            vec![
-                PetitionRequest::Sign(1),
-                PetitionRequest::Sign(7),
-                PetitionRequest::Sign(3),
-            ],
-            "absent = 1, present = truncated toward zero"
-        );
+        let mut loan_v = acts();
+        crate::script::live::lending(&mut loan_v, || {
+            s.run("SignPetition(); SignPetition(7); SignPetition(3.9)")
+                .unwrap();
+            assert_eq!(
+                take(),
+                vec![
+                    PetitionRequest::Sign(1),
+                    PetitionRequest::Sign(7),
+                    PetitionRequest::Sign(3),
+                ],
+                "absent = 1, present = truncated toward zero"
+            );
+        });
     }
 
     /// A refused name queues its message instead of a packet.
     #[test]
     fn the_name_validator_gates_both_verbs_and_only_buy_reports_it() {
         let s = UiScript::new().unwrap();
-        let mut loan = acts();
-        assert_eq!(
-            s.eval::<Option<u32>>("return BuyGuildCharter(\"Legacy\")")
-                .unwrap(),
-            Some(1)
-        );
-        assert_eq!(
-            s.eval::<Option<u32>>("return BuyGuildCharter(\"\")")
-                .unwrap(),
-            None,
-            "an empty name is refused locally — the server answers it with silence"
-        );
-        assert_eq!(
-            s.arity("RenamePetition(\"Legacy\")").unwrap(),
-            0,
-            "rename pushes nothing at all"
-        );
-        s.run("RenamePetition(\"  spaced  \")").unwrap();
-        assert_eq!(
-            take(&mut loan),
-            vec![
-                PetitionRequest::Buy("Legacy".into()),
-                PetitionRequest::NameRefused("ERR_NAME_NO_NAME"),
-                PetitionRequest::Rename("Legacy".into()),
-                PetitionRequest::RenameRefused("ERR_NAME_INVALID_SPACE"),
-            ]
-        );
+        let mut loan_v = acts();
+        crate::script::live::lending(&mut loan_v, || {
+            assert_eq!(
+                s.eval::<Option<u32>>("return BuyGuildCharter(\"Legacy\")")
+                    .unwrap(),
+                Some(1)
+            );
+            assert_eq!(
+                s.eval::<Option<u32>>("return BuyGuildCharter(\"\")")
+                    .unwrap(),
+                None,
+                "an empty name is refused locally — the server answers it with silence"
+            );
+            assert_eq!(
+                s.arity("RenamePetition(\"Legacy\")").unwrap(),
+                0,
+                "rename pushes nothing at all"
+            );
+            s.run("RenamePetition(\"  spaced  \")").unwrap();
+            assert_eq!(
+                take(),
+                vec![
+                    PetitionRequest::Buy("Legacy".into()),
+                    PetitionRequest::NameRefused("ERR_NAME_NO_NAME"),
+                    PetitionRequest::Rename("Legacy".into()),
+                    PetitionRequest::RenameRefused("ERR_NAME_INVALID_SPACE"),
+                ]
+            );
+        });
     }
 
     #[test]
@@ -893,75 +897,79 @@ mod tests {
     #[test]
     fn get_tabard_info_is_an_intent_with_no_returns() {
         let s = UiScript::new().unwrap();
-        let mut loan = acts();
-        assert_eq!(
-            s.eval::<i64>("local n = function(...) return arg.n end return n(GetTabardInfo())")
-                .unwrap(),
-            0
-        );
-        assert_eq!(take(&mut loan), vec![PetitionRequest::TabardInfo]);
+        let mut loan_v = acts();
+        crate::script::live::lending(&mut loan_v, || {
+            assert_eq!(
+                s.eval::<i64>("local n = function(...) return arg.n end return n(GetTabardInfo())")
+                    .unwrap(),
+                0
+            );
+            assert_eq!(take(), vec![PetitionRequest::TabardInfo]);
+        });
     }
 
     #[test]
     fn the_vendor_answers_its_rows_and_packs_the_banner() {
         let mut s = UiScript::new().unwrap();
-        let mut loan = acts();
-        s.set_petition_vendor(PetitionVendorState {
-            open: true,
-            items: vec![
-                PetitionVendorItem {
-                    name: Some("Arena Team Charter".into()),
-                    texture: Some("Interface\\Icons\\INV_Misc_Note_01".into()),
-                    cost: 800_000,
-                },
-                PetitionVendorItem::default(),
-            ],
-            has_filled_petition: true,
+        let mut loan_v = acts();
+        crate::script::live::lending(&mut loan_v, || {
+            s.set_petition_vendor(PetitionVendorState {
+                open: true,
+                items: vec![
+                    PetitionVendorItem {
+                        name: Some("Arena Team Charter".into()),
+                        texture: Some("Interface\\Icons\\INV_Misc_Note_01".into()),
+                        cost: 800_000,
+                    },
+                    PetitionVendorItem::default(),
+                ],
+                has_filled_petition: true,
+            });
+            assert_eq!(s.eval::<i64>("return GetNumPetitionItems()").unwrap(), 2);
+            let got = s
+                .eval::<String>("local n, t, c = GetPetitionItemInfo(1) return n .. '|' .. c")
+                .unwrap();
+            assert_eq!(got, "Arena Team Charter|800000");
+            assert!(s
+                .eval::<bool>("local n, t, c = GetPetitionItemInfo(2) return n == nil and c == 0")
+                .unwrap());
+            assert_eq!(s.eval::<i64>("return HasFilledPetition()").unwrap(), 1);
+            assert_eq!(s.eval::<i64>("return BuyPetition(1, 'Probes')").unwrap(), 1);
+            s.run("TurnInArenaPetition(2, 1, 0.5, 0, 7, 0, 0, 1, 3, 0.2, 0.2, 0.2) TurnInArenaPetition(3)")
+            .unwrap();
+            assert_eq!(
+                take(),
+                vec![
+                    PetitionRequest::VendorBuy {
+                        index: 0,
+                        name: "Probes".into()
+                    },
+                    PetitionRequest::VendorTurnInArena(ArenaBannerChoice {
+                        team_size: 2,
+                        background_color: 0xFF_FF_80_00,
+                        emblem_style: 7,
+                        emblem_color: 0xFF_00_00_FF,
+                        border_style: 3,
+                        border_color: 0xFF_33_33_33,
+                    }),
+                    PetitionRequest::VendorTurnInArena(ArenaBannerChoice {
+                        team_size: 3,
+                        background_color: u32::MAX,
+                        emblem_style: u32::MAX,
+                        emblem_color: u32::MAX,
+                        border_style: u32::MAX,
+                        border_color: u32::MAX,
+                    }),
+                ]
+            );
+            // Each close reaches the view inside its call; the vendor's own zero gates the second there (`0x5a24f0`).
+            s.run("ClosePetitionVendor() ClosePetitionVendor()")
+                .unwrap();
+            assert_eq!(
+                take(),
+                vec![PetitionRequest::CloseVendor, PetitionRequest::CloseVendor]
+            );
         });
-        assert_eq!(s.eval::<i64>("return GetNumPetitionItems()").unwrap(), 2);
-        let got = s
-            .eval::<String>("local n, t, c = GetPetitionItemInfo(1) return n .. '|' .. c")
-            .unwrap();
-        assert_eq!(got, "Arena Team Charter|800000");
-        assert!(s
-            .eval::<bool>("local n, t, c = GetPetitionItemInfo(2) return n == nil and c == 0")
-            .unwrap());
-        assert_eq!(s.eval::<i64>("return HasFilledPetition()").unwrap(), 1);
-        assert_eq!(s.eval::<i64>("return BuyPetition(1, 'Probes')").unwrap(), 1);
-        s.run("TurnInArenaPetition(2, 1, 0.5, 0, 7, 0, 0, 1, 3, 0.2, 0.2, 0.2) TurnInArenaPetition(3)")
-            .unwrap();
-        assert_eq!(
-            take(&mut loan),
-            vec![
-                PetitionRequest::VendorBuy {
-                    index: 0,
-                    name: "Probes".into()
-                },
-                PetitionRequest::VendorTurnInArena(ArenaBannerChoice {
-                    team_size: 2,
-                    background_color: 0xFF_FF_80_00,
-                    emblem_style: 7,
-                    emblem_color: 0xFF_00_00_FF,
-                    border_style: 3,
-                    border_color: 0xFF_33_33_33,
-                }),
-                PetitionRequest::VendorTurnInArena(ArenaBannerChoice {
-                    team_size: 3,
-                    background_color: u32::MAX,
-                    emblem_style: u32::MAX,
-                    emblem_color: u32::MAX,
-                    border_style: u32::MAX,
-                    border_color: u32::MAX,
-                }),
-            ]
-        );
-        // Each close reaches the view inside its call; the vendor's own zero gates the second there (`0x5a24f0`).
-        s.run("ClosePetitionVendor() ClosePetitionVendor()")
-            .unwrap();
-        assert_eq!(
-            take(&mut loan),
-            vec![PetitionRequest::CloseVendor, PetitionRequest::CloseVendor]
-        );
     }
 
     /// A backpack with two charters (slots 1 and 2) and a plain item (slot 3), every template
@@ -1021,38 +1029,37 @@ mod tests {
     #[test]
     fn the_petition_button_takes_a_charter_and_turns_it_in() {
         let s = vendor_with_charters();
-        let mut loan = acts();
-        s.run("TurnInPetition()").unwrap();
-        assert!(take(&mut loan).is_empty(), "an empty button sends nothing");
+        let mut loan_v = acts();
+        crate::script::live::lending(&mut loan_v, || {
+            s.run("TurnInPetition()").unwrap();
+            assert!(take().is_empty(), "an empty button sends nothing");
 
-        s.run("PickupContainerItem(0, 1)").unwrap();
-        s.model_mut().pending_events.clear();
-        s.run("ClickPetitionButton()").unwrap();
-        let fired: Vec<String> = s
-            .model_ref()
-            .pending_events
-            .iter()
-            .map(|(e, _)| e.clone())
-            .collect();
-        assert!(
-            fired.contains(&"PETITION_VENDOR_UPDATE".to_string()),
-            "{fired:?}"
-        );
-        assert!(fired.contains(&"CURSOR_UPDATE".to_string()), "{fired:?}");
-        assert!(
-            !fired.contains(&"ITEM_LOCK_CHANGED".to_string()),
-            "no unlock: {fired:?}"
-        );
-        assert_eq!(held_slot(&s), None, "the cursor cleared");
-        assert!(locked(&s, 1), "the charter stays locked");
-        s.run("PickupContainerItem(0, 1)").unwrap();
-        assert_eq!(held_slot(&s), None, "a locked charter does not pick up");
+            s.run("PickupContainerItem(0, 1)").unwrap();
+            s.model_mut().pending_events.clear();
+            s.run("ClickPetitionButton()").unwrap();
+            let fired: Vec<String> = s
+                .model_ref()
+                .pending_events
+                .iter()
+                .map(|(e, _)| e.clone())
+                .collect();
+            assert!(
+                fired.contains(&"PETITION_VENDOR_UPDATE".to_string()),
+                "{fired:?}"
+            );
+            assert!(fired.contains(&"CURSOR_UPDATE".to_string()), "{fired:?}");
+            assert!(
+                !fired.contains(&"ITEM_LOCK_CHANGED".to_string()),
+                "no unlock: {fired:?}"
+            );
+            assert_eq!(held_slot(&s), None, "the cursor cleared");
+            assert!(locked(&s, 1), "the charter stays locked");
+            s.run("PickupContainerItem(0, 1)").unwrap();
+            assert_eq!(held_slot(&s), None, "a locked charter does not pick up");
 
-        s.run("TurnInPetition()").unwrap();
-        assert_eq!(
-            take(&mut loan),
-            vec![PetitionRequest::VendorTurnIn { item: 0x71 }]
-        );
+            s.run("TurnInPetition()").unwrap();
+            assert_eq!(take(), vec![PetitionRequest::VendorTurnIn { item: 0x71 }]);
+        });
     }
 
     /// A second charter swaps the first back onto the cursor; an empty cursor takes the button's
@@ -1060,84 +1067,85 @@ mod tests {
     #[test]
     fn the_petition_button_swaps_and_refuses_as_the_reference() {
         let mut s = vendor_with_charters();
-        let mut loan = acts();
-        s.run("PickupContainerItem(0, 1); ClickPetitionButton()")
-            .unwrap();
-        s.run("PickupContainerItem(0, 2); ClickPetitionButton()")
-            .unwrap();
-        assert_eq!(
-            held_slot(&s),
-            Some(1),
-            "the previous charter is handed back"
-        );
-        assert!(locked(&s, 1) && locked(&s, 2));
-        s.run("TurnInPetition()").unwrap();
-        assert_eq!(
-            take(&mut loan),
-            vec![PetitionRequest::VendorTurnIn { item: 0x72 }]
-        );
+        let mut loan_v = acts();
+        crate::script::live::lending(&mut loan_v, || {
+            s.run("PickupContainerItem(0, 1); ClickPetitionButton()")
+                .unwrap();
+            s.run("PickupContainerItem(0, 2); ClickPetitionButton()")
+                .unwrap();
+            assert_eq!(
+                held_slot(&s),
+                Some(1),
+                "the previous charter is handed back"
+            );
+            assert!(locked(&s, 1) && locked(&s, 2));
+            s.run("TurnInPetition()").unwrap();
+            assert_eq!(take(), vec![PetitionRequest::VendorTurnIn { item: 0x72 }]);
 
-        // Slot 1 goes back to its bag, then a plain item is refused and stays held.
-        s.run("PickupContainerItem(0, 1)").unwrap();
-        assert!(!locked(&s, 1));
-        s.run("PickupContainerItem(0, 3); ClickPetitionButton()")
-            .unwrap();
-        assert_eq!(held_slot(&s), Some(3), "a plain item stays on the cursor");
-        s.run("ClearCursor()").unwrap();
+            // Slot 1 goes back to its bag, then a plain item is refused and stays held.
+            s.run("PickupContainerItem(0, 1)").unwrap();
+            assert!(!locked(&s, 1));
+            s.run("PickupContainerItem(0, 3); ClickPetitionButton()")
+                .unwrap();
+            assert_eq!(held_slot(&s), Some(3), "a plain item stays on the cursor");
+            s.run("ClearCursor()").unwrap();
 
-        // An empty cursor empties the button and takes its charter.
-        s.run("ClickPetitionButton()").unwrap();
-        assert_eq!(held_slot(&s), Some(2));
-        s.run("TurnInPetition()").unwrap();
-        assert!(take(&mut loan).is_empty());
-        s.run("ClearCursor()").unwrap();
-        assert!(!locked(&s, 2));
+            // An empty cursor empties the button and takes its charter.
+            s.run("ClickPetitionButton()").unwrap();
+            assert_eq!(held_slot(&s), Some(2));
+            s.run("TurnInPetition()").unwrap();
+            assert!(take().is_empty());
+            s.run("ClearCursor()").unwrap();
+            assert!(!locked(&s, 2));
 
-        // With the vendor closed the button ignores the click.
-        s.set_petition_vendor(PetitionVendorState::default());
-        s.run("PickupContainerItem(0, 1); ClickPetitionButton()")
-            .unwrap();
-        assert_eq!(held_slot(&s), Some(1));
+            // With the vendor closed the button ignores the click.
+            s.set_petition_vendor(PetitionVendorState::default());
+            s.run("PickupContainerItem(0, 1); ClickPetitionButton()")
+                .unwrap();
+            assert_eq!(held_slot(&s), Some(1));
+        });
     }
 
     /// The list's show forgets the button's item with no lock event (`0x5a22cb`), the app keeping its lock; an empty button forgets nothing.
     #[test]
     fn a_petition_list_show_empties_the_button_and_keeps_the_lock() {
         let mut s = vendor_with_charters();
-        let mut loan = acts();
-        assert_eq!(s.clear_petition_button(), None);
-        s.run("PickupContainerItem(0, 1); ClickPetitionButton()")
-            .unwrap();
-        assert!(locked(&s, 1));
-        s.model_mut().pending_events.clear();
-        assert_eq!(
-            s.clear_petition_button(),
-            Some(PetitionButtonItem {
-                item: 0x71,
-                bag: 0,
-                slot: 1
-            })
-        );
-        assert!(
-            !s.model_ref()
-                .pending_events
-                .iter()
-                .any(|(e, _)| e == "ITEM_LOCK_CHANGED"),
-            "no unlock"
-        );
-        // The app keeps the slot's send lock (`keep_locked`), which the bag verbs read at the call.
-        if let Some(slot) = s
-            .model_mut()
-            .containers
-            .get_mut(&0)
-            .and_then(|c| c.slots.get_mut(&1))
-        {
-            slot.locked = true;
-        }
-        assert!(locked(&s, 1), "the forgotten charter stays locked");
-        s.run("PickupContainerItem(0, 1)").unwrap();
-        assert_eq!(held_slot(&s), None, "a locked charter does not pick up");
-        s.run("TurnInPetition()").unwrap();
-        assert!(take(&mut loan).is_empty());
+        let mut loan_v = acts();
+        crate::script::live::lending(&mut loan_v, || {
+            assert_eq!(s.clear_petition_button(), None);
+            s.run("PickupContainerItem(0, 1); ClickPetitionButton()")
+                .unwrap();
+            assert!(locked(&s, 1));
+            s.model_mut().pending_events.clear();
+            assert_eq!(
+                s.clear_petition_button(),
+                Some(PetitionButtonItem {
+                    item: 0x71,
+                    bag: 0,
+                    slot: 1
+                })
+            );
+            assert!(
+                !s.model_ref()
+                    .pending_events
+                    .iter()
+                    .any(|(e, _)| e == "ITEM_LOCK_CHANGED"),
+                "no unlock"
+            );
+            // The app keeps the slot's send lock (`keep_locked`), which the bag verbs read at the call.
+            if let Some(slot) = s
+                .model_mut()
+                .containers
+                .get_mut(&0)
+                .and_then(|c| c.slots.get_mut(&1))
+            {
+                slot.locked = true;
+            }
+            assert!(locked(&s, 1), "the forgotten charter stays locked");
+            s.run("PickupContainerItem(0, 1)").unwrap();
+            assert_eq!(held_slot(&s), None, "a locked charter does not pick up");
+            s.run("TurnInPetition()").unwrap();
+            assert!(take().is_empty());
+        });
     }
 }

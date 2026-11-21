@@ -398,3 +398,38 @@ fn every_instance_token_resolves_in_the_real_global_strings() {
         assert!(template.contains("%s"), "{} names the instance", line.token);
     }
 }
+
+/// A welcome's listener reads the model as of its raise: the feed's later lock-clock write lands
+/// once the listener has run.
+#[test]
+fn a_welcomes_listener_does_not_see_the_feeds_later_lock_write() {
+    use benilla_ui::script::UiScript;
+    let mut app = App::new();
+    app.init_resource::<InstanceState>()
+        .init_resource::<ChatLog>()
+        .init_resource::<Time<Real>>()
+        .init_resource::<crate::ui_script::live::UiEvents>()
+        .add_systems(Update, feed_instance);
+    {
+        let mut state = app.world_mut().resource_mut::<InstanceState>();
+        state.welcomes.push((33, 0, 600, true, false));
+        state.lock.deadline = Some(Instant::now() + std::time::Duration::from_secs(90));
+    }
+    let script = UiScript::new().expect("VM");
+    script
+        .run(
+            "SEEN = {} local f = CreateFrame('Frame') f:RegisterEvent('RAID_INSTANCE_WELCOME')
+             f:SetScript('OnEvent', function() SEEN[#SEEN + 1] = GetInstanceLockTimeRemaining() end)",
+        )
+        .unwrap();
+    app.insert_non_send_resource(script);
+    app.update();
+    crate::ui_script::raises::fire_raises(app.world_mut());
+    let script = app.world().non_send_resource::<UiScript>();
+    let seen: String = script.eval("return table.concat(SEEN, ',')").unwrap();
+    assert_eq!(seen, "0", "the listener ran before the clock was written");
+    let now: u32 = script
+        .eval("return (GetInstanceLockTimeRemaining())")
+        .unwrap();
+    assert!(now > 80, "the clock is written after the listener: {now}");
+}

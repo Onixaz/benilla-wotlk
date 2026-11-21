@@ -20,7 +20,7 @@ const HOLDERS: &[(&str, usize)] = &[
     ("ui_chat/input/mod.rs", 3),
     ("ui_chat/net.rs", 9),
     ("ui_guild/mod.rs", 10),
-    ("ui_lfg.rs", 3),
+    ("ui_lfg.rs", 2),
     ("ui_loot/mod.rs", 3),
     ("ui_loot/net.rs", 6),
     ("ui_notices.rs", 5),
@@ -81,7 +81,10 @@ fn walk(dir: &Path, root: &Path, out: &mut BTreeMap<String, usize>) {
         if is_test_file(&rel) || HOME.contains(&rel.as_str()) {
             continue;
         }
-        let source = std::fs::read_to_string(&path).expect("a source file reads");
+        // A checkout's line ends do not move the `#[cfg(test)]` split.
+        let source = std::fs::read_to_string(&path)
+            .expect("a source file reads")
+            .replace("\r\n", "\n");
         let count = non_test(&source)
             .lines()
             .filter(|l| names_a_queue(l))

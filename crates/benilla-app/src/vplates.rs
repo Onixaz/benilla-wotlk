@@ -366,7 +366,7 @@ struct PlateWorld<'w, 's> {
     camera: Query<'w, 's, (&'static Camera, &'static Transform), With<WorldCamera>>,
     window: Query<'w, 's, &'static Window, With<bevy::window::PrimaryWindow>>,
     // The pending ground-target cast, for the plate's hit-test veto.
-    targeting: crate::ui_script::LentRef<'w, crate::spell::SpellTargeting>,
+    targeting: Option<Res<'w, crate::spell::SpellTargeting>>,
     // An owner guid to its unit, for the owned-unit categories.
     index: Res<'w, crate::net::GuidIndex>,
     // The current map's instance type, for the arena range skip.
@@ -378,7 +378,7 @@ struct PlateWorld<'w, 's> {
 /// `GetTime` stamp of the last frame, keyed as the plates are.
 #[derive(SystemParam)]
 struct PlateCasts<'w, 's> {
-    units: crate::ui_script::LentRef<'w, crate::ui_cast::UnitCasts>,
+    units: Option<Res<'w, crate::ui_cast::UnitCasts>>,
     schools: Option<Res<'w, crate::ui_cast::InterruptSchools>>,
     spells: Option<Res<'w, crate::ui_action::Spells>>,
     bars: Local<'s, (std::collections::HashMap<u64, PlateCastBar>, Option<f64>)>,
@@ -389,10 +389,7 @@ struct PlateCasts<'w, 's> {
 #[allow(clippy::type_complexity)] // one Bevy system's full input set
 fn drive_vplates(
     // `None` in a run with no UI VM; the loan comes first, so the plate world's lent read pairs it.
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
+    mut script: crate::ui_script::InTurn,
     mode: Res<VPlateMode>,
     mut plates: ResMut<VPlates>,
     mut plate_hover: ResMut<PlateHover>,
@@ -419,8 +416,8 @@ fn drive_vplates(
     bucket.clear();
     // Every early return retires the plates first, or the widgets stay on screen; the reference
     // hides each live plate and returns it to the pool.
-    let retire_all = |script: Option<NonSendMut<benilla_ui::script::UiScript>>| {
-        if let Some(mut script) = script {
+    let retire_all = |mut script: crate::ui_script::InTurn| {
+        if let Some(mut script) = script.turn() {
             script.retire_nameplates();
         }
     };
@@ -436,7 +433,7 @@ fn drive_vplates(
         retire_all(script);
         return;
     };
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     // No plate while the game UI is hidden (`[0xac80a8]`, `0x72b0a0`).
@@ -470,7 +467,7 @@ fn drive_vplates(
     script.set_nameplate_hit_test_veto(
         world
             .targeting
-            .get()
+            .as_deref()
             .is_some_and(|t| t.wants(crate::spell::targeting::TargetingWants::Location)),
     );
     let hovered_key = script.hovered_nameplate();
@@ -692,7 +689,7 @@ fn drive_vplates(
         let source = (world.selection.target == Some(entity))
             .then(|| {
                 let schools = casts.schools.as_deref().copied().unwrap_or_default();
-                casts.units.get()?.plate_source(guid.0, schools)
+                casts.units.as_deref()?.plate_source(guid.0, schools)
             })
             .flatten();
         let spells = casts.spells.as_deref();
@@ -807,11 +804,12 @@ impl Plugin for VPlatesPlugin {
                 Update,
                 (
                     // After the drain of the VM's `SetCVar`s (a binding body, the Names panel).
-                    read_plate_cvars.after(crate::cvars::sync_cvars),
+                    read_plate_cvars.after(crate::cvars::CvarSync),
                     // After the targeting chain, itself after `WorldStage::Input`, so this projects
                     // through this frame's camera; `ui_script::extract::paint_script` runs after
                     // it, so the plates paint the same frame.
-                    drive_vplates.after(TargetUpdate),
+                    crate::ui_script::raises::then_fire(drive_vplates.after(TargetUpdate))
+                        .in_set(crate::ui_script::UiPaint),
                 )
                     .chain()
                     .in_set(VPlateSet),

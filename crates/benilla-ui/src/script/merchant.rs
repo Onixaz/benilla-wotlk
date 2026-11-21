@@ -1411,51 +1411,53 @@ mod tests {
 
     #[test]
     fn show_repair_cursor_checks_targeting_and_vendor_then_returns_held_item() {
-        let mut s = UiScript::new().unwrap();
-        let mut bag = ContainerState {
-            num_slots: 1,
-            ..Default::default()
-        };
-        bag.slots.insert(
-            1,
-            ContainerSlot {
-                item_id: 117,
-                count: 1,
+        crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+            let mut s = UiScript::new().unwrap();
+            let mut bag = ContainerState {
+                num_slots: 1,
                 ..Default::default()
-            },
-        );
-        s.set_container(0, Some(bag));
-        s.run("PickupContainerItem(0, 1)").unwrap();
-        assert!(s.cursor_item().is_some());
+            };
+            bag.slots.insert(
+                1,
+                ContainerSlot {
+                    item_id: 117,
+                    count: 1,
+                    ..Default::default()
+                },
+            );
+            s.set_container(0, Some(bag));
+            s.run("PickupContainerItem(0, 1)").unwrap();
+            assert!(s.cursor_item().is_some());
 
-        s.run("ShowRepairCursor()").unwrap();
-        assert!(!s.repair_mode(), "no vendor cannot arm repair");
-        assert!(s.cursor_item().is_some(), "early return keeps held item");
+            s.run("ShowRepairCursor()").unwrap();
+            assert!(!s.repair_mode(), "no vendor cannot arm repair");
+            assert!(s.cursor_item().is_some(), "early return keeps held item");
 
-        s.set_merchant(Some(stock()));
-        s.run("ShowRepairCursor()").unwrap();
-        assert!(!s.repair_mode(), "non-repair vendor cannot arm repair");
-        assert!(s.cursor_item().is_some());
+            s.set_merchant(Some(stock()));
+            s.run("ShowRepairCursor()").unwrap();
+            assert!(!s.repair_mode(), "non-repair vendor cannot arm repair");
+            assert!(s.cursor_item().is_some());
 
-        let mut vendor = stock();
-        vendor.can_repair = true;
-        s.set_merchant(Some(vendor));
-        s.set_spell_targeting(true);
-        s.run("ShowRepairCursor()").unwrap();
-        assert!(!s.repair_mode(), "targeting spell wins over repair");
-        assert!(s.cursor_item().is_some());
+            let mut vendor = stock();
+            vendor.can_repair = true;
+            s.set_merchant(Some(vendor));
+            s.set_spell_targeting(true);
+            s.run("ShowRepairCursor()").unwrap();
+            assert!(!s.repair_mode(), "targeting spell wins over repair");
+            assert!(s.cursor_item().is_some());
 
-        s.set_spell_targeting(false);
-        s.run("ShowRepairCursor()").unwrap();
-        assert!(s.repair_mode());
-        assert!(
-            s.cursor_item().is_none(),
-            "ClearCursor returned the held item"
-        );
-        assert!(s
-            .eval::<bool>("local _, _, locked = GetContainerItemInfo(0, 1) return not locked")
-            .unwrap());
-        assert!(s.take_container_moves().is_empty());
+            s.set_spell_targeting(false);
+            s.run("ShowRepairCursor()").unwrap();
+            assert!(s.repair_mode());
+            assert!(
+                s.cursor_item().is_none(),
+                "ClearCursor returned the held item"
+            );
+            assert!(s
+                .eval::<bool>("local _, _, locked = GetContainerItemInfo(0, 1) return not locked")
+                .unwrap());
+            assert!(s.take_container_moves().is_empty());
+        });
     }
 
     /// The targeting arm writes the Cast base mode over Repair and its end restores Point, so
@@ -1463,24 +1465,26 @@ mod tests {
     /// repair mode standing.
     #[test]
     fn arming_spell_targeting_ends_repair_mode_and_disarming_does_not_restore_it() {
-        let mut s = UiScript::new().unwrap();
-        let mut vendor = stock();
-        vendor.can_repair = true;
-        s.set_merchant(Some(vendor));
-        s.run("ShowRepairCursor()").unwrap();
-        s.set_spell_targeting(false);
-        assert!(s.repair_mode(), "the idle feed keeps repair mode");
+        crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+            let mut s = UiScript::new().unwrap();
+            let mut vendor = stock();
+            vendor.can_repair = true;
+            s.set_merchant(Some(vendor));
+            s.run("ShowRepairCursor()").unwrap();
+            s.set_spell_targeting(false);
+            assert!(s.repair_mode(), "the idle feed keeps repair mode");
 
-        s.set_spell_targeting(true);
-        assert!(!s.repair_mode(), "the targeting arm ends repair mode");
-        assert!(s.eval::<bool>("return InRepairMode() == nil").unwrap());
+            s.set_spell_targeting(true);
+            assert!(!s.repair_mode(), "the targeting arm ends repair mode");
+            assert!(s.eval::<bool>("return InRepairMode() == nil").unwrap());
 
-        s.set_spell_targeting(false);
-        assert!(
-            !s.repair_mode(),
-            "ending the targeting restores Point, not Repair"
-        );
-        assert!(s.eval::<bool>("return InRepairMode() == nil").unwrap());
+            s.set_spell_targeting(false);
+            assert!(
+                !s.repair_mode(),
+                "ending the targeting restores Point, not Repair"
+            );
+            assert!(s.eval::<bool>("return InRepairMode() == nil").unwrap());
+        });
     }
 
     #[test]
@@ -1563,70 +1567,71 @@ mod tests {
         s.set_player_req_state(req);
         assert_eq!(cursor(&mut s), Some(UiCursorMode::UnableBuy), "honor");
 
-        // SAFETY: dropped on this thread at the end of the test, the only loan.
-        let _live = unsafe {
-            crate::script::LiveLoan::new(crate::script::live::TestView {
-                honor: Some(HonorState {
-                    honor_currency: 7000,
-                    ..Default::default()
-                }),
-                ..Default::default()
-            })
-        };
-        assert_eq!(cursor(&mut s), Some(UiCursorMode::UnableBuy), "cost item");
-        let mut slots = std::collections::HashMap::new();
-        slots.insert(
-            1,
-            ContainerSlot {
-                item_id: 20560,
-                count: 3,
-                ..Default::default()
-            },
-        );
-        s.set_container(
-            0,
-            Some(ContainerState {
-                num_slots: 16,
-                slots,
-                ..Default::default()
-            }),
-        );
-        assert_eq!(cursor(&mut s), Some(UiCursorMode::Buy));
-
-        // A rated row with no team is short; a bracket off 0..=2 skips the test (`0x58584b`).
-        let rated = |bracket: i32| {
-            let mut st = state.clone();
-            let c = st.items[2].extended_cost.as_mut().unwrap();
-            (c.required_rating, c.arena_bracket) = (1800, bracket);
-            st
-        };
-        s.set_merchant(Some(rated(1)));
-        assert_eq!(cursor(&mut s), Some(UiCursorMode::UnableBuy), "no team");
-        s.set_merchant(Some(rated(3)));
-        assert_eq!(cursor(&mut s), Some(UiCursorMode::Buy), "bracket skipped");
-        s.set_merchant(Some(rated(1)));
-        let _teams = crate::script::live::lend_test(crate::script::live::TestView {
+        let mut live_v = crate::script::live::TestView {
             honor: Some(HonorState {
                 honor_currency: 7000,
                 ..Default::default()
             }),
-            arena_teams: [
-                ArenaTeamSlotView {
-                    info: [7, 3, 1, 0, 0, 0, 1800],
-                    record: Some(ArenaTeamRecordView {
-                        team_type: 3,
-                        ..Default::default()
-                    }),
-                    stats: [1800, 0, 0, 0, 0, 0],
-                    roster_type: 3,
-                    members: Vec::new(),
-                },
-                Default::default(),
-                Default::default(),
-            ],
             ..Default::default()
+        };
+        crate::script::live::lending(&mut live_v, || {
+            assert_eq!(cursor(&mut s), Some(UiCursorMode::UnableBuy), "cost item");
+            let mut slots = std::collections::HashMap::new();
+            slots.insert(
+                1,
+                ContainerSlot {
+                    item_id: 20560,
+                    count: 3,
+                    ..Default::default()
+                },
+            );
+            s.set_container(
+                0,
+                Some(ContainerState {
+                    num_slots: 16,
+                    slots,
+                    ..Default::default()
+                }),
+            );
+            assert_eq!(cursor(&mut s), Some(UiCursorMode::Buy));
+
+            // A rated row with no team is short; a bracket off 0..=2 skips the test (`0x58584b`).
+            let rated = |bracket: i32| {
+                let mut st = state.clone();
+                let c = st.items[2].extended_cost.as_mut().unwrap();
+                (c.required_rating, c.arena_bracket) = (1800, bracket);
+                st
+            };
+            s.set_merchant(Some(rated(1)));
+            assert_eq!(cursor(&mut s), Some(UiCursorMode::UnableBuy), "no team");
+            s.set_merchant(Some(rated(3)));
+            assert_eq!(cursor(&mut s), Some(UiCursorMode::Buy), "bracket skipped");
+            s.set_merchant(Some(rated(1)));
+            let mut teams_v = crate::script::live::TestView {
+                honor: Some(HonorState {
+                    honor_currency: 7000,
+                    ..Default::default()
+                }),
+                arena_teams: [
+                    ArenaTeamSlotView {
+                        info: [7, 3, 1, 0, 0, 0, 1800],
+                        record: Some(ArenaTeamRecordView {
+                            team_type: 3,
+                            ..Default::default()
+                        }),
+                        stats: [1800, 0, 0, 0, 0, 0],
+                        roster_type: 3,
+                        members: Vec::new(),
+                    },
+                    Default::default(),
+                    Default::default(),
+                ],
+                ..Default::default()
+            };
+            crate::script::live::lending(&mut teams_v, || {
+                assert_eq!(cursor(&mut s), Some(UiCursorMode::Buy), "rating met");
+            });
         });
-        assert_eq!(cursor(&mut s), Some(UiCursorMode::Buy), "rating met");
     }
 
     #[test]

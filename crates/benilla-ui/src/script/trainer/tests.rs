@@ -406,21 +406,23 @@ fn the_skill_line_filter_hides_a_line_and_its_header() {
 #[test]
 fn buy_sends_an_available_services_spell_id_and_refuses_every_other_row() {
     let mut s = script_all();
-    let mut loan = crate::script::live::lend_test(Default::default());
-    let mut bought = || loan.with_view_mut(|v| std::mem::take(&mut v.trainer_bought));
-    s.set_trainer(Some(trainer()));
-    s.run("BuyTrainerService(2)").unwrap();
-    assert_eq!(bought(), vec![78]);
+    let mut loan_v = crate::script::live::TestView::default();
+    crate::script::live::lending(&mut loan_v, || {
+        let bought = || crate::script::live::test_view(|v| std::mem::take(&mut v.trainer_bought));
+        s.set_trainer(Some(trainer()));
+        s.run("BuyTrainerService(2)").unwrap();
+        assert_eq!(bought(), vec![78]);
 
-    s.run("BuyTrainerService(1)").unwrap();
-    assert!(bought().is_empty(), "a header is not buyable");
+        s.run("BuyTrainerService(1)").unwrap();
+        assert!(bought().is_empty(), "a header is not buyable");
 
-    s.run("BuyTrainerService(3)").unwrap();
-    s.run("BuyTrainerService(5)").unwrap();
-    assert!(
-        bought().is_empty(),
-        "only state byte 0, available, reaches the wire"
-    );
+        s.run("BuyTrainerService(3)").unwrap();
+        s.run("BuyTrainerService(5)").unwrap();
+        assert!(
+            bought().is_empty(),
+            "only state byte 0, available, reaches the wire"
+        );
+    });
 }
 
 /// The filter-and-sort picks the first visible available service on a list, a filter or a
@@ -471,12 +473,14 @@ fn every_resort_picks_the_first_available_service() {
     );
 
     // The close's zero leg runs inside the call on an open trainer, and once (`0x5940fa`).
-    let mut loan = crate::script::live::lend_test(crate::script::live::TestView {
+    let mut loan_v = crate::script::live::TestView {
         trainer_is_open: Some(true),
         ..Default::default()
+    };
+    crate::script::live::lending(&mut loan_v, || {
+        s.run("CloseTrainer() CloseTrainer()").unwrap();
+        assert_eq!(crate::script::live::test_view(|v| v.trainer_zeroes), 1);
     });
-    s.run("CloseTrainer() CloseTrainer()").unwrap();
-    assert_eq!(loan.with_view_mut(|v| v.trainer_zeroes), 1);
 }
 
 #[test]

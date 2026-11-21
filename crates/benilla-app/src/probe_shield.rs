@@ -170,10 +170,7 @@ fn drive_shield(
     names: Res<NameCache>,
     self_guid: Res<SelfGuid>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
+    mut script: crate::ui_script::InTurn,
 ) {
     let entered_world = entered.read().next().is_some();
     let ours = intent.account().is_some_and(is_probe_account);
@@ -288,7 +285,9 @@ fn drive_shield(
 
     // Send the queued lines, one per `STEP_SECS`, god first.
     if !shield.steps.is_empty() {
-        let Some(mut script) = script else { return };
+        let Some(mut script) = script.turn() else {
+            return;
+        };
         while !shield.steps.is_empty() && time.elapsed_secs() >= shield.next_at {
             let line = shield.steps.remove(0);
             debug!("probe-shield: sending {line:?}");

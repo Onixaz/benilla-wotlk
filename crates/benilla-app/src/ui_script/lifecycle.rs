@@ -942,24 +942,29 @@ pub(crate) fn run_pending_reload(world: &mut World) {
 /// `AppExit`, the quit roots, read as a message because a quit from in-world never leaves
 /// `InWorld`. A quit from the character screen, or on a worldport's loading screen, finds the
 /// latch spent, so `PLAYER_LEAVING_WORLD` does not fire.
-pub(crate) fn shutdown_on_exit(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+pub(crate) fn shutdown_on_exit(world: &mut World) {
+    let Ok(Some((identity, leaving_world))) = world.run_system_cached(exit_sweep) else {
+        return;
+    };
+    super::safe_world::lend(world, |script| {
+        shutdown_ui_state(script, identity.as_ref(), leaving_world);
+    });
+}
+
+/// [`shutdown_on_exit`]'s gate and sweep: the identity and whether the world is left, on a quit
+/// with a UI to save.
+fn exit_sweep(
     id: Res<AddOnIdentity>,
     pending_entry: Option<Res<PendingEntryUiLoad>>,
     mut sweep: LeaveWorldSweep,
     mut exits: MessageReader<AppExit>,
-) {
-    if exits.read().next().is_none() {
-        return;
-    }
+) -> Option<(Option<(String, String)>, bool)> {
+    exits.read().next()?;
     // Same guard as [`end_ui_session`]: a quit inside the entry-load window has no UI to save.
     if pending_entry.is_some() {
-        return;
+        return None;
     }
-    let leaving_world = sweep.run();
-    if let Some(mut script) = script {
-        shutdown_ui_state(&mut script, id.0.as_ref(), leaving_world);
-    }
+    Some((id.0.clone(), sweep.run()))
 }
 
 /// The load's ordered tail without the host seams, for tests; production runs

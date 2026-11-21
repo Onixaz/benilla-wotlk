@@ -3,10 +3,9 @@
 //! addon reads globals from many of its files.
 
 use benilla_ui::script::{
-    BattlefieldFlagLive, BattlefieldPositionLive, LiveLoan, LiveState, QuadContent, UiScript,
-    UnitState, WorldMapCatalog, WorldMapContinentView, WorldMapFeed, WorldMapOverlayView,
-    WorldMapPlayer, WorldMapPoiView, WorldMapPoint, WorldMapZoneView, WorldStateUiView,
-    ARROW_MODEL,
+    BattlefieldFlagLive, BattlefieldPositionLive, LiveState, QuadContent, UiScript, UnitState,
+    WorldMapCatalog, WorldMapContinentView, WorldMapFeed, WorldMapOverlayView, WorldMapPlayer,
+    WorldMapPoiView, WorldMapPoint, WorldMapZoneView, WorldStateUiView, ARROW_MODEL,
 };
 
 fn quiet(s: &UiScript) {
@@ -122,10 +121,9 @@ impl LiveState for Positions {
     }
 }
 
-/// Lend `view` until the loan drops.
-fn lend(view: Positions) -> LiveLoan<Positions> {
-    // SAFETY: each test drops its loan on its own thread, before its next one.
-    unsafe { LiveLoan::new(view) }
+/// `view`, to lend around the test's calls into Lua.
+fn lend(view: Positions) -> Positions {
+    view
 }
 
 /// The player in Warsong Gulch at `uv`, off the map at `None`, with party members at theirs.
@@ -539,12 +537,14 @@ fn the_poi_pool_grows_from_the_landmarks_and_parks_its_tail() {
     assert_eq!(num(&s, "BattlefieldMinimapPOI1:GetWidth()"), 12.0);
 
     // A battleground whose map row carries a bigger `MinimapIconScale` grows every icon by it.
-    let loan = lend(Positions {
+    let mut loan_v = lend(Positions {
         icon_scale: 1.5,
         ..Default::default()
     });
-    s.run("BattlefieldMinimap_Update()").unwrap();
-    drop(loan);
+    crate::ui_script::test_live::lending(&mut loan_v, || {
+        s.run("BattlefieldMinimap_Update()").unwrap();
+    });
+
     assert_eq!(
         (
             num(&s, "BattlefieldMinimapPOI1:GetWidth()"),
@@ -581,7 +581,7 @@ fn the_battleground_blips_and_the_flag_follow_the_position_family() {
     let mut s = session();
     open(&mut s);
 
-    let loan = lend(Positions {
+    let mut loan_v = lend(Positions {
         players: vec![
             BattlefieldPositionLive {
                 at: at((0.25, 0.75)),
@@ -599,107 +599,111 @@ fn the_battleground_blips_and_the_flag_follow_the_position_family() {
         }],
         icon_scale: 1.0,
     });
-    feed(&mut s, Some((0.5, 0.25)), 0.0, vec![Some((0.1, 0.2)), None]);
-    update(&mut s, 0.1);
+    crate::ui_script::test_live::lending(&mut loan_v, || {
+        feed(&mut s, Some((0.5, 0.25)), 0.0, vec![Some((0.1, 0.2)), None]);
+        update(&mut s, 0.1);
 
-    assert!(
-        shown(&s, "BattlefieldMinimapRaid1"),
-        "the placed teammate shows"
-    );
-    assert_eq!(
-        s.eval::<String>("return BattlefieldMinimapRaid1.name")
+        assert!(
+            shown(&s, "BattlefieldMinimapRaid1"),
+            "the placed teammate shows"
+        );
+        assert_eq!(
+            s.eval::<String>("return BattlefieldMinimapRaid1.name")
+                .unwrap(),
+            "Alliedguy",
+            "…carrying the name the tooltip reads for a non-group teammate"
+        );
+        assert_eq!(
+            s.eval::<(String, String, f64, f64)>(
+                "local p, r, rp, x, y = BattlefieldMinimapRaid1:GetPoint(1) return p, rp, x, y"
+            )
             .unwrap(),
-        "Alliedguy",
-        "…carrying the name the tooltip reads for a non-group teammate"
-    );
-    assert_eq!(
-        s.eval::<(String, String, f64, f64)>(
-            "local p, r, rp, x, y = BattlefieldMinimapRaid1:GetPoint(1) return p, rp, x, y"
-        )
-        .unwrap(),
-        (
-            "CENTER".into(),
-            "TOPLEFT".into(),
-            0.25 * 225.0,
-            -0.75 * 150.0
-        )
-    );
-    assert!(
-        !shown(&s, "BattlefieldMinimapRaid2"),
-        "the (0,0) teammate hides"
-    );
-    assert!(
-        !shown(&s, "BattlefieldMinimapRaid40"),
-        "…and so does every slot past the roster"
-    );
+            (
+                "CENTER".into(),
+                "TOPLEFT".into(),
+                0.25 * 225.0,
+                -0.75 * 150.0
+            )
+        );
+        assert!(
+            !shown(&s, "BattlefieldMinimapRaid2"),
+            "the (0,0) teammate hides"
+        );
+        assert!(
+            !shown(&s, "BattlefieldMinimapRaid40"),
+            "…and so does every slot past the roster"
+        );
 
-    // The party arm reads `GetPlayerMapPosition("party"..i)`, the world map's own feed.
-    assert!(shown(&s, "BattlefieldMinimapParty1"));
-    assert_eq!(
-        s.eval::<(f64, f64)>(
-            "local _, _, _, x, y = BattlefieldMinimapParty1:GetPoint(1) return x, y"
-        )
-        .unwrap(),
-        (0.1 * 225.0, -0.2 * 150.0)
-    );
-    assert!(
-        !shown(&s, "BattlefieldMinimapParty2"),
-        "a slot with no position hides"
-    );
-
-    assert!(shown(&s, "BattlefieldMinimapFlag1"));
-    assert_eq!(
-        s.eval::<String>("return BattlefieldMinimapFlag1Texture:GetTexture()")
+        // The party arm reads `GetPlayerMapPosition("party"..i)`, the world map's own feed.
+        assert!(shown(&s, "BattlefieldMinimapParty1"));
+        assert_eq!(
+            s.eval::<(f64, f64)>(
+                "local _, _, _, x, y = BattlefieldMinimapParty1:GetPoint(1) return x, y"
+            )
             .unwrap(),
-        "Interface\\WorldStateFrame\\HordeFlag"
-    );
-    assert!(!shown(&s, "BattlefieldMinimapFlag2"));
+            (0.1 * 225.0, -0.2 * 150.0)
+        );
+        assert!(
+            !shown(&s, "BattlefieldMinimapParty2"),
+            "a slot with no position hides"
+        );
 
-    // The tooltip prefers the row's `name` over `UnitName` (`Blizzard_BattlefieldMinimap.lua:485`).
-    let (bx, by) = screen_centre(&mut s, "BattlefieldMinimapRaid1");
-    assert_eq!(
-        s.hit_test_name(bx, by).as_deref(),
-        Some("BattlefieldMinimapRaid1"),
-        "the blip is what the cursor is over"
-    );
-    s.mouse_move(bx, by);
-    assert!(s.eval::<bool>("return GameTooltip:IsShown()").unwrap());
-    assert_eq!(
-        s.eval::<String>("return GameTooltipTextLeft1:GetText()")
-            .unwrap(),
-        "Alliedguy"
-    );
-    s.mouse_move(5.0, 5.0);
+        assert!(shown(&s, "BattlefieldMinimapFlag1"));
+        assert_eq!(
+            s.eval::<String>("return BattlefieldMinimapFlag1Texture:GetTexture()")
+                .unwrap(),
+            "Interface\\WorldStateFrame\\HordeFlag"
+        );
+        assert!(!shown(&s, "BattlefieldMinimapFlag2"));
 
-    // Show Teammates off hides the party and raid blips and leaves the flag carrier up: the
-    // `not showPlayers` arm (`Blizzard_BattlefieldMinimap.lua:245-252`) hides only
-    // `BattlefieldMinimapParty1..4` and `BattlefieldMinimapRaid1..40`.
-    s.run("BattlefieldMinimapOptions.showPlayers = false")
-        .unwrap();
-    update(&mut s, 0.1);
-    for f in ["BattlefieldMinimapRaid1", "BattlefieldMinimapParty1"] {
-        assert!(!shown(&s, f), "{f} hides while teammates are switched off");
-    }
-    assert!(
-        shown(&s, "BattlefieldMinimapFlag1"),
-        "…but the carrier's flag is not in that arm's two loops, so it stays up"
-    );
+        // The tooltip prefers the row's `name` over `UnitName` (`Blizzard_BattlefieldMinimap.lua:485`).
+        let (bx, by) = screen_centre(&mut s, "BattlefieldMinimapRaid1");
+        assert_eq!(
+            s.hit_test_name(bx, by).as_deref(),
+            Some("BattlefieldMinimapRaid1"),
+            "the blip is what the cursor is over"
+        );
+        s.mouse_move(bx, by);
+        assert!(s.eval::<bool>("return GameTooltip:IsShown()").unwrap());
+        assert_eq!(
+            s.eval::<String>("return GameTooltipTextLeft1:GetText()")
+                .unwrap(),
+            "Alliedguy"
+        );
+        s.mouse_move(5.0, 5.0);
 
-    s.run("BattlefieldMinimapOptions.showPlayers = true")
-        .unwrap();
-    update(&mut s, 0.1);
-    assert!(shown(&s, "BattlefieldMinimapRaid1"));
-    drop(loan);
-    let _loan = lend(Positions {
+        // Show Teammates off hides the party and raid blips and leaves the flag carrier up: the
+        // `not showPlayers` arm (`Blizzard_BattlefieldMinimap.lua:245-252`) hides only
+        // `BattlefieldMinimapParty1..4` and `BattlefieldMinimapRaid1..40`.
+        s.run("BattlefieldMinimapOptions.showPlayers = false")
+            .unwrap();
+        update(&mut s, 0.1);
+        for f in ["BattlefieldMinimapRaid1", "BattlefieldMinimapParty1"] {
+            assert!(!shown(&s, f), "{f} hides while teammates are switched off");
+        }
+        assert!(
+            shown(&s, "BattlefieldMinimapFlag1"),
+            "…but the carrier's flag is not in that arm's two loops, so it stays up"
+        );
+
+        s.run("BattlefieldMinimapOptions.showPlayers = true")
+            .unwrap();
+        update(&mut s, 0.1);
+        assert!(shown(&s, "BattlefieldMinimapRaid1"));
+    });
+
+    let mut loan_v = lend(Positions {
         icon_scale: 1.0,
         ..Default::default()
     });
-    update(&mut s, 0.1);
-    assert!(
-        !shown(&s, "BattlefieldMinimapRaid1") && !shown(&s, "BattlefieldMinimapFlag1"),
-        "leaving the battleground takes the blips with it"
-    );
-    quiet(&s);
+    crate::ui_script::test_live::lending(&mut loan_v, || {
+        update(&mut s, 0.1);
+        assert!(
+            !shown(&s, "BattlefieldMinimapRaid1") && !shown(&s, "BattlefieldMinimapFlag1"),
+            "leaving the battleground takes the blips with it"
+        );
+        quiet(&s);
+    });
 }
 
 /// The world map and the battle map each own one arrow (`Arrow::World`, `Arrow::Mini`), created

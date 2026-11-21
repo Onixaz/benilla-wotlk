@@ -60,7 +60,7 @@ pub(crate) struct PetBar {
     pub(crate) cooldowns: Cooldowns,
     /// The pet-attacking global `[0xc234dc]`: all of `IsPetAttackActive` and the only thing that lights Attack. Written by the flags field's pet arm after its event (`0x5d30ba`), a possessed Attack press (`0x5d4509`), the stop (`0x5d46c2`) and a new pet's combat test (`0x5d6a80`).
     pub(crate) attacking: bool,
-    /// The `PET_BAR_UPDATE`s a press's latch raised, counted (`0x5d300c`, `0x5d3041`): its applier fires one per count as the press returns ([`fire_bar_signals`]). Wrapping.
+    /// The `PET_BAR_UPDATE`s a press's latch raised, counted (`0x5d300c`, `0x5d3041`): its applier fires one per count as the press returns ([`bar_signals_in_turn`]). Wrapping.
     pub(crate) bar_signals: u32,
     /// The charm or possess expiry, the packet's duration past its arrival; `None` when the
     /// duration is 0, as for a hunter's or warlock's own pet.
@@ -136,10 +136,14 @@ impl PetBar {
     }
 }
 
-/// Fire the `PET_BAR_UPDATE`s a press raised since `before`, the bar's signal count then.
-pub(crate) fn fire_bar_signals(script: &mut benilla_ui::script::UiScript, before: u32, now: u32) {
+/// The `PET_BAR_UPDATE`s a press raised since `before`, the bar's signal count then, in turn on `ui`.
+pub(crate) fn bar_signals_in_turn(
+    ui: &mut crate::ui_script::live::UiEvents,
+    before: u32,
+    now: u32,
+) {
     for _ in 0..now.wrapping_sub(before) {
-        script.fire_event("PET_BAR_UPDATE", Vec::new());
+        ui.fire("PET_BAR_UPDATE", Vec::new());
     }
 }
 
@@ -169,9 +173,10 @@ impl Plugin for UiPetPlugin {
                         .before(UnitFeed)
                         .before(crate::ui_script::UiPress),
                     // The menu verbs a queued script call held back, once the interface is up.
-                    drain_pet_menu
-                        .in_set(UiDrain)
-                        .run_if(crate::ui_script::ingame_ui_up),
+                    crate::ui_script::raises::then_fire(
+                        drain_pet_menu.run_if(crate::ui_script::ingame_ui_up),
+                    )
+                    .in_set(UiDrain),
                 ),
             );
     }

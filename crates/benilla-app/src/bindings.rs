@@ -186,14 +186,18 @@ impl Plugin for BindingsPlugin {
                     // The key sets are seeded at the VM's birth, not here: `seed_bindings_for_vm`
                     // runs in `load_ingame_ui_on_world_entry`, before FrameXML and every addon;
                     // the commands come with the load.
-                    (sync_dispatch, latch_and_dispatch)
+                    (
+                        crate::ui_script::raises::then_fire(sync_dispatch),
+                        latch_and_dispatch,
+                    )
                         .chain()
                         .in_set(crate::ui_script::UiPress)
                         .in_set(BindingSet)
                         .in_set(InWorldGated),
                     // After the tick: the requests are Lua's own (`SaveBindings`), queued by
                     // handlers the tick dispatched, and a save must not wait a frame.
-                    drain_binding_requests.in_set(crate::ui_script::UiDrain),
+                    crate::ui_script::raises::then_fire(drain_binding_requests)
+                        .in_set(crate::ui_script::UiDrain),
                 ),
             );
     }
@@ -240,11 +244,10 @@ pub(crate) fn seed_bindings_for_vm(world: &mut World, script: &mut UiScript) {
 
 /// Drain the VM's binding requests: `SaveBindings` copies the live table into its set in the VM
 /// and owes the files at the UI shutdown.
-fn drain_binding_requests(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut files: ResMut<BindingFiles>,
-) {
-    let Some(mut script) = script else { return };
+fn drain_binding_requests(mut script: crate::ui_script::InTurn, mut files: ResMut<BindingFiles>) {
+    let Some(mut script) = script.turn() else {
+        return;
+    };
     for req in script.take_keybind_requests() {
         let KeybindRequest::Save(which) = req;
         files.dirty |= match which {
@@ -302,10 +305,12 @@ pub(crate) fn save_to_account_data(world: &mut World) {
 /// load), and fire `UPDATE_BINDINGS` so the Lua consumers (the action bar's hotkey corners)
 /// repaint.
 pub(crate) fn sync_dispatch(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut dispatch: ResMut<BindingDispatch>,
 ) {
-    let Some(mut script) = script else { return };
+    let Some(mut script) = script.turn() else {
+        return;
+    };
     // No `UPDATE_BINDINGS` for an override (`0x563480`).
     let overrides = script.override_generation();
     if *dispatch.seen_overrides.get(&script) != Some(overrides) {
@@ -368,59 +373,116 @@ impl WheelNotches {
     }
 }
 
+/// What [`latch_and_dispatch`] reads and writes between its calls into Lua.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct DispatchInputs<'w, 's> {
+    keyboard: MessageReader<'w, 's, KeyboardInput>,
+    // What the active layout names a letter, digit or punctuation key.
+    layout: Res<'w, LayoutNames>,
+    keys: Res<'w, ButtonInput<KeyCode>>,
+    buttons: Res<'w, ButtonInput<MouseButton>>,
+    scroll: Res<'w, AccumulatedMouseScroll>,
+    capture: Res<'w, UiKeyboardCapture>,
+    hover: Res<'w, PlayerUiHover>,
+    // The chrome flag; only the wheel branch reads it.
+    over_ui: Res<'w, PointerOverUiPanel>,
+    dispatch: Res<'w, BindingDispatch>,
+    state: ResMut<'w, BindingsState>,
+    focus_lost: MessageReader<'w, 's, bevy::input::keyboard::KeyboardFocusLost>,
+    cover: Option<Res<'w, crate::loading_screen::LoadingScreen>>,
+}
+
+/// [`latch_and_dispatch`]'s memory across frames.
+#[derive(Default)]
+pub(crate) struct DispatchLocals {
+    same_vm: crate::ui_script::VmMemo<bool>,
+    notches: WheelNotches,
+}
+
 /// The dispatch pass (see the module doc). Runs after the UI key feed and before the script calls
 /// apply, so a bound key acts this frame, once, ahead of the frame's feed and tick.
+///
+/// Exclusive: a binding's body runs with the `World` lent, so the script calls it makes apply
+/// inside it, and no parameter is held across it.
 pub(crate) fn latch_and_dispatch(
-    (mut script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut keyboard: MessageReader<KeyboardInput>,
-    // What the active layout names a letter, digit or punctuation key.
-    layout: Res<LayoutNames>,
-    keys: Res<ButtonInput<KeyCode>>,
-    buttons: Res<ButtonInput<MouseButton>>,
-    scroll: Res<AccumulatedMouseScroll>,
-    capture: Res<UiKeyboardCapture>,
-    hover: Res<PlayerUiHover>,
-    // The chrome flag; only the wheel branch reads it.
-    over_ui: Res<PointerOverUiPanel>,
-    dispatch: Res<BindingDispatch>,
-    mut state: ResMut<BindingsState>,
-    mut same_vm: Local<crate::ui_script::VmMemo<bool>>,
-    mut notches: Local<WheelNotches>,
-    mut focus_lost: MessageReader<bevy::input::keyboard::KeyboardFocusLost>,
-    cover: Option<Res<crate::loading_screen::LoadingScreen>>,
+    world: &mut World,
+    inputs: &mut bevy::ecs::system::SystemState<DispatchInputs>,
+    mut locals: Local<DispatchLocals>,
 ) {
-    state.just.clear();
-    state.fired.clear();
-    state.amounts.clear();
-    state.control_changed = false;
+    let mut script = world
+        .get_non_send_resource::<UiScript>()
+        .map(UiScript::share);
+    let mut p = inputs.get_mut(world);
+    // One binding body, down or up, with the `World` lent.
+    macro_rules! run {
+        ($command:expr, $down:expr) => {{
+            let command: &str = $command;
+            let ran = crate::ui_script::safe_world::lua!(world, inputs, p, |s| s
+                .execute_binding(command, $down));
+            if let Some(Err(e)) = ran {
+                warn!("bindings({command}): {e}");
+            }
+        }};
+    }
+    // One matching press: the command's body with `keystate = "down"`, and a latch on its input
+    // so the release can run the up-half.
+    macro_rules! press {
+        ($command:expr, $key:expr) => {{
+            let command: String = $command;
+            run!(&command, true);
+            p.state.latched.push(($key, command));
+        }};
+    }
+    // A base key's release: drop its latch and run the command's `runOnUp` up-half, even while
+    // typing (the reference completes a pressed binding's release regardless of focus).
+    macro_rules! release {
+        ($key:expr) => {{
+            let key: Held = $key;
+            let mut i = 0;
+            while i < p.state.latched.len() {
+                if p.state.latched[i].0 == key {
+                    let (_, command) = p.state.latched.remove(i);
+                    run!(&command, false);
+                } else {
+                    i += 1;
+                }
+            }
+        }};
+    }
+    p.state.just.clear();
+    p.state.fired.clear();
+    p.state.amounts.clear();
+    p.state.control_changed = false;
 
     // Deviation: latches die with the VM that made them, because a latch names a command of that
     // VM's table and releasing it against a new one would run another load's up-half. The
     // reference keeps a held key running through `ReloadUI`; here it re-latches on its next press.
     // The held bits die with it, as the key's Stop would have cleared them.
     if let Some(script) = script.as_ref() {
-        if same_vm.claim(script) {
-            state.latched.clear();
-            state.held.clear();
+        if locals.same_vm.claim(script) {
+            p.state.latched.clear();
+            p.state.held.clear();
         }
     }
     // The reference's two bulk clears: the window deactivate (an `and eax,0xfffff00f`, the
     // direction bits only, so the mouse pair and autorun survive) and the world enter behind the
     // loading cover, which clears every bit. A key's latch meets them in the stuck-latch sweep too,
     // whose up-half runs the Stop.
-    if cover.is_some_and(|c| c.covering()) {
-        state.held.clear();
-    } else if focus_lost.read().count() > 0 {
-        state
+    if p.cover.as_ref().is_some_and(|c| c.covering()) {
+        p.state.held.clear();
+    } else if p.focus_lost.read().count() > 0 {
+        p.state
             .held
             .retain(|&i| matches!(i, Input::TurnOrAction | Input::CameraOrSelectOrMove));
     }
     // Lua's binding calls made since the last pass, before this frame's keys.
     if let Some(s) = script.as_mut() {
-        let inputs = s.take_binding_input();
-        state.apply_script_input(inputs);
+        let made = s.take_binding_input();
+        p.state.apply_script_input(made);
     }
 
+    let keys = p.keys.clone();
+    let buttons = p.buttons.clone();
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
     let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
     let alt = keys.pressed(KeyCode::AltLeft) || keys.pressed(KeyCode::AltRight);
@@ -441,20 +503,21 @@ pub(crate) fn latch_and_dispatch(
     // ── The pressed-key reconcile ── against bevy's button planes, before this frame's messages: a
     // release the window never saw drops off the list, and a window deactivate empties it, the
     // reference's wipe, so a key held across an alt-tab re-latches on its next repeat.
-    state
+    p.state
         .down
         .retain(|&kc| physically_down(Held::Key(kc), &keys, &buttons));
 
     // ── Keyboard ── press edges run their command, gated on ownership and the capture arm;
     // release edges unlatch and run the `runOnUp` up-half.
-    let typing = capture.typing;
-    for ev in keyboard.read() {
+    let typing = p.capture.typing;
+    let events: Vec<KeyboardInput> = p.keyboard.read().cloned().collect();
+    for ev in &events {
         let key = chord::normalize_key(ev.key_code);
         match ev.state {
             ButtonState::Pressed => {
                 // A focused box in alt-arrow mode declines the four arrows, so their bindings
                 // fire while typing (`UiKeyboardCapture::arrows_fall_through`).
-                let arrow_exempt = capture.arrows_fall_through
+                let arrow_exempt = p.capture.arrows_fall_through
                     && matches!(
                         ev.key_code,
                         KeyCode::ArrowLeft
@@ -464,23 +527,23 @@ pub(crate) fn latch_and_dispatch(
                     );
                 // A keyboard frame ate this one key (the world map's `OnKeyDown`, a cinematic);
                 // per key, so every other binding is untouched.
-                let eaten = capture.consumed.contains(&ev.key_code);
+                let eaten = p.capture.consumed.contains(&ev.key_code);
                 // A repeat is a key we already believe is down, the reference's test. Recorded
                 // before the gates below, so a key held through a focused box stays down.
-                let repeat = state.down.contains(&key);
+                let repeat = p.state.down.contains(&key);
                 if !repeat {
-                    state.down.push(key);
+                    p.state.down.push(key);
                 }
                 // `sup`: the Super deviation (module doc).
                 if (typing && !arrow_exempt) || eaten || sup || repeat {
                     continue;
                 }
-                if state.latched.iter().any(|(k, _)| *k == Held::Key(key)) {
+                if p.state.latched.iter().any(|(k, _)| *k == Held::Key(key)) {
                     continue; // already latched (missed release would double-latch)
                 }
                 // Named under the layout this press was typed in; a key 1.12 cannot name binds
                 // nothing.
-                let Some(name) = chord::key_token(ev.key_code, &layout) else {
+                let Some(name) = chord::key_token(ev.key_code, &p.layout) else {
                     continue;
                 };
                 let chord = Chord {
@@ -489,13 +552,13 @@ pub(crate) fn latch_and_dispatch(
                     shift,
                     key: BindKey::Key(name),
                 };
-                if let Some(command) = dispatch.resolve(chord, dev_plane) {
-                    press(&mut state, &mut script, command, Held::Key(key));
+                if let Some(command) = p.dispatch.resolve(chord, dev_plane).map(str::to_owned) {
+                    press!(command, Held::Key(key));
                 }
             }
             ButtonState::Released => {
-                state.down.retain(|&kc| kc != key);
-                release(&mut state, &mut script, Held::Key(key));
+                p.state.down.retain(|&kc| kc != key);
+                release!(Held::Key(key));
             }
         }
     }
@@ -511,8 +574,8 @@ pub(crate) fn latch_and_dispatch(
     ] {
         if buttons.just_pressed(b)
             && !sup
-            && hover.0.is_none()
-            && !state.latched.iter().any(|(k, _)| *k == Held::Mouse(b))
+            && p.hover.0.is_none()
+            && !p.state.latched.iter().any(|(k, _)| *k == Held::Mouse(b))
         {
             let chord = Chord {
                 alt,
@@ -520,12 +583,12 @@ pub(crate) fn latch_and_dispatch(
                 shift,
                 key: BindKey::Mouse(b),
             };
-            if let Some(command) = dispatch.resolve(chord, false) {
-                press(&mut state, &mut script, command, Held::Mouse(b));
+            if let Some(command) = p.dispatch.resolve(chord, false).map(str::to_owned) {
+                press!(command, Held::Mouse(b));
             }
         }
         if buttons.just_released(b) {
-            release(&mut state, &mut script, Held::Mouse(b));
+            release!(Held::Mouse(b));
         }
     }
 
@@ -533,11 +596,11 @@ pub(crate) fn latch_and_dispatch(
     // chord to its binding dispatch with `isDown=1` then `isDown=0` per wheel message. A `runOnUp`
     // command runs both halves; a plain one's up leg is a no-op in the command runner. A
     // trackpad's fractional lines carry to whole notches.
-    let wheel = wheel_lines(scroll.unit, scroll.delta.y);
+    let wheel = wheel_lines(p.scroll.unit, p.scroll.delta.y);
     // Over chrome only (`PointerOverUiPanel`): the wheel still zooms with the cursor on a
     // nameplate, a mouse-enabled widget but not a panel.
-    if wheel != 0.0 && !sup && !over_ui.0 {
-        let steps = notches.feed(wheel);
+    if wheel != 0.0 && !sup && !p.over_ui.0 {
+        let steps = locals.notches.feed(wheel);
         let key = if steps > 0 {
             BindKey::WheelUp
         } else {
@@ -549,10 +612,10 @@ pub(crate) fn latch_and_dispatch(
             shift,
             key,
         };
-        if let Some(command) = dispatch.resolve(chord, false) {
+        if let Some(command) = p.dispatch.resolve(chord, false).map(str::to_owned) {
             for _ in 0..steps.unsigned_abs() {
-                press(&mut state, &mut script, command, Held::Wheel);
-                release(&mut state, &mut script, Held::Wheel);
+                press!(command.clone(), Held::Wheel);
+                release!(Held::Wheel);
             }
         }
     }
@@ -562,20 +625,20 @@ pub(crate) fn latch_and_dispatch(
     // bevy zeroes `ButtonInput` for both (see the clears above). UI keyboard focus never reaches
     // here.
     let mut stuck: Vec<Held> = Vec::new();
-    for (k, _) in &state.latched {
+    for (k, _) in &p.state.latched {
         if !physically_down(*k, &keys, &buttons) && !stuck.contains(k) {
             stuck.push(*k);
         }
     }
     for k in stuck {
-        release(&mut state, &mut script, k);
+        release!(k);
     }
 
     // The calls this pass's binding bodies made act this frame, as in the reference the bit has
     // already moved when the body returns.
     if let Some(s) = script.as_mut() {
-        let inputs = s.take_binding_input();
-        state.apply_script_input(inputs);
+        let made = s.take_binding_input();
+        p.state.apply_script_input(made);
     }
 }
 
@@ -595,40 +658,6 @@ fn physically_down(
         Held::Mouse(b) => buttons.pressed(b),
         // A notch is a press and a release in one frame; it is never "held".
         Held::Wheel => false,
-    }
-}
-
-/// One matching press: the command's body with `keystate = "down"`, and a latch on its input so
-/// the release can run the up-half.
-fn press(
-    state: &mut BindingsState,
-    script: &mut Option<NonSendMut<UiScript>>,
-    command: &str,
-    key: Held,
-) {
-    if let Some(s) = script.as_mut() {
-        if let Err(e) = s.execute_binding(command, true) {
-            warn!("bindings({command}): {e}");
-        }
-    }
-    state.latched.push((key, command.to_owned()));
-}
-
-/// A base key's release: drop its latch and run the command's `runOnUp` up-half, even while
-/// typing (the reference completes a pressed binding's release regardless of focus).
-fn release(state: &mut BindingsState, script: &mut Option<NonSendMut<UiScript>>, key: Held) {
-    let mut i = 0;
-    while i < state.latched.len() {
-        if state.latched[i].0 == key {
-            let (_, command) = state.latched.remove(i);
-            if let Some(s) = script.as_mut() {
-                if let Err(e) = s.execute_binding(&command, false) {
-                    warn!("bindings({command}): {e}");
-                }
-            }
-        } else {
-            i += 1;
-        }
     }
 }
 

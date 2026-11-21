@@ -132,7 +132,7 @@ fn record(
     time: Res<Time<Real>>,
     cost: Res<UiFrameCost>,
     mesh: Res<crate::ui_pass::UiMeshCost>,
-    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut rec: ResMut<Recorder>,
 ) {
     let frame_ms = time.delta_secs() * 1000.0;
@@ -146,7 +146,7 @@ fn record(
     if rec.rows.is_empty() && frame_ms > 100.0 {
         return;
     }
-    let tip = script.as_deref().and_then(tooltip_context);
+    let tip = script.turn().as_deref().and_then(tooltip_context);
     let c = cost.clone();
     let (owner, lines, first) = tip
         .clone()

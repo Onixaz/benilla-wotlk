@@ -12,7 +12,7 @@ use bevy::prelude::*;
 
 use benilla_protocol::messages::InspectItem;
 use benilla_protocol::{SessionEvent, SessionEventKind as K};
-use benilla_ui::script::{InspectView, InvSlotView, InventorySlots, ScriptValue, UiScript};
+use benilla_ui::script::{InspectView, InvSlotView, InventorySlots, ScriptValue};
 
 use crate::entities::ItemDisplays;
 use crate::items::Items;
@@ -248,7 +248,7 @@ fn inspect_slot_view(
 }
 
 fn feed_inspect(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut target: ResMut<InspectTarget>,
     mut feed: ResMut<InspectFeedState>,
     mut booth: ResMut<InspectBooth>,
@@ -266,7 +266,7 @@ fn feed_inspect(
     group: Res<crate::ui_party::GroupState>,
     worn: Res<InspectWorn>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     // A `/reload` keeps the latched token, and the fresh memo re-pushes the view.

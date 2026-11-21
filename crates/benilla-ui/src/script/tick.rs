@@ -44,13 +44,20 @@ impl UiScript {
             self.fire_event("PLAYER_REGEN_ENABLED", Vec::new());
         } else {
             self.fire_event("PLAYER_REGEN_DISABLED", Vec::new());
-            self.model_mut().protected_actions_allowed = false;
+            // After the event's listeners, also when a host step queues the event in turn.
+            super::world_loan::in_turn_or_now(self, |s| {
+                s.model_mut().protected_actions_allowed = false;
+            });
         }
     }
 }
 
 /// [`UiScript::fire_event`] for a caller holding `&Lua`, such as a Lua binding.
 pub(crate) fn fire_event_into(lua: &Lua, event: &str, args: Vec<ScriptValue>) {
+    // A host step that holds the lent state queues its raise in turn.
+    let Some(args) = super::world_loan::queue_in_turn(lua, event, args) else {
+        return;
+    };
     let model_mut = || crate::script::model_mut_of(lua);
     let vm = {
         let model = lua

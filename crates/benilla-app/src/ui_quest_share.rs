@@ -139,7 +139,7 @@ impl Plugin for QuestSharePlugin {
 
 /// `ConfirmAcceptQuest()`, the popup's Yes, answered with the latched quest id.
 fn drain_quest_share(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    script: Option<NonSendMut<UiScript>>,
     share: Res<QuestShare>,
     commands: Res<NetCommands>,
 ) {

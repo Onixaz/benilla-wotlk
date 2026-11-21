@@ -3,18 +3,16 @@
 
 use bevy::prelude::*;
 
-use benilla_ui::script::UiScript;
-
 use super::{show_messages, ui_error_text, MessageSink, Shown, UiError, UiErrorKeys, UiErrorTexts};
 
 #[allow(clippy::type_complexity)] // a Bevy system's full input set
 pub(super) fn feed_actions(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut ui_error_keys: ResMut<UiErrorKeys>,
     mut ui_error_texts: ResMut<UiErrorTexts>,
     mut sink: MessageSink,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
 

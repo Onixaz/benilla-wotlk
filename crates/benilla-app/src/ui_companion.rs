@@ -4,7 +4,7 @@ use bevy::prelude::*;
 
 use benilla_formats::{CompanionKind, SpellCatalog, SummonPropertiesCatalog, SPELL_AURA_MOUNTED};
 use benilla_protocol::ObjectFields;
-use benilla_ui::script::{CompanionIntent, CompanionType, CompanionView, ScriptValue, UiScript};
+use benilla_ui::script::{CompanionIntent, CompanionType, CompanionView, ScriptValue};
 
 use crate::names::{NameCache, NameKey};
 use crate::net::{ClientCommand, NetCommands, ObjectStore, SelfPlayer};
@@ -26,7 +26,7 @@ impl Plugin for UiCompanionPlugin {
             .add_systems(
                 Update,
                 (
-                    drain_companions.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_companions).in_set(UiDrain),
                     // After the VM ticks: a click's `SetCreature` lands in `UiPress`, before it. Before the display build that loads its model and the booth that draws it.
                     feed_companion_booth
                         .in_set(UiDrain)
@@ -571,13 +571,13 @@ pub(crate) fn dismiss(
 
 /// The dismissals `DismissCompanion` queued.
 fn drain_companions(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     spells: Option<Res<Spells>>,
     summons: Res<SummonSlots>,
     commands: Res<NetCommands>,
     self_q: Query<(&ObjectStore, Option<&UnitAuras>), With<SelfPlayer>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let intents = script.take_companion_intents();
@@ -599,12 +599,12 @@ fn drain_companions(
 /// (`0x597960`, the record's first display id), asking for a record not yet cached. The pane's
 /// rotate buttons own the yaw.
 fn feed_companion_booth(
-    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     names: Res<NameCache>,
     commands: Res<NetCommands>,
     mut booth: ResMut<crate::portrait::CompanionBooth>,
 ) {
-    let Some(script) = script else {
+    let Some(script) = script.turn() else {
         return;
     };
     let pane = script.model_pane("CompanionModelFrame");

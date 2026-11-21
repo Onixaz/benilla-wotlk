@@ -129,19 +129,17 @@ struct Stretch {
 }
 
 /// Installs the verbs into each new in-game VM.
-fn install_verbs(
-    mut stretch: ResMut<Stretch>,
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
-    self_player: Query<(), With<SelfPlayer>>,
-) {
-    let Some(script) = script else { return };
-    if self_player.is_empty() || stretch.installed_vm == script.session() {
+fn install_verbs(world: &mut World) {
+    let Some(script) = world
+        .get_non_send_resource::<benilla_ui::script::UiScript>()
+        .map(benilla_ui::script::UiScript::share)
+    else {
+        return;
+    };
+    if !super::in_world(world) || world.resource::<Stretch>().installed_vm == script.session() {
         return;
     }
-    stretch.installed_vm = script.session();
+    world.resource_mut::<Stretch>().installed_vm = script.session();
     let lua = script.lua();
     let g = lua.globals();
     let set = |name: &str, f: mlua::Result<mlua::Function>| match f {

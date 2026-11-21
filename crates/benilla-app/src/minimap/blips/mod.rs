@@ -500,13 +500,13 @@ pub(super) fn emit_group_arrows(
 /// cursor by itself, and hover loss hides it at once (`0x57d15e`). Runs after `UnitFeed`, so a
 /// same-frame move from a world hover to a blip ends on the blip's tooltip.
 pub(super) fn drive_blip_tooltip(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     hover: Res<MinimapBlipHover>,
     names: Res<NameCache>,
     commands: Res<NetCommands>,
     mut last: Local<crate::ui_script::VmMemo<Option<String>>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let last = last.get(&script);

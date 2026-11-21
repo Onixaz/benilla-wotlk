@@ -108,14 +108,15 @@ fn say(script: &mut UiScript, sink: &mut MessageSink, msg: UiError) {
 /// The turn-in's lines in 12340's order (`0x6d0e66`-`0x6d10b4`); whether the quest chains on, `None` with no template.
 fn turn_in_lines(
     In((c, chosen)): In<(QuestComplete, u32)>,
-    (script, mut live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut vm: crate::ui_script::InTurn,
+    mut waits: Option<NonSendMut<crate::items::RecordWaits>>,
     (quest_log, items, commands): (Res<QuestLog>, Res<Items>, Res<NetCommands>),
     mut sink: MessageSink,
     mut center: Option<MessageWriter<crate::ui_unit::CombatTextEvent>>,
 ) -> Option<bool> {
     let t = quest_log.template(c.quest_id, &commands)?;
     let chained = t.next_quest_in_chain != 0;
-    let Some(mut script) = script else {
+    let Some(mut script) = vm.turn() else {
         return Some(chained);
     };
     say(
@@ -190,7 +191,11 @@ fn turn_in_lines(
                 say(&mut script, &mut sink, reward_item_line(&link, count));
             }
             None if items.template_answered_unknown(item) => {}
-            None => live.wait_record(item, crate::items::RecordWait::QuestReward(count)),
+            None => {
+                if let Some(waits) = waits.as_deref_mut() {
+                    waits.wait(item, crate::items::RecordWait::QuestReward(count), false);
+                }
+            }
         }
     }
     Some(chained)
@@ -200,7 +205,7 @@ fn turn_in_lines(
 #[allow(clippy::too_many_arguments)] // one Bevy system's full input set
 pub(crate) fn accept_line(
     In(quest_id): In<u32>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     quest_log: Res<QuestLog>,
     commands: Res<NetCommands>,
     mut sink: MessageSink,
@@ -209,7 +214,7 @@ pub(crate) fn accept_line(
     // The accept callback's process-wide count (`0x6df46d`).
     mut accepts: Local<u32>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let Some(t) = quest_log.template(quest_id, &commands) else {

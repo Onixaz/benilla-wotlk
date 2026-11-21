@@ -20,7 +20,7 @@
 
 use bevy::prelude::*;
 
-use benilla_ui::script::{CameraViewRequest, UiScript, CAMERA_VIEW_COUNT};
+use benilla_ui::script::{CameraViewRequest, CAMERA_VIEW_COUNT};
 use benilla_world::view::WorldCamera;
 
 use crate::creature_anim::wrap_pi;
@@ -205,7 +205,7 @@ struct ViewTargets<'w, 's> {
 /// Drain the Lua queue and the barber chair's view into the rig, before [`super::control`] seats
 /// this frame's camera.
 fn drain_view_requests(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut cvars: ResMut<crate::cvars::Cvars>,
     mut targets: ViewTargets,
     mut barber: MessageReader<BarberView>,
@@ -236,7 +236,7 @@ fn drain_view_requests(
             }
         }
     }
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let requests = script.take_camera_view_requests();
@@ -350,7 +350,7 @@ pub(super) fn plugin(app: &mut App) {
         .add_systems(Startup, load_saved_views.after(crate::cvars::CvarLoad))
         .add_systems(
             Update,
-            drain_view_requests
+            crate::ui_script::raises::then_fire(drain_view_requests)
                 // After the Lua tick that queues them, before the control pass seats the pose.
                 .in_set(crate::ui_script::UiDrain)
                 .after(crate::ui_barber::BarberDrain)

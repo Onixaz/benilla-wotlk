@@ -703,7 +703,7 @@ fn a_looted_roll_shows_its_lines_and_never_the_placeholder() {
         })],
         fishing: false,
     }));
-    let _tables = lend_tables(ItemTables {
+    let mut tables_v = lend_tables(ItemTables {
         random_properties: [(
             584,
             RandomPropertyView {
@@ -726,7 +726,8 @@ fn a_looted_roll_shows_its_lines_and_never_the_placeholder() {
         .collect(),
         ..Default::default()
     });
-    s.run(
+    crate::script::live::lending(&mut tables_v, || {
+        s.run(
         r#"
         local a = CreateFrame("Button", "Slot"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
         local tt = CreateFrame("GameTooltip", "TT")
@@ -735,28 +736,29 @@ fn a_looted_roll_shows_its_lines_and_never_the_placeholder() {
     "#,
     )
     .unwrap();
-    let lines = super::lines_of(&mut s);
-    let texts: Vec<&str> = lines.iter().map(|(t, _)| t.as_str()).collect();
-    assert!(
-        !texts.contains(&"[ITEM_RANDOM_ENCHANT]"),
-        "a block source never reaches the placeholder arm — got {texts:?}"
-    );
-    assert_eq!(
-        texts.first(),
-        Some(&"Bloodrazor of the Monkey"),
-        "the plate takes the roll's suffixed name — got {texts:?}"
-    );
-    for line in ["|cffffffffAgility +7|r", "|cffffffffStamina +7|r"] {
-        let l = lines
-            .iter()
-            .find(|(t, _)| t == line)
-            .unwrap_or_else(|| panic!("the roll's slot line {line} — got {texts:?}"));
-        assert_eq!(
-            l.1,
-            [1.0, 210.0 / 255.0, 0.0, 1.0],
-            "{line} carries its white over the gold line"
+        let lines = super::lines_of(&mut s);
+        let texts: Vec<&str> = lines.iter().map(|(t, _)| t.as_str()).collect();
+        assert!(
+            !texts.contains(&"[ITEM_RANDOM_ENCHANT]"),
+            "a block source never reaches the placeholder arm — got {texts:?}"
         );
-    }
+        assert_eq!(
+            texts.first(),
+            Some(&"Bloodrazor of the Monkey"),
+            "the plate takes the roll's suffixed name — got {texts:?}"
+        );
+        for line in ["|cffffffffAgility +7|r", "|cffffffffStamina +7|r"] {
+            let l = lines
+                .iter()
+                .find(|(t, _)| t == line)
+                .unwrap_or_else(|| panic!("the roll's slot line {line} — got {texts:?}"));
+            assert_eq!(
+                l.1,
+                [1.0, 210.0 / 255.0, 0.0, 1.0],
+                "{line} carries its white over the gold line"
+            );
+        }
+    });
 }
 
 /// The class 10 bind gate (`0x627ef7`): a token prints its bind line only when the requester is
@@ -921,7 +923,7 @@ fn a_linked_roll_shows_its_lines_and_never_the_placeholder() {
             ..Default::default()
         },
     );
-    let _tables = lend_tables(ItemTables {
+    let mut tables_v = lend_tables(ItemTables {
         random_properties: [(
             584,
             RandomPropertyView {
@@ -937,7 +939,8 @@ fn a_linked_roll_shows_its_lines_and_never_the_placeholder() {
         .collect(),
         ..Default::default()
     });
-    s.run(
+    crate::script::live::lending(&mut tables_v, || {
+        s.run(
         r#"
         local a = CreateFrame("Button", "Slot"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
         ITEM_SUFFIX_TEMPLATE = "%s %s"
@@ -947,23 +950,24 @@ fn a_linked_roll_shows_its_lines_and_never_the_placeholder() {
     "#,
     )
     .unwrap();
-    let texts: Vec<String> = super::lines_of(&mut s)
-        .into_iter()
-        .map(|(t, _)| t)
-        .collect();
-    assert!(
-        !texts.iter().any(|t| t == "[ITEM_RANDOM_ENCHANT]"),
-        "a link never reaches the placeholder arm — got {texts:?}"
-    );
-    assert_eq!(
-        texts.first().map(String::as_str),
-        Some("Bloodrazor of the Monkey"),
-        "the plate takes the link's own suffixed name — got {texts:?}"
-    );
-    assert!(
-        texts.iter().any(|t| t == "|cffffffffAgility +7|r"),
-        "the roll's slot line — got {texts:?}"
-    );
+        let texts: Vec<String> = super::lines_of(&mut s)
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        assert!(
+            !texts.iter().any(|t| t == "[ITEM_RANDOM_ENCHANT]"),
+            "a link never reaches the placeholder arm — got {texts:?}"
+        );
+        assert_eq!(
+            texts.first().map(String::as_str),
+            Some("Bloodrazor of the Monkey"),
+            "the plate takes the link's own suffixed name — got {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|t| t == "|cffffffffAgility +7|r"),
+            "the roll's slot line — got {texts:?}"
+        );
+    });
 }
 
 /// `ITEM_RANDOM_ENCHANT` prints, green, only for a random-property item with no instance to read a
@@ -1057,7 +1061,7 @@ fn a_linked_suffix_fills_its_amount_and_its_enchant_prints() {
             },
         )
     };
-    let _tables = lend_tables(ItemTables {
+    let mut tables_v = lend_tables(ItemTables {
         enchant_rows: HashMap::from([row(2802, "+$i Stamina"), row(1900, "Crusader")]),
         random_suffixes: HashMap::from([(
             39,
@@ -1069,7 +1073,8 @@ fn a_linked_suffix_fills_its_amount_and_its_enchant_prints() {
         )]),
         ..Default::default()
     });
-    s.run(
+    crate::script::live::lending(&mut tables_v, || {
+        s.run(
         r#"
         ITEM_SUFFIX_TEMPLATE = "%s %s"
         local a = CreateFrame("Button", "Slot"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
@@ -1079,15 +1084,16 @@ fn a_linked_suffix_fills_its_amount_and_its_enchant_prints() {
     "#,
     )
     .unwrap();
-    let texts: Vec<String> = super::lines_of(&mut s)
-        .into_iter()
-        .map(|(t, _)| t)
-        .collect();
-    assert_eq!(texts[0], "Outlander's Leggings of the Bear");
-    assert!(texts.iter().any(|t| t.contains("+18 Stamina")), "{texts:?}");
-    assert!(texts.iter().any(|t| t.contains("Crusader")), "{texts:?}");
-    let link: String = s.eval("return select(2, TT:GetItem())").unwrap();
-    assert!(link.contains("|Hitem:8889:1900:0:0:0:0:-39:28:"), "{link}");
+        let texts: Vec<String> = super::lines_of(&mut s)
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        assert_eq!(texts[0], "Outlander's Leggings of the Bear");
+        assert!(texts.iter().any(|t| t.contains("+18 Stamina")), "{texts:?}");
+        assert!(texts.iter().any(|t| t.contains("Crusader")), "{texts:?}");
+        let link: String = s.eval("return select(2, TT:GetItem())").unwrap();
+        assert!(link.contains("|Hitem:8889:1900:0:0:0:0:-39:28:"), "{link}");
+    });
 }
 
 /// A clicked link closes a tooltip already showing it, and each builder runs its script before
@@ -1153,9 +1159,9 @@ fn a_retrieving_link_fires_and_its_landing_does_not_toggle() {
 }
 
 /// Lend `tables` as the client's item tables.
-fn lend_tables(tables: ItemTables) -> crate::script::live::LiveLoan<crate::script::live::TestView> {
-    crate::script::live::lend_test(crate::script::live::TestView {
+fn lend_tables(tables: ItemTables) -> crate::script::live::TestView {
+    crate::script::live::TestView {
         item_tables: Some(tables),
         ..Default::default()
-    })
+    }
 }

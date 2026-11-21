@@ -7,7 +7,7 @@ use bevy::prelude::*;
 
 use benilla_protocol::field::FIELD_PLAYER_KNOWN_TITLES;
 use benilla_protocol::{SessionEvent, SessionEventKind};
-use benilla_ui::script::{PlayerTitles, ScriptValue, TitleRow, UiScript};
+use benilla_ui::script::{PlayerTitles, ScriptValue, TitleRow};
 
 use crate::names::NameCache;
 use crate::net::{
@@ -26,7 +26,7 @@ impl Plugin for UiTitlePlugin {
             Update,
             (
                 feed_titles.in_set(UnitFeed),
-                drain_title_sets.in_set(UiDrain),
+                crate::ui_script::raises::then_fire(drain_title_sets).in_set(UiDrain),
                 feed_overhead_rows,
             ),
         )
@@ -79,14 +79,14 @@ fn known_titles_watch(index: u16) -> Option<u16> {
 }
 
 fn feed_titles(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     tables: Option<Res<QuestRewardTablesRes>>,
     self_q: Query<(Entity, &ObjectStore), With<SelfPlayer>>,
     changed_self: Query<(), (With<SelfPlayer>, Changed<ObjectStore>)>,
     mut edges: MessageReader<FieldChanged>,
     mut memory: Local<VmMemo<()>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         edges.clear();
         return;
     };
@@ -118,11 +118,8 @@ fn feed_titles(
 }
 
 /// `SetCurrentTitle`'s sends; the server answers with `PLAYER_CHOSEN_TITLE`.
-fn drain_title_sets(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    commands: Res<NetCommands>,
-) {
-    let Some(mut script) = script else {
+fn drain_title_sets(mut script: crate::ui_script::InTurn, commands: Res<NetCommands>) {
+    let Some(mut script) = script.turn() else {
         return;
     };
     for mask_id in script.take_title_sets() {
@@ -136,7 +133,7 @@ fn drain_title_sets(
 /// for a mask no row has or with no player. The earn effect plays in `creature_anim`.
 fn on_title_earned(
     In(ev): In<SessionEvent>,
-    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     tables: Option<Res<QuestRewardTablesRes>>,
     names: Res<NameCache>,
     self_q: Query<(&crate::net::Guid, &ObjectStore), With<SelfPlayer>>,
@@ -145,7 +142,8 @@ fn on_title_earned(
     let SessionEvent::TitleEarned { mask_id, earned } = ev else {
         return;
     };
-    let (Some(script), Some(tables), Some((guid, store))) = (script, tables, self_q.iter().next())
+    let (Some(script), Some(tables), Some((guid, store))) =
+        (script.turn(), tables, self_q.iter().next())
     else {
         return;
     };

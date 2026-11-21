@@ -356,3 +356,33 @@ fn the_stock_raid_ui_repaints_a_member_who_dies_out_of_view() {
     let errors = app.world().non_send_resource::<UiScript>().errors();
     assert!(errors.is_empty(), "script errors: {errors:?}");
 }
+
+/// A member's listener reads the model as of its raise: the next member's snapshot lands once the
+/// listener has run, so `party1`'s first `UNIT_HEALTH` finds no `party2` yet.
+#[test]
+fn a_members_listener_does_not_see_the_next_members_write() {
+    let mut app = app();
+    app.world_mut()
+        .non_send_resource_mut::<UiScript>()
+        .run(
+            r#"
+            SPLIT = {}
+            local f = CreateFrame("Frame")
+            f:RegisterEvent("UNIT_HEALTH")
+            f:SetScript("OnEvent", function(_, _, unit)
+                if unit == "party1" then table.insert(SPLIT, tostring(UnitExists("party2"))) end
+            end)
+            "#,
+        )
+        .unwrap();
+    party(&mut app, &[ON, ON]);
+    frame(&mut app);
+    let script = app.world().non_send_resource::<UiScript>();
+    let seen: String = script.eval("return table.concat(SPLIT, ',')").unwrap();
+    assert_eq!(
+        seen, "nil",
+        "party1's listener ran before party2 was written"
+    );
+    let now: bool = script.eval("return UnitExists('party2') ~= nil").unwrap();
+    assert!(now, "party2 is written after the listener");
+}

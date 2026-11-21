@@ -15,7 +15,7 @@
 use bevy::prelude::*;
 
 use benilla_formats::{ItemGesture, ItemGroupSoundsCatalog};
-use benilla_ui::script::{CursorPayload, SoundRequest, UiScript};
+use benilla_ui::script::{CursorPayload, SoundRequest};
 
 use crate::entities::ItemDisplays;
 use crate::items::Items;
@@ -29,13 +29,13 @@ use super::{SoundConfig, SoundOutput};
 /// Drain the VM's queued `PlaySound` intents into the kit player; drained even with no catalog,
 /// so the queue cannot grow unbounded.
 fn drain_ui_sounds(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     kits: Option<ResMut<SoundKits>>,
     assets: Option<Res<WorldAssets>>,
     mut out: NonSendMut<SoundOutput>,
     config: Res<SoundConfig>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let requests = script.take_sounds();
@@ -123,7 +123,7 @@ enum CursorGesture {
 /// lands on the cursor (`PlaceAction`); the same item is no change. A missing link (template,
 /// display, group 0, kit 0) is silent, as in the client.
 fn play_item_gesture_sounds(
-    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut prev: Local<crate::ui_script::VmMemo<Option<CursorPayload>>>,
     items: Res<Items>,
     displays: Option<Res<ItemDisplays>>,
@@ -134,7 +134,7 @@ fn play_item_gesture_sounds(
     config: Res<SoundConfig>,
     net: Res<NetCommands>,
 ) {
-    let Some(script) = script else { return };
+    let Some(script) = script.turn() else { return };
     let prev = prev.get(&script);
     let now = script.cursor_payload();
     if *prev == now {
@@ -356,8 +356,8 @@ pub(super) fn plugin(app: &mut App) {
         .add_systems(
             Update,
             (
-                drain_ui_sounds,
-                play_item_gesture_sounds,
+                crate::ui_script::raises::then_fire(drain_ui_sounds),
+                crate::ui_script::raises::then_fire(play_item_gesture_sounds),
                 play_loot_pickup_sounds,
                 play_auto_equip_sounds,
             )
@@ -367,13 +367,13 @@ pub(super) fn plugin(app: &mut App) {
 
 /// Hand each new VM the cached device list, and every VM a list that moved.
 pub(super) fn feed_drivers(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     drivers: Res<OutputDrivers>,
     out: NonSend<SoundOutput>,
     mut device_changed: ResMut<DeviceChanged>,
     mut seeded: Local<crate::ui_script::VmMemo<bool>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let fresh = seeded.claim(&script);
@@ -389,10 +389,10 @@ pub(super) fn feed_drivers(
 
 /// Drain the panel's `Sound_GameSystem_RestartSoundSystem` into a [`SoundRestart`].
 pub(super) fn drain_restart_request(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut restarts: MessageWriter<SoundRestart>,
 ) {
-    if script.is_some_and(|mut s| s.take_sound_restart()) {
+    if script.turn().is_some_and(|mut s| s.take_sound_restart()) {
         restarts.write(SoundRestart);
     }
 }

@@ -18,8 +18,7 @@ use benilla_protocol::messages::{
 use benilla_protocol::EntityKind;
 use benilla_ui::script::UiScript;
 
-use super::probes::ProbeClock;
-use crate::net::{ChatKind, ClientCommand, Guid, NetCommands, NetEntity, ObjectStore, SelfPlayer};
+use crate::net::{ChatKind, ClientCommand, NetCommands, ObjectStore};
 use crate::player::Player;
 use crate::ui_bank::BankPrices;
 
@@ -147,29 +146,52 @@ fn find_bank_slot(store: &ObjectStore, guid: u64) -> Option<u8> {
     (0..BANK_SLOTS).find(|&i| store.0.player_bank_slot(i) == Some(guid))
 }
 
-fn bank_probe(
-    time: ProbeClock,
-    mut probe: ResMut<BankProbe>,
-    prices: Option<Res<BankPrices>>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    self_player: Query<(), With<SelfPlayer>>,
-    self_store: Query<&ObjectStore, With<SelfPlayer>>,
-    player: Res<Player>,
-    units: Query<(&Guid, &NetEntity, &ObjectStore, &Transform), Without<SelfPlayer>>,
-    net: Res<NetCommands>,
-    mut exit: MessageWriter<AppExit>,
-) {
-    if self_player.is_empty() {
+fn bank_probe(world: &mut World) {
+    if !super::probes::in_world(world) {
         return; // not in-world yet
     }
-    let Some(script) = script else {
-        return; // no UI VM in a headless build
-    };
-    let now = time.elapsed_secs_f64();
-    let phase = probe.phase;
-    let Some(store) = self_store.iter().next() else {
+    let Some(store) = super::probes::self_store(world) else {
         return;
     };
+    let purchased = store.0.player_bank_bag_slots_purchased().unwrap_or(0);
+    let next_price = world
+        .get_resource::<BankPrices>()
+        .and_then(|p| p.0.next_slot_price(purchased));
+    let units = super::probes::seen(world);
+    let pos = world.resource::<Player>().pos;
+    let net = NetCommands(world.resource::<NetCommands>().0.clone());
+    let now = f64::from(super::probes::probe_secs(world));
+    let Some(mut probe) = world.remove_resource::<BankProbe>() else {
+        return;
+    };
+    let mut exit = Vec::new();
+    super::probes::with_vm(world, |script| {
+        if let Some(script) = script {
+            bank_step(
+                &mut probe, script, now, &store, next_price, &units, pos, &net, &mut exit,
+            );
+        }
+    });
+    world.insert_resource(probe);
+    for e in exit {
+        world.write_message(e);
+    }
+}
+
+/// One frame of the probe on the VM, the `World` lent.
+#[allow(clippy::too_many_arguments)]
+fn bank_step(
+    probe: &mut BankProbe,
+    script: &mut UiScript,
+    now: f64,
+    store: &ObjectStore,
+    next_price: Option<u32>,
+    units: &super::probes::Seen,
+    pos: Vec3,
+    net: &NetCommands,
+    exit: &mut Vec<AppExit>,
+) {
+    let phase = probe.phase;
 
     match phase {
         Phase::Wait => {
@@ -203,7 +225,7 @@ fn bank_probe(
             if now - sent_at < SETTLE_SECS {
                 return;
             }
-            let me = player.pos;
+            let me = pos;
             let banker = units.iter().find(|(_, net_e, u_store, tf)| {
                 net_e.kind == EntityKind::Unit
                     && (u_store.0.object_entry() == Some(BANKER_ENTRY)
@@ -368,14 +390,11 @@ fn bank_probe(
                         since: now,
                         teleported: false,
                         bought: false,
-                        events_baseline: events_len(&script),
+                        events_baseline: events_len(script),
                     };
                     return;
                 }
-                let cost = prices
-                    .as_ref()
-                    .and_then(|p| p.0.next_slot_price(purchased))
-                    .unwrap_or(0);
+                let cost = next_price.unwrap_or(0);
                 probe.next_cost = cost;
                 info!(
                     "PROBE_BANK: (5 buy_slot) baseline purchased={purchased} money={money}c next \
@@ -410,7 +429,7 @@ fn bank_probe(
                         since: now,
                         teleported: false,
                         bought: false,
-                        events_baseline: events_len(&script),
+                        events_baseline: events_len(script),
                     };
                     return;
                 }
@@ -438,7 +457,7 @@ fn bank_probe(
                     since: now,
                     teleported: false,
                     bought: false,
-                    events_baseline: events_len(&script),
+                    events_baseline: events_len(script),
                 };
             } else if now - since > ACTION_TIMEOUT_SECS {
                 error!(
@@ -452,7 +471,7 @@ fn bank_probe(
                     since: now,
                     teleported: false,
                     bought: false,
-                    events_baseline: events_len(&script),
+                    events_baseline: events_len(script),
                 };
             }
         }
@@ -505,9 +524,9 @@ fn bank_probe(
                 };
                 return;
             }
-            let seen = events_len(&script);
+            let seen = events_len(script);
             if seen > events_baseline {
-                let text = last_event(&script);
+                let text = last_event(script);
                 if text.to_lowercase().contains("banker") {
                     info!("PROBE_BANK: PASS (6 refusal) — surfaced error: {text:?}");
                     probe.passes += 1;
@@ -536,7 +555,7 @@ fn bank_probe(
                 probe.passes, probe.fails
             );
             // `AppExit` plus a hard backstop, so a teardown hang cannot keep the account held.
-            exit.write(AppExit::Success);
+            exit.push(AppExit::Success);
             std::thread::spawn(|| {
                 std::thread::sleep(std::time::Duration::from_secs(5));
                 warn!("PROBE_BANK: still alive 5s after AppExit — hard exit");

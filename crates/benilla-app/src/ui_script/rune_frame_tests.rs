@@ -59,53 +59,55 @@ fn the_rune_bar_loads_clean_and_hides_off_a_death_knight() {
 /// the icon.
 #[test]
 fn a_death_knight_s_runes_follow_the_table() {
-    benilla_formats::wow_data_or_skip!();
-    let (_lock, mut s, failures) = setup(("Death Knight", "DEATHKNIGHT"));
-    let ours: Vec<_> = failures.iter().filter(|f| f.contains("Rune")).collect();
-    assert!(ours.is_empty(), "load failures: {ours:#?}");
-    assert!(s.eval::<bool>("return RuneFrame:IsShown()").unwrap());
-    s.set_runes(dk_runes(), DK);
-    s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
-    let icon = |s: &UiScript, i: u32| {
-        s.eval::<String>(&format!("return RuneButtonIndividual{i}Rune:GetTexture()"))
-            .unwrap()
-    };
-    assert!(icon(&s, 1).contains("Blood"), "{}", icon(&s, 1));
-    // `RuneFrame_FixRunes` swaps the frost and unholy buttons at the first entry.
-    assert!(icon(&s, 3).contains("Frost"), "{}", icon(&s, 3));
-    assert!(icon(&s, 5).contains("Unholy"), "{}", icon(&s, 5));
+    crate::ui_script::test_live::lending(&mut crate::ui_script::test_live::View, || {
+        benilla_formats::wow_data_or_skip!();
+        let (_lock, mut s, failures) = setup(("Death Knight", "DEATHKNIGHT"));
+        let ours: Vec<_> = failures.iter().filter(|f| f.contains("Rune")).collect();
+        assert!(ours.is_empty(), "load failures: {ours:#?}");
+        assert!(s.eval::<bool>("return RuneFrame:IsShown()").unwrap());
+        s.set_runes(dk_runes(), DK);
+        s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
+        let icon = |s: &UiScript, i: u32| {
+            s.eval::<String>(&format!("return RuneButtonIndividual{i}Rune:GetTexture()"))
+                .unwrap()
+        };
+        assert!(icon(&s, 1).contains("Blood"), "{}", icon(&s, 1));
+        // `RuneFrame_FixRunes` swaps the frost and unholy buttons at the first entry.
+        assert!(icon(&s, 3).contains("Frost"), "{}", icon(&s, 3));
+        assert!(icon(&s, 5).contains("Unholy"), "{}", icon(&s, 5));
 
-    // Rune 1 spent now: the event arms the button's ticker, which starts the cooldown.
-    let mut runes = dk_runes();
-    runes.set_predicted(0x3f, 0x3e, None, NOW_MS, &DK);
-    s.set_runes(runes.clone(), DK);
-    power_update(&mut s, 1, false);
-    let tick = "local b = RuneButtonIndividual1 local f = b:GetScript('OnUpdate') \
+        // Rune 1 spent now: the event arms the button's ticker, which starts the cooldown.
+        let mut runes = dk_runes();
+        runes.set_predicted(0x3f, 0x3e, None, NOW_MS, &DK);
+        s.set_runes(runes.clone(), DK);
+        power_update(&mut s, 1, false);
+        let tick = "local b = RuneButtonIndividual1 local f = b:GetScript('OnUpdate') \
         if f then f(b, 0.1) end return b:GetScript('OnUpdate') ~= nil";
-    assert!(s.eval::<bool>(tick).unwrap(), "the ticker runs while spent");
-    assert!(s
-        .eval::<bool>("return RuneButtonIndividual1Cooldown:IsShown()")
-        .unwrap());
+        assert!(s.eval::<bool>(tick).unwrap(), "the ticker runs while spent");
+        assert!(s
+            .eval::<bool>("return RuneButtonIndividual1Cooldown:IsShown()")
+            .unwrap());
 
-    // Ready again: the next tick sees it and stops.
-    runes.set_predicted(0x3e, 0x3f, None, NOW_MS, &DK);
-    s.set_runes(runes.clone(), DK);
-    power_update(&mut s, 1, true);
-    assert!(
-        !s.eval::<bool>(tick).unwrap(),
-        "a ready rune stops its ticker"
-    );
+        // Ready again: the next tick sees it and stops.
+        runes.set_predicted(0x3e, 0x3f, None, NOW_MS, &DK);
+        s.set_runes(runes.clone(), DK);
+        power_update(&mut s, 1, true);
+        assert!(
+            !s.eval::<bool>(tick).unwrap(),
+            "a ready rune stops its ticker"
+        );
 
-    // A death rune repaints the button.
-    runes.convert(0, 3);
-    s.set_runes(runes, DK);
-    s.fire_event("RUNE_TYPE_UPDATE", vec![ScriptValue::Int(1)]);
-    assert!(icon(&s, 1).contains("Death"), "{}", icon(&s, 1));
-    // A bare VM's `PLAYER_ENTERING_WORLD` trips other frames; only the rune bar's count here.
-    let errors: Vec<_> = s
-        .take_errors()
-        .into_iter()
-        .filter(|e| e.contains("Rune"))
-        .collect();
-    assert!(errors.is_empty(), "{errors:#?}");
+        // A death rune repaints the button.
+        runes.convert(0, 3);
+        s.set_runes(runes, DK);
+        s.fire_event("RUNE_TYPE_UPDATE", vec![ScriptValue::Int(1)]);
+        assert!(icon(&s, 1).contains("Death"), "{}", icon(&s, 1));
+        // A bare VM's `PLAYER_ENTERING_WORLD` trips other frames; only the rune bar's count here.
+        let errors: Vec<_> = s
+            .take_errors()
+            .into_iter()
+            .filter(|e| e.contains("Rune"))
+            .collect();
+        assert!(errors.is_empty(), "{errors:#?}");
+    });
 }

@@ -380,10 +380,7 @@ mod tests {
         ]
     }
 
-    fn bar_script() -> (
-        UiScript,
-        crate::script::LiveLoan<crate::script::live::TestView>,
-    ) {
+    fn bar_script() -> (UiScript, crate::script::live::TestView) {
         let s = UiScript::new().unwrap();
         let pets = crate::script::live::lend_pets(true, true, true, hunter_bar());
         (s, pets)
@@ -391,44 +388,48 @@ mod tests {
 
     #[test]
     fn picking_up_a_spell_blanks_its_slot_and_sends() {
-        let (s, _pets) = bar_script();
-        assert!(s.eval::<bool>("return PickupPetAction(4)").unwrap());
-        assert!(
-            matches!(s.cursor_payload(), Some(crate::script::CursorPayload::PetAction(c)) if c.src_slot == 4),
-            "{:?}",
-            s.cursor_payload()
-        );
-        assert_eq!(
-            crate::script::live::take_test_pet_writes(),
-            vec![vec![(3, CLAW & 0xFFFF_0000)]],
-            "one pair, 0-based, the id zeroed and everything else kept"
-        );
+        let (s, mut pets_v) = bar_script();
+        crate::script::live::lending(&mut pets_v, || {
+            assert!(s.eval::<bool>("return PickupPetAction(4)").unwrap());
+            assert!(
+                matches!(s.cursor_payload(), Some(crate::script::CursorPayload::PetAction(c)) if c.src_slot == 4),
+                "{:?}",
+                s.cursor_payload()
+            );
+            assert_eq!(
+                crate::script::live::take_test_pet_writes(),
+                vec![vec![(3, CLAW & 0xFFFF_0000)]],
+                "one pair, 0-based, the id zeroed and everything else kept"
+            );
+        });
     }
 
     #[test]
     fn a_dragged_token_carries_a_resolved_icon_path() {
         let s = UiScript::new().unwrap();
-        let _pets = crate::script::live::lend_pets(true, true, true, hunter_bar());
-        s.run(r#"PET_ATTACK_TEXTURE = "Interface\\Icons\\Ability_GhoulFrenzy""#)
-            .unwrap();
+        let mut pets_v = crate::script::live::lend_pets(true, true, true, hunter_bar());
+        crate::script::live::lending(&mut pets_v, || {
+            s.run(r#"PET_ATTACK_TEXTURE = "Interface\\Icons\\Ability_GhoulFrenzy""#)
+                .unwrap();
 
-        s.run("PickupPetAction(1)").unwrap();
-        let Some(CursorPayload::PetAction(p)) = s.cursor_payload() else {
-            panic!("the command word is on the cursor")
-        };
-        assert_eq!(
-            p.texture.as_deref(),
-            Some("Interface\\Icons\\Ability_GhoulFrenzy"),
-            "the global was resolved, not carried as a name"
-        );
+            s.run("PickupPetAction(1)").unwrap();
+            let Some(CursorPayload::PetAction(p)) = s.cursor_payload() else {
+                panic!("the command word is on the cursor")
+            };
+            assert_eq!(
+                p.texture.as_deref(),
+                Some("Interface\\Icons\\Ability_GhoulFrenzy"),
+                "the global was resolved, not carried as a name"
+            );
 
-        // An unset global resolves to no icon, not to its own name.
-        s.run("ClearCursor() PET_ATTACK_TEXTURE = nil PickupPetAction(1)")
-            .unwrap();
-        let Some(CursorPayload::PetAction(p)) = s.cursor_payload() else {
-            panic!("still picked up")
-        };
-        assert_eq!(p.texture, None);
+            // An unset global resolves to no icon, not to its own name.
+            s.run("ClearCursor() PET_ATTACK_TEXTURE = nil PickupPetAction(1)")
+                .unwrap();
+            let Some(CursorPayload::PetAction(p)) = s.cursor_payload() else {
+                panic!("still picked up")
+            };
+            assert_eq!(p.texture, None);
+        });
     }
 
     /// The write asks the pet's usability predicate first, and the app's answer is the one the bar
@@ -438,100 +439,109 @@ mod tests {
     #[test]
     fn an_unusable_bar_writes_nothing_at_either_end() {
         let s = UiScript::new().unwrap();
-        let _pets = crate::script::live::lend_pets(true, false, true, hunter_bar());
-
-        assert!(s.eval::<bool>("return PickupPetAction(4)").unwrap());
-        assert!(
-            matches!(s.cursor_payload(), Some(crate::script::CursorPayload::PetAction(c))
+        let mut pets_v = crate::script::live::lend_pets(true, false, true, hunter_bar());
+        crate::script::live::lending(&mut pets_v, || {
+            assert!(s.eval::<bool>("return PickupPetAction(4)").unwrap());
+            assert!(
+                matches!(s.cursor_payload(), Some(crate::script::CursorPayload::PetAction(c))
                 if c.src_slot == 4 && c.packed == CLAW),
-            "the pickup lifted Claw: {:?}",
-            s.cursor_payload()
-        );
-        assert!(
-            crate::script::live::take_test_pet_writes().is_empty(),
-            "but its blank was refused, so nothing is sent"
-        );
+                "the pickup lifted Claw: {:?}",
+                s.cursor_payload()
+            );
+            assert!(
+                crate::script::live::take_test_pet_writes().is_empty(),
+                "but its blank was refused, so nothing is sent"
+            );
 
-        s.run("PickupPetAction(5)").unwrap();
-        assert!(
-            s.cursor_payload().is_none(),
-            "the drop cleared the cursor and nothing refilled it"
-        );
-        assert!(
-            crate::script::live::take_test_pet_writes().is_empty(),
-            "and wrote nothing"
-        );
+            s.run("PickupPetAction(5)").unwrap();
+            assert!(
+                s.cursor_payload().is_none(),
+                "the drop cleared the cursor and nothing refilled it"
+            );
+            assert!(
+                crate::script::live::take_test_pet_writes().is_empty(),
+                "and wrote nothing"
+            );
 
-        // Slot 4 was never blanked: a second pickup lifts the whole word, autocast bits and all,
-        // where a blanked slot would give the type with id 0.
-        s.run("PickupPetAction(4)").unwrap();
-        assert!(
-            matches!(s.cursor_payload(), Some(crate::script::CursorPayload::PetAction(c))
+            // Slot 4 was never blanked: a second pickup lifts the whole word, autocast bits and all,
+            // where a blanked slot would give the type with id 0.
+            s.run("PickupPetAction(4)").unwrap();
+            assert!(
+                matches!(s.cursor_payload(), Some(crate::script::CursorPayload::PetAction(c))
                 if c.packed == CLAW),
-            "{:?}",
-            s.cursor_payload()
-        );
-        // Growl kept its slot too: the refused drop never displaced it.
-        s.run("ClearCursor() PickupPetAction(5)").unwrap();
-        assert!(matches!(
-            s.cursor_payload(),
-            Some(crate::script::CursorPayload::PetAction(c)) if c.packed == GROWL
-        ));
-        assert!(crate::script::live::take_test_pet_writes().is_empty());
+                "{:?}",
+                s.cursor_payload()
+            );
+            // Growl kept its slot too: the refused drop never displaced it.
+            s.run("ClearCursor() PickupPetAction(5)").unwrap();
+            assert!(matches!(
+                s.cursor_payload(),
+                Some(crate::script::CursorPayload::PetAction(c)) if c.packed == GROWL
+            ));
+            assert!(crate::script::live::take_test_pet_writes().is_empty());
+        });
     }
 
     /// The same bar made usable takes the same two writes, which is what the test above stops.
     #[test]
     fn a_usable_bar_takes_both_writes() {
-        let (s, _pets) = bar_script();
-        s.run("PickupPetAction(4) PickupPetAction(5)").unwrap();
-        assert_eq!(
-            crate::script::live::take_test_pet_writes().len(),
-            2,
-            "the pickup's blank and the drop"
-        );
+        let (s, mut pets_v) = bar_script();
+        crate::script::live::lending(&mut pets_v, || {
+            s.run("PickupPetAction(4) PickupPetAction(5)").unwrap();
+            assert_eq!(
+                crate::script::live::take_test_pet_writes().len(),
+                2,
+                "the pickup's blank and the drop"
+            );
+        });
     }
 
     #[test]
     fn picking_up_a_token_leaves_the_slot_alone() {
-        let (s, _pets) = bar_script();
-        assert!(s.eval::<bool>("return PickupPetAction(1)").unwrap());
-        assert!(
-            crate::script::live::take_test_pet_writes().is_empty(),
-            "nothing was written, so nothing is sent"
-        );
+        let (s, mut pets_v) = bar_script();
+        crate::script::live::lending(&mut pets_v, || {
+            assert!(s.eval::<bool>("return PickupPetAction(1)").unwrap());
+            assert!(
+                crate::script::live::take_test_pet_writes().is_empty(),
+                "nothing was written, so nothing is sent"
+            );
+        });
     }
 
     #[test]
     fn a_drag_between_two_spell_slots_sends_twice_and_carries_the_occupant() {
-        let (s, _pets) = bar_script();
-        s.run("PickupPetAction(4) PickupPetAction(5)").unwrap();
-        assert_eq!(
-            crate::script::live::take_test_pet_writes(),
-            vec![vec![(3, CLAW & 0xFFFF_0000)], vec![(4, CLAW)]]
-        );
-        assert!(
-            matches!(s.cursor_payload(), Some(crate::script::CursorPayload::PetAction(c)) if c.src_slot == 5),
-            "Growl was displaced and is now held, addressed as the slot it came from: {:?}",
-            s.cursor_payload()
-        );
+        let (s, mut pets_v) = bar_script();
+        crate::script::live::lending(&mut pets_v, || {
+            s.run("PickupPetAction(4) PickupPetAction(5)").unwrap();
+            assert_eq!(
+                crate::script::live::take_test_pet_writes(),
+                vec![vec![(3, CLAW & 0xFFFF_0000)], vec![(4, CLAW)]]
+            );
+            assert!(
+                matches!(s.cursor_payload(), Some(crate::script::CursorPayload::PetAction(c)) if c.src_slot == 5),
+                "Growl was displaced and is now held, addressed as the slot it came from: {:?}",
+                s.cursor_payload()
+            );
+        });
     }
 
     /// The relocation and the write share one send: the server counts the pairs by body size
     /// (vmangos `Server/Packets/Pet.cpp:56`).
     #[test]
     fn dropping_onto_a_token_relocates_it_in_one_send() {
-        let (s, _pets) = bar_script();
-        s.run("PickupPetAction(4) PickupPetAction(1)").unwrap();
-        let sends = crate::script::live::take_test_pet_writes();
-        assert_eq!(sends.len(), 2, "the pickup's blank, then the drop");
-        assert_eq!(
+        let (s, mut pets_v) = bar_script();
+        crate::script::live::lending(&mut pets_v, || {
+            s.run("PickupPetAction(4) PickupPetAction(1)").unwrap();
+            let sends = crate::script::live::take_test_pet_writes();
+            assert_eq!(sends.len(), 2, "the pickup's blank, then the drop");
+            assert_eq!(
             sends[1],
             vec![(3, ATTACK), (0, CLAW)],
             "the relocation pair FIRST, then the write — the binary's own order. And the slot the \
              spell was just picked OUT of is the first candidate, so Attack lands there."
         );
-        assert!(s.cursor_payload().is_none());
+            assert!(s.cursor_payload().is_none());
+        });
     }
 
     /// The reachable refusal is a passive spell, which the pickup does not gate; its blank
@@ -544,56 +554,62 @@ mod tests {
             passive: true,
             ..view(CLAW, "Claw")
         };
-        let _pets = crate::script::live::lend_pets(true, true, true, bar);
-
-        s.run("PickupPetAction(4) PickupPetAction(5)").unwrap();
-        assert_eq!(
-            crate::script::live::take_test_pet_writes(),
-            vec![vec![(3, CLAW & 0xFFFF_0000)]],
-            "the pickup's own blank went through; the drop wrote and sent nothing"
-        );
-        assert!(
-            s.cursor_payload().is_none(),
-            "and the cursor is empty — the reference cleared it before it ever decided"
-        );
+        let mut pets_v = crate::script::live::lend_pets(true, true, true, bar);
+        crate::script::live::lending(&mut pets_v, || {
+            s.run("PickupPetAction(4) PickupPetAction(5)").unwrap();
+            assert_eq!(
+                crate::script::live::take_test_pet_writes(),
+                vec![vec![(3, CLAW & 0xFFFF_0000)]],
+                "the pickup's own blank went through; the drop wrote and sent nothing"
+            );
+            assert!(
+                s.cursor_payload().is_none(),
+                "and the cursor is empty — the reference cleared it before it ever decided"
+            );
+        });
     }
 
     #[test]
     fn slot_eleven_is_refused_rather_than_written_past_the_array() {
-        let (s, _pets) = bar_script();
-        assert!(!s.eval::<bool>("return PickupPetAction(11)").unwrap());
-        assert!(!s.eval::<bool>("return PickupPetAction(0)").unwrap());
-        assert!(crate::script::live::take_test_pet_writes().is_empty());
-        assert!(s.cursor_payload().is_none());
+        let (s, mut pets_v) = bar_script();
+        crate::script::live::lending(&mut pets_v, || {
+            assert!(!s.eval::<bool>("return PickupPetAction(11)").unwrap());
+            assert!(!s.eval::<bool>("return PickupPetAction(0)").unwrap());
+            assert!(crate::script::live::take_test_pet_writes().is_empty());
+            assert!(s.cursor_payload().is_none());
+        });
     }
 
     /// The third flag, `pickup_allowed`, is false for a pet that is out of view or possessed.
     #[test]
     fn a_possessed_bar_takes_no_drag_at_all() {
         let s = UiScript::new().unwrap();
-        let _pets = crate::script::live::lend_pets(true, true, false, hunter_bar());
-        assert!(!s.eval::<bool>("return PickupPetAction(4)").unwrap());
-        assert!(crate::script::live::take_test_pet_writes().is_empty());
+        let mut pets_v = crate::script::live::lend_pets(true, true, false, hunter_bar());
+        crate::script::live::lending(&mut pets_v, || {
+            assert!(!s.eval::<bool>("return PickupPetAction(4)").unwrap());
+            assert!(crate::script::live::take_test_pet_writes().is_empty());
+        });
     }
 
     #[test]
     fn the_pet_payload_and_the_action_bar_refuse_each_other() {
-        let (mut s, _pets) = bar_script();
-        s.set_action(
-            1,
-            Some(crate::script::ActionSlot {
-                texture: Some("Interface\\Icons\\Spell_A".into()),
-                kind: 0,
-                action: 133,
-                count: 0,
-                consumable: false,
-                stackable: false,
-                pet_spell: None,
-            }),
-        );
+        let (mut s, mut pets_v) = bar_script();
+        crate::script::live::lending(&mut pets_v, || {
+            s.set_action(
+                1,
+                Some(crate::script::ActionSlot {
+                    texture: Some("Interface\\Icons\\Spell_A".into()),
+                    kind: 0,
+                    action: 133,
+                    count: 0,
+                    consumable: false,
+                    stackable: false,
+                    pet_spell: None,
+                }),
+            );
 
-        s.run(
-            r#"
+            s.run(
+                r#"
             petshows, barshows = 0, 0
             local f = CreateFrame("Frame", "PetGridListener")
             f:RegisterEvent("PET_BAR_SHOWGRID")
@@ -603,26 +619,27 @@ mod tests {
                 if event == "ACTIONBAR_SHOWGRID" then barshows = barshows + 1 end
             end)
             "#,
-        )
-        .unwrap();
+            )
+            .unwrap();
 
-        s.run("PickupPetAction(4)").unwrap();
-        s.tick(0.01);
-        assert_eq!(s.eval::<i64>("return petshows").unwrap(), 1);
-        assert_eq!(
-            s.eval::<i64>("return barshows").unwrap(),
-            0,
-            "the action bar's grid stays down — nothing can land there"
-        );
-        // PlaceAction refuses it outright and leaves it held.
-        assert!(!s.eval::<bool>("return PlaceAction(1)").unwrap());
-        assert!(matches!(
-            s.cursor_payload(),
-            Some(crate::script::CursorPayload::PetAction(_))
-        ));
-        assert!(
-            s.take_action_sets().is_empty(),
-            "and writes nothing to the action bar"
-        );
+            s.run("PickupPetAction(4)").unwrap();
+            s.tick(0.01);
+            assert_eq!(s.eval::<i64>("return petshows").unwrap(), 1);
+            assert_eq!(
+                s.eval::<i64>("return barshows").unwrap(),
+                0,
+                "the action bar's grid stays down — nothing can land there"
+            );
+            // PlaceAction refuses it outright and leaves it held.
+            assert!(!s.eval::<bool>("return PlaceAction(1)").unwrap());
+            assert!(matches!(
+                s.cursor_payload(),
+                Some(crate::script::CursorPayload::PetAction(_))
+            ));
+            assert!(
+                s.take_action_sets().is_empty(),
+                "and writes nothing to the action bar"
+            );
+        });
     }
 }

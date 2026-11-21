@@ -588,11 +588,6 @@ pub(crate) struct MerchantLive<'w, 's> {
 }
 
 impl MerchantLive<'_, '_> {
-    /// The globals, read by a system between its calls into Lua.
-    pub(crate) fn state(&self) -> &MerchantOpen {
-        &self.open
-    }
-
     /// Whether a vendor is set (`0xbfa3e8`).
     pub(crate) fn open(&self) -> bool {
         self.open.is_open()
@@ -863,7 +858,7 @@ impl MerchantLive<'_, '_> {
 pub(crate) fn end_repair_mode_on_right_press(
     mut presses: MessageReader<WorldRightPress>,
     payload_held: Res<crate::ui_script::CursorPayloadHeld>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    script: Option<NonSendMut<UiScript>>,
 ) {
     if presses.read().last().is_none() || payload_held.0 {
         return;

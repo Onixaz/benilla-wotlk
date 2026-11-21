@@ -446,12 +446,6 @@ impl TrainerLive<'_, '_> {
         &mut self.open.window
     }
 
-    /// The open trainer, its record count and type, read by a system between its calls into Lua.
-    pub(crate) fn open(&self) -> Option<(u64, usize, u32)> {
-        let o = &*self.open;
-        o.trainer.map(|t| (t, o.services.len(), o.trainer_type))
-    }
-
     /// Whether a trainer is open (the setter stored a nonzero guid).
     pub(crate) fn is_open(&self) -> bool {
         self.open.trainer.is_some()

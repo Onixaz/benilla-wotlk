@@ -486,15 +486,15 @@ fn on_cast_result(
             && arg.unwrap_or(0) == 0
             && ladder
                 .cooldowns
-                .read()
+                .as_ref()
                 .has_on_hold_record(spell_id, 0, category);
         if not_ready_hold {
-            ladder.cooldowns.write().clear_spell(spell_id);
+            ladder.cooldowns.clear_spell(spell_id);
         }
         // Its start cooldown clear signals when a record matched (`0x80476d`); DONT_REPORT
         // returns before it.
         let start_cleared =
-            !success && reason != Some(0x17) && ladder.cooldowns.read().has_spell(spell_id);
+            !success && reason != Some(0x17) && ladder.cooldowns.has_spell(spell_id);
         // The routine's auto-repeat cancel (`0x8082d3`, `0x8083c6`), signalled in its place below.
         let mut cancels: Vec<&'static str> = Vec::new();
         let chained = cast_result(
@@ -506,10 +506,10 @@ fn on_cast_result(
             &r.index,
             &r.casting,
             &mut r.cast_events,
-            &mut ladder.pending.write(),
-            &mut ladder.queued_melee.write(),
-            &mut ladder.cooldowns.write(),
-            &mut ladder.auto_repeat.write(),
+            ladder.pending.as_mut(),
+            ladder.queued_melee.as_mut(),
+            ladder.cooldowns.as_mut(),
+            ladder.auto_repeat.as_mut(),
             ladder.spells.as_deref(),
             &ladder.commands,
             r.play_seq.next(),
@@ -591,10 +591,10 @@ fn on_own_spell_go(
         &r.index,
         &r.casting,
         &mut r.cast_events,
-        &mut ladder.pending.write(),
-        &mut ladder.queued_melee.write(),
-        &mut ladder.cooldowns.write(),
-        &mut ladder.auto_repeat.write(),
+        ladder.pending.as_mut(),
+        ladder.queued_melee.as_mut(),
+        ladder.cooldowns.as_mut(),
+        ladder.auto_repeat.as_mut(),
         ladder.spells.as_deref(),
         &ladder.commands,
         r.play_seq.next(),

@@ -79,17 +79,41 @@ struct CharCreateProbe {
 
 /// Drive the create, then the delete, through the stock screens as a player's clicks would.
 fn drive_charcreate_probe(
-    mut probe: ResMut<CharCreateProbe>,
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
-    catalog: Option<Res<crate::entities::CharCreate>>,
-    classes: Option<Res<crate::chr_classes::ChrClassTable>>,
-    mut results: MessageReader<CharActionResultMessage>,
-    time: super::probes::ProbeClock,
+    world: &mut World,
+    results: &mut bevy::ecs::system::SystemState<MessageReader<CharActionResultMessage>>,
 ) {
-    let glue = super::glue_press::glue(script.as_deref());
+    let results: Vec<(CharAction, u8)> = results
+        .get_mut(world)
+        .read()
+        .map(|r| (r.action, r.code))
+        .collect();
+    let Some(mut probe) = world.remove_resource::<CharCreateProbe>() else {
+        return;
+    };
+    let files = (
+        world
+            .get_resource::<crate::entities::CharCreate>()
+            .and_then(|c| c.0.race_file(probe.req.race).map(str::to_owned)),
+        world
+            .get_resource::<crate::chr_classes::ChrClassTable>()
+            .and_then(|c| c.0.file(u32::from(probe.req.class)).map(str::to_owned)),
+    );
+    let now = super::probes::probe_secs(world);
+    super::probes::with_vm(world, |script| {
+        probe_step(&mut probe, script.as_deref(), &files, &results, now);
+    });
+    world.insert_resource(probe);
+}
+
+/// One frame of the probe on the glue VM, with the frame's create and delete results.
+fn probe_step(
+    probe: &mut CharCreateProbe,
+    script: Option<&benilla_ui::script::UiScript>,
+    files: &(Option<String>, Option<String>),
+    results: &[(CharAction, u8)],
+    now: f32,
+) {
+    let glue = super::glue_press::glue(script);
     match probe.state {
         ProbeState::AwaitingSelect => {
             let Some(s) = glue.filter(|s| super::glue_press::select_up(s)) else {
@@ -114,14 +138,6 @@ fn drive_charcreate_probe(
             let Some(s) = glue.filter(|s| super::glue_press::create_up(s)) else {
                 return;
             };
-            let files = (
-                catalog
-                    .as_deref()
-                    .and_then(|c| c.0.race_file(probe.req.race)),
-                classes
-                    .as_deref()
-                    .and_then(|c| c.0.file(u32::from(probe.req.class))),
-            );
             let (Some(race_file), Some(class_file)) = files else {
                 error!("probe-charcreate: no file string for the race or class");
                 probe.state = ProbeState::Done;
@@ -143,15 +159,15 @@ fn drive_charcreate_probe(
             }
         }
         ProbeState::Creating => {
-            let Some(r) = results.read().find(|r| r.action == CharAction::Create) else {
+            let Some(&(_, code)) = results.iter().find(|r| r.0 == CharAction::Create) else {
                 return;
             };
             info!(
                 "probe-charcreate: create result = {:#04x} ({})",
-                r.code,
-                result_label(CharAction::Create, r.code)
+                code,
+                result_label(CharAction::Create, code)
             );
-            probe.state = match (r.code == messages::CHAR_CREATE_SUCCESS, probe.keep) {
+            probe.state = match (code == messages::CHAR_CREATE_SUCCESS, probe.keep) {
                 (true, false) => ProbeState::Cleanup,
                 (true, true) => {
                     info!("probe-charcreate: KEEP set — leaving the new character in place");
@@ -175,9 +191,7 @@ fn drive_charcreate_probe(
                     probe.state = ProbeState::Deleting;
                 }
                 // The screen stands before the roster its create asked for lands.
-                None if time.elapsed_secs()
-                    - *probe.cleanup_since.get_or_insert(time.elapsed_secs())
-                    < CLEANUP_WAIT_SECS => {}
+                None if now - *probe.cleanup_since.get_or_insert(now) < CLEANUP_WAIT_SECS => {}
                 None => {
                     warn!("probe-charcreate: created char not in roster — cannot clean up");
                     probe.state = ProbeState::Done;
@@ -185,13 +199,13 @@ fn drive_charcreate_probe(
             }
         }
         ProbeState::Deleting => {
-            let Some(r) = results.read().find(|r| r.action == CharAction::Delete) else {
+            let Some(&(_, code)) = results.iter().find(|r| r.0 == CharAction::Delete) else {
                 return;
             };
             info!(
                 "probe-charcreate: delete result = {:#04x} ({})",
-                r.code,
-                result_label(CharAction::Delete, r.code)
+                code,
+                result_label(CharAction::Delete, code)
             );
             probe.state = ProbeState::Done;
         }

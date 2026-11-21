@@ -145,6 +145,9 @@ enum Step {
     /// The pet bar's feed and its cooldown flush: `GetPetActionCooldown`.
     /// The VM's tick: the `OnUpdate` scripts and the cooldown widgets' update.
     Tick,
+    /// The units' feed: the `"target"` snapshot and `PLAYER_TARGET_CHANGED` for a selection a
+    /// script did not move.
+    UnitFeed,
 }
 
 impl Step {
@@ -156,6 +159,7 @@ impl Step {
             Step::ScriptCalls => "::script_calls::apply_script_calls",
             Step::WorldSelect => "::click::select_on_click",
             Step::Tick => "::extract::tick_script",
+            Step::UnitFeed => "::ui_unit::feed_units",
         }
     }
 
@@ -171,6 +175,10 @@ impl Step {
                 schedule.add_systems(crate::target::click::select_on_click.in_set(self))
             }
             Step::Tick => schedule.add_systems(crate::ui_script::extract::tick_script.in_set(self)),
+            Step::UnitFeed => {
+                crate::ui_unit::feed_units_in(schedule, self);
+                schedule
+            }
         };
     }
 }
@@ -537,6 +545,17 @@ impl Rig {
         self.app.world().resource::<Selection>().guid
     }
 
+    /// The water's template, changed by `f`.
+    fn retemplate(&mut self, f: impl FnOnce(&mut benilla_protocol::ItemInfo)) {
+        let mut items = self.app.world_mut().resource_mut::<crate::items::Items>();
+        let mut t = items
+            .template_cached(WATER)
+            .cloned()
+            .expect("the water's template");
+        f(&mut t);
+        items.insert_template(WATER, Some(t));
+    }
+
     /// Five waters in the backpack's first slot (`PLAYER_FIELD_PACK_SLOT_1`), with
     /// Drink as their on-use spell.
     fn water_in_the_backpack(&mut self) {
@@ -660,6 +679,106 @@ fn what_follows_the_script_calls_still_follows_them() {
     }
 }
 
+/// Feed Pet through `DropItemOnUnit("pet")` clears the cursor after the send's events, at the
+/// drop's raise step (`0x80b556` signals inside the send), so the world click's payload leg that
+/// follows reads an empty cursor and raises no destroy confirm for the food just fed.
+#[test]
+fn a_fed_items_clear_lands_before_the_world_clicks_payload_leg() {
+    use bevy::ecs::system::RunSystemOnce;
+    const FEED_PET: u32 = 6991;
+    const FOOD: u32 = 2287;
+    const FOOD_GUID: u64 = 0x4000_0000_0000_0077;
+    let g = graph_or_skip!();
+    let drop = g.one("::drop_item_on_unit");
+    let leg = g.one("::drop_on_world_click");
+    assert!(
+        g.succ[drop]
+            .iter()
+            .any(|&s| g.names[s].ends_with("::raises::fire_raises") && g.reaches(s, leg)),
+        "a raise step runs right after the drop and before the world click's payload leg"
+    );
+    let mut rig = Rig::new(&[]).expect("names");
+    let world = rig.app.world_mut();
+    let index = world.resource::<GuidIndex>().0.clone();
+    world
+        .entity_mut(index[&ME])
+        .insert(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
+            (benilla_protocol::field::FIELD_UNIT_FLAGS, 0x8),
+            (
+                benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1,
+                FOOD_GUID as u32,
+            ),
+            (
+                benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1 + 1,
+                (FOOD_GUID >> 32) as u32,
+            ),
+        ])));
+    world
+        .entity_mut(index[&PET])
+        .insert(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_UNIT_CREATED_BY_SPELL, 883),
+            (benilla_protocol::field::FIELD_UNIT_CREATEDBY, ME as u32),
+            (benilla_protocol::field::FIELD_UNIT_CREATEDBY + 1, 0),
+        ])));
+    world
+        .resource_mut::<crate::ui_action::LearnedAbilities>()
+        .feed_pet = Some(FEED_PET);
+    rig.vm().set_container(
+        0,
+        Some(benilla_ui::script::ContainerState {
+            bag_family: 0,
+            name: Some("Backpack".into()),
+            num_slots: 16,
+            slots: HashMap::from([(
+                1,
+                benilla_ui::script::ContainerSlot {
+                    item_id: FOOD,
+                    count: 1,
+                    ..Default::default()
+                },
+            )]),
+        }),
+    );
+    rig.lua(
+        r#"CONFIRMS = 0
+           local f = CreateFrame("Frame")
+           f:RegisterEvent("DELETE_ITEM_CONFIRM")
+           f:SetScript("OnEvent", function() CONFIRMS = CONFIRMS + 1 end)
+           PickupContainerItem(0, 1)
+           DropItemOnUnit("pet")"#,
+    );
+    assert!(
+        rig.vm().eval::<bool>("return CursorHasItem()").unwrap(),
+        "fixture: the food is held"
+    );
+    // The same press's click, claimed for a payload drop, on open ground.
+    let world = rig.app.world_mut();
+    world.write_message(crate::target::WorldDropClick);
+    world
+        .run_system_once(crate::ui_action::drop_item::drop_item_on_unit)
+        .unwrap();
+    world
+        .run_system_once(crate::ui_script::raises::fire_raises)
+        .unwrap();
+    world
+        .run_system_once(crate::ui_action::drop_item::drop_on_world_click)
+        .unwrap();
+    world
+        .run_system_once(crate::ui_script::raises::fire_raises)
+        .unwrap();
+    rig.vm().tick(0.01);
+    assert!(
+        !rig.vm().eval::<bool>("return CursorHasItem()").unwrap(),
+        "Feed Pet cleared the cursor"
+    );
+    assert_eq!(
+        rig.vm().eval::<i64>("return CONFIRMS").unwrap(),
+        0,
+        "the fed food raises no destroy confirm"
+    );
+}
+
 /// The pointer arbiter reads the UI's hover after the input feed wrote it, and player control
 /// reads the arbiter's answer: a press over the UI never also turns the camera or clicks the world.
 #[test]
@@ -679,17 +798,22 @@ fn raw_input_is_stamped_before_the_ui_input_feed() {
     assert!(g.before("::stamp_input", Step::BindingDispatch.suffix()));
 }
 
-/// The world clicks resolve against this frame's pick: player control settles the click, the press
-/// latch and the hover pick follow it, and every click leg (the select, the cursor commits, Click
-/// to Move's arrival, the right click and a crate's interaction) follows them.
+/// The world clicks resolve against the press's pick: the click tests settle in the press pass,
+/// the press latch follows the settle and the select follows the latch, all before the tick, as
+/// 12340's input pass selects (`0x480410`) before the paint's `OnUpdate` walk (`0x495320`); the
+/// hover pick follows player control, and every later click leg (the cursor commits, Click to
+/// Move's arrival, the right click and a crate's interaction) follows both picks.
 #[test]
 fn the_world_clicks_resolve_against_this_frames_pick() {
     let g = graph_or_skip!();
-    let control = "::controller::control";
-    for pick in ["::latch_press_pick", "::update_hover"] {
-        assert!(g.before(control, pick), "{pick} follows player control");
+    let latch = "::latch_press_pick";
+    assert!(g.before("::latch_world_mouse", latch));
+    assert!(g.before(latch, Step::WorldSelect.suffix()));
+    assert!(g.before(Step::WorldSelect.suffix(), Step::Tick.suffix()));
+    assert!(g.before(Step::ScriptCalls.suffix(), Step::WorldSelect.suffix()));
+    assert!(g.before("::controller::control", "::update_hover"));
+    for pick in [latch, "::update_hover"] {
         for leg in [
-            Step::WorldSelect.suffix(),
             "::commit_ground_cast_on_click",
             "::commit_object_cast_on_click",
             "::act_on_arrival",
@@ -848,7 +972,8 @@ fn a_binding_reads_the_world_on_its_press_and_its_release() {
 }
 
 /// A world click and a cast the script makes after it in the same frame (an `OnUpdate`'s): the
-/// cast goes to the unit the click selected, once.
+/// cast goes to the unit the click selected, once, as 12340's input pass selects before the
+/// paint runs the `OnUpdate` scripts (`0x480410`, `0x495320`).
 #[test]
 fn a_world_click_selects_before_a_cast_a_script_makes_after_it() {
     let mut rig = rig_or_skip!(&[Step::WorldSelect, Step::ScriptCalls, Step::Tick]);
@@ -1160,4 +1285,484 @@ fn a_key_and_a_world_click_in_one_frame_cast_before_the_click_selects() {
     rig.frame();
     assert_eq!(rig.casts(), [(BOLT, Some(OLD))]);
     assert_eq!(rig.selected(), Some(NEW));
+}
+
+// ── C: a script call applies inside the Lua call that made it ──────────────────────────────────
+
+/// An `OnUpdate` that runs `TICK_DO` once, the next frame after it is set.
+const TICK_DO: &str = r#"
+    local f = CreateFrame("Frame")
+    f:SetScript("OnUpdate", function()
+        if TICK_DO then
+            local run = TICK_DO
+            TICK_DO = nil
+            run()
+        end
+    end)
+"#;
+
+/// `UseAction` then `GetActionCooldown` in one `OnUpdate`: the cast goes out and its GCD is armed
+/// inside the call (`0x80b583` → `0x805d70`), so the read after it sees the sweep.
+#[test]
+fn use_action_then_get_action_cooldown_reads_the_gcd_in_one_chunk() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.lua(TICK_DO);
+    rig.lua("TICK_DO = function() UseAction(1) READ = GetActionCooldown(1) end");
+    rig.frame();
+    assert_eq!(
+        rig.casts(),
+        [(BOLT, Some(OLD))],
+        "the cast went out in the call"
+    );
+    let start: f64 = rig.vm().eval("return READ").expect("a start");
+    assert!(start > 0.0, "the read after the call sees the GCD: {start}");
+}
+
+/// `TargetUnit` then the getters in one `OnUpdate`, with no token's snapshot naming the new target:
+/// the getters look the target global's object up (`0x524f38`), so they read it in the call.
+#[test]
+fn target_unit_then_unit_exists_reads_a_unit_no_snapshot_held() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"TICK_DO = function()
+            TargetUnit("party1")
+            READ = { UnitExists("target") and true or false, UnitGUID("target") }
+        end"#,
+    );
+    rig.frame();
+    assert_eq!(rig.selected(), Some(NEW));
+    let (exists, guid): (bool, String) =
+        rig.vm().eval("return READ[1], READ[2]").expect("the reads");
+    assert!(exists, "the new target exists in the call");
+    assert_eq!(guid, format!("0x{NEW:016X}"));
+}
+
+/// The new target `party1` as a named player at 42 health, so its snapshot reads apart from `OLD`'s.
+fn bob_at_42(rig: &mut Rig) {
+    let world = rig.app.world_mut();
+    let entity = world.resource::<GuidIndex>().0[&NEW];
+    world
+        .entity_mut(entity)
+        .insert(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 42),
+            (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+        ])));
+    world
+        .resource_mut::<crate::names::NameCache>()
+        .insert_player(NEW, "Bob".into(), None);
+}
+
+/// `TargetUnit` then the snapshot getters in one `OnUpdate`: the setter's tail writes the new
+/// target's snapshot before it returns (`0x524f38`), so `UnitName` and `UnitHealth` read it in the
+/// call.
+#[test]
+fn target_unit_then_unit_name_reads_the_new_target_in_one_chunk() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    bob_at_42(&mut rig);
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"TICK_DO = function()
+            TargetUnit("party1")
+            READ = { UnitName("target"), UnitHealth("target") }
+        end"#,
+    );
+    rig.frame();
+    assert_eq!(rig.selected(), Some(NEW));
+    let (name, health): (String, i64) =
+        rig.vm().eval("return READ[1], READ[2]").expect("the reads");
+    assert_eq!(
+        (name.as_str(), health),
+        ("Bob", 42),
+        "the new target's snapshot in the call"
+    );
+}
+
+/// A snapshot the setter's tail wrote is diffed by the feed against what the VM holds: the
+/// selection moved back by a path that is not a script's leaves no stale `"target"` behind.
+#[test]
+fn a_target_the_tail_wrote_is_replaced_when_the_selection_moves_back() {
+    let mut rig = rig_or_skip!(&[Step::UnitFeed, Step::Tick]);
+    bob_at_42(&mut rig);
+    rig.lua(TICK_DO);
+    rig.lua(r#"TICK_DO = function() TargetUnit("party1") end"#);
+    rig.frame();
+    let health: i64 = rig
+        .vm()
+        .eval(r#"return UnitHealth("target")"#)
+        .expect("a read");
+    assert_eq!(health, 42, "the tail wrote the new target's snapshot");
+    rig.lua("TICK_DO = nil");
+    let old = rig.app.world().resource::<GuidIndex>().0[&OLD];
+    *rig.app.world_mut().resource_mut::<Selection>() = Selection {
+        target: Some(old),
+        guid: Some(OLD),
+        ..Default::default()
+    };
+    rig.frame();
+    let health: i64 = rig
+        .vm()
+        .eval(r#"return UnitHealth("target")"#)
+        .expect("a read");
+    assert_eq!(
+        health, 100,
+        "the feed pushed the old target's snapshot over the tail's"
+    );
+}
+
+/// The setter fires `PLAYER_TARGET_CHANGED` before it returns (`0x524f54`), after the usable
+/// update (`0x524f48`): a listener runs inside the `TargetUnit` call, once.
+#[test]
+fn target_unit_fires_player_target_changed_inside_the_call() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"ORDER = {}
+        local f = CreateFrame("Frame")
+        f:RegisterEvent("PLAYER_TARGET_CHANGED")
+        f:SetScript("OnEvent", function(self, event)
+            ORDER[#ORDER + 1] = event .. " " .. (UnitGUID("target") or "nil")
+        end)
+        TICK_DO = function()
+            TargetUnit("party1")
+            ORDER[#ORDER + 1] = "returned"
+        end"#,
+    );
+    rig.frame();
+    rig.frame();
+    let order: Vec<String> = rig.vm().eval("return ORDER").expect("the order");
+    assert_eq!(
+        order,
+        [
+            format!("PLAYER_TARGET_CHANGED 0x{NEW:016X}"),
+            "returned".into()
+        ]
+    );
+}
+
+/// A script call a listener makes while a press's raise runs applies inside that listener, nested,
+/// as 12340's verbs re-enter from a `UNIT_SPELLCAST_SENT` listener (`0x80b556`): the select is
+/// read back before the listener returns, and the outer press's cast kept its old target.
+#[test]
+fn a_select_from_a_sent_listener_applies_inside_it() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"local f = CreateFrame("Frame")
+        f:RegisterEvent("UNIT_SPELLCAST_SENT")
+        f:SetScript("OnEvent", function()
+            TargetUnit("party1")
+            SEEN = UnitGUID("target")
+        end)
+        TICK_DO = function() UseAction(1) TICK_DO = nil end"#,
+    );
+    rig.frame();
+    let seen: String = rig.vm().eval("return SEEN").expect("the listener ran");
+    assert_eq!(
+        seen,
+        format!("0x{NEW:016X}"),
+        "the listener's select applied in it"
+    );
+    assert_eq!(rig.selected(), Some(NEW));
+    assert_eq!(rig.casts(), [(BOLT, Some(OLD))]);
+}
+
+/// A listener on `event`, raised by the call `call` makes inside an `OnUpdate`, that targets
+/// `party1` and reads the target back inside the listener: what it read, and the selection after.
+fn listener_selects(rig: &mut Rig, event: &str, call: &str) -> (Option<String>, Option<u64>) {
+    rig.lua(TICK_DO);
+    rig.lua(&format!(
+        r#"local f = CreateFrame("Frame")
+        f:RegisterEvent("{event}")
+        f:SetScript("OnEvent", function()
+            if SEEN then return end
+            TargetUnit("party1")
+            SEEN = UnitGUID("target")
+        end)
+        TICK_DO = function() {call} end"#
+    ));
+    rig.frame();
+    let seen = rig
+        .vm()
+        .eval::<Option<String>>("return SEEN")
+        .ok()
+        .flatten();
+    (seen, rig.selected())
+}
+
+/// The selection's refusal line (`0x525f87` -> `0x5216f0`) raises as `AssistUnit` returns, with no
+/// applier borrow held: its listener's `TargetUnit` applies inside it.
+#[test]
+fn a_select_from_a_refusal_line_listener_applies_inside_it() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.lua(r#"ERR_UNIT_NOT_FOUND = "Unknown unit.""#);
+    let (seen, selected) =
+        listener_selects(&mut rig, "UI_ERROR_MESSAGE", r#"AssistUnit("nobody")"#);
+    assert_eq!(seen, Some(format!("0x{NEW:016X}")));
+    assert_eq!(selected, Some(NEW));
+}
+
+/// The item-use fork's `USE_GLYPH` (`0x5d8ad3`) raises as `UseContainerItem` returns: its
+/// listener's `TargetUnit` applies inside it.
+#[test]
+fn a_select_from_a_use_glyph_listener_applies_inside_it() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.water_in_the_backpack();
+    rig.retemplate(|t| t.class = 16);
+    let (seen, selected) = listener_selects(&mut rig, "USE_GLYPH", "UseContainerItem(0, 1)");
+    assert_eq!(seen, Some(format!("0x{NEW:016X}")));
+    assert_eq!(selected, Some(NEW));
+}
+
+/// A lootable item's lock edge (`0x6dcded` -> `0x706feb`) raises as `UseContainerItem` returns:
+/// its listener's `TargetUnit` applies inside it.
+#[test]
+fn a_select_from_an_item_lock_listener_applies_inside_it() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.water_in_the_backpack();
+    rig.retemplate(|t| t.flags |= benilla_protocol::messages::ITEM_FLAG_LOOTABLE);
+    let (seen, selected) =
+        listener_selects(&mut rig, "ITEM_LOCK_CHANGED", "UseContainerItem(0, 1)");
+    assert_eq!(seen, Some(format!("0x{NEW:016X}")));
+    assert_eq!(selected, Some(NEW));
+}
+
+/// `call` in an `OnUpdate`, with an `ITEM_LOCKED` listener that casts Bolt: the sends since, as
+/// `"cast"`, `"equip"` or `"open"`, the others left out.
+fn sends_around_the_lock(rig: &mut Rig, call: &str) -> Vec<&'static str> {
+    rig.lua(TICK_DO);
+    rig.lua(&format!(
+        r#"local f = CreateFrame("Frame")
+        f:RegisterEvent("ITEM_LOCKED")
+        f:SetScript("OnEvent", function() UseAction(1) end)
+        TICK_DO = function() {call} end"#
+    ));
+    rig.frame();
+    rig.sent()
+        .into_iter()
+        .filter_map(|c| match c {
+            ClientCommand::CastSpell { .. } => Some("cast"),
+            ClientCommand::AutoEquipItemSlot { .. } => Some("equip"),
+            ClientCommand::OpenItem { .. } => Some("open"),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The slotted equip locks and signals before it sends (`0x6e0136` before `0x6e016e`): a send the
+/// lock's listener makes reaches the wire ahead of `CMSG_AUTOEQUIP_ITEM_SLOT`.
+#[test]
+fn a_slotted_equips_lock_listener_sends_before_the_equip() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.water_in_the_backpack();
+    // `EquipItemByName` does nothing without the player (`0x51cdb0`).
+    rig.vm().set_unit_guids(&benilla_ui::script::UnitGuids {
+        player: ME,
+        ..Default::default()
+    });
+    let sends = sends_around_the_lock(&mut rig, "EquipItemByName(159, 16)");
+    assert_eq!(sends, ["cast", "equip"]);
+}
+
+/// The item open locks and signals before it sends (`0x6dcded` before `0x6dce3b`): a send the
+/// lock's listener makes reaches the wire ahead of `CMSG_OPEN_ITEM`.
+#[test]
+fn an_item_opens_lock_listener_sends_before_the_open() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.water_in_the_backpack();
+    rig.retemplate(|t| t.flags |= benilla_protocol::messages::ITEM_FLAG_LOOTABLE);
+    let sends = sends_around_the_lock(&mut rig, "UseContainerItem(0, 1)");
+    assert_eq!(sends, ["cast", "open"]);
+}
+
+/// The bind dialog's accept re-runs the slotted equip (`0x6e01a0`), which locks and signals before
+/// it sends (`0x6e0136` before `0x6e016e`): the lock's listener's send goes out first.
+#[test]
+fn an_accepted_slotted_equips_lock_listener_sends_before_the_equip() {
+    use bevy::ecs::system::RunSystemOnce;
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.water_in_the_backpack();
+    let index = rig
+        .app
+        .world_mut()
+        .resource_mut::<crate::ui_bind_confirm::PendingEquips>()
+        .add(crate::ui_bind_confirm::PendingEquip::Slot {
+            bag: 0,
+            slot: 1,
+            dst: 15,
+        });
+    rig.lua(&format!(
+        r#"local f = CreateFrame("Frame")
+        f:RegisterEvent("ITEM_LOCKED")
+        f:SetScript("OnEvent", function() UseAction(1) end)
+        EquipPendingItem({index})"#
+    ));
+    rig.app
+        .world_mut()
+        .run_system_once(crate::ui_items::drain_bind_confirm_answers)
+        .expect("the answers drain");
+    let sends: Vec<&str> = rig
+        .sent()
+        .into_iter()
+        .filter_map(|c| match c {
+            ClientCommand::CastSpell { .. } => Some("cast"),
+            ClientCommand::AutoEquipItemSlot { .. } => Some("equip"),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sends, ["cast", "equip"]);
+}
+
+/// A call made where no hook is lent waits; the next call made under one applies it first, so the
+/// two keep call order: the cast goes to the target the earlier call selected.
+#[test]
+fn a_queued_call_applies_before_the_in_call_one() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.lua(TICK_DO);
+    rig.lua(r#"TargetUnit("party1")"#);
+    assert_eq!(rig.selected(), Some(OLD), "no hook lent: the call waits");
+    rig.lua(r#"TICK_DO = function() CastSpellByName("Bolt") end"#);
+    rig.frame();
+    assert_eq!(rig.casts(), [(BOLT, Some(NEW))]);
+}
+
+/// A macro's lines each apply their call as the line runs (`0x564e5d`), so a line after `/target`
+/// reads the new target.
+#[test]
+fn a_macro_lines_cast_reads_back_in_the_next_line() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"local f = CreateFrame("Frame")
+        f:RegisterEvent("EXECUTE_CHAT_LINE")
+        f:SetScript("OnEvent", function(self, event, arg1) RunScript(arg1) end)
+        MACRO_INDEX = CreateMacro("probe", 1,
+            'TargetUnit("party1")\nREAD = UnitGUID("target")\nUseAction(1)\nCD = GetActionCooldown(1)')"#,
+    );
+    let index: u32 = rig.vm().eval("return MACRO_INDEX").expect("an index");
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::ui_action::ActionSlots>()
+        .buttons
+        .insert(
+            2,
+            ActionButton {
+                slot: 2,
+                action: index,
+                kind: ACTION_KIND_MACRO,
+            },
+        );
+    rig.lua("TICK_DO = function() UseAction(3) end");
+    rig.frame();
+    let read: String = rig.vm().eval("return READ").expect("a guid");
+    assert_eq!(
+        read,
+        format!("0x{NEW:016X}"),
+        "the line after /target reads it"
+    );
+    let cd: f64 = rig.vm().eval("return CD").expect("a start");
+    assert!(cd > 0.0, "the line after the cast reads its GCD: {cd}");
+    assert_eq!(rig.casts(), [(BOLT, Some(NEW))]);
+}
+
+/// The self-pressing macro below run once, on a thread with `stack` bytes of stack: the depth it
+/// reached, the depth one frame later, and the error the error handler saw.
+fn self_pressing_macro(stack: usize) -> Option<(u32, u32, String)> {
+    std::thread::Builder::new()
+        .stack_size(stack)
+        .spawn(|| {
+            let mut rig = Rig::new(&[Step::Tick])?;
+            rig.lua(TICK_DO);
+            rig.lua(
+                r#"local f = CreateFrame("Frame")
+                f:RegisterEvent("EXECUTE_CHAT_LINE")
+                f:SetScript("OnEvent", function(self, event, arg1) RunScript(arg1) end)
+                seterrorhandler(function(msg) ERR = ERR or tostring(msg) end)
+                DEPTH = 0
+                MACRO_INDEX = CreateMacro("probe", 1, 'DEPTH = DEPTH + 1\nUseAction(3)')"#,
+            );
+            let index: u32 = rig.vm().eval("return MACRO_INDEX").expect("an index");
+            rig.app
+                .world_mut()
+                .resource_mut::<crate::ui_action::ActionSlots>()
+                .buttons
+                .insert(
+                    2,
+                    ActionButton {
+                        slot: 2,
+                        action: index,
+                        kind: ACTION_KIND_MACRO,
+                    },
+                );
+            rig.lua("TICK_DO = function() UseAction(3) end");
+            rig.frame();
+            let depth: u32 = rig.vm().eval("return DEPTH").expect("a depth");
+            rig.frame();
+            let again: u32 = rig.vm().eval("return DEPTH").expect("a depth");
+            let err: String = rig.vm().eval("return ERR or ''").expect("an error");
+            Some((depth, again, err))
+        })
+        .expect("a thread")
+        .join()
+        .expect("no panic")
+}
+
+/// A macro that presses itself recurses as 12340's runner does, which keeps no depth of its own
+/// (`0x564db0` saves and restores the running macro, nothing more): Lua's C-call limit ends it
+/// with its stack error inside the call, on a stack the size of the client's main thread, and the
+/// frame goes on.
+#[test]
+fn a_self_pressing_macro_ends_in_the_lua_stack_error() {
+    let Some((depth, again, err)) = self_pressing_macro(crate::MAIN_THREAD_STACK) else {
+        eprintln!("skipped: this build carries no system names");
+        return;
+    };
+    // Lua 5.1 counts C calls in `nCcalls`; the next line's compile is the first past its limit.
+    assert!(
+        err.ends_with("chunk has too many syntax levels"),
+        "Lua's C-call limit: {err:?}"
+    );
+    assert!(depth > 8, "past the old cap: {depth}");
+    assert_eq!(again, depth, "nothing waits for the next frame");
+}
+
+/// The binary links the main thread's stack the self-pressing macro above runs on.
+#[test]
+fn the_binary_links_the_main_thread_stack() {
+    let build = include_str!("../../../benilla/build.rs");
+    let linked = build
+        .lines()
+        .find_map(|l| l.strip_prefix("const MAIN_THREAD_STACK: usize = "))
+        .and_then(|v| {
+            v.trim_end_matches(';')
+                .replace('_', "")
+                .parse::<usize>()
+                .ok()
+        });
+    assert_eq!(linked, Some(crate::MAIN_THREAD_STACK));
+}
+
+/// `PetAttack` then `IsPetAttackActive` in one `OnUpdate`: the order raises the attacking global
+/// inside the call (`0x5d4509`).
+#[test]
+fn pet_attack_then_is_pet_attack_active_in_one_chunk() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.lua(TICK_DO);
+    rig.lua("TICK_DO = function() PetAttack() READ = IsPetAttackActive() end");
+    rig.frame();
+    let read: bool = rig.vm().eval("return READ == true").expect("a flag");
+    assert!(read, "the attacking global is up before the verb returns");
+}
+
+/// `CastPetAction` then `GetPetActionCooldown` in one `OnUpdate`: the pet's cooldown starts and is
+/// flushed inside the press (`0x5d4427` → `0x805d70`, `0x805eda`).
+#[test]
+fn cast_pet_action_then_get_pet_action_cooldown_in_one_chunk() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.lua(TICK_DO);
+    rig.lua("TICK_DO = function() CastPetAction(1) READ = GetPetActionCooldown(1) end");
+    rig.frame();
+    let start: f64 = rig.vm().eval("return READ").expect("a start");
+    assert!(start > 0.0, "the pet's GCD reads in the same call: {start}");
 }

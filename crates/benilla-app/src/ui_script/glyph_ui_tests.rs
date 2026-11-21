@@ -272,78 +272,80 @@ fn a_shift_right_click_removes_the_glyph_after_the_confirm() {
 /// the matching socket queues the bind, a full or mismatched socket the reference's refusals.
 #[test]
 fn a_targeting_glyph_matches_its_sockets_and_a_click_places_it() {
-    benilla_formats::wow_data_or_skip!();
-    let _l = crate::local_state::test_env::ENV_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let (mut s, _load_failures) =
-        super::layer_tests::production_load_with("glyphs", false, "", |_| {});
-    let _ = s.take_errors();
-    let m = push_model(&mut s);
-    open_glyph_tab(&mut s);
-    let _ = s.take_script_calls();
+    crate::ui_script::test_live::lending(&mut crate::ui_script::test_live::View, || {
+        benilla_formats::wow_data_or_skip!();
+        let _l = crate::local_state::test_env::ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (mut s, _load_failures) =
+            super::layer_tests::production_load_with("glyphs", false, "", |_| {});
+        let _ = s.take_errors();
+        let m = push_model(&mut s);
+        open_glyph_tab(&mut s);
+        let _ = s.take_script_calls();
 
-    let arm = |s: &mut UiScript, glyph: u32| {
-        s.set_spell_targeting(true);
-        s.set_glyph_targeting(Some(GlyphTargeting {
-            glyphs: [Some(glyph), None, None],
-            wants_socket: true,
-        }));
-    };
-    arm(&mut s, m.spare_major);
-    s.run(
-        r#"
+        let arm = |s: &mut UiScript, glyph: u32| {
+            s.set_spell_targeting(true);
+            s.set_glyph_targeting(Some(GlyphTargeting {
+                glyphs: [Some(glyph), None, None],
+                wants_socket: true,
+            }));
+        };
+        arm(&mut s, m.spare_major);
+        s.run(
+            r#"
         assert(SpellCanTargetGlyph() == 1)
         assert(GlyphMatchesSocket(4) == 1, "socket 4 is a major")
         assert(GlyphMatchesSocket(2) == nil, "socket 2 is a minor")
         GlyphFrameGlyph4:Click("LeftButton")
         "#,
-    )
-    .unwrap();
-    assert_eq!(
-        s.take_script_calls(),
-        vec![ScriptCall::PlaceGlyph {
-            socket: 3,
-            verdict: GlyphPlacement::Bind
-        }]
-    );
-    // A minor into a major socket, the inscribed glyph again, a locked socket.
-    arm(&mut s, m.minor);
-    s.run("PlaceGlyphInSocket(6)").unwrap();
-    arm(&mut s, m.major);
-    s.run("PlaceGlyphInSocket(4)").unwrap();
-    s.set_glyph_sockets(GlyphSockets {
-        slots: [21, 22, 23, 24, 25, 26],
-        glyphs: [m.major, 0, 0, 0, 0, 0],
-        enabled: 0x07,
+        )
+        .unwrap();
+        assert_eq!(
+            s.take_script_calls(),
+            vec![ScriptCall::PlaceGlyph {
+                socket: 3,
+                verdict: GlyphPlacement::Bind
+            }]
+        );
+        // A minor into a major socket, the inscribed glyph again, a locked socket.
+        arm(&mut s, m.minor);
+        s.run("PlaceGlyphInSocket(6)").unwrap();
+        arm(&mut s, m.major);
+        s.run("PlaceGlyphInSocket(4)").unwrap();
+        s.set_glyph_sockets(GlyphSockets {
+            slots: [21, 22, 23, 24, 25, 26],
+            glyphs: [m.major, 0, 0, 0, 0, 0],
+            enabled: 0x07,
+        });
+        arm(&mut s, m.spare_major);
+        s.run("PlaceGlyphInSocket(6)").unwrap();
+        let verdicts: Vec<_> = s
+            .take_script_calls()
+            .into_iter()
+            .filter_map(|c| match c {
+                ScriptCall::PlaceGlyph { socket, verdict } => Some((socket, verdict)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            verdicts,
+            [
+                (
+                    5,
+                    GlyphPlacement::Fail(benilla_ui::script::GLYPH_FAILED_INVALID)
+                ),
+                (
+                    3,
+                    GlyphPlacement::Fail(benilla_ui::script::GLYPH_FAILED_UNIQUE)
+                ),
+                (
+                    5,
+                    GlyphPlacement::Fail(benilla_ui::script::GLYPH_FAILED_LOCKED)
+                ),
+            ]
+        );
+        let errors = glyph_errors(s.take_errors());
+        assert!(errors.is_empty(), "glyph window errors: {errors:#?}");
     });
-    arm(&mut s, m.spare_major);
-    s.run("PlaceGlyphInSocket(6)").unwrap();
-    let verdicts: Vec<_> = s
-        .take_script_calls()
-        .into_iter()
-        .filter_map(|c| match c {
-            ScriptCall::PlaceGlyph { socket, verdict } => Some((socket, verdict)),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(
-        verdicts,
-        [
-            (
-                5,
-                GlyphPlacement::Fail(benilla_ui::script::GLYPH_FAILED_INVALID)
-            ),
-            (
-                3,
-                GlyphPlacement::Fail(benilla_ui::script::GLYPH_FAILED_UNIQUE)
-            ),
-            (
-                5,
-                GlyphPlacement::Fail(benilla_ui::script::GLYPH_FAILED_LOCKED)
-            ),
-        ]
-    );
-    let errors = glyph_errors(s.take_errors());
-    assert!(errors.is_empty(), "glyph window errors: {errors:#?}");
 }

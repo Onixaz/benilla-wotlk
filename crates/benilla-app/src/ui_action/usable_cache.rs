@@ -21,7 +21,6 @@ use benilla_ui::script::ScriptValue;
 use crate::items::Items;
 use crate::net::{NetCommands, ObjectStore, Objects, SelfPlayer};
 use crate::spell::{usable, Cooldowns};
-use crate::ui_script::{LentRef, OwnedMut};
 
 use super::{PlayerActions, Spells};
 
@@ -180,17 +179,17 @@ pub(crate) fn reactive_spells(
 #[derive(SystemParam)]
 pub(crate) struct UsableInputs<'w, 's> {
     spells: Option<Res<'w, Spells>>,
-    actions: LentRef<'w, PlayerActions>,
-    slots: LentRef<'w, crate::ui_action::ActionSlots>,
-    bound: LentRef<'w, crate::ui_macro::MacroBoundSpells>,
-    pet_bar: LentRef<'w, crate::ui_pet::PetBar>,
-    cooldowns: LentRef<'w, Cooldowns>,
-    selection: LentRef<'w, crate::target::Selection>,
+    actions: Option<Res<'w, PlayerActions>>,
+    slots: Option<Res<'w, crate::ui_action::ActionSlots>>,
+    bound: Option<Res<'w, crate::ui_macro::MacroBoundSpells>>,
+    pet_bar: Option<Res<'w, crate::ui_pet::PetBar>>,
+    cooldowns: Option<Res<'w, Cooldowns>>,
+    selection: Option<Res<'w, crate::target::Selection>>,
     me: Query<'w, 's, (Entity, &'static ObjectStore), With<SelfPlayer>>,
     stores: Query<'w, 's, &'static ObjectStore>,
     objects: Objects<'w, 's>,
     auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
-    place: LentRef<'w, crate::area::PlayerPlace>,
+    place: Option<Res<'w, crate::area::PlayerPlace>>,
     world: UsableWorld<'w>,
     tables: UsableTables<'w>,
 }
@@ -360,26 +359,26 @@ impl<'a, 'w, 's> Sources<'a, 'w, 's> {
 impl UsableInputs<'_, '_> {
     /// `f` over the reads, `None` without the tables a walk needs.
     fn with_reads<R>(&self, f: impl FnOnce(&Reads<'_, '_, '_>) -> R) -> Option<R> {
-        let actions = self.actions.get()?;
-        let slots = self.slots.get()?;
-        let cooldowns = self.cooldowns.get()?;
-        let pet_bar = self.pet_bar.get();
-        let bound = self.bound.get();
-        let place = self.place.get();
+        let actions = self.actions.as_deref()?;
+        let slots = self.slots.as_deref()?;
+        let cooldowns = self.cooldowns.as_deref()?;
+        let pet_bar = self.pet_bar.as_deref();
+        let bound = self.bound.as_deref();
+        let place = self.place.as_deref();
         let t = &self.tables;
         let reads = Sources {
             spells: self.spells.as_deref(),
-            actions: Some(&actions),
-            slots: Some(&slots),
-            bound: bound.as_deref(),
-            pet_bar: pet_bar.as_deref(),
-            cooldowns: Some(&cooldowns),
+            actions: Some(actions),
+            slots: Some(slots),
+            bound,
+            pet_bar,
+            cooldowns: Some(cooldowns),
             me: self.me.iter().next(),
-            target_guid: self.selection.get().and_then(|s| s.guid).unwrap_or(0),
+            target_guid: self.selection.as_deref().and_then(|s| s.guid).unwrap_or(0),
             stores: &self.stores,
             objects: &self.objects,
             auras: &self.auras,
-            place: place.as_deref(),
+            place,
             world: &self.world,
             factions: t.factions.as_deref(),
             reputations: t.reputations.as_deref(),
@@ -754,14 +753,14 @@ pub(crate) fn run(
 /// Run `pass` and write what it leaves; the events it signals, in order.
 pub(crate) fn run_into(
     inputs: &UsableInputs,
-    caches: &mut OwnedMut<UsableCaches>,
+    caches: &mut ResMut<UsableCaches>,
     pass: Pass,
 ) -> Vec<UsableEvent> {
-    let result = run(inputs, &caches.read(), pass);
+    let result = run(inputs, caches.as_ref(), pass);
     let Some((fresh, events)) = result else {
         return Vec::new();
     };
-    *caches.write() = fresh;
+    *caches.as_mut() = fresh;
     events
 }
 
@@ -769,19 +768,24 @@ pub(crate) fn run_into(
 #[derive(SystemParam)]
 pub(crate) struct UsableRun<'w, 's> {
     inputs: UsableInputs<'w, 's>,
-    caches: OwnedMut<'w, UsableCaches>,
+    caches: ResMut<'w, UsableCaches>,
 }
 
 impl UsableRun<'_, '_> {
     /// Whether the stance bar lists a form, for the cooldown signals (`0x53bac5`).
     pub(crate) fn lists_forms(&self) -> bool {
-        self.caches.read().lists_forms()
+        self.caches.lists_forms()
     }
 
     /// Run `pass` and fire what it signals into `script`, in order.
     pub(crate) fn fire(&mut self, script: &mut benilla_ui::script::UiScript, pass: Pass) {
-        let events = run_into(&self.inputs, &mut self.caches, pass);
+        let events = self.run(pass);
         fire_into(script, events);
+    }
+
+    /// Run `pass`: what it signals, in order, for a caller that fires with no borrow held.
+    pub(crate) fn run(&mut self, pass: Pass) -> Vec<UsableEvent> {
+        run_into(&self.inputs, &mut self.caches, pass)
     }
 }
 
@@ -806,7 +810,7 @@ pub(crate) fn step(pass: Pass) -> impl FnOnce(&mut World) + Send + Sync + 'stati
 fn run_step(
     In(pass): In<Pass>,
     inputs: UsableInputs,
-    mut caches: OwnedMut<UsableCaches>,
+    mut caches: ResMut<UsableCaches>,
     mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     let events = run_into(&inputs, &mut caches, pass);
@@ -884,10 +888,10 @@ pub(crate) fn edit_step(edit: ListEdit) -> impl FnOnce(&mut World) + Send + Sync
 fn run_edit(
     In(edit): In<ListEdit>,
     inputs: UsableInputs,
-    mut caches: OwnedMut<UsableCaches>,
+    mut caches: ResMut<UsableCaches>,
     mut signals: NonSendMut<crate::ui_script::live::UniqueSignals>,
 ) {
-    let mut fresh = caches.read().clone();
+    let mut fresh = caches.clone();
     let signal = inputs
         .with_reads(|r| apply_edit(r, &mut fresh, edit))
         .unwrap_or_else(|| {
@@ -898,7 +902,7 @@ fn run_edit(
             }
             false
         });
-    *caches.write() = fresh;
+    *caches.as_mut() = fresh;
     if signal {
         signals.unique_signal("UPDATE_SHAPESHIFT_FORMS");
     }

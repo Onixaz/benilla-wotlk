@@ -340,11 +340,6 @@ impl GossipView<'_, '_> {
         self.gossip.as_deref().and_then(|g| g.npc)
     }
 
-    /// The globals, read by a system between its calls into Lua.
-    pub(crate) fn state(&self) -> Option<&GossipState> {
-        self.gossip.as_deref()
-    }
-
     /// The globals at the call.
     pub(crate) fn read(&self) -> Option<GossipRead<'_>> {
         let g = self.gossip.as_deref()?;

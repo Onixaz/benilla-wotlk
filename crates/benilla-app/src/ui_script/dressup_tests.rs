@@ -75,39 +75,41 @@ fn load_room_with_bags(s: &UiScript) {
 /// (`PaperDollFrame.lua:100-104`).
 fn shown_paper_doll() -> UiScript {
     let mut s = UiScript::new().unwrap();
-    s.record_writes();
-    s.set_screen_size(1024.0, 768.0);
-    for file in crate::ui_script::test_ui::production_order(&[
-        CHARACTER_UI,
-        &[
-            "Interface\\FrameXML\\GlobalStrings.lua",
-            "Interface\\FrameXML\\BasicControls.xml",
-            "Interface\\FrameXML\\LocaleProperties.lua",
-            r"Interface\FrameXML\UIParent.xml",
-            "Interface\\FrameXML\\UIMenu.xml",
-            "Interface\\FrameXML\\UIDropDownMenu.xml",
-            "Interface\\FrameXML\\UIPanelTemplates.lua",
-            "Interface\\FrameXML\\UIPanelTemplates.xml",
-            "Interface\\FrameXML\\ChatFrame.xml",
-            "Interface\\FrameXML\\FloatingChatFrame.xml",
-            // After the panel kit its buttons inherit from.
-            "Interface\\FrameXML\\DressUpFrame.xml",
-        ],
-    ]) {
-        super::test_ui::load_ui_strict(&s, file);
-    }
-    s.set_unit(
-        "player",
-        Some(UnitState {
-            exists: true,
-            level: 60,
-            race: Some("Human".into()),
-            race_file: Some("Human".into()),
-            class: Some("Warrior".into()),
-            class_file: Some("WARRIOR".into()),
-            ..UnitState::default()
-        }),
-    );
+    let mut writes_v = crate::ui_script::test_live::View;
+    crate::ui_script::test_live::lending(&mut writes_v, || {
+        s.set_screen_size(1024.0, 768.0);
+        for file in crate::ui_script::test_ui::production_order(&[
+            CHARACTER_UI,
+            &[
+                "Interface\\FrameXML\\GlobalStrings.lua",
+                "Interface\\FrameXML\\BasicControls.xml",
+                "Interface\\FrameXML\\LocaleProperties.lua",
+                r"Interface\FrameXML\UIParent.xml",
+                "Interface\\FrameXML\\UIMenu.xml",
+                "Interface\\FrameXML\\UIDropDownMenu.xml",
+                "Interface\\FrameXML\\UIPanelTemplates.lua",
+                "Interface\\FrameXML\\UIPanelTemplates.xml",
+                "Interface\\FrameXML\\ChatFrame.xml",
+                "Interface\\FrameXML\\FloatingChatFrame.xml",
+                // After the panel kit its buttons inherit from.
+                "Interface\\FrameXML\\DressUpFrame.xml",
+            ],
+        ]) {
+            super::test_ui::load_ui_strict(&s, file);
+        }
+        s.set_unit(
+            "player",
+            Some(UnitState {
+                exists: true,
+                level: 60,
+                race: Some("Human".into()),
+                race_file: Some("Human".into()),
+                class: Some("Warrior".into()),
+                class_file: Some("WARRIOR".into()),
+                ..UnitState::default()
+            }),
+        );
+    });
     s
 }
 
@@ -150,31 +152,33 @@ fn backpack_with_jerky(s: &mut UiScript) -> String {
 fn ctrl_click_on_a_bag_item_opens_the_room_wearing_it() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
-    s.record_writes();
-    s.set_screen_size(1024.0, 768.0);
-    load_room_with_bags(&s);
-    let btn = backpack_with_jerky(&mut s);
-    assert!(!s.eval::<bool>("return DressUpFrame:IsVisible()").unwrap());
+    let mut writes_v = crate::ui_script::test_live::View;
+    crate::ui_script::test_live::lending(&mut writes_v, || {
+        s.set_screen_size(1024.0, 768.0);
+        load_room_with_bags(&s);
+        let btn = backpack_with_jerky(&mut s);
+        assert!(!s.eval::<bool>("return DressUpFrame:IsVisible()").unwrap());
 
-    // Modifiers go in before the click, as the app's input pass sends them.
-    s.set_modifiers(false, true, false);
-    click(&mut s, &btn, "LeftButton");
-    s.set_modifiers(false, false, false);
+        // Modifiers go in before the click, as the app's input pass sends them.
+        s.set_modifiers(false, true, false);
+        click(&mut s, &btn, "LeftButton");
+        s.set_modifiers(false, false, false);
 
-    assert!(
-        s.eval::<bool>("return DressUpFrame:IsVisible()").unwrap(),
-        "ctrl-click opened the dressing room"
-    );
-    assert_eq!(
-        s.take_dressup_edits(),
-        vec![DressUpIntent::Dress, DressUpIntent::TryOn(117, [0; 4])],
-        "re-dress first, then try the clicked item on"
-    );
-    assert!(
-        s.cursor_item().is_none(),
-        "the ctrl fork never picks the item up"
-    );
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+        assert!(
+            s.eval::<bool>("return DressUpFrame:IsVisible()").unwrap(),
+            "ctrl-click opened the dressing room"
+        );
+        assert_eq!(
+            s.take_dressup_edits(),
+            vec![DressUpIntent::Dress, DressUpIntent::TryOn(117, [0; 4])],
+            "re-dress first, then try the clicked item on"
+        );
+        assert!(
+            s.cursor_item().is_none(),
+            "the ctrl fork never picks the item up"
+        );
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    });
 }
 
 /// Stock shift arm (`ContainerFrame.lua:567-578`): the link with chat open, else the stack
@@ -184,39 +188,41 @@ fn ctrl_click_on_a_bag_item_opens_the_room_wearing_it() {
 fn shift_click_posts_the_link_with_chat_open_and_splits_with_it_closed() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
-    s.record_writes();
-    s.set_screen_size(1024.0, 768.0);
-    load_room_with_bags(&s);
-    let btn = backpack_with_jerky(&mut s);
+    let mut writes_v = crate::ui_script::test_live::View;
+    crate::ui_script::test_live::lending(&mut writes_v, || {
+        s.set_screen_size(1024.0, 768.0);
+        load_room_with_bags(&s);
+        let btn = backpack_with_jerky(&mut s);
 
-    s.set_modifiers(true, false, false);
-    click(&mut s, &btn, "LeftButton");
-    s.set_modifiers(false, false, false);
-    assert!(
-        s.eval::<bool>("return StackSplitFrame:IsShown()").unwrap(),
-        "with chat closed, shift-click still opens the stack splitter"
-    );
-    s.run("StackSplitFrame:Hide()").unwrap();
+        s.set_modifiers(true, false, false);
+        click(&mut s, &btn, "LeftButton");
+        s.set_modifiers(false, false, false);
+        assert!(
+            s.eval::<bool>("return StackSplitFrame:IsShown()").unwrap(),
+            "with chat closed, shift-click still opens the stack splitter"
+        );
+        s.run("StackSplitFrame:Hide()").unwrap();
 
-    assert!(s.focus_editbox("ChatFrameEditBox"));
-    s.set_modifiers(true, false, false);
-    click(&mut s, &btn, "LeftButton");
-    s.set_modifiers(false, false, false);
-    assert_eq!(
-        s.eval::<String>("return ChatFrameEditBox:GetText()")
-            .unwrap(),
-        JERKY_LINK,
-        "the item's full escaped link landed in the chat box"
-    );
-    assert!(
-        !s.eval::<bool>("return StackSplitFrame:IsShown()").unwrap(),
-        "with chat open the splitter must NOT open"
-    );
-    assert!(
-        s.cursor_item().is_none(),
-        "neither shift fork picks the stack up"
-    );
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+        assert!(s.focus_editbox("ChatFrameEditBox"));
+        s.set_modifiers(true, false, false);
+        click(&mut s, &btn, "LeftButton");
+        s.set_modifiers(false, false, false);
+        assert_eq!(
+            s.eval::<String>("return ChatFrameEditBox:GetText()")
+                .unwrap(),
+            JERKY_LINK,
+            "the item's full escaped link landed in the chat box"
+        );
+        assert!(
+            !s.eval::<bool>("return StackSplitFrame:IsShown()").unwrap(),
+            "with chat open the splitter must NOT open"
+        );
+        assert!(
+            s.cursor_item().is_none(),
+            "neither shift fork picks the stack up"
+        );
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    });
 }
 
 /// Stock `SetItemRef`, which a chat frame's `OnHyperlinkClick` calls: ctrl previews the item
@@ -226,27 +232,29 @@ fn shift_click_posts_the_link_with_chat_open_and_splits_with_it_closed() {
 fn ctrl_clicking_a_chat_link_previews_it() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
-    s.record_writes();
-    s.set_screen_size(1024.0, 768.0);
-    load_room(&s);
+    let mut writes_v = crate::ui_script::test_live::View;
+    crate::ui_script::test_live::lending(&mut writes_v, || {
+        s.set_screen_size(1024.0, 768.0);
+        load_room(&s);
 
-    s.set_modifiers(false, true, false);
-    s.run(&format!(
-        "SetItemRef(\"item:117\", \"{JERKY_LINK}\", \"LeftButton\")"
-    ))
-    .unwrap();
-    s.set_modifiers(false, false, false);
+        s.set_modifiers(false, true, false);
+        s.run(&format!(
+            "SetItemRef(\"item:117\", \"{JERKY_LINK}\", \"LeftButton\")"
+        ))
+        .unwrap();
+        s.set_modifiers(false, false, false);
 
-    assert_eq!(
-        s.take_dressup_edits(),
-        vec![DressUpIntent::Dress, DressUpIntent::TryOn(117, [0; 4])],
-        "a chat link's id reached TryOn through DressUpItemLink's own gsub"
-    );
-    assert!(
-        s.eval::<bool>("return DressUpFrame:IsVisible()").unwrap(),
-        "and the room opened"
-    );
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+        assert_eq!(
+            s.take_dressup_edits(),
+            vec![DressUpIntent::Dress, DressUpIntent::TryOn(117, [0; 4])],
+            "a chat link's id reached TryOn through DressUpItemLink's own gsub"
+        );
+        assert!(
+            s.eval::<bool>("return DressUpFrame:IsVisible()").unwrap(),
+            "and the room opened"
+        );
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    });
 }
 
 /// Stock `PaperDollItemSlotButton_OnClick` (`PaperDollFrame.lua:647-662`) reads
@@ -256,49 +264,52 @@ fn ctrl_clicking_a_chat_link_previews_it() {
 fn the_paper_doll_slots_preview_and_post_what_you_wear() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = shown_paper_doll();
-    let mut slots = InventorySlots::default();
-    slots[1] = Some(InvSlotView {
-        item_id: 1234,
-        icon: Some("Interface\\Icons\\INV_Helmet_01".into()),
-        count: 1,
-        quality: 2,
-        name: Some("Test Helm".into()),
-        link: Some("|cff1eff00|Hitem:1234:0:0:0|h[Test Helm]|h|r".into()),
-        equip_slots: vec![1],
-        ..Default::default()
+    let mut writes_v = crate::ui_script::test_live::View;
+    crate::ui_script::test_live::lending(&mut writes_v, || {
+        let mut slots = InventorySlots::default();
+        slots[1] = Some(InvSlotView {
+            item_id: 1234,
+            icon: Some("Interface\\Icons\\INV_Helmet_01".into()),
+            count: 1,
+            quality: 2,
+            name: Some("Test Helm".into()),
+            link: Some("|cff1eff00|Hitem:1234:0:0:0|h[Test Helm]|h|r".into()),
+            equip_slots: vec![1],
+            ..Default::default()
+        });
+        s.set_inventory_slots(slots);
+        assert_eq!(
+            s.eval::<String>("return GetInventoryItemLink(\"player\", 1)")
+                .unwrap(),
+            "|cff1eff00|Hitem:1234:0:0:0|h[Test Helm]|h|r"
+        );
+        s.run(r#"ToggleCharacter("PaperDollFrame")"#).unwrap();
+        let _ = s.take_dressup_edits();
+        s.resolve();
+
+        s.set_modifiers(false, true, false);
+        click(&mut s, "CharacterHeadSlot", "LeftButton");
+        s.set_modifiers(false, false, false);
+        assert_eq!(
+            s.take_dressup_edits(),
+            vec![DressUpIntent::Dress, DressUpIntent::TryOn(1234, [0; 4])]
+        );
+
+        assert!(s.focus_editbox("ChatFrameEditBox"));
+        s.set_modifiers(true, false, false);
+        click(&mut s, "CharacterHeadSlot", "LeftButton");
+        s.set_modifiers(false, false, false);
+        assert_eq!(
+            s.eval::<String>("return ChatFrameEditBox:GetText()")
+                .unwrap(),
+            "|cff1eff00|Hitem:1234:0:0:0|h[Test Helm]|h|r"
+        );
+        assert!(
+            s.cursor_item().is_none(),
+            "a modified doll click never picks the worn item up"
+        );
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     });
-    s.set_inventory_slots(slots);
-    assert_eq!(
-        s.eval::<String>("return GetInventoryItemLink(\"player\", 1)")
-            .unwrap(),
-        "|cff1eff00|Hitem:1234:0:0:0|h[Test Helm]|h|r"
-    );
-    s.run(r#"ToggleCharacter("PaperDollFrame")"#).unwrap();
-    let _ = s.take_dressup_edits();
-    s.resolve();
-
-    s.set_modifiers(false, true, false);
-    click(&mut s, "CharacterHeadSlot", "LeftButton");
-    s.set_modifiers(false, false, false);
-    assert_eq!(
-        s.take_dressup_edits(),
-        vec![DressUpIntent::Dress, DressUpIntent::TryOn(1234, [0; 4])]
-    );
-
-    assert!(s.focus_editbox("ChatFrameEditBox"));
-    s.set_modifiers(true, false, false);
-    click(&mut s, "CharacterHeadSlot", "LeftButton");
-    s.set_modifiers(false, false, false);
-    assert_eq!(
-        s.eval::<String>("return ChatFrameEditBox:GetText()")
-            .unwrap(),
-        "|cff1eff00|Hitem:1234:0:0:0|h[Test Helm]|h|r"
-    );
-    assert!(
-        s.cursor_item().is_none(),
-        "a modified doll click never picks the worn item up"
-    );
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
 /// An unresolved item has no link, which stock `PaperDollFrame.lua:653` inserts unguarded:
@@ -308,39 +319,42 @@ fn the_paper_doll_slots_preview_and_post_what_you_wear() {
 fn shift_clicking_an_unresolved_slot_posts_nothing_and_never_raises() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = shown_paper_doll();
-    // Occupied but unresolved: an item id with no name or quality, so no link.
-    let mut slots = InventorySlots::default();
-    slots[1] = Some(InvSlotView {
-        item_id: 1234,
-        count: 1,
-        ..Default::default()
+    let mut writes_v = crate::ui_script::test_live::View;
+    crate::ui_script::test_live::lending(&mut writes_v, || {
+        // Occupied but unresolved: an item id with no name or quality, so no link.
+        let mut slots = InventorySlots::default();
+        slots[1] = Some(InvSlotView {
+            item_id: 1234,
+            count: 1,
+            ..Default::default()
+        });
+        s.set_inventory_slots(slots);
+        s.run(r#"ToggleCharacter("PaperDollFrame")"#).unwrap();
+        let _ = s.take_dressup_edits();
+        s.resolve();
+        assert!(s.focus_editbox("ChatFrameEditBox"));
+
+        s.set_modifiers(true, false, false);
+        click(&mut s, "CharacterHeadSlot", "LeftButton");
+        s.set_modifiers(false, false, false);
+        assert_eq!(
+            s.eval::<String>("return ChatFrameEditBox:GetText()")
+                .unwrap(),
+            "",
+            "nothing posts while the template is in flight"
+        );
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+
+        // Ctrl is inert too: `DressUpItemLink` returns on a nil link (`DressUpFrame.lua:11-13`).
+        s.set_modifiers(false, true, false);
+        click(&mut s, "CharacterHeadSlot", "LeftButton");
+        s.set_modifiers(false, false, false);
+        assert!(
+            s.take_dressup_edits().is_empty(),
+            "no try-on for an item we cannot even name yet"
+        );
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     });
-    s.set_inventory_slots(slots);
-    s.run(r#"ToggleCharacter("PaperDollFrame")"#).unwrap();
-    let _ = s.take_dressup_edits();
-    s.resolve();
-    assert!(s.focus_editbox("ChatFrameEditBox"));
-
-    s.set_modifiers(true, false, false);
-    click(&mut s, "CharacterHeadSlot", "LeftButton");
-    s.set_modifiers(false, false, false);
-    assert_eq!(
-        s.eval::<String>("return ChatFrameEditBox:GetText()")
-            .unwrap(),
-        "",
-        "nothing posts while the template is in flight"
-    );
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
-
-    // Ctrl is inert too: `DressUpItemLink` returns on a nil link (`DressUpFrame.lua:11-13`).
-    s.set_modifiers(false, true, false);
-    click(&mut s, "CharacterHeadSlot", "LeftButton");
-    s.set_modifiers(false, false, false);
-    assert!(
-        s.take_dressup_edits().is_empty(),
-        "no try-on for an item we cannot even name yet"
-    );
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
 /// The rotate buttons step 0.03 per `OnClick` (`UIParent.lua:1428`) and register both mouse edges
@@ -350,52 +364,54 @@ fn shift_clicking_an_unresolved_slot_posts_nothing_and_never_raises() {
 fn reset_re_dresses_hiding_edits_nothing_and_the_arrows_spin_the_pane() {
     benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
-    s.record_writes();
-    s.set_screen_size(1024.0, 768.0);
-    load_room(&s);
-    s.run("ShowUIPanel(DressUpFrame)").unwrap();
-    let _ = s.take_sounds();
-    let _ = s.take_dressup_edits();
-    s.resolve();
+    let mut writes_v = crate::ui_script::test_live::View;
+    crate::ui_script::test_live::lending(&mut writes_v, || {
+        s.set_screen_size(1024.0, 768.0);
+        load_room(&s);
+        s.run("ShowUIPanel(DressUpFrame)").unwrap();
+        let _ = s.take_sounds();
+        let _ = s.take_dressup_edits();
+        s.resolve();
 
-    // `Model_OnLoad` seeds the default facing.
-    assert!(
-        (s.model_pane_facing("DressUpModel") - 0.61).abs() < 1e-6,
-        "ref UIParent.lua:1422"
-    );
+        // `Model_OnLoad` seeds the default facing.
+        assert!(
+            (s.model_pane_facing("DressUpModel") - 0.61).abs() < 1e-6,
+            "ref UIParent.lua:1422"
+        );
 
-    s.run("DressUpFrameResetButton:Click()").unwrap();
-    assert_eq!(s.take_dressup_edits(), vec![DressUpIntent::Dress]);
-    assert_eq!(
-        s.take_sounds(),
-        vec![SoundRequest::KitName("gsTitleOptionOK".into())],
-        "Reset plays the ref's own kit"
-    );
+        s.run("DressUpFrameResetButton:Click()").unwrap();
+        assert_eq!(s.take_dressup_edits(), vec![DressUpIntent::Dress]);
+        assert_eq!(
+            s.take_sounds(),
+            vec![SoundRequest::KitName("gsTitleOptionOK".into())],
+            "Reset plays the ref's own kit"
+        );
 
-    let before = s.model_pane_facing("DressUpModel");
-    let (x, y) = s
-        .eval::<(f32, f32)>(
-            "return (DressUpModelRotateLeftButton:GetLeft() \
+        let before = s.model_pane_facing("DressUpModel");
+        let (x, y) = s
+            .eval::<(f32, f32)>(
+                "return (DressUpModelRotateLeftButton:GetLeft() \
                      + DressUpModelRotateLeftButton:GetRight()) / 2, \
                     (DressUpModelRotateLeftButton:GetTop() \
                      + DressUpModelRotateLeftButton:GetBottom()) / 2",
-        )
-        .unwrap();
-    s.mouse_button(x, y, "LeftButton", true);
-    s.mouse_button(x, y, "LeftButton", false);
-    assert!(
-        (s.model_pane_facing("DressUpModel") - (before - 0.06)).abs() < 1e-5,
-        "a tap fires OnClick twice: {} → {}",
-        before,
-        s.model_pane_facing("DressUpModel")
-    );
+            )
+            .unwrap();
+        s.mouse_button(x, y, "LeftButton", true);
+        s.mouse_button(x, y, "LeftButton", false);
+        assert!(
+            (s.model_pane_facing("DressUpModel") - (before - 0.06)).abs() < 1e-5,
+            "a tap fires OnClick twice: {} → {}",
+            before,
+            s.model_pane_facing("DressUpModel")
+        );
 
-    s.run("HideUIPanel(DressUpFrame)").unwrap();
-    // The pane keeps its model while hidden and the booth draws none; the stock `OnHide` edits nothing.
-    assert!(
-        s.shown_model_pane("DressUpModel").is_none(),
-        "the room is hidden"
-    );
-    assert!(s.take_dressup_edits().is_empty());
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+        s.run("HideUIPanel(DressUpFrame)").unwrap();
+        // The pane keeps its model while hidden and the booth draws none; the stock `OnHide` edits nothing.
+        assert!(
+            s.shown_model_pane("DressUpModel").is_none(),
+            "the room is hidden"
+        );
+        assert!(s.take_dressup_edits().is_empty());
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    });
 }

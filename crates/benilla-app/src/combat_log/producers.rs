@@ -90,7 +90,6 @@ pub(crate) struct LogCtx<'w, 's> {
     reputations: Res<'w, Reputations>,
     selection: Option<Res<'w, crate::target::Selection>>,
     script: Option<NonSend<'w, UiScript>>,
-    _live: crate::ui_script::LendLive<'w, 's>,
     spell_mods: Option<Res<'w, crate::spell::SpellModifiers>>,
     enchants: Option<Res<'w, crate::items::Enchants>>,
     objects: Option<Res<'w, crate::go_templates::GameObjectTemplates>>,

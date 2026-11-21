@@ -218,6 +218,7 @@ fn quest_call(
             model.units_by_lower.remove("questnpc");
         }
     }
+    super::calls::apply_queued(lua);
     if out.finished {
         super::tick::fire_event_into(lua, "QUEST_FINISHED", Vec::new());
     }

@@ -157,7 +157,7 @@ pub(crate) fn plugin(app: &mut App) {
     app.add_systems(
         Update,
         step_difficulty_objects
-            .after(crate::ui_party::drain_party)
+            .after(crate::ui_party::PartyDrain)
             .in_set(WorldStage::Present),
     );
 }

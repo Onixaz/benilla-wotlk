@@ -34,7 +34,7 @@ pub(super) struct FedGuild {
 
 /// Build the display snapshot, push it, and fire the guild events on their edges.
 pub(super) fn feed_guild(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut guild: ResMut<GuildState>,
     cache: Res<super::GuildCache>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
@@ -43,7 +43,7 @@ pub(super) fn feed_guild(
     mut sink: crate::ui_action::MessageSink,
     mut fed: Local<crate::ui_script::VmMemo<FedGuild>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let fed = fed.get(&script);
@@ -301,12 +301,12 @@ pub(super) fn index_of(order: &[u64], guid: u64) -> u32 {
 /// Turn the Lua guild intents into their sends. The note verbs carry a 1-based display row where
 /// the wire wants a name; select, sort and show-offline are local and send nothing.
 pub(super) fn drain_guild(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut guild: ResMut<GuildState>,
     commands: Res<NetCommands>,
     time: Res<Time<Real>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let requests = script.take_guild_requests();

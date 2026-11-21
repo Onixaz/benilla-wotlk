@@ -1688,9 +1688,12 @@ fn scripted_pick(mgr: &mut GlueMgr, script: &mut UiScript) {
         "CharacterSelect_SelectCharacter({}) CharacterSelect_EnterWorld()",
         row + 1
     );
-    if let Err(e) = script.run(&chunk) {
-        warn!("glue: the scripted pick raised: {e}");
-    }
+    // The clicks run at the raise step after the manager, with the `World` lent.
+    benilla_ui::script::world_loan::in_turn_or_now(script, move |s| {
+        if let Err(e) = s.run(&chunk) {
+            warn!("glue: the scripted pick raised: {e}");
+        }
+    });
 }
 
 /// What `EnterWorld` did ([`GlueMgr::enter_world`]).
@@ -1719,7 +1722,7 @@ fn notice_cvar(notice: GlueNotice) -> &'static str {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn drive_glue_mgr(
     mut mgr: ResMut<GlueMgr>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut vm: crate::ui_script::InTurn,
     mut news: LoginNews,
     mut asks: GlueAsks,
     realms: Option<Res<crate::realm_select::Realms>>,
@@ -1734,7 +1737,7 @@ pub(crate) fn drive_glue_mgr(
     time: Res<Time>,
 ) {
     let now_ms = time.elapsed().as_millis() as u32;
-    let mut script = script.filter(|s| s.vm_kind() == VmKind::Glue);
+    let mut script = vm.turn().filter(|s| s.vm_kind() == VmKind::Glue);
     let in_world = state.is_some_and(|s| *s.get() == crate::char_select::ClientState::InWorld);
     let glue_up = script.is_some() && !in_world;
 

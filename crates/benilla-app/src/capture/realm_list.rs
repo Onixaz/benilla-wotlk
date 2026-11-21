@@ -35,29 +35,25 @@ fn fixture() -> Vec<RealmInfo> {
 }
 
 /// Ask for the list on the stock screen once the glue VM stands, then answer it.
-pub(super) fn seed_realm_list(
-    ctx: Res<CaptureCtx>,
-    mut step: Local<u8>,
-    mut lists: MessageWriter<crate::net::RealmListMessage>,
-    (script, _live): (
-        Option<NonSend<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
-) {
-    if ctx.name != NAME {
+pub(super) fn seed_realm_list(world: &mut World, mut step: Local<u8>) {
+    if world.resource::<CaptureCtx>().name != NAME {
         return;
     }
     match *step {
         0 => {
-            let Some(s) = super::glue_press::glue(script.as_deref()) else {
+            let asked = crate::ui_script::safe_world::lend(world, |s| {
+                let s = super::glue_press::glue(Some(s))?;
+                if let Err(e) = s.run("RequestRealmList(1)") {
+                    warn!("glue-realmlist: RequestRealmList raised: {e}");
+                }
+                Some(())
+            });
+            if asked.flatten().is_none() {
                 return;
-            };
-            if let Err(e) = s.run("RequestRealmList(1)") {
-                warn!("glue-realmlist: RequestRealmList raised: {e}");
             }
         }
         2 => {
-            lists.write(crate::net::RealmListMessage {
+            world.write_message(crate::net::RealmListMessage {
                 realms: fixture(),
                 failed: false,
             });

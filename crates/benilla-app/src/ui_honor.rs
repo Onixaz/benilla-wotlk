@@ -73,7 +73,8 @@ impl Plugin for UiHonorPlugin {
             .init_resource::<crate::nameplates::PvpNameStrings>()
             .add_systems(
                 Update,
-                drain_inspect_honor_requests.in_set(crate::ui_script::UiDrain),
+                crate::ui_script::raises::then_fire(drain_inspect_honor_requests)
+                    .in_set(crate::ui_script::UiDrain),
             )
             // A VM holder, so after the tick; before the driver, so a new VM's strings reach the
             // lines the frame it arrives.
@@ -88,11 +89,11 @@ impl Plugin for UiHonorPlugin {
 
 /// `RequestInspectHonorData()` (`0x5e9140`): a send for the inspect target (`0x5e91a1`), none without one (`0x5e916c`).
 fn drain_inspect_honor_requests(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     target: Res<crate::ui_inspect::InspectGuid>,
     commands: Res<NetCommands>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     for _ in 0..script.take_inspect_honor_requests() {
@@ -226,10 +227,10 @@ pub(crate) fn is_honor_watch(index: u16) -> bool {
 /// boot VM with `GlobalStrings.lua` run, a world VM after its FrameXML and addon load), so the read
 /// sees what the load defined; any other frame pays one compare.
 fn feed_pvp_name_strings(
-    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut strings: ResMut<crate::nameplates::PvpNameStrings>,
 ) {
-    let Some(script) = script else {
+    let Some(script) = script.turn() else {
         return;
     };
     if strings.session() != Some(script.session()) {

@@ -621,57 +621,59 @@ fn ctrl_and_shift_on_a_loot_row_preview_and_post_without_looting() {
         s.mouse_button(x, y, "LeftButton", false);
         s.set_modifiers(false, false, false);
     };
-    s.record_writes();
-    ctrl_click(&mut s, (x, y));
-    assert!(s.take_dressup_edits().is_empty(), "cloth is not worn");
-    assert!(
-        s.take_loot_picks().is_empty(),
-        "a ctrl-click must not also loot the row"
-    );
+    let mut writes_v = crate::ui_script::test_live::View;
+    crate::ui_script::test_live::lending(&mut writes_v, || {
+        ctrl_click(&mut s, (x, y));
+        assert!(s.take_dressup_edits().is_empty(), "cloth is not worn");
+        assert!(
+            s.take_loot_picks().is_empty(),
+            "a ctrl-click must not also loot the row"
+        );
 
-    // Ctrl on gloves: the dressing room wearing them, and no loot.
-    const GLOVES_LINK: &str = "|cffffffff|Hitem:2582:0:0:0:0:0:0:0:0|h[Thin Cloth Gloves]|h|r";
-    s.set_item_template(
-        2582,
-        benilla_ui::script::ItemTemplateView {
-            name: "Thin Cloth Gloves".into(),
-            quality: 1,
-            inventory_type: 10,
-            ..Default::default()
-        },
-    );
-    s.fire_event("LOOT_CLOSED", vec![]);
-    s.set_loot(Some(LootState {
-        source_unit: false,
-        source_level: 0,
-        fishing: false,
-        master_candidates: Vec::new(),
-        rows: vec![Some(LootRow {
-            item_id: 2582,
-            name: Some("Thin Cloth Gloves".into()),
-            texture: Some("Interface\\Icons\\INV_Gauntlets_17".into()),
-            quantity: 1,
-            quality: Some(1),
-            is_coin: false,
-            link: Some(GLOVES_LINK.into()),
-            random_property_id: 0,
-            locked: false,
-        })],
-    }));
-    s.fire_event("LOOT_OPENED", vec![]);
-    s.resolve();
-    let gloves = icon_center(&s.extract(), "INV_Gauntlets_17");
-    ctrl_click(&mut s, gloves);
-    assert_eq!(
-        s.take_dressup_edits(),
-        vec![DressUpIntent::Dress, DressUpIntent::TryOn(2582, [0; 4])],
-        "re-dress first, then try the looted item on"
-    );
-    assert!(
-        s.take_loot_picks().is_empty(),
-        "a ctrl-click must not also loot the row"
-    );
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+        // Ctrl on gloves: the dressing room wearing them, and no loot.
+        const GLOVES_LINK: &str = "|cffffffff|Hitem:2582:0:0:0:0:0:0:0:0|h[Thin Cloth Gloves]|h|r";
+        s.set_item_template(
+            2582,
+            benilla_ui::script::ItemTemplateView {
+                name: "Thin Cloth Gloves".into(),
+                quality: 1,
+                inventory_type: 10,
+                ..Default::default()
+            },
+        );
+        s.fire_event("LOOT_CLOSED", vec![]);
+        s.set_loot(Some(LootState {
+            source_unit: false,
+            source_level: 0,
+            fishing: false,
+            master_candidates: Vec::new(),
+            rows: vec![Some(LootRow {
+                item_id: 2582,
+                name: Some("Thin Cloth Gloves".into()),
+                texture: Some("Interface\\Icons\\INV_Gauntlets_17".into()),
+                quantity: 1,
+                quality: Some(1),
+                is_coin: false,
+                link: Some(GLOVES_LINK.into()),
+                random_property_id: 0,
+                locked: false,
+            })],
+        }));
+        s.fire_event("LOOT_OPENED", vec![]);
+        s.resolve();
+        let gloves = icon_center(&s.extract(), "INV_Gauntlets_17");
+        ctrl_click(&mut s, gloves);
+        assert_eq!(
+            s.take_dressup_edits(),
+            vec![DressUpIntent::Dress, DressUpIntent::TryOn(2582, [0; 4])],
+            "re-dress first, then try the looted item on"
+        );
+        assert!(
+            s.take_loot_picks().is_empty(),
+            "a ctrl-click must not also loot the row"
+        );
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    });
 }
 
 /// Master loot: an item at or above `MASTER_LOOT_THREHOLD` (4, epic; the misspelling is the

@@ -7,32 +7,33 @@ use crate::script::*;
 #[test]
 fn taxi_snapshot_surfaces_and_acts_reach_the_view_in_their_call() {
     let mut s = script();
-    let mut loan = crate::script::live::lend_test(Default::default());
-    s.set_screen_size(800.0, 600.0);
-    s.set_taxi(Some(TaxiUiState {
-        art: "Interface\\TaxiFrame\\TAXIMAP1".into(),
-        nodes: vec![
-            TaxiUiNode {
-                name: "Crossroads, The Barrens".into(),
-                node_type: TaxiNodeType::Current,
-                pos: (0.5, 0.6),
-                cost: 0,
-                routes: vec![],
-                num_routes: 0,
-            },
-            TaxiUiNode {
-                name: "Orgrimmar, Durotar".into(),
-                node_type: TaxiNodeType::Reachable,
-                pos: (0.55, 0.8),
-                cost: 110,
-                routes: vec![[0.5, 0.6, 0.55, 0.8]],
-                num_routes: 1,
-            },
-        ],
-    }));
+    let mut loan_v = crate::script::live::TestView::default();
+    crate::script::live::lending(&mut loan_v, || {
+        s.set_screen_size(800.0, 600.0);
+        s.set_taxi(Some(TaxiUiState {
+            art: "Interface\\TaxiFrame\\TAXIMAP1".into(),
+            nodes: vec![
+                TaxiUiNode {
+                    name: "Crossroads, The Barrens".into(),
+                    node_type: TaxiNodeType::Current,
+                    pos: (0.5, 0.6),
+                    cost: 0,
+                    routes: vec![],
+                    num_routes: 0,
+                },
+                TaxiUiNode {
+                    name: "Orgrimmar, Durotar".into(),
+                    node_type: TaxiNodeType::Reachable,
+                    pos: (0.55, 0.8),
+                    cost: 110,
+                    routes: vec![[0.5, 0.6, 0.55, 0.8]],
+                    num_routes: 1,
+                },
+            ],
+        }));
 
-    s.run(
-        r#"
+        s.run(
+            r#"
         f = CreateFrame("Frame", "TaxiHost")
         f:SetWidth(316); f:SetHeight(352); f:SetPoint("CENTER", 0, 0)
         map = f:CreateTexture("TaxiMapTex", "OVERLAY")
@@ -58,36 +59,37 @@ fn taxi_snapshot_surfaces_and_acts_reach_the_view_in_their_call() {
         TakeTaxiNode(2)
         CloseTaxiMap()
     "#,
-    )
-    .unwrap();
+        )
+        .unwrap();
 
-    assert_eq!(
-        loan.with_view_mut(|v| std::mem::take(&mut v.taxi_acts)),
-        vec![TaxiAct::Take(1), TaxiAct::Close],
-        "the 0-based slot, then the close"
-    );
+        assert_eq!(
+            crate::script::live::test_view(|v| std::mem::take(&mut v.taxi_acts)),
+            vec![TaxiAct::Take(1), TaxiAct::Close],
+            "the 0-based slot, then the close"
+        );
 
-    s.resolve();
-    assert!(
-        s.extract().iter().any(|q| matches!(
-            &q.content,
-            QuadContent::Texture { path: Some(p), .. } if p == "Interface\\TaxiFrame\\TAXIMAP1"
-        )),
-        "the continent art draws on the SetTaxiMap target"
-    );
+        s.resolve();
+        assert!(
+            s.extract().iter().any(|q| matches!(
+                &q.content,
+                QuadContent::Texture { path: Some(p), .. } if p == "Interface\\TaxiFrame\\TAXIMAP1"
+            )),
+            "the continent art draws on the SetTaxiMap target"
+        );
 
-    s.set_unit_guids(&crate::script::UnitGuids {
-        player: 1,
-        held: [(1, 0)].into(),
-        ..Default::default()
+        s.set_unit_guids(&crate::script::UnitGuids {
+            player: 1,
+            held: [(1, 0)].into(),
+            ..Default::default()
+        });
+        let mut riding = crate::script::live::TestView {
+            units: [(1, (1 << 20, 1))].into(),
+            ..Default::default()
+        };
+        s.with_live(&mut riding, |s| {
+            s.run(r#"assert(UnitOnTaxi("player") == 1)"#)
+        })
+        .unwrap();
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     });
-    let mut riding = crate::script::live::TestView {
-        units: [(1, (1 << 20, 1))].into(),
-        ..Default::default()
-    };
-    s.with_live(&mut riding, |s| {
-        s.run(r#"assert(UnitOnTaxi("player") == 1)"#)
-    })
-    .unwrap();
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }

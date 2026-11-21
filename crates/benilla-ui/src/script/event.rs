@@ -537,6 +537,7 @@ pub(crate) fn invoke_with_globals(
     event_name: Option<&str>,
     extra: Vec<Value>,
 ) -> mlua::Result<()> {
+    super::world_loan::assert_not_quiet(lua);
     let g = lua.globals();
     let saved_this: Value = g.get("this")?;
     let saved_event: Value = g.get("event")?;

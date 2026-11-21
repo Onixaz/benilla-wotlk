@@ -147,7 +147,7 @@ impl Plugin for UiCharPlugin {
                 feed_char.in_set(UiFeed),
                 watch_skill_ups.in_set(UiFeed),
                 feed_skills.in_set(UiFeed),
-                drain_skill_abandons.in_set(UiDrain),
+                crate::ui_script::raises::then_fire(drain_skill_abandons).in_set(UiDrain),
             ),
         );
     }
@@ -179,7 +179,7 @@ fn skill_line(script: &UiScript, chat: &mut crate::ui_chat::ChatLog, key: &str, 
 }
 
 fn watch_skill_ups(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     self_guid: Res<crate::net::SelfGuid>,
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
     skill_lines: Option<Res<crate::ui_spellbook::SkillLines>>,
@@ -194,7 +194,7 @@ fn watch_skill_ups(
     // added, removed or changes value; the reference fires it at the end of every skill-list
     // rebuild, which its value, max, permanent-bonus and temporary-bonus watchers run, and from
     // both header collapse and expand verbs.
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let prev = prev.get(&script);
@@ -290,12 +290,12 @@ fn watch_skill_ups(
 /// The skills-pane feed: every `PLAYER_SKILL_INFO` line the reference lists, as a flat
 /// [`SkillEntry`] pushed through `set_skills` on change; the engine groups, sorts and folds.
 fn feed_skills(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     self_store: Query<Ref<ObjectStore>, With<SelfPlayer>>,
     skill_lines: Option<Res<crate::ui_spellbook::SkillLines>>,
     mut last: Local<crate::ui_script::VmMemo<Option<SkillsState>>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let last = last.get(&script);
@@ -385,11 +385,8 @@ pub(crate) fn skills_row(
 
 /// Each queued `AbandonSkill` becomes one `CMSG_UNLEARN_SKILL`; nothing changes locally, as the
 /// server's `SetSkill(id, 0, 0)` (vmangos `SkillHandler.cpp:69`) returns as a skill-field update.
-fn drain_skill_abandons(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    commands: Res<NetCommands>,
-) {
-    let Some(mut script) = script else {
+fn drain_skill_abandons(mut script: crate::ui_script::InTurn, commands: Res<NetCommands>) {
+    let Some(mut script) = script.turn() else {
         return;
     };
     for skill_id in script.take_skill_abandons() {
@@ -1034,7 +1031,7 @@ pub(crate) fn fire_stat_transitions(
 pub(crate) fn feed_char(
     // `ChrClasses.dbc` field 16, the relic flag `find_equip_slot` reads; absent, no class has one.
     classes: Option<Res<crate::chr_classes::ChrClassTable>>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut inv: crate::items::Inventory,
     items: Res<Items>,
     icons: Option<Res<ItemDisplays>>,
@@ -1050,7 +1047,7 @@ pub(crate) fn feed_char(
     // The gt tables and form flags behind the sheet's derived figures.
     sheet_tables: Option<Res<SheetTables>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     // The stock `CharacterModelFrame` owns the yaw (`Model_Rotate*` call `SetRotation`); the booth

@@ -4,9 +4,9 @@
 
 use benilla_formats::{AreaTableCatalog, ChrClassNames, CreateRaceRow};
 use benilla_protocol::messages::{contact_flag, friend_status, WhoEntry};
-use benilla_ui::script::{
-    FriendInfo, SocialRequest, SocialState as VmSocial, UiScript, WhoInfo, WhoRecords,
-};
+#[cfg(test)]
+use benilla_ui::script::UiScript;
+use benilla_ui::script::{FriendInfo, SocialRequest, SocialState as VmSocial, WhoInfo, WhoRecords};
 use bevy::prelude::*;
 
 use crate::area::AreaTableRes;
@@ -55,7 +55,7 @@ pub(crate) struct FedSocial {
 
 /// Push the display snapshot to the VM, fire the list events, and print the owed result lines.
 pub(crate) fn feed_social(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut social: ResMut<SocialState>,
     names: Res<NameCache>,
     areas: Option<Res<AreaTableRes>>,
@@ -64,7 +64,7 @@ pub(crate) fn feed_social(
     mut sink: MessageSink,
     mut fed: Local<crate::ui_script::VmMemo<FedSocial>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let fed = fed.get(&script);
@@ -425,7 +425,7 @@ fn index_of(order: &[u64], guid: u64) -> u32 {
 /// Turn the Lua API's social intents into their sends. A row resolves through the order the feed
 /// published, since the wire removes by guid.
 pub(crate) fn drain_social(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut social: ResMut<SocialState>,
     commands: Res<NetCommands>,
     areas: Option<Res<AreaTableRes>>,
@@ -436,7 +436,7 @@ pub(crate) fn drain_social(
     for &c in complaints.read() {
         social.complained(c);
     }
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     script.set_complaint_status(social.complaint_status());

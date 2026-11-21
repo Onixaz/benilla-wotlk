@@ -96,7 +96,7 @@ pub(crate) fn cast_pet_spell(
     on_self: bool,
     sink: &mut dyn crate::ui_action::signals::SignalSink,
 ) -> crate::ui_pet::PetCast {
-    if p.bar.read().spells.pet_guid == 0 {
+    if p.bar.spells.pet_guid == 0 {
         debug!("ui_pet_book: dropping a queued pet book cast — the bar is gone");
         return crate::ui_pet::PetCast::Done;
     }

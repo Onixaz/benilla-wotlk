@@ -95,10 +95,7 @@ fn parent_zone(areas: &AreaTableRes, id: u32) -> Option<u32> {
 /// lands the frame it decodes.
 pub(super) fn feed_broadcasts(
     mut log: ResMut<ChatLog>,
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
+    mut script: crate::ui_script::InTurn,
     channels: Res<ChannelState>,
     areas: Option<Res<AreaTableRes>>,
     messages: Option<Res<ServerMessages>>,
@@ -108,7 +105,7 @@ pub(super) fn feed_broadcasts(
         return;
     }
     // The format string lives in the VM, so the queue waits for one; it clears at session end.
-    let Some(script) = script else { return };
+    let Some(script) = script.turn() else { return };
     // The player's zone, as the reference keeps it; `top_zone` is the single-hop parent on 5875
     // data.
     let player_zone = areas

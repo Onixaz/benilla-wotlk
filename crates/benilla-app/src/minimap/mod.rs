@@ -458,7 +458,7 @@ fn emit_minimap(
         Res<MinimapRotate>,
         Res<crate::death::ReleasePoi>,
     ),
-    (blip_inputs, _live): (blips::BlipInputs, crate::ui_script::LendLive),
+    blip_inputs: blips::BlipInputs,
     mut composite: ResMut<composite::MinimapComposite>,
     rig: Option<Res<composite::CompositeRig>>,
     mut quads: ResMut<UiQuads>,
@@ -1013,10 +1013,7 @@ struct InsideProbe {
 /// widget built later is still told. The edge also fires `MINIMAP_UPDATE_ZOOM`, on which the stock
 /// `Minimap_OnEvent` re-syncs the +/- buttons to the other index's level.
 fn feed_minimap_inside(
-    (script, _live): (
-        Option<bevy::ecs::system::NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
+    mut vm: crate::ui_script::InTurn,
     world: benilla_world::world_point::WorldPoint,
     player: Res<Player>,
     instances: Query<&WmoPortalInstance>,
@@ -1049,7 +1046,7 @@ fn feed_minimap_inside(
         }
     };
     inside_res.set_if_neq(MinimapInside(inside));
-    let Some(mut script) = script else { return };
+    let Some(mut script) = vm.turn() else { return };
     let edge = *was_inside.get(&script) != Some(inside);
     let created = script.minimap_widgets_created();
     if edge || *pushed_at.get(&script) != created {
@@ -1065,16 +1062,14 @@ fn feed_minimap_inside(
 /// Swap the disc's mask for the one `Minimap:SetMaskTexture` names (a 1.12 method). Memoised on the
 /// path and re-read with a fresh VM; a path that fails to load keeps the current mask and warns.
 fn feed_minimap_mask(
-    (script, _live): (
-        Option<bevy::ecs::system::NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
+    mut vm: crate::ui_script::InTurn,
     assets: Option<ResMut<MinimapAssets>>,
     world_assets: Option<ResMut<WorldAssets>>,
     mut images: ResMut<Assets<Image>>,
     mut last: Local<crate::ui_script::VmMemo<Option<String>>>,
 ) {
-    let (Some(script), Some(mut assets), Some(mut world_assets)) = (script, assets, world_assets)
+    let (Some(script), Some(mut assets), Some(mut world_assets)) =
+        (vm.turn(), assets, world_assets)
     else {
         return;
     };
@@ -1103,14 +1098,11 @@ fn feed_minimap_mask(
 /// `GetPlayerFacing`'s answer rides along (`0x60a490`): the facing of what the camera follows, a
 /// far-sight subject or a vehicle when one is published, else our body.
 fn feed_minimap_player_facing(
-    (script, _live): (
-        Option<bevy::ecs::system::NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
+    mut vm: crate::ui_script::InTurn,
     player: Res<Player>,
     subject: Option<Res<crate::player::ViewSubject>>,
 ) {
-    let Some(mut script) = script else { return };
+    let Some(mut script) = vm.turn() else { return };
     let own = player.facing().rem_euclid(std::f32::consts::TAU);
     script.set_minimap_player_facing(own);
     let followed = subject.as_deref().and_then(|s| s.remote).map(|v| v.facing);
@@ -1121,14 +1113,11 @@ fn feed_minimap_player_facing(
 /// Turn the compass texture against the map while it rotates (by `-facing`, `0x57d5b0`, from the
 /// minimap draw); north-up leaves it alone, as the stock file hides it then.
 fn feed_minimap_compass(
-    (script, _live): (
-        Option<bevy::ecs::system::NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
+    mut vm: crate::ui_script::InTurn,
     player: Res<Player>,
     rotate: Res<MinimapRotate>,
 ) {
-    let Some(mut script) = script else { return };
+    let Some(mut script) = vm.turn() else { return };
     if rotate.0 {
         script.set_minimap_compass_rotation(-player.facing().rem_euclid(std::f32::consts::TAU));
     }
@@ -1138,14 +1127,11 @@ fn feed_minimap_compass(
 /// and the calendar's clock with it (`CalendarGetDate()`, an event's alarm). Before the first
 /// `SMSG_LOGIN_SETTIMESPEED` they read 0:00 and the unset date.
 fn feed_game_time(
-    (script, _live): (
-        Option<bevy::ecs::system::NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
+    mut vm: crate::ui_script::InTurn,
     time: Res<crate::net::ServerTime>,
     mut last: Local<crate::ui_script::VmMemo<Option<u32>>>,
 ) {
-    let Some(mut script) = script else { return };
+    let Some(mut script) = vm.turn() else { return };
     let last = last.get(&script);
     let Some(gt) = time.0 else { return };
     let minute = gt.minute_of_day();

@@ -219,11 +219,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "CastShapeshiftForm",
         lua.create_function(|lua, i: u32| {
             let spell = form_at(&forms(lua), i).map(|f| f.view.spell_id);
-            let mut model = crate::script::model_mut_of(lua);
             if let Some(spell_id) = spell {
-                model
-                    .script_calls
-                    .push(super::ScriptCall::CastShapeshiftForm(spell_id));
+                super::calls::make(lua, super::ScriptCall::CastShapeshiftForm(spell_id));
             }
             Ok(())
         })?,

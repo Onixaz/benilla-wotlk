@@ -203,10 +203,8 @@ mod layout_cache;
 mod level_grant;
 mod lfg;
 pub(crate) mod live;
-pub use live::{
-    owner_write, read_live, shared_read, write_live, GlobalStrings, LiveLoan, LiveState,
-    OwnerWrite, SharedRead, ViewRef,
-};
+pub mod world_loan;
+pub use live::{read_live, write_live, GlobalStrings, LiveState};
 mod loot;
 mod loot_roll;
 mod lua51;
@@ -328,7 +326,7 @@ pub use battlefield_score::{
     BattlefieldScoreRow, BattlefieldScores, BattlefieldStatColumn, BattlefieldTeamView, ScoreName,
 };
 pub use bind_confirm::PendingEquipAnswer;
-pub use calls::{CastAt, NearestMode, ScriptCall};
+pub use calls::{apply_queued, set_apply, ApplyCall, CastAt, NearestMode, ScriptCall};
 pub use camera_view::{CameraViewRequest, CAMERA_VIEW_COUNT};
 pub use channel::{ChannelCommand, ZoneChannelRow};
 pub use channel_pane::ChannelSlotInfo;
@@ -832,6 +830,13 @@ pub struct UiScript {
     session: u64,
 }
 
+/// The host's counters, kept in the VM so [`UiScript::in_call`] builds the same host from `&Lua`.
+#[derive(Clone)]
+pub(crate) struct HostIds {
+    instructions: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    session: u64,
+}
+
 /// Hands out [`UiScript::session`] ids: process-global and monotone, so an id is never reused.
 static NEXT_SESSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
@@ -1275,10 +1280,15 @@ impl UiScript {
 
     fn host(lua: Lua) -> UiScript {
         item_stats::clear_fixture_player();
-        UiScript {
-            lua,
+        let ids = HostIds {
             instructions: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             session: NEXT_SESSION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        };
+        lua.set_app_data(ids.clone());
+        UiScript {
+            lua,
+            instructions: ids.instructions,
+            session: ids.session,
         }
     }
 
@@ -1539,6 +1549,7 @@ impl UiScript {
 
     /// Run a chunk under the name the 1.12 client gives it ([`addon_chunk_name`] for addon files).
     pub fn run_chunk_named(&self, chunk: &[u8], name: &str) -> mlua::Result<()> {
+        world_loan::assert_not_quiet(&self.lua);
         self.lua
             .load(crate::source::chunk(chunk))
             .set_name(name)
@@ -1550,6 +1561,7 @@ impl UiScript {
     /// the chunk compiles as `?` and runs as secure code; a compile or run error goes to the error
     /// handler, never to the caller.
     pub fn execute_secure(&self, chunk: &str) {
+        world_loan::assert_not_quiet(&self.lua);
         let lua = &self.lua;
         let run = taint::run_as(0, || {
             lua.load(chunk)
@@ -1564,6 +1576,7 @@ impl UiScript {
 
     /// Load and evaluate a Lua chunk, returning its result: for tests and one-shot queries.
     pub fn eval<T: mlua::FromLuaMulti>(&self, chunk: &str) -> mlua::Result<T> {
+        world_loan::assert_not_quiet(&self.lua);
         self.lua.load(chunk).set_mode(mlua::ChunkMode::Text).eval()
     }
 

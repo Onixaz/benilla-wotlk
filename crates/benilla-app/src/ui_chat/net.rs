@@ -50,10 +50,7 @@ fn on_chat(
 fn on_channel_list(
     In(ev): In<SessionEvent>,
     mut chat_log: ResMut<ChatLog>,
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
+    mut script: crate::ui_script::InTurn,
     names: Option<Res<crate::names::NameCache>>,
     commands: Option<Res<NetCommands>>,
 ) {
@@ -74,7 +71,7 @@ fn on_channel_list(
         "chat: display list {channel:?} ({} members, flags {flags:#04x})",
         members.len()
     );
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     script.display_channel_list(&channel, flags, &members, |guid| {
@@ -90,15 +87,12 @@ fn on_channel_list(
 /// `SMSG_USERLIST_ADD`, `_REMOVE` and `_UPDATE`: the watched channel's roster follows its members.
 fn on_channel_user_list(
     In(ev): In<SessionEvent>,
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
+    mut script: crate::ui_script::InTurn,
     names: Option<Res<crate::names::NameCache>>,
     commands: Option<Res<NetCommands>>,
 ) {
     use benilla_protocol::messages::ChannelUserListKind as K;
-    let (SessionEvent::ChannelUserList(u), Some(mut script)) = (ev, script) else {
+    let (SessionEvent::ChannelUserList(u), Some(mut script)) = (ev, script.turn()) else {
         return;
     };
     debug!(
@@ -130,14 +124,11 @@ fn on_channel_user_list(
 /// The channel pane's roster waits on the name cache (`0x4ffe30`): each answer that has landed is
 /// handed over, and the last one fires the roster's events.
 pub(super) fn feed_channel_roster_names(
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
+    mut script: crate::ui_script::InTurn,
     names: Option<Res<crate::names::NameCache>>,
     commands: Option<Res<NetCommands>>,
 ) {
-    let (Some(mut script), Some(names), Some(commands)) = (script, names, commands) else {
+    let (Some(mut script), Some(names), Some(commands)) = (script.turn(), names, commands) else {
         return;
     };
     for guid in script.channel_roster_unnamed() {

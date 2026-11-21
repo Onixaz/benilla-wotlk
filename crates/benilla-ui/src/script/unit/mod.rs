@@ -369,6 +369,15 @@ impl super::UiScript {
         super::tooltip_unit::on_unit_push(&self.lua, token);
     }
 
+    /// Whether `token`'s snapshot is `state` now (`None`: none held): what a feed diffs a push
+    /// against, whoever wrote the snapshot last.
+    pub fn holds_unit(&self, token: &str, state: Option<&UnitState>) -> bool {
+        self.model_ref()
+            .units_by_lower
+            .get(&token.to_ascii_lowercase())
+            == state
+    }
+
     /// Push, or clear with `None`, the snapshot of a unit a `target` chain can end on, by guid. A
     /// token with a hop that no push names (`"party1target"`, `"raid3targettarget"`) resolves
     /// through [`UnitGuids`] to a guid and reads that guid's entry, the reference's order (then

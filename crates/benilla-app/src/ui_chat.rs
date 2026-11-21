@@ -27,6 +27,8 @@ mod frames;
 /// The idle handler: the 5-minute auto-sit and auto-AFK, and the 30-minute camp.
 pub(crate) mod idle;
 mod input;
+#[cfg(test)]
+pub(crate) use input::drain_chat_input;
 /// The language gate: the exemptions and fluency lookup behind the chat garble.
 mod language;
 pub(crate) use language::{language_skill, ChatLanguages};
@@ -144,15 +146,15 @@ impl Plugin for UiChatPlugin {
                 (
                     // First, so a `/afk` typed this frame reads the descriptor's settled state.
                     away::reconcile_afk_mirror,
-                    away::movement_clears_afk,
+                    crate::ui_script::raises::then_fire(away::movement_clears_afk),
                     // After the clears, so a press that stamps the clock and drops the flag is
                     // settled before the idle timer reads it.
-                    idle::idle_handler,
+                    crate::ui_script::raises::then_fire(idle::idle_handler).in_set(idle::IdleStep),
                     input::drain_chat_input.in_set(ChatDrain),
                     // After the box's drain, so a `SendChatMessage` or `SendAddonMessage` from a
                     // slash handler it just ran goes out this frame.
-                    input::drain_addon_chat_sends,
-                    input::drain_addon_message_sends,
+                    crate::ui_script::raises::then_fire(input::drain_addon_chat_sends),
+                    crate::ui_script::raises::then_fire(input::drain_addon_message_sends),
                 )
                     .chain()
                     .in_set(UiDrain)
@@ -169,18 +171,29 @@ impl Plugin for UiChatPlugin {
             .add_systems(
                 Update,
                 (
-                    channels::end_session_channels_on_disconnect,
-                    channels::auto_join_zone_channels.in_set(crate::char_select::InWorldGated),
-                    recruitment::guild_recruitment_cascade.in_set(crate::char_select::InWorldGated),
+                    crate::ui_script::raises::then_fire(
+                        channels::end_session_channels_on_disconnect,
+                    ),
+                    crate::ui_script::raises::then_fire(
+                        channels::auto_join_zone_channels.in_set(crate::char_select::InWorldGated),
+                    ),
+                    crate::ui_script::raises::then_fire(
+                        recruitment::guild_recruitment_cascade
+                            .in_set(crate::char_select::InWorldGated),
+                    ),
                 )
                     .chain()
+                    .in_set(crate::ui_script::UiPaint)
                     .after(benilla_world::terrain_stream::AreaAuthoritySet)
                     // The selection and the pet's words its lent view reads are the clicks'.
                     .after(crate::target::TargetUpdate),
             )
             .add_systems(
                 OnExit(crate::char_select::ClientState::InWorld),
-                (channels::end_session_channels, end_session_chat),
+                (
+                    crate::ui_script::raises::then_fire(channels::end_session_channels),
+                    end_session_chat,
+                ),
             );
         settings::plugin(app);
         logging::plugin(app);
@@ -193,14 +206,12 @@ impl Plugin for UiChatPlugin {
 ///
 /// Deviation: not run on benilla's same-character reconnect, which the reference lacks (it
 /// returns to the login screen), so the window keeps its scrollback there.
-fn end_session_chat(
-    (script, _live): (
-        Option<NonSendMut<benilla_ui::script::UiScript>>,
-        crate::ui_script::LendLive,
-    ),
-    mut log: ResMut<ChatLog>,
-) {
-    end_chat_session(script.map(NonSendMut::into_inner), &mut log);
+fn end_session_chat(world: &mut World) {
+    let mut log = std::mem::take(&mut *world.resource_mut::<ChatLog>());
+    // The windows' `Clear` runs Lua: the `World` is lent for it.
+    crate::ui_script::safe_world::lend(world, |script| end_chat_session(Some(script), &mut log))
+        .unwrap_or_else(|| end_chat_session(None, &mut log));
+    *world.resource_mut::<ChatLog>() = log;
 }
 
 /// [`end_session_chat`]'s body, callable without a `World`.

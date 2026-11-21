@@ -236,10 +236,7 @@ fn on_session_end(In(_): In<SessionEvent>, records: Option<NonSendMut<RefundReco
 }
 
 /// The VM's socketing accepts and refund sends.
-fn drain_item_sends(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    commands: Res<NetCommands>,
-) {
+fn drain_item_sends(script: Option<NonSendMut<UiScript>>, commands: Res<NetCommands>) {
     let Some(mut script) = script else {
         return;
     };

@@ -198,10 +198,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(name) = name.filter(|n| !n.trim().is_empty()) else {
                 return Ok(());
             };
-            let mut model = crate::script::model_mut_of(lua);
-            model.script_calls.push(super::ScriptCall::Select(
-                super::SelectionRequest::AssistByName(name),
-            ));
+            super::calls::make(
+                lua,
+                super::ScriptCall::Select(super::SelectionRequest::AssistByName(name)),
+            );
             Ok(())
         })?,
     )?;

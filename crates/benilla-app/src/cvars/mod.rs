@@ -660,6 +660,11 @@ impl Cvars {
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct CvarLoad;
 
+/// The per-frame registry sync ([`sync_cvars`]) and the step that fires what it raised: what reads
+/// the frame's `SetCVar`s orders after this set.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct CvarSync;
+
 pub(crate) struct CvarPlugin;
 
 impl Plugin for CvarPlugin {
@@ -676,7 +681,10 @@ impl Plugin for CvarPlugin {
             // finds the stage. A texture-policy write is published the same frame.
             .add_systems(
                 Update,
-                (sync_cvars, follow_filter_policy)
+                (
+                    crate::ui_script::raises::then_fire(sync_cvars).in_set(CvarSync),
+                    follow_filter_policy,
+                )
                     .chain()
                     .in_set(crate::ui_script::UiDrain),
             )
@@ -904,7 +912,7 @@ pub(crate) fn boot_cvar(name: &str) -> Option<String> {
 /// Per frame: seed a new VM's mirror, drain its registrations and writes into the registry, push
 /// the registry's writes into the mirror, and trigger every accepted move.
 pub(crate) fn sync_cvars(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut cvars: ResMut<Cvars>,
     adapter: Option<Res<bevy::render::renderer::RenderAdapterInfo>>,
     msaa_formats: Option<Res<benilla_world::view::MsaaFormats>>,
@@ -918,7 +926,7 @@ pub(crate) fn sync_cvars(
             cvars.own_for_session("gxApi", Some(backend));
         }
     }
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         // Nothing to mirror into; a later VM is seeded from the table, which carries it all.
         if cvars.has_outbox() {
             cvars.take_outbox();

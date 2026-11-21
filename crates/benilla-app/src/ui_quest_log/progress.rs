@@ -469,10 +469,10 @@ fn quest_item_loot(
 
 /// `QueryQuestsCompleted()`'s requests, sent after the tick that made them.
 pub(super) fn drain_quest_progress_sends(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     commands: Res<NetCommands>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     for _ in 0..script.take_quests_completed_queries() {
@@ -483,10 +483,7 @@ pub(super) fn drain_quest_progress_sends(
 /// Announce the queued notices in the handler's turn; a notice whose quest-item check waits on a template stays queued for that template's answer.
 #[allow(clippy::too_many_arguments)] // one Bevy system's full input set
 fn announce_notices(
-    (script, mut live): (
-        Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<'_, '_, crate::ui_script::live::OwnsExpiries>,
-    ),
+    mut vm: crate::ui_script::InTurn,
     self_q: Query<(&ObjectStore, &Guid), With<SelfPlayer>>,
     (log, mut marks, mut expiries): (
         Res<QuestLog>,
@@ -501,7 +498,7 @@ fn announce_notices(
     // The auto-complete's completion test: the bag walk and the standings.
     (objects, rewards): (crate::net::Objects, crate::ui_quest::rewards::RewardInputs),
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = vm.turn() else {
         return;
     };
 
@@ -534,9 +531,7 @@ fn announce_notices(
     let notices = std::mem::take(&mut marks.notices);
     let (resolved, held) = resolve(&log, &mut expiries, notices, &lookups);
     marks.notices = held;
-    live.lending(&mut *expiries, || {
-        show_announces(&mut script, &mut sink, resolved)
-    });
+    show_announces(&mut script, &mut sink, resolved);
 }
 
 /// Each line, then its `QUEST_WATCH_UPDATE` with the quest's log row.

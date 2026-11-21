@@ -17,7 +17,6 @@ use benilla_protocol::messages::{ItemInfo, PLAYER_SKILL_SLOTS};
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use benilla_ui::script::{
     TradeSkillDifficulty, TradeSkillGroup, TradeSkillReagent, TradeSkillRecipe, TradeSkillState,
-    UiScript,
 };
 use benilla_ui::strings::Arg;
 
@@ -141,7 +140,7 @@ impl Plugin for UiTradeSkillPlugin {
                         .after(crate::ui_script::UiPress)
                         .before(crate::ui_script::UiFeed),
                     feed_trade_skill.in_set(UnitFeed),
-                    drain_trade_skill.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_trade_skill).in_set(UiDrain),
                 ),
             );
     }
@@ -451,11 +450,8 @@ pub(crate) fn list_link(
 /// Build the book: the known recipes of the open line, banded against the current rank.
 #[allow(clippy::too_many_arguments)] // a Bevy system's full input set
 fn feed_trade_skill(
-    (script, _live): (
-        Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsTradeSkill>,
-    ),
-    mut open: crate::ui_script::OwnedMut<TradeSkillOpen>,
+    mut vm: crate::ui_script::InTurn,
+    mut open: ResMut<TradeSkillOpen>,
     actions: Res<PlayerActions>,
     data: BookData,
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
@@ -469,11 +465,11 @@ fn feed_trade_skill(
     mut texts: Local<crate::ui_script::VmMemo<HashMap<u32, RecipeText>>>,
     mut last_reads: Local<crate::ui_script::VmMemo<Option<TokenReads>>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = vm.turn() else {
         return;
     };
     let (open_line, opener) = {
-        let o = open.read();
+        let o = open.as_ref();
         (o.line, o.spell_id)
     };
     let me = self_store.single().ok();
@@ -756,7 +752,7 @@ fn feed_trade_skill(
 
     let last = last.get(&script);
     let (show, close) = {
-        let mut o = open.write();
+        let o = open.as_mut();
         (std::mem::take(&mut o.show), std::mem::take(&mut o.close))
     };
     if fresh != *last {
@@ -794,31 +790,25 @@ fn feed_trade_skill(
 /// Drain the Lua intents and run the engine's repeat on our own cast edges: a start commits a
 /// pending repeat, a go may cast again, a failure stops it.
 fn drain_trade_skill(
-    (script, mut live): (
-        Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<(
-            crate::ui_script::OwnsCooldowns,
-            crate::ui_script::OwnsTradeSkill,
-        )>,
-    ),
-    mut open: crate::ui_script::OwnedMut<TradeSkillOpen>,
+    mut vm: crate::ui_script::InTurn,
+    mut open: ResMut<TradeSkillOpen>,
     mut cast_events: MessageReader<CastEvent>,
     targeting: cast_target::CastTargeting,
     mut ladder: CastLadder,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = vm.turn() else {
         return;
     };
 
     for spell_id in script.take_trade_skill_casts() {
-        if open.read().line.is_none() {
+        if open.line.is_none() {
             debug!("ui_tradeskill: DoTradeSkill({spell_id}) with no open book — ignored");
             continue;
         }
         debug!("ui_tradeskill: DoTradeSkill({spell_id})");
         ladder.send(spell_id, &targeting.context(), CastCommit::Spell);
-        // The send's cast-bar edges, fired as it returns (`0x80b556`).
-        ladder.press.fire(&mut script, &mut live);
+        // The send's cast-bar edges, in turn as it returns (`0x80b556`).
+        ladder.press.defer_in_turn(&mut script);
     }
 
     let self_entity = ladder.self_player.single().ok().map(|(e, _)| e);
@@ -826,13 +816,15 @@ fn drain_trade_skill(
         if Some(ev.entity) != self_entity {
             continue;
         }
+        // The edges write the repeat at once, in the order read (start `0x5da0f0`, go `0x5da070`,
+        // failure `0x5da020`): the frame's packets precede its input and paint (`0x47f10d`).
         match ev.kind {
             CastEventKind::Start { .. } => script.trade_skill_cast_started(ev.spell_id),
             CastEventKind::Go { .. } => {
                 if script.trade_skill_cast_done(ev.spell_id) {
                     debug!("ui_tradeskill: recast {}", ev.spell_id);
                     ladder.send(ev.spell_id, &targeting.context(), CastCommit::Spell);
-                    ladder.press.fire(&mut script, &mut live);
+                    ladder.press.defer_in_turn(&mut script);
                 }
             }
             CastEventKind::Fail { .. } => script.trade_skill_cast_failed(ev.spell_id),
@@ -842,7 +834,7 @@ fn drain_trade_skill(
 
     if script.take_trade_skill_close() {
         debug!("ui_tradeskill: client-side close (no packet)");
-        open.write().line = None;
+        open.line = None;
     }
 }
 
@@ -988,5 +980,91 @@ mod tests {
         );
 
         assert_eq!(app.world().resource::<TradeSkillOpen>().line, None);
+    }
+
+    /// A start and a go of one craft read in one drain commit the repeat, then spend one of it:
+    /// the go reads the start's commit (`0x5da0f0` then `0x5da070`).
+    #[test]
+    fn a_start_and_a_go_in_one_drain_run_the_repeat_in_order() {
+        use bevy::ecs::system::RunSystemOnce;
+        const ROD: u32 = 7421;
+        let mut app = crate::game_plugins::schedule_tests::headless_client();
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        app.insert_resource(NetCommands(tx));
+        let world = app.world_mut();
+        let me = world
+            .spawn((
+                SelfPlayer,
+                crate::net::Guid(0x10),
+                ObjectStore(benilla_protocol::ObjectFields::default()),
+            ))
+            .id();
+        world.resource_mut::<SelfGuid>().0 = Some(0x10);
+        let mut script = benilla_ui::script::UiScript::new().expect("a VM");
+        script.set_trade_skill(Some(TradeSkillState {
+            line: 333,
+            line_name: "Enchanting".into(),
+            alt_verb: String::new(),
+            rank: 1,
+            max_rank: 75,
+            list_link: None,
+            recipes: vec![TradeSkillRecipe {
+                spell_id: ROD,
+                name: "Runed Copper Rod".into(),
+                difficulty: TradeSkillDifficulty::Trivial,
+                num_available: 5,
+                trivial_high: 100,
+                group: Some(TradeSkillGroup::SubClass {
+                    class: 7,
+                    subclass: 12,
+                    name: Some("Enchanting".into()),
+                }),
+                item_level: 0,
+                inv_slots: 1 << 26,
+                creates_item: true,
+                product_item: 6218,
+                required_level: None,
+                icon: None,
+                min_made: 1,
+                max_made: 1,
+                cooldown_end: None,
+                description: None,
+                search_text: Vec::new(),
+                reagents: Vec::new(),
+                tools: Vec::new(),
+            }],
+        }));
+        script
+            .run(
+                r#"for i = 1, GetNumTradeSkills() do
+                       if select(2, GetTradeSkillInfo(i)) ~= "header" then
+                           SelectTradeSkill(i)
+                           DoTradeSkill(i, 3)
+                       end
+                   end"#,
+            )
+            .expect("the cast runs");
+        assert_eq!(script.take_trade_skill_casts(), [ROD]);
+        world.insert_non_send_resource(script);
+        for kind in [
+            CastEventKind::Start { visuals: true },
+            CastEventKind::Go { ends_cast: true },
+        ] {
+            world.write_message(CastEvent {
+                entity: me,
+                spell_id: ROD,
+                kind,
+                cast_count: 0,
+                seq: 0,
+            });
+        }
+        world
+            .run_system_once(drain_trade_skill)
+            .expect("the drain runs");
+        let left = world
+            .non_send_resource::<benilla_ui::script::UiScript>()
+            .eval::<i64>("return GetTradeskillRepeatCount()")
+            .expect("the count");
+        assert_eq!(left, 2, "the go spent one of the committed three");
     }
 }

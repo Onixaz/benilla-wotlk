@@ -17,11 +17,9 @@ use bevy::window::{CursorOptions, PrimaryWindow};
 
 use crate::creature_anim::{move_flags, wrap_pi, BodyTwist, MovementState};
 use crate::net::{ClientCommand, Embodied, NetCommands, TeleportMessage, WorldportMessage};
-use crate::target::WorldDropClick;
 use crate::ui_script::InspectMode;
 use benilla_assets::coords::wow_to_bevy;
 use benilla_assets::AssetSet;
-use benilla_world::interact::{WorldClick, WorldRightClick};
 use benilla_world::schedule::WorldStage;
 
 mod approach;
@@ -76,6 +74,10 @@ pub(crate) use camera_saved::{
     restore_from_cvars as restore_camera_from_cvars, save_to_cvars as save_camera_to_cvars,
 };
 use controller::control;
+
+/// The world mouse latch and the click tests' settle, in the press pass.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct WorldClickSet;
 // The private camera and `state` items are re-imported for the modules beside this one, which
 // name them `super::X`.
 pub(crate) use camera::{head_height, CameraControl, CameraPivot};
@@ -239,6 +241,7 @@ impl Plugin for PlayerPlugin {
         app.add_observer(camera::on_cvar);
         app.add_observer(camera_dynamics::on_cvar);
         app.init_resource::<camera::LookConfig>();
+        app.init_resource::<camera::WorldClickTests>();
         app.init_resource::<camera_zoom::ZoomLimit>();
         app.init_resource::<camera_zoom::VehicleSeatZoom>();
         app.init_resource::<camera::FollowConfig>();
@@ -335,15 +338,18 @@ impl Plugin for PlayerPlugin {
                 // Off in capture mode, where the camera is pinned.
                 .run_if(not(resource_exists::<crate::run_mode::CaptureMode>)),
         )
-        // Which mouse buttons the world owns, decoded ahead of its three readers: `/follow`'s
-        // both-button cancel, the look session and the camera's command word. Not in `control`:
-        // `steer_follow` runs before it and would read the latch a frame late.
+        // Which mouse buttons the world owns, decoded in the press pass ahead of its readers: the
+        // click tests' settle, `/follow`'s both-button cancel, the look session and the camera's
+        // command word. The settle runs there too, before the frame's `OnUpdate` scripts, as
+        // 12340's input pass settles a world click (`0x480410`) before the paint's walk
+        // (`0x495320`).
         .add_systems(
             Update,
-            camera::latch_world_mouse
-                .in_set(WorldStage::Input)
-                .before(control)
-                .before(follow::steer_follow)
+            crate::ui_script::raises::then_fire(camera::latch_world_mouse)
+                .in_set(WorldClickSet)
+                .in_set(crate::ui_script::UiPress)
+                .after(crate::ui_script::PointerArbiter)
+                .after(crate::bindings::BindingSet)
                 .in_set(crate::char_select::InWorldGated),
         )
         // The world's right mouse-down, off that latch and ahead of `control`, the button's

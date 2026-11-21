@@ -59,33 +59,51 @@ fn record(kind: MirrorTimerKind) -> usize {
 /// fires it as `"UNKNOWN"` and keeps no record (`0x519a50`), and `MirrorTimer_Show` errors on
 /// its nil colour before `Show()`. vmangos's `NUM_CLIENT_TIMERS` keeps its fourth timer off the
 /// wire.
-fn feed_mirror_timers(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut feed: ResMut<MirrorTimerFeed>,
-    mut records: ResMut<MirrorRecords>,
-    mut seeded: Local<crate::ui_script::VmMemo<bool>>,
-    spells: Option<Res<Spells>>,
-    mut tutorials: Option<MessageWriter<crate::tutorial::TutorialEvent>>,
-) {
-    let Some(mut script) = script else {
+/// Exclusive: each edge fires with the `World` lent, so a listener reads it in its call.
+fn feed_mirror_timers(world: &mut World, mut seeded: Local<crate::ui_script::VmMemo<bool>>) {
+    let Some(mut script) = world
+        .get_non_send_resource::<UiScript>()
+        .map(UiScript::share)
+    else {
         // No VM (a capture or headless run): drop the edges so the queue stays bounded.
-        feed.0.clear();
+        world.resource_mut::<MirrorTimerFeed>().0.clear();
         return;
     };
     let seeded = seeded.get(&script);
     if !*seeded {
         *seeded = true;
-        for (i, record) in records.0.iter().enumerate() {
-            script.restore_mirror_timer(i, record.clone());
+        for (i, record) in world
+            .resource::<MirrorRecords>()
+            .0
+            .clone()
+            .into_iter()
+            .enumerate()
+        {
+            script.restore_mirror_timer(i, record);
         }
     }
     // The VM has no spell-catalog binding, so the owning spell's name resolves here; 0 is none.
-    let spell_name = |id: u32| -> Option<String> {
+    let spell_name = |world: &World, id: u32| -> Option<String> {
         (id != 0)
-            .then(|| spells.as_ref()?.catalog.get(id).map(|d| d.name.clone()))
+            .then(|| {
+                world
+                    .get_resource::<Spells>()?
+                    .catalog
+                    .get(id)
+                    .map(|d| d.name.clone())
+            })
             .flatten()
     };
-    for edge in feed.0.drain(..) {
+    let tutorial = |world: &mut World, id| {
+        if let Some(mut t) = world.get_resource_mut::<Messages<crate::tutorial::TutorialEvent>>() {
+            t.write(crate::tutorial::TutorialEvent::trigger(id));
+        }
+    };
+    let fire = |world: &mut World, script: &mut UiScript, event: &str, args| {
+        crate::ui_script::safe_world::lend_to(world, script, |s| s.fire_event(event, args));
+    };
+    let edges = std::mem::take(&mut world.resource_mut::<MirrorTimerFeed>().0);
+    for edge in edges {
         let raw = match edge {
             MirrorTimerEdge::Start(start) => start.kind,
             MirrorTimerEdge::Pause { kind, .. } | MirrorTimerEdge::Stop { kind } => kind,
@@ -96,20 +114,8 @@ fn feed_mirror_timers(
         // The handler's two tutorial arms, type 0 and type 1 (`0x519c11`-`0x519c20`).
         if matches!(edge, MirrorTimerEdge::Start(_)) {
             match kind {
-                MirrorTimerKind::Fatigue => {
-                    if let Some(t) = tutorials.as_mut() {
-                        t.write(crate::tutorial::TutorialEvent::trigger(
-                            crate::tutorial::id::FATIGUE,
-                        ));
-                    }
-                }
-                MirrorTimerKind::Breath => {
-                    if let Some(t) = tutorials.as_mut() {
-                        t.write(crate::tutorial::TutorialEvent::trigger(
-                            crate::tutorial::id::BREATH,
-                        ));
-                    }
-                }
+                MirrorTimerKind::Fatigue => tutorial(world, crate::tutorial::id::FATIGUE),
+                MirrorTimerKind::Breath => tutorial(world, crate::tutorial::id::BREATH),
                 _ => {}
             }
         }
@@ -117,7 +123,7 @@ fn feed_mirror_timers(
         let (event, args): (&str, Vec<ScriptValue>) = match edge {
             MirrorTimerEdge::Start(start) => {
                 // The owning spell's name when its row exists (`0x5199a0`).
-                let spell = spell_name(start.spell_id);
+                let spell = spell_name(world, start.spell_id);
                 let label = script.mirror_timer_label(record(kind), spell.as_deref());
                 // The fire (`0x519c06`), then the record (`0x519c40`).
                 let args = vec![
@@ -129,7 +135,7 @@ fn feed_mirror_timers(
                     ScriptValue::Str(label),
                 ];
                 debug!("net: mirror timer MIRROR_TIMER_START {edge:?}");
-                script.fire_event("MIRROR_TIMER_START", args);
+                fire(world, &mut script, "MIRROR_TIMER_START", args);
                 script.start_mirror_timer(
                     record(kind),
                     MirrorTimer {
@@ -141,7 +147,8 @@ fn feed_mirror_timers(
                         ..Default::default()
                     },
                 );
-                records.0[record(kind)] = script.mirror_timer(record(kind));
+                world.resource_mut::<MirrorRecords>().0[record(kind)] =
+                    script.mirror_timer(record(kind));
                 continue;
             }
             // The stock handler raises on this: it matches `arg1` as the timer name, then tests
@@ -155,15 +162,15 @@ fn feed_mirror_timers(
             // The fire (`0x519abc`), then the record empties (`0x519ad9`).
             MirrorTimerEdge::Stop { .. } => {
                 debug!("net: mirror timer MIRROR_TIMER_STOP {edge:?}");
-                script.fire_event("MIRROR_TIMER_STOP", vec![name]);
+                fire(world, &mut script, "MIRROR_TIMER_STOP", vec![name]);
                 script.stop_mirror_timer(record(kind));
-                records.0[record(kind)] = None;
+                world.resource_mut::<MirrorRecords>().0[record(kind)] = None;
                 continue;
             }
         };
         // One log line per edge: the bars live inside the VM, so this is their only outside trace.
         debug!("net: mirror timer {event} {edge:?}");
-        script.fire_event(event, args);
+        fire(world, &mut script, event, args);
     }
 }
 

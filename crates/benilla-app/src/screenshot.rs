@@ -21,8 +21,6 @@ use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
 use bevy::tasks::IoTaskPool;
 
-use benilla_ui::script::UiScript;
-
 use crate::ui_script::{UiDrain, UiFeed};
 
 /// The reference's file stem.
@@ -139,7 +137,7 @@ impl ScreenshotState {
 /// this frame's: that order is the one-frame hold (module doc).
 fn ask_for_captures(
     mut commands: Commands,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut state: ResMut<ScreenshotState>,
 ) {
     for _ in 0..std::mem::take(&mut state.pending) {
@@ -147,7 +145,7 @@ fn ask_for_captures(
             .spawn(Screenshot::primary_window())
             .observe(write_capture);
     }
-    if let Some(mut script) = script {
+    if let Some(mut script) = script.turn() {
         state.pending += script.take_screenshot_asks();
     }
 }
@@ -207,11 +205,8 @@ fn encode(rgb: &image::RgbImage, format: Format, path: &std::path::Path) -> std:
 
 /// Fires `SCREENSHOT_SUCCEEDED` or `SCREENSHOT_FAILED` for finished writes, always a frame after
 /// the capture, so the status cannot be in the picture.
-fn report_captures(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    state: Res<ScreenshotState>,
-) {
-    let Some(mut script) = script else {
+fn report_captures(mut script: crate::ui_script::InTurn, state: Res<ScreenshotState>) {
+    let Some(mut script) = script.turn() else {
         return;
     };
     while let Ok(outcome) = state.rx.try_recv() {
@@ -236,7 +231,7 @@ impl Plugin for ScreenshotPlugin {
             Update,
             (
                 report_captures.in_set(UiFeed),
-                ask_for_captures
+                crate::ui_script::raises::then_fire(ask_for_captures)
                     .in_set(UiDrain)
                     .after(crate::bindings::BindingSet),
             ),
@@ -351,9 +346,10 @@ mod tests {
     /// The real [`ask_for_captures`] with no VM, as at character select.
     fn spawn_pending_only(
         commands: Commands,
-        live: crate::ui_script::LendLive,
+        script: crate::ui_script::InTurn,
         state: ResMut<ScreenshotState>,
     ) {
-        ask_for_captures(commands, (None, live), state);
+        assert!(!script.is_some());
+        ask_for_captures(commands, script, state);
     }
 }

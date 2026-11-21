@@ -140,142 +140,148 @@ fn with_nothing_to_show_the_pets_tab_hides() {
 /// sub-tabs, and Summon; the Mounts tab switches the list.
 #[test]
 fn companions_open_the_companion_page_and_the_mounts_tab_switches_it() {
-    benilla_formats::wow_data_or_skip!();
-    let _l = env_lock();
-    let mut s = load("pet-companions");
-    enter_world(&mut s);
-    s.set_companions(companions());
-    s.fire_event("COMPANION_UPDATE", vec![]);
-    toggle(&mut s, "PaperDollFrame");
-    s.resolve();
-    assert!(shown(&mut s, "CharacterFrameTab2"), "the Pets tab shows");
-    open_pet_page(&mut s);
-    assert_eq!(errors(&mut s), Vec::<String>::new());
-    assert!(visible(&mut s, "PetPaperDollFrameCompanionFrame"));
-    assert!(!visible(&mut s, "PetPaperDollFramePetFrame"));
-    assert!(
-        !shown(&mut s, "PetPaperDollFrameTab1"),
-        "no pet, no Pet tab"
-    );
-    assert!(shown(&mut s, "PetPaperDollFrameTab2") && shown(&mut s, "PetPaperDollFrameTab3"));
-    assert_eq!(
-        s.eval::<String>("return PetNameText:GetText()").unwrap(),
-        s.eval::<String>("return COMPANIONS").unwrap()
-    );
-    assert_eq!(
-        s.eval::<String>("return CompanionSelectedName:GetText()")
-            .unwrap(),
-        "Bombay Cat"
-    );
-    assert!(s
-        .eval::<bool>(
-            "return CompanionButton1:IsEnabled() == 1 and CompanionButton2:IsEnabled() == 1 \
+    crate::ui_script::test_live::lending(&mut crate::ui_script::test_live::View, || {
+        benilla_formats::wow_data_or_skip!();
+        let _l = env_lock();
+        let mut s = load("pet-companions");
+        enter_world(&mut s);
+        s.set_companions(companions());
+        s.fire_event("COMPANION_UPDATE", vec![]);
+        toggle(&mut s, "PaperDollFrame");
+        s.resolve();
+        assert!(shown(&mut s, "CharacterFrameTab2"), "the Pets tab shows");
+        open_pet_page(&mut s);
+        assert_eq!(errors(&mut s), Vec::<String>::new());
+        assert!(visible(&mut s, "PetPaperDollFrameCompanionFrame"));
+        assert!(!visible(&mut s, "PetPaperDollFramePetFrame"));
+        assert!(
+            !shown(&mut s, "PetPaperDollFrameTab1"),
+            "no pet, no Pet tab"
+        );
+        assert!(shown(&mut s, "PetPaperDollFrameTab2") && shown(&mut s, "PetPaperDollFrameTab3"));
+        assert_eq!(
+            s.eval::<String>("return PetNameText:GetText()").unwrap(),
+            s.eval::<String>("return COMPANIONS").unwrap()
+        );
+        assert_eq!(
+            s.eval::<String>("return CompanionSelectedName:GetText()")
+                .unwrap(),
+            "Bombay Cat"
+        );
+        assert!(s
+            .eval::<bool>(
+                "return CompanionButton1:IsEnabled() == 1 and CompanionButton2:IsEnabled() == 1 \
              and CompanionButton3:IsEnabled() == 0 and CompanionButton1:GetChecked() == 1"
-        )
-        .unwrap());
-    assert_eq!(
-        s.eval::<String>("return CompanionButton1:GetNormalTexture():GetTexture()")
-            .unwrap()
-            .to_ascii_lowercase(),
-        "interface\\icons\\critter10673"
-    );
-    assert_eq!(
-        s.eval::<String>("return CompanionSummonButton:GetText()")
-            .unwrap(),
-        s.eval::<String>("return SUMMON").unwrap()
-    );
-    let model = s
-        .model_pane("CompanionModelFrame")
-        .expect("the preview pane");
-    assert_eq!(model.creature, Some(7385), "SetCreature names the cat");
+            )
+            .unwrap());
+        assert_eq!(
+            s.eval::<String>("return CompanionButton1:GetNormalTexture():GetTexture()")
+                .unwrap()
+                .to_ascii_lowercase(),
+            "interface\\icons\\critter10673"
+        );
+        assert_eq!(
+            s.eval::<String>("return CompanionSummonButton:GetText()")
+                .unwrap(),
+            s.eval::<String>("return SUMMON").unwrap()
+        );
+        let model = s
+            .model_pane("CompanionModelFrame")
+            .expect("the preview pane");
+        assert_eq!(model.creature, Some(7385), "SetCreature names the cat");
 
-    s.run("PetPaperDollFrameTab3:Click()").unwrap();
-    s.resolve();
-    assert_eq!(errors(&mut s), Vec::<String>::new());
-    assert_eq!(
-        s.eval::<String>("return PetPaperDollFrameCompanionFrame.mode")
-            .unwrap(),
-        "MOUNT"
-    );
-    assert_eq!(
-        s.eval::<String>("return CompanionSelectedName:GetText()")
-            .unwrap(),
-        "Brown Horse"
-    );
-    assert_eq!(
-        s.eval::<String>("return CompanionSummonButton:GetText()")
-            .unwrap(),
-        s.eval::<String>("return MOUNT").unwrap()
-    );
+        s.run("PetPaperDollFrameTab3:Click()").unwrap();
+        s.resolve();
+        assert_eq!(errors(&mut s), Vec::<String>::new());
+        assert_eq!(
+            s.eval::<String>("return PetPaperDollFrameCompanionFrame.mode")
+                .unwrap(),
+            "MOUNT"
+        );
+        assert_eq!(
+            s.eval::<String>("return CompanionSelectedName:GetText()")
+                .unwrap(),
+            "Brown Horse"
+        );
+        assert_eq!(
+            s.eval::<String>("return CompanionSummonButton:GetText()")
+                .unwrap(),
+            s.eval::<String>("return MOUNT").unwrap()
+        );
+    });
 }
 
 /// Summon casts the selected companion (`CallCompanion` `0x53e5e0`); once it is out the button
 /// reads Dismiss and `DismissCompanion` asks the app to send it home.
 #[test]
 fn summon_casts_the_selection_and_dismiss_sends_it_home() {
-    benilla_formats::wow_data_or_skip!();
-    let _l = env_lock();
-    let mut s = load("pet-summon");
-    enter_world(&mut s);
-    s.set_companions(companions());
-    s.fire_event("COMPANION_UPDATE", vec![]);
-    toggle(&mut s, "PaperDollFrame");
-    open_pet_page(&mut s);
-    let _ = s.take_script_calls();
+    crate::ui_script::test_live::lending(&mut crate::ui_script::test_live::View, || {
+        benilla_formats::wow_data_or_skip!();
+        let _l = env_lock();
+        let mut s = load("pet-summon");
+        enter_world(&mut s);
+        s.set_companions(companions());
+        s.fire_event("COMPANION_UPDATE", vec![]);
+        toggle(&mut s, "PaperDollFrame");
+        open_pet_page(&mut s);
+        let _ = s.take_script_calls();
 
-    s.run("CompanionButton_OnEnter(CompanionButton1)").unwrap();
-    s.run("CompanionSummonButton:Click()").unwrap();
-    assert_eq!(
-        s.take_script_calls(),
-        vec![ScriptCall::CastSpell {
-            spell_id: 10673,
-            at: CastAt::Selection,
-            via_book: false,
-        }]
-    );
+        s.run("CompanionButton_OnEnter(CompanionButton1)").unwrap();
+        s.run("CompanionSummonButton:Click()").unwrap();
+        assert_eq!(
+            s.take_script_calls(),
+            vec![ScriptCall::CastSpell {
+                spell_id: 10673,
+                at: CastAt::Selection,
+                via_book: false,
+            }]
+        );
 
-    let mut out = companions();
-    out.critters[0].active = true;
-    s.set_companions(out);
-    s.fire_event("COMPANION_UPDATE", vec![ScriptValue::Str("CRITTER".into())]);
-    s.resolve();
-    assert_eq!(
-        s.eval::<String>("return CompanionSummonButton:GetText()")
-            .unwrap(),
-        s.eval::<String>("return PET_DISMISS").unwrap()
-    );
-    assert!(shown(&mut s, "CompanionButton1ActiveTexture"));
-    s.run("CompanionSummonButton:Click()").unwrap();
-    assert_eq!(
-        s.take_companion_intents(),
-        vec![CompanionIntent::Dismiss(10673)]
-    );
-    assert_eq!(errors(&mut s), Vec::<String>::new());
+        let mut out = companions();
+        out.critters[0].active = true;
+        s.set_companions(out);
+        s.fire_event("COMPANION_UPDATE", vec![ScriptValue::Str("CRITTER".into())]);
+        s.resolve();
+        assert_eq!(
+            s.eval::<String>("return CompanionSummonButton:GetText()")
+                .unwrap(),
+            s.eval::<String>("return PET_DISMISS").unwrap()
+        );
+        assert!(shown(&mut s, "CompanionButton1ActiveTexture"));
+        s.run("CompanionSummonButton:Click()").unwrap();
+        assert_eq!(
+            s.take_companion_intents(),
+            vec![CompanionIntent::Dismiss(10673)]
+        );
+        assert_eq!(errors(&mut s), Vec::<String>::new());
+    });
 }
 
 /// With a pet the page opens on the Pet tab, its stats drawn, and the companion tabs beside it.
 #[test]
 fn a_pet_opens_the_pet_page_with_its_stats() {
-    benilla_formats::wow_data_or_skip!();
-    let _l = env_lock();
-    let mut s = load("pet-pet");
-    enter_world(&mut s);
-    give_pet(&mut s);
-    s.set_companions(companions());
-    s.fire_event("COMPANION_UPDATE", vec![]);
-    toggle(&mut s, "PaperDollFrame");
-    open_pet_page(&mut s);
-    assert_eq!(errors(&mut s), Vec::<String>::new());
-    assert!(visible(&mut s, "PetPaperDollFramePetFrame"));
-    assert!(!visible(&mut s, "PetPaperDollFrameCompanionFrame"));
-    assert!(shown(&mut s, "PetPaperDollFrameTab1"));
-    assert_eq!(
-        s.eval::<String>("return PetNameText:GetText()").unwrap(),
-        "Snarl"
-    );
-    assert_eq!(
-        s.eval::<String>("return PetStatFrame1StatText:GetText()")
-            .unwrap(),
-        "123"
-    );
+    crate::ui_script::test_live::lending(&mut crate::ui_script::test_live::View, || {
+        benilla_formats::wow_data_or_skip!();
+        let _l = env_lock();
+        let mut s = load("pet-pet");
+        enter_world(&mut s);
+        give_pet(&mut s);
+        s.set_companions(companions());
+        s.fire_event("COMPANION_UPDATE", vec![]);
+        toggle(&mut s, "PaperDollFrame");
+        open_pet_page(&mut s);
+        assert_eq!(errors(&mut s), Vec::<String>::new());
+        assert!(visible(&mut s, "PetPaperDollFramePetFrame"));
+        assert!(!visible(&mut s, "PetPaperDollFrameCompanionFrame"));
+        assert!(shown(&mut s, "PetPaperDollFrameTab1"));
+        assert_eq!(
+            s.eval::<String>("return PetNameText:GetText()").unwrap(),
+            "Snarl"
+        );
+        assert_eq!(
+            s.eval::<String>("return PetStatFrame1StatText:GetText()")
+                .unwrap(),
+            "123"
+        );
+    });
 }

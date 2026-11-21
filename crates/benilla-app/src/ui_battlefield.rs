@@ -703,13 +703,13 @@ fn cached_full_name(names: &NameCache, guid: u64) -> Option<String> {
 
 /// The VM's sends (`0x54cc70`, `0x54e5b0`, `0x54da10`, `0x54c250`).
 fn drain_battlefield(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut state: ResMut<Battlefield>,
     queue: Res<BattlefieldQueue>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     commands: Res<NetCommands>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let send = |c| {
@@ -1164,7 +1164,7 @@ impl Plugin for BattlefieldPlugin {
                         .in_set(UiFeed)
                         .after(crate::ui_mail::send_query_next_mail_time_on_enter)
                         .before(crate::ui_unit::EnterWorldFeed),
-                    drain_battlefield.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_battlefield).in_set(UiDrain),
                 ),
             );
     }

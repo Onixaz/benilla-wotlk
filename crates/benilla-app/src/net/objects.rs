@@ -112,7 +112,7 @@ pub(crate) struct Scene<'w, 's> {
     ui: ResMut<'w, crate::ui_script::live::UiEvents>,
     signals: NonSendMut<'w, crate::ui_script::live::UniqueSignals>,
     /// The current target, whose aura state the usable update watches (`0x716810`).
-    selection: crate::ui_script::LentRef<'w, crate::target::Selection>,
+    selection: Option<Res<'w, crate::target::Selection>>,
     hard_landings: MessageWriter<'w, crate::creature_anim::HardLanding>,
     go_custom_anims: MessageWriter<'w, crate::go_anim::GoCustomAnim>,
     go_resets: MessageWriter<'w, crate::go_anim::GoResetState>,
@@ -1834,7 +1834,7 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     }
     // The target's aura state (`0x716810`), and our pet's power, its predicted copy re-seeded
     // (`0x722c50` -> `0x53d1b0`).
-    let target = sc.selection.get().and_then(|s| s.guid);
+    let target = sc.selection.as_deref().and_then(|s| s.guid);
     if sc.self_guid.0 != Some(guid) {
         if merged.aura_state_moved && target == Some(guid) {
             sc.ui.world(crate::ui_action::usable_cache::step(

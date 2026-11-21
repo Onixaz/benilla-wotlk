@@ -19,8 +19,6 @@
 
 use bevy::prelude::*;
 
-use benilla_ui::script::UiScript;
-
 use super::probes::ProbeClock;
 use crate::items::Items;
 use crate::net::{ChatKind, ClientCommand, NetCommands, ObjectStore, Objects, SelfPlayer};
@@ -52,7 +50,17 @@ pub(crate) struct ProbeClamPlugin;
 impl Plugin for ProbeClamPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ClamProbe>()
-            .add_systems(Update, clam_probe);
+            .init_resource::<super::probes::ProbeChunks>()
+            .init_resource::<super::probes::LootFrameShown>()
+            .add_systems(
+                Update,
+                (
+                    super::probes::read_loot_frame,
+                    clam_probe,
+                    super::probes::run_probe_chunks,
+                )
+                    .chain(),
+            );
     }
 }
 
@@ -132,10 +140,8 @@ fn finish(net: &NetCommands, entry: u32, now: f64) -> Phase {
 
 /// Whether the live `LootFrame` is shown, which needs `LOOT_OPENED` to have fired; falls back to
 /// the app-side session when the frame cannot be read.
-fn window_open(script: &UiScript, loot: &LootState) -> bool {
-    script
-        .eval::<bool>("return LootFrame:IsShown() and 1 or nil")
-        .unwrap_or_else(|_| loot.source().is_some())
+fn window_open(shown: Option<bool>, loot: &LootState) -> bool {
+    shown.unwrap_or_else(|| loot.source().is_some())
 }
 
 /// The probe's copy of `entry` in the backpack: its item guid and 1-based Lua slot, once its
@@ -167,7 +173,8 @@ fn find_in_backpack(
 fn clam_probe(
     time: ProbeClock,
     mut probe: ResMut<ClamProbe>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    shown: Res<super::probes::LootFrameShown>,
+    mut chunks: ResMut<super::probes::ProbeChunks>,
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
     objects: Objects,
     items: Res<Items>,
@@ -181,7 +188,7 @@ fn clam_probe(
     let Ok(store) = self_store.single() else {
         return; // not in-world yet
     };
-    let Some(mut script) = script else {
+    let Some(shown) = shown.0 else {
         return; // no UI VM in this build, so nothing to drive
     };
     let now = time.elapsed_secs_f64();
@@ -221,18 +228,18 @@ fn clam_probe(
             }
         }
         Phase::Before => {
-            probe.control.push(window_open(&script, &loot));
+            probe.control.push(window_open(shown, &loot));
             if probe.control.len() < CONTROL_FRAMES {
                 return;
             }
-            click(&mut script, &mut probe, 0);
+            click(&mut chunks, &probe, 0);
             probe.phase = Phase::WaitOpen {
                 since: now,
                 round: 0,
             };
         }
         Phase::WaitOpen { since, round } => {
-            if window_open(&script, &loot) {
+            if window_open(shown, &loot) {
                 let source = loot.source();
                 let grey = probe.clam.is_some_and(|g| pending.is_locked(g));
                 info!(
@@ -242,7 +249,7 @@ fn clam_probe(
                 );
                 probe.opened.push(source);
                 probe.greyed.push(grey);
-                let _ = script.eval::<()>("CloseLoot()");
+                chunks.run("CloseLoot()", |_, _| {});
                 probe.phase = Phase::WaitClosed { since: now, round };
             } else if now - since > OPEN_TIMEOUT_SECS {
                 let grey = probe.clam.is_some_and(|g| pending.is_locked(g));
@@ -262,12 +269,12 @@ fn clam_probe(
         Phase::Settling { since, round } => {
             if now - since >= REOPEN_SETTLE_SECS {
                 info!("PROBE_CLAM: re-clicking the same item (round {round})");
-                click(&mut script, &mut probe, round);
+                click(&mut chunks, &probe, round);
                 probe.phase = Phase::WaitOpen { since: now, round };
             }
         }
         Phase::WaitClosed { since, round } => {
-            if !window_open(&script, &loot) {
+            if !window_open(shown, &loot) {
                 probe.cleared.push(latch.0.is_none());
                 let next = round + 1;
                 if next < ROUNDS {
@@ -322,13 +329,13 @@ fn clam_probe(
 
 /// Right-click the clam through the live VM's `UseContainerItem`, so the real dispatcher
 /// (`ui_items::ScriptItemUse::use_container_item`) picks the packet.
-fn click(script: &mut UiScript, probe: &mut ClamProbe, round: u8) {
+fn click(chunks: &mut super::probes::ProbeChunks, probe: &ClamProbe, round: u8) {
     let slot = probe.slot;
     info!("PROBE_CLAM: round {round} — UseContainerItem(0, {slot}) through the live VM");
-    if let Err(e) = script.run(&format!("UseContainerItem(0, {slot})")) {
+    chunks.run(format!("UseContainerItem(0, {slot})"), |world, e| {
         error!("PROBE_CLAM: FAIL — the click chunk did not run: {e}");
-        probe.fails += 1;
-    }
+        world.resource_mut::<ClamProbe>().fails += 1;
+    });
 }
 
 /// The verdict, one line per reading, then the DONE tally.

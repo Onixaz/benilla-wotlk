@@ -23,10 +23,9 @@ pub(crate) mod glue_mgr;
 pub(crate) mod glue_scene;
 mod input;
 pub(crate) mod live;
-pub(crate) use live::{
-    LendLive, LentRef, OwnedMut, OwnsActions, OwnsCooldowns, OwnsMacros, OwnsPending, OwnsPlace,
-    OwnsScriptCalls, OwnsSelection, OwnsSpirit, OwnsTradeSkill,
-};
+pub(crate) mod raises;
+pub(crate) mod safe_world;
+pub(crate) use raises::{InTurn, VmTurn};
 #[cfg(test)]
 pub(crate) mod live_tests;
 // The press-frame tests run the input pass as a system of their own.
@@ -40,6 +39,8 @@ mod feed_census_tests;
 mod layer_tests;
 mod load_log;
 mod manifest;
+#[cfg(test)]
+mod raise_census_tests;
 /// The server alert's fetch and `LaunchURL`'s browser, for the stock glue screens.
 pub(crate) mod server_alert;
 #[cfg(test)]
@@ -258,6 +259,10 @@ pub(crate) struct PointerOverUiPanel(pub(crate) bool);
 /// `0x495320`) runs `OnUpdate` and the cooldown widgets.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct UiPress;
+
+/// [`PointerOverUi`]'s arbiter, in [`UiPress`] after the pointer feed.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct PointerArbiter;
 
 /// The player-UI feed phase, after [`UiPress`] and ungated (`UnitFeed` is the gated sub-phase):
 /// every push this frame's tick must see, as in the reference's frame, where packet dispatch
@@ -512,6 +517,8 @@ impl Plugin for UiScriptPlugin {
                 )
                     .chain(),
             )
+            // The raise steps between the phases.
+            .add_plugins(raises::schedule)
             // The area resolves after the input's calls drain and before the paint (`0x47f15b`, `0x47f163`).
             .configure_sets(
                 Update,
@@ -554,12 +561,13 @@ impl Plugin for UiScriptPlugin {
                     .after(crate::vplates::VPlateSet)
                     .before(crate::ui_pass::UiQuadAppend),
             )
-            // After the hover is known and before gameplay reads `PointerOverUi`.
+            // After the hover is known and before the world mouse latch reads `PointerOverUi`.
             .add_systems(
                 Update,
                 arbitrate_pointer_over_ui
-                    .after(UiInput)
-                    .before(WorldStage::Input),
+                    .in_set(PointerArbiter)
+                    .in_set(UiPress)
+                    .after(input::feed_ui_input),
             );
 
         // A UI capture's synthetic unit snapshots, after the real feed so they win.
@@ -612,11 +620,11 @@ pub(crate) use lifecycle::{
 /// `GetFramerate()`'s host half: FPS on `Time<Real>`, smoothed by a one-second pole; how the
 /// reference averages it is untraced.
 fn feed_framerate(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     time: Res<Time<bevy::time::Real>>,
     mut smoothed: Local<f64>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let dt = time.delta_secs_f64();
@@ -635,18 +643,17 @@ fn feed_framerate(
 }
 
 /// Synthetic player and target snapshots for a server-less UI capture, and its first events once.
-fn demo_unit_feed(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut fired: Local<VmMemo<bool>>,
-) {
+fn demo_unit_feed(world: &mut World, mut fired: Local<VmMemo<bool>>) {
+    safe_world::lend(world, |script| demo_units(script, &mut fired));
+}
+
+/// [`demo_unit_feed`]'s body on the VM, with the `World` lent.
+fn demo_units(script: &mut UiScript, fired: &mut VmMemo<bool>) {
     /// The synthetic target's guid: a creature high part; only its distinctness matters.
     const DEMO_TARGET_GUID: u64 = 0xF130_0000_0000_0001;
 
-    let Some(mut script) = script else {
-        return;
-    };
     // Session-keyed: a fresh VM needs the one-shot events and bar seeds again.
-    let fired = fired.get(&script);
+    let fired = fired.get(script);
     // Debug (`WOW_CAPTURE_REHOVER=1`): re-fire the world hover every frame, a flapping raycast.
     if std::env::var("WOW_CAPTURE_REHOVER").as_deref() == Ok("1") {
         script.world_tooltip_unit("mouseover");
@@ -705,7 +712,7 @@ fn demo_unit_feed(
     // The combo dots need a rogue and banked points, seeded only for `ui-combopoints`.
     if std::env::var("WOW_CAPTURE").as_deref() == Ok("ui-combopoints") {
         crate::dev::set_fixture_player(
-            &mut script,
+            script,
             benilla_ui::script::PlayerReqState {
                 level: 12,
                 class_id: 4, // rogue
@@ -721,7 +728,7 @@ fn demo_unit_feed(
     if !*fired {
         // Battle-stance page slots (actions 73..); slot 80 is a consumable stack of 5, since stock
         // `ActionButton_UpdateCount` shows only a consumable's count (`ActionButton.lua:287`).
-        crate::dev::set_fixture_bonus_bar_offset(&mut script, 1);
+        crate::dev::set_fixture_bonus_bar_offset(script, 1);
         // A macro on button 4; a capture has no character for `ui_macro::load_macros` to read.
         script.set_macros(benilla_ui::script::MacroState {
             account: vec![benilla_ui::script::MacroView {
@@ -776,7 +783,7 @@ fn demo_unit_feed(
             (60, "Interface\\Icons\\Spell_Holy_Heal", 0x00, 108, 0),
         ] {
             crate::dev::set_fixture_action(
-                &mut script,
+                script,
                 action,
                 Some(ActionSlot {
                     texture: Some(icon.into()),
@@ -800,7 +807,7 @@ fn demo_unit_feed(
         }
         // The stance bar: battle active (bonus offset 1), defensive uncastable, berserker cooling.
         crate::dev::set_fixture_shapeshift_forms(
-            &mut script,
+            script,
             vec![
                 benilla_ui::script::ShapeshiftFormView {
                     spell_id: 2457,

@@ -741,11 +741,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "UseQuestLogSpecialItem",
         lua.create_function(|lua, v: Value| {
             let index = number_arg(lua, v, "Usage: UseQuestLogSpecialItem(index)")?;
-            let mut model = super::model_mut_of(lua);
-            if let Some((bag, slot)) = special_item(&model, index).map(|i| (i.bag, i.slot)) {
-                model
-                    .script_calls
-                    .push(super::ScriptCall::UseItem { bag, slot });
+            let item = special_item(&super::model_mut_of(lua), index).map(|i| (i.bag, i.slot));
+            if let Some((bag, slot)) = item {
+                super::calls::make(lua, super::ScriptCall::UseItem { bag, slot });
             }
             Ok(())
         })?,

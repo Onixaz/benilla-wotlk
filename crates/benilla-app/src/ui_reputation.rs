@@ -9,9 +9,11 @@
 //! (`0x5d05b0`). The rank is [`benilla_formats::reputation_rank`], shared with the unit-reaction
 //! decode; the pane shows it uncapped.
 
+#[cfg(test)]
+use benilla_ui::script::UiScript;
 use bevy::prelude::*;
 
-use benilla_ui::script::{FactionEntry, ReputationSend, ReputationState, UiScript};
+use benilla_ui::script::{FactionEntry, ReputationSend, ReputationState};
 
 use crate::net::{ClientCommand, NetCommands, ObjectStore, Reputations, SelfPlayer};
 use crate::target::Factions;
@@ -31,7 +33,7 @@ impl Plugin for UiReputationPlugin {
                 Update,
                 (
                     feed_reputation.in_set(UiFeed),
-                    drain_reputation_sends.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_reputation_sends).in_set(UiDrain),
                 ),
             )
             .add_systems(PostUpdate, apply_local_flag_writes);
@@ -83,14 +85,14 @@ type ReputationInputs = Option<(u8, u8, Option<u32>)>;
 /// keeps a change to no faction quiet. The first push fires too: the stock watch bar initializes
 /// off `UPDATE_FACTION` at login.
 fn feed_reputation(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
     reputations: Res<Reputations>,
     factions: Option<Res<Factions>>,
     mut last: Local<crate::ui_script::VmMemo<Option<ReputationState>>>,
     mut last_inputs: Local<crate::ui_script::VmMemo<ReputationInputs>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let last = last.get(&script);
@@ -149,12 +151,12 @@ struct LocalFlagWrites(Vec<(u32, u8, bool)>);
 /// Send the pane's queued verbs. None is acked, so the war and inactive flags go into the store
 /// the way the client writes its own (`0x5d0a10`, `0x5d1c10`): the next push keeps them.
 fn drain_reputation_sends(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     commands: Res<NetCommands>,
     mut writes: ResMut<LocalFlagWrites>,
 ) {
     use benilla_formats::faction_flags as flag;
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     for send in script.take_reputation_sends() {

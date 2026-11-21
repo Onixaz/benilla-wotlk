@@ -22,8 +22,8 @@ use super::{PetBar, PetUnit};
 /// the pet book's `CastSpell(id, "pet")`.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct PetPress<'w, 's> {
-    pub(crate) bar: crate::ui_script::OwnedMut<'w, PetBar>,
-    pub(crate) selection: crate::ui_script::OwnedMut<'w, Selection>,
+    pub(crate) bar: ResMut<'w, PetBar>,
+    pub(crate) selection: ResMut<'w, Selection>,
     pub(crate) commands: Res<'w, NetCommands>,
     pub(crate) pet: PetUnit<'w, 's>,
     pub(crate) spells: Option<Res<'w, Spells>>,
@@ -36,8 +36,6 @@ pub(crate) struct PetPress<'w, 's> {
     cvars: Option<Res<'w, crate::cvars::Cvars>>,
     /// The creature records, whose type flags exempt a mounted fighter (`0x715f70`).
     names: Option<Res<'w, crate::names::NameCache>>,
-    /// The usable update an on-hold cooldown start runs (`0x805ed1`).
-    usable: Option<crate::ui_action::usable_cache::UsableRun<'w, 's>>,
     /// A press armed an on-hold start whose usable update has not run yet.
     on_hold_start: Local<'s, bool>,
 }
@@ -67,16 +65,11 @@ pub(crate) enum PetCast {
 }
 
 impl PetPress<'_, '_> {
-    /// The press's cooldown start, fired into `script`: the spellbook's signals, the usable update
+    /// The press's cooldown start, in turn on `ui`: the spellbook's signals, the usable update
     /// when on hold, then the pet bar's (`0x805ec3`-`0x805eda`).
-    pub(crate) fn fire_cooldown_start(&mut self, script: &mut benilla_ui::script::UiScript) {
+    pub(crate) fn cooldown_start_in_turn(&mut self, ui: &mut crate::ui_script::live::UiEvents) {
         let on_hold = std::mem::take(&mut *self.on_hold_start);
-        crate::ui_action::signals::cooldown_site_now(
-            script,
-            self.usable.as_mut(),
-            on_hold,
-            crate::ui_action::signals::Tail::Pet,
-        );
+        crate::ui_action::signals::cooldown_site(ui, on_hold, crate::ui_action::signals::Tail::Pet);
     }
 
     /// `CastPetAction(slot)`, a 1-based bar slot.
@@ -85,7 +78,7 @@ impl PetPress<'_, '_> {
         slot: u32,
         sink: &mut dyn crate::ui_action::signals::SignalSink,
     ) -> PetCast {
-        let entry = slot_entry(&self.bar.read(), slot);
+        let entry = slot_entry(self.bar.as_ref(), slot);
         match entry {
             Some(entry) => self.press(slot, entry, None, sink),
             None => PetCast::Done,
@@ -151,11 +144,11 @@ impl PetPress<'_, '_> {
             ..
         } = self;
         // The spell arm asks with `ignoreControl` set (`0x5d4283 push 1`), the others without.
-        let Some(pet_store) = pet.usable_pet_with(&bar.read(), entry.is_spell()) else {
+        let Some(pet_store) = pet.usable_pet_with(bar.as_ref(), entry.is_spell()) else {
             debug!("ui_pet: slot {slot} refused, the pet's actions are not usable — no packet");
             return PetCast::Done;
         };
-        let pet_guid = bar.read().spells.pet_guid;
+        let pet_guid = bar.spells.pet_guid;
         let possessing = possessing(Some(pet_store), pet.self_guid.0);
         // A press on a running spell cancels its aura (`0x5d4325`), kept if cast under 1.5 s ago.
         let display = entry
@@ -169,7 +162,7 @@ impl PetPress<'_, '_> {
                 .is_some_and(|v| v != 0.0);
             if secure
                 && bar
-                    .read()
+                    .as_ref()
                     .cooldowns
                     .recently_cast(spell_id, 0, Instant::now())
             {
@@ -196,7 +189,7 @@ impl PetPress<'_, '_> {
             None
         };
         // The passed target, else the selection (`0x5d4240`).
-        let selected = selection.read().guid;
+        let selected = selection.guid;
         let mut target_guid = passed.filter(|&g| g != 0).or(selected).unwrap_or(0);
         // `AttributesEx4 & 0x20` (`0x5d4407`) or a possessed pet casts as the pet (`0x5d445a`).
         if let Some(spell) = spell {
@@ -228,7 +221,7 @@ impl PetPress<'_, '_> {
                 crate::spell::validator::MountedGate::creature(pet_store, names.as_deref()),
                 sink,
                 // No range leg: a mounted pet that got this far fights mounted (`0x72bdb0`).
-            ) || match pick.target(None, &mut selection.write(), seam, false, sink) {
+            ) || match pick.target(None, selection.as_mut(), seam, false, sink) {
                 Some(guid) => {
                     target_guid = guid;
                     false
@@ -238,13 +231,13 @@ impl PetPress<'_, '_> {
         } else {
             false
         };
-        if !commit_press(&mut bar.write(), entry, refused) {
+        if !commit_press(bar.as_mut(), entry, refused) {
             debug!("ui_pet: slot {slot} refused by the attack validator — no packet");
             return PetCast::Done;
         }
         if let Some(spell) = spell {
             **on_hold_start |= arm_pet_gcd(
-                &mut bar.write(),
+                bar.as_mut(),
                 entry.action(),
                 spell,
                 possessing,

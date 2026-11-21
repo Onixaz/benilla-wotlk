@@ -408,7 +408,7 @@ type VehicleUnits<'w, 's> = Query<
 /// seat by the party record's seat id; the seat trees, the mover and the player's seat flags.
 #[allow(clippy::too_many_arguments)] // a Bevy system's full input set
 fn feed_vehicle_view(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     units: VehicleUnits,
     mover: Query<&crate::net::Guid, With<crate::net::ActiveMover>>,
     index: Res<GuidIndex>,
@@ -420,7 +420,7 @@ fn feed_vehicle_view(
     spells: Option<Res<crate::ui_action::Spells>>,
     mut pushed: Local<crate::ui_script::VmMemo<Option<VehicleView>>>,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let (aim, remote) = aim;
@@ -568,7 +568,7 @@ fn feed_vehicle_view(
 /// allow (`0x5d46f0`, flag `0x2000000`). Otherwise the plain request.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)] // a Bevy system's full input set
 fn send_vehicle_requests(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     net: Option<Res<crate::net::NetCommands>>,
     me: Query<Option<&Passenger>, With<crate::net::SelfPlayer>>,
     mover: Query<
@@ -585,7 +585,7 @@ fn send_vehicle_requests(
     mut stop: ResMut<SeatStop>,
     mut aim: ResMut<aim::VehicleAim>,
 ) {
-    let (Some(mut script), Some(net)) = (script, net) else {
+    let (Some(mut script), Some(net)) = (script.turn(), net) else {
         return;
     };
     let requests = script.take_vehicle_requests();
@@ -682,7 +682,7 @@ fn send_vehicle_requests(
 /// Turn the mover's pitch under its keys or toward its target, at its pitch rate.
 #[allow(clippy::type_complexity)] // the mover's facts, one query
 fn drive_vehicle_aim(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     net: Option<Res<crate::net::NetCommands>>,
     mover: Query<
         (
@@ -698,7 +698,11 @@ fn drive_vehicle_aim(
     time: Res<Time>,
     mut aim: ResMut<aim::VehicleAim>,
 ) {
-    if let Some(power) = script.as_deref().map(UiScript::vehicle_aim_norm_power) {
+    if let Some(power) = script
+        .turn()
+        .as_deref()
+        .map(UiScript::vehicle_aim_norm_power)
+    {
         if aim.power != power {
             aim.power = power;
         }
@@ -729,16 +733,13 @@ fn drive_vehicle_aim(
         rate,
         time.delta_secs(),
         &net,
-        script.as_deref_mut(),
+        script.turn().as_deref_mut(),
     );
 }
 
 /// Fire what the frame owes, each once per token naming the unit (`0x60bb70`).
-fn feed_vehicle_signals(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut signals: ResMut<VehicleSignals>,
-) {
-    let Some(mut script) = script else {
+fn feed_vehicle_signals(mut script: crate::ui_script::InTurn, mut signals: ResMut<VehicleSignals>) {
+    let Some(mut script) = script.turn() else {
         return;
     };
     if std::mem::take(&mut signals.sliders_hidden) {

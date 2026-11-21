@@ -877,7 +877,7 @@ impl LootSourceObjects<'_, '_> {
 }
 
 fn feed_loot(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut script: crate::ui_script::InTurn,
     mut loot: ResMut<LootState>,
     items: Res<Items>,
     icons: Option<Res<ItemDisplays>>,
@@ -894,7 +894,7 @@ fn feed_loot(
     objects: LootSourceObjects,
     mut moving: OpenWhileMoving,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = script.turn() else {
         return;
     };
     let last = last.get(&script);
@@ -917,8 +917,11 @@ fn feed_loot(
         group: &group,
         names: &names,
     };
+    // Each write after a raise (the receive lines above, a sweep's events) lands once that raise's
+    // listeners have run.
     // The looted object (`[0xbfa8d8]`), which the purchase verbs refuse while it is open.
-    script.set_loot_source(loot.source().unwrap_or(0));
+    let source = loot.source().unwrap_or(0);
+    script.after_raises(move |s| s.set_loot_source(source));
     let fresh = snapshot(&loot, &items, icons.as_deref(), &commands, rolls, who).map(|mut snap| {
         let level = loot.source().and_then(|g| objects.unit_level(g));
         snap.source_unit = level.is_some();
@@ -935,7 +938,7 @@ fn feed_loot(
     // A window that replaced the shown one: the new object's set closes the old before it opens the
     // new.
     if std::mem::replace(seen_generation, loot.generation) != loot.generation && last.is_some() {
-        script.set_loot(None);
+        script.after_raises(|s| s.set_loot(None));
         script.fire_event("LOOT_CLOSED", vec![]);
         *last = None;
     }
@@ -943,7 +946,8 @@ fn feed_loot(
         fire_changed_rows(&mut loot, &mut script, &items, &commands);
         return;
     }
-    script.set_loot(fresh.clone());
+    let snap = fresh.clone();
+    script.after_raises(move |s| s.set_loot(snap));
     match (&*last, &fresh) {
         (None, Some(snap)) => {
             // No open while a template is pending (`0x5896b0`); `last` stays, so this retries.
@@ -962,7 +966,7 @@ fn feed_loot(
                 if empty {
                     let closed = close_interaction(&mut loot, &mut moving.latch, &commands, true);
                     moving.dead.after_close(closed);
-                    script.set_loot(None);
+                    script.after_raises(|s| s.set_loot(None));
                     script.fire_event("LOOT_CLOSED", vec![]);
                     *last = None;
                     return;
@@ -976,7 +980,7 @@ fn feed_loot(
                 let closed = close_on_move_start(&mut loot, &mut moving.latch, &commands);
                 if closed.is_some() {
                     moving.dead.after_close(closed);
-                    script.set_loot(None);
+                    script.after_raises(|s| s.set_loot(None));
                     script.fire_event("LOOT_CLOSED", vec![]);
                     *last = None;
                     return;
@@ -1174,33 +1178,17 @@ struct OpenWhileMoving<'w, 's> {
     dead: DeadUnitDeselect<'w, 's>,
 }
 
-/// The locks a loot close released: each unlock signals at the item's place as it clears (`0x707020`).
-#[derive(bevy::ecs::system::SystemParam)]
-struct LootUnlocks<'w, 's> {
-    pending: crate::ui_script::OwnedMut<'w, crate::pending_item_ops::PendingItemOps>,
-    objects: crate::net::Objects<'w, 's>,
+/// Sends the Lua asks: `LootSlot` takes (`0x589140`), `ConfirmLootSlot` confirms (`0x589300`);
+/// then each lock a loot close released unlocks and signals at the item's place, one before the
+/// next (`0x707020`).
+fn drain_loot(world: &mut World) {
+    crate::ui_items::watch::run_lock_step(world, drain_loot_asks, ());
 }
 
-impl LootUnlocks<'_, '_> {
-    fn flush(&mut self, loot: &mut LootState, mut script: Option<&mut UiScript>) {
-        for guid in loot.take_unlocks() {
-            if !self.pending.write().unlock(guid) {
-                continue;
-            }
-            let args = crate::ui_items::watch::lock_args(&self.objects, guid);
-            if let (Some(script), Some(args)) = (script.as_deref_mut(), args) {
-                crate::ui_items::watch::fire_lock_edge_now(script, false, args);
-            }
-        }
-    }
-}
-
-/// Sends the Lua asks: `LootSlot` takes (`0x589140`), `ConfirmLootSlot` confirms (`0x589300`).
-fn drain_loot(
-    (mut script, _live): (
-        Option<NonSendMut<UiScript>>,
-        crate::ui_script::LendLive<crate::ui_script::OwnsPending>,
-    ),
+/// [`drain_loot`]'s sends; the unlocks the closes released.
+fn drain_loot_asks(
+    In(()): In<()>,
+    mut vm: crate::ui_script::InTurn,
     mut loot: ResMut<LootState>,
     mut latch: ResMut<LootLatch>,
     commands: Res<NetCommands>,
@@ -1211,8 +1199,9 @@ fn drain_loot(
     mut move_start: ResMut<LootMoveStart>,
     mut dead: DeadUnitDeselect,
     mut errors: ResMut<UiErrorKeys>,
-    mut unlocks: LootUnlocks,
-) {
+    objects: crate::net::Objects,
+) -> Vec<crate::ui_items::watch::LockStep> {
+    let mut script = vm.turn();
     if std::mem::take(&mut move_start.0) {
         dead.after_close(close_on_move_start(&mut loot, &mut latch, &commands));
     }
@@ -1231,7 +1220,14 @@ fn drain_loot(
     for display_id in loot.take_pickups() {
         pickup.write(crate::sound::LootPickupSound { display_id });
     }
-    unlocks.flush(&mut loot, script.as_deref_mut());
+    loot.take_unlocks()
+        .into_iter()
+        .map(|guid| crate::ui_items::watch::LockStep {
+            guid,
+            locked: false,
+            args: crate::ui_items::watch::lock_args(&objects, guid),
+        })
+        .collect()
 }
 
 /// [`drain_loot`]'s Lua intents; the takes' pickup sounds queue on [`LootState`].
@@ -3202,5 +3198,64 @@ mod tests {
         );
         app.update();
         assert_eq!(loot_events(&mut app), "LOOT_CLOSED=nil,LOOT_OPENED=0");
+    }
+
+    /// A listener reads the model as of its raise (`0x81b530` runs it in the caller): a window
+    /// that replaced the shown one closes the old before the new one's snapshot is written, so the
+    /// close's listener reads no loot.
+    #[test]
+    fn a_replaced_windows_close_listener_does_not_see_the_new_window() {
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let mut app = App::new();
+        app.add_message::<crate::sound::LootPickupSound>()
+            .add_message::<crate::target::DeselectGuid>()
+            .init_resource::<LootMoveStart>()
+            .init_resource::<LootLatch>()
+            .init_resource::<crate::net::GuidIndex>()
+            .init_resource::<LootState>()
+            .init_resource::<crate::ui_chat::ChatLog>()
+            .init_resource::<GroupState>()
+            .init_resource::<NameCache>()
+            .init_resource::<Items>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<LootConfig>()
+            .init_resource::<crate::ui_script::live::UiEvents>()
+            .insert_resource(NetCommands(tx))
+            .add_systems(bevy::prelude::Update, feed_loot);
+        app.world_mut()
+            .resource_mut::<LootState>()
+            .open(0x42, loot_type::CORPSE, 5, Vec::new());
+        let script = UiScript::new().unwrap();
+        script
+            .run(
+                "SEEN = {} local f = CreateFrame('Frame') f:RegisterEvent('LOOT_CLOSED')
+                 f:SetScript('OnEvent', function() SEEN[#SEEN + 1] = GetNumLootItems() end)",
+            )
+            .unwrap();
+        app.insert_non_send_resource(script);
+        app.update();
+        crate::ui_script::raises::fire_raises(app.world_mut());
+        let shown = |app: &App| -> i64 {
+            app.world()
+                .non_send_resource::<UiScript>()
+                .eval("return GetNumLootItems()")
+                .unwrap()
+        };
+        assert!(shown(&app) > 0, "fixture: the first window is shown");
+        app.world_mut()
+            .resource_mut::<LootState>()
+            .open(0x43, loot_type::CORPSE, 9, Vec::new());
+        app.update();
+        crate::ui_script::raises::fire_raises(app.world_mut());
+        let seen: String = app
+            .world()
+            .non_send_resource::<UiScript>()
+            .eval("return table.concat(SEEN, ',')")
+            .unwrap();
+        assert_eq!(seen, "0", "the close's listener reads no window");
+        assert!(
+            shown(&app) > 0,
+            "the new window is written after the listener"
+        );
     }
 }

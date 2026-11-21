@@ -26,9 +26,8 @@ use bevy::prelude::*;
 use benilla_protocol::EntityKind;
 use benilla_ui::script::UiScript;
 
-use super::probes::ProbeClock;
 use crate::names::NameCache;
-use crate::net::{ChatKind, ClientCommand, Guid, NetCommands, NetEntity, ObjectStore, SelfPlayer};
+use crate::net::{ChatKind, ClientCommand, NetCommands};
 use crate::player::Player;
 use crate::portrait::{BoothPanes, PortraitImages, PortraitSource};
 
@@ -139,27 +138,47 @@ fn clear_log(script: &UiScript) {
     }
 }
 
-fn vendor_swap_probe(
-    time: ProbeClock,
-    mut probe: ResMut<VendorSwapProbe>,
-    (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    names: Res<NameCache>,
-    panes: Res<BoothPanes>,
-    images: Res<PortraitImages>,
-    self_player: Query<(), With<SelfPlayer>>,
-    player: Res<Player>,
-    units: Query<(&Guid, &NetEntity, &ObjectStore, &Transform), Without<SelfPlayer>>,
-    net: Res<NetCommands>,
-    mut exit: MessageWriter<AppExit>,
-) {
-    if self_player.is_empty() {
+fn vendor_swap_probe(world: &mut World) {
+    if !super::probes::in_world(world) {
         return; // not in-world yet
     }
-    let now = time.elapsed_secs_f64();
-    let Some(script) = script else {
+    let now = f64::from(super::probes::probe_secs(world));
+    let units = super::probes::seen(world);
+    let pos = world.resource::<Player>().pos;
+    let Some(mut probe) = world.remove_resource::<VendorSwapProbe>() else {
         return;
     };
+    let mut exit = Vec::new();
+    super::probes::with_vm(world, |script| {
+        if let Some(script) = script {
+            vendor_swap_step(&mut probe, script, now, &units, pos, &mut exit);
+        }
+    });
+    world.insert_resource(probe);
+    for e in exit {
+        world.write_message(e);
+    }
+}
 
+/// The merchant's vendor (`0xbfa3e8`), read live off the lent `World`.
+fn merchant_vendor() -> Option<u64> {
+    super::probes::read(|w| {
+        w.get_resource::<crate::ui_merchant::MerchantOpen>()
+            .and_then(|m| m.vendor)
+    })
+}
+
+/// One frame of the probe on the VM, the `World` lent; the caches and booth read live.
+#[allow(clippy::too_many_lines)]
+fn vendor_swap_step(
+    probe: &mut VendorSwapProbe,
+    script: &mut UiScript,
+    now: f64,
+    units: &super::probes::Seen,
+    pos: Vec3,
+    exit: &mut Vec<AppExit>,
+) {
+    let net = super::probes::read(|w| NetCommands(w.resource::<NetCommands>().0.clone()));
     match probe.phase {
         Phase::Start => {
             if let Err(e) = script.run(HOOK) {
@@ -181,7 +200,7 @@ fn vendor_swap_probe(
             if now - sent_at < SETTLE_SECS {
                 return;
             }
-            let me = player.pos;
+            let me = pos;
             let find = |entry: u32| {
                 units
                     .iter()
@@ -194,7 +213,15 @@ fn vendor_swap_probe(
             };
             let (brog, dobbins) = (find(BROG_ENTRY), find(DOBBINS_ENTRY));
             // Both names must be cached before the legs read them back out of the VM.
-            let named = |g: Option<u64>| g.is_some_and(|g| names.resolve(g, &net).is_some());
+            let named = |g: Option<u64>| {
+                g.is_some_and(|g| {
+                    super::probes::read(|w| {
+                        w.resource::<NameCache>()
+                            .resolve(g, w.resource::<NetCommands>())
+                            .is_some()
+                    })
+                })
+            };
             let (brog_named, dobbins_named) = (named(brog), named(dobbins));
             if brog_named && dobbins_named {
                 probe.brog = brog;
@@ -205,7 +232,7 @@ fn vendor_swap_probe(
                      CMSG_LIST_INVENTORY to Brog",
                     dobbins.expect("named")
                 );
-                clear_log(&script);
+                clear_log(script);
                 let _ = net.0.send(ClientCommand::ListInventory { guid: brog });
                 probe.phase = Phase::Open { since: now };
             } else if now - sent_at > SCAN_TIMEOUT_SECS {
@@ -221,8 +248,13 @@ fn vendor_swap_probe(
         }
         Phase::Open { since } => {
             let brog = probe.brog.expect("set at Settle");
-            let expect = names.peek(brog).unwrap_or("").to_string();
-            match (live.merchant_vendor() == Some(brog), first_show(&script)) {
+            let expect = super::probes::read(|w| {
+                w.resource::<NameCache>()
+                    .peek(brog)
+                    .unwrap_or("")
+                    .to_string()
+            });
+            match (merchant_vendor() == Some(brog), first_show(script)) {
                 (true, Some((npc, title))) => {
                     if npc == expect && title == expect {
                         info!(
@@ -243,7 +275,7 @@ fn vendor_swap_probe(
                     error!(
                         "PROBE_VENDOR_SWAP: open FAIL — no merchant window + MERCHANT_SHOW on \
                          Brog within {WINDOW_TIMEOUT_SECS}s (vendor = {:?})",
-                        live.merchant_vendor()
+                        merchant_vendor()
                     );
                     probe.fails += 1;
                     probe.phase = Phase::Done;
@@ -252,8 +284,13 @@ fn vendor_swap_probe(
             }
         }
         Phase::Portrait { since } => {
-            let sampled = panes.0.contains_key("npc");
-            let baked = matches!(images.0.get("npc"), Some(PortraitSource::Live(_)));
+            let sampled = super::probes::read(|w| w.resource::<BoothPanes>().0.contains_key("npc"));
+            let baked = super::probes::read(|w| {
+                matches!(
+                    w.resource::<PortraitImages>().0.get("npc"),
+                    Some(PortraitSource::Live(_))
+                )
+            });
             if sampled && baked {
                 info!(
                     "PROBE_VENDOR_SWAP: portrait PASS — the round region samples the \"npc\" \
@@ -261,7 +298,8 @@ fn vendor_swap_probe(
                 );
                 probe.passes += 1;
             } else if now - since > PORTRAIT_TIMEOUT_SECS {
-                let mut keys: Vec<&String> = panes.0.keys().collect();
+                let mut keys: Vec<String> =
+                    super::probes::read(|w| w.resource::<BoothPanes>().0.keys().cloned().collect());
                 keys.sort();
                 error!(
                     "PROBE_VENDOR_SWAP: portrait FAIL — sampled under \"npc\": {sampled}, live \
@@ -273,14 +311,19 @@ fn vendor_swap_probe(
             }
             let dobbins = probe.dobbins.expect("set at Settle");
             info!("PROBE_VENDOR_SWAP: CMSG_LIST_INVENTORY to Dobbins over Brog's open window");
-            clear_log(&script);
+            clear_log(script);
             let _ = net.0.send(ClientCommand::ListInventory { guid: dobbins });
             probe.phase = Phase::Swap { since: now };
         }
         Phase::Swap { since } => {
             let dobbins = probe.dobbins.expect("set at Settle");
-            let expect = names.peek(dobbins).unwrap_or("").to_string();
-            match (live.merchant_vendor() == Some(dobbins), first_show(&script)) {
+            let expect = super::probes::read(|w| {
+                w.resource::<NameCache>()
+                    .peek(dobbins)
+                    .unwrap_or("")
+                    .to_string()
+            });
+            match (merchant_vendor() == Some(dobbins), first_show(script)) {
                 (true, Some((npc, title))) => {
                     if npc == expect && title == expect {
                         info!(
@@ -301,7 +344,7 @@ fn vendor_swap_probe(
                     error!(
                         "PROBE_VENDOR_SWAP: swap FAIL — no window swap + MERCHANT_SHOW on \
                          Dobbins within {WINDOW_TIMEOUT_SECS}s (vendor = {:?})",
-                        live.merchant_vendor()
+                        merchant_vendor()
                     );
                     probe.fails += 1;
                     probe.phase = Phase::Done;
@@ -314,7 +357,12 @@ fn vendor_swap_probe(
                 return;
             }
             let dobbins = probe.dobbins.expect("set at Settle");
-            let expect = names.peek(dobbins).unwrap_or("").to_string();
+            let expect = super::probes::read(|w| {
+                w.resource::<NameCache>()
+                    .peek(dobbins)
+                    .unwrap_or("")
+                    .to_string()
+            });
             let title: String = script
                 .eval("return tostring(MerchantNameText:GetText())")
                 .unwrap_or_default();
@@ -338,7 +386,7 @@ fn vendor_swap_probe(
         }
         Phase::Clear { since, closed_at } => {
             match closed_at {
-                None if live.merchant_vendor().is_none() => {
+                None if merchant_vendor().is_none() => {
                     probe.phase = Phase::Clear {
                         since,
                         closed_at: Some(now),
@@ -348,7 +396,7 @@ fn vendor_swap_probe(
                     error!(
                         "PROBE_VENDOR_SWAP: clear FAIL — the session never cleared after \
                          HideUIPanel (vendor = {:?})",
-                        live.merchant_vendor()
+                        merchant_vendor()
                     );
                     probe.fails += 1;
                     probe.phase = Phase::Done;
@@ -402,7 +450,7 @@ fn vendor_swap_probe(
                 probe.passes, probe.fails, probe.skips
             );
             // `AppExit` plus a hard backstop, so a teardown hang cannot keep the account held.
-            exit.write(AppExit::Success);
+            exit.push(AppExit::Success);
             std::thread::spawn(|| {
                 std::thread::sleep(std::time::Duration::from_secs(5));
                 warn!("PROBE_VENDOR_SWAP: still alive 5s after AppExit — hard exit");

@@ -1,7 +1,7 @@
 //! The guild bank's app side, after 12340's guild bank info: the banker, the six tabs' names,
 //! slots and locks, the money, the logs and texts, the wire, and the item gates and stack
 //! arithmetic of the swap senders. Main-thread state the verbs read and write at the call
-//! ([`crate::ui_script::live::Lent`]); its handlers fire their events in turn.
+//! ([`crate::ui_script::live::MainState`]); its handlers fire their events in turn.
 
 use benilla_protocol::messages::{
     GuildBankLogEntry, GuildBankSend, GuildBankSlot, GuildBankSwap, BAG_PLAYER_INVENTORY,
@@ -257,7 +257,7 @@ impl Plugin for UiGuildBankPlugin {
         net::register(app);
         app.init_non_send_resource::<GuildBankState>().add_systems(
             Update,
-            drain_guild_bank
+            crate::ui_script::raises::then_fire(drain_guild_bank)
                 .in_set(UiDrain)
                 .after(crate::ui_guild::GuildDrain),
         );
@@ -408,18 +408,19 @@ pub(crate) struct SwapInputs<'w, 's> {
 
 /// Drain the engine's sends: each gated on the open banker as the reference's senders are.
 fn drain_guild_bank(
-    (script, live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+    mut vm: crate::ui_script::InTurn,
+    bank: Option<NonSend<GuildBankState>>,
     net: Res<NetCommands>,
     inputs: SwapInputs,
 ) {
-    let Some(mut script) = script else {
+    let Some(mut script) = vm.turn() else {
         return;
     };
     for request in script.take_guild_bank_requests() {
-        // The bank is read between calls into Lua: the auto-store's event fires after (`0x5a63f0`).
-        let stored = live.with_guild_bank(|state| {
-            state.is_some_and(|state| handle(&mut script, state, &net, &inputs, request))
-        });
+        // The auto-store's event follows its send (`0x5a63f0`).
+        let stored = bank
+            .as_deref()
+            .is_some_and(|state| handle(&mut script, state, &net, &inputs, request));
         if stored {
             script.fire_event("GUILDBANKBAGSLOTS_CHANGED", Vec::new());
         }

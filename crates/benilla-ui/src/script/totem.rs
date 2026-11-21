@@ -154,8 +154,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "DestroyTotem",
         lua.create_function(|lua, v: Value| {
             let slot = slot_arg(lua, v, "Usage: DestroyTotem(slot)")?;
-            let queued = !crate::script::model_mut_of(lua).script_calls.is_empty();
-            if queued {
+            if !crate::script::calls::none_waiting(lua) {
                 crate::script::model_mut_of(lua)
                     .script_calls
                     .push(super::ScriptCall::DestroyTotem(slot as u8));
@@ -171,7 +170,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::script::live::{lend_test, LiveLoan, TestView};
+    use crate::script::live::TestView;
     use crate::script::UiScript;
 
     use super::*;
@@ -179,14 +178,14 @@ mod tests {
     fn script_with(
         live: [Option<TotemView>; MAX_TOTEM_SLOTS],
         tools: [bool; MAX_TOTEM_SLOTS],
-    ) -> (UiScript, LiveLoan<TestView>) {
+    ) -> (UiScript, TestView) {
         let mut s = UiScript::new().unwrap();
         s.set_now(100.0);
-        let view = lend_test(TestView {
+        let view = TestView {
             totems: std::cell::RefCell::new(live),
             totem_tools: tools,
             ..Default::default()
-        });
+        };
         (s, view)
     }
 
@@ -207,35 +206,39 @@ mod tests {
 
     #[test]
     fn a_live_slot_answers_its_totem_in_whole_seconds() {
-        let (s, _view) = script_with(one(0, searing()), [false; 4]);
-        let (have, name, start, duration, icon): (bool, String, f64, f64, String) =
-            s.eval("return GetTotemInfo(1)").unwrap();
-        assert!(have);
-        assert_eq!(name, "Searing Totem");
-        assert_eq!((start, duration), (95.0, 30.0));
-        assert_eq!(icon, "Interface\\Icons\\Spell_Fire_SearingTotem");
-        // 95.5 + 30 - 100 = 25.5 s left, truncated.
-        assert_eq!(s.eval::<f64>("return GetTotemTimeLeft(1)").unwrap(), 25.0);
+        let (s, mut view_v) = script_with(one(0, searing()), [false; 4]);
+        crate::script::live::lending(&mut view_v, || {
+            let (have, name, start, duration, icon): (bool, String, f64, f64, String) =
+                s.eval("return GetTotemInfo(1)").unwrap();
+            assert!(have);
+            assert_eq!(name, "Searing Totem");
+            assert_eq!((start, duration), (95.0, 30.0));
+            assert_eq!(icon, "Interface\\Icons\\Spell_Fire_SearingTotem");
+            // 95.5 + 30 - 100 = 25.5 s left, truncated.
+            assert_eq!(s.eval::<f64>("return GetTotemTimeLeft(1)").unwrap(), 25.0);
+        });
     }
 
     #[test]
     fn an_empty_slot_answers_whether_its_tool_is_carried() {
-        let (s, _view) = script_with(Default::default(), [false, true, false, false]);
-        let (have, name, start, duration, icon): (bool, String, f64, f64, String) =
-            s.eval("return GetTotemInfo(2)").unwrap();
-        assert!(have, "the earth tool is carried");
-        assert_eq!(
-            (name.as_str(), start, duration, icon.as_str()),
-            ("", 0.0, 0.0, "")
-        );
-        let (have,): (bool,) = s.eval("return GetTotemInfo(3)").unwrap();
-        assert!(!have);
-        assert_eq!(s.eval::<f64>("return GetTotemTimeLeft(2)").unwrap(), 0.0);
+        let (s, mut view_v) = script_with(Default::default(), [false, true, false, false]);
+        crate::script::live::lending(&mut view_v, || {
+            let (have, name, start, duration, icon): (bool, String, f64, f64, String) =
+                s.eval("return GetTotemInfo(2)").unwrap();
+            assert!(have, "the earth tool is carried");
+            assert_eq!(
+                (name.as_str(), start, duration, icon.as_str()),
+                ("", 0.0, 0.0, "")
+            );
+            let (have,): (bool,) = s.eval("return GetTotemInfo(3)").unwrap();
+            assert!(!have);
+            assert_eq!(s.eval::<f64>("return GetTotemTimeLeft(2)").unwrap(), 0.0);
+        });
     }
 
     #[test]
     fn an_unnamed_totem_answers_nil_for_its_name() {
-        let (s, _view) = script_with(
+        let (s, mut view_v) = script_with(
             one(
                 3,
                 TotemView {
@@ -245,14 +248,16 @@ mod tests {
             ),
             [false; 4],
         );
-        assert!(s
-            .eval::<bool>("local _, name = GetTotemInfo(4) return name == nil")
-            .unwrap());
+        crate::script::live::lending(&mut view_v, || {
+            assert!(s
+                .eval::<bool>("local _, name = GetTotemInfo(4) return name == nil")
+                .unwrap());
+        });
     }
 
     #[test]
     fn an_expired_totem_has_no_time_left() {
-        let (s, _view) = script_with(
+        let (s, mut view_v) = script_with(
             one(
                 0,
                 TotemView {
@@ -262,62 +267,79 @@ mod tests {
             ),
             [false; 4],
         );
-        assert_eq!(s.eval::<f64>("return GetTotemTimeLeft(1)").unwrap(), 0.0);
+        crate::script::live::lending(&mut view_v, || {
+            assert_eq!(s.eval::<f64>("return GetTotemTimeLeft(1)").unwrap(), 0.0);
+        });
     }
 
     #[test]
     fn slots_outside_one_to_four_and_non_numbers_raise() {
-        let (s, _view) = script_with(Default::default(), [false; 4]);
-        for call in [
-            "GetTotemInfo(0)",
-            "GetTotemInfo(5)",
-            "GetTotemTimeLeft(9)",
-            "DestroyTotem(0)",
-            "GetTotemInfo()",
-            "GetTotemInfo('fire')",
-        ] {
-            assert!(s.run(call).is_err(), "{call} raises");
-        }
+        let (s, mut view_v) = script_with(Default::default(), [false; 4]);
+        crate::script::live::lending(&mut view_v, || {
+            for call in [
+                "GetTotemInfo(0)",
+                "GetTotemInfo(5)",
+                "GetTotemTimeLeft(9)",
+                "DestroyTotem(0)",
+                "GetTotemInfo()",
+                "GetTotemInfo('fire')",
+            ] {
+                assert!(s.run(call).is_err(), "{call} raises");
+            }
+        });
     }
 
     /// `DestroyTotem` sends, clears and fires `PLAYER_TOTEM_UPDATE` before it returns, so the same
     /// chunk reads the slot empty and a handler of the event has run (`0x5197d0`).
     #[test]
     fn destroying_a_live_totem_sends_clears_and_announces_it_inside_the_call() {
-        let (s, view) = script_with(one(2, searing()), [false; 4]);
-        s.run(
-            "SEEN = {} local f = CreateFrame('Frame') f:RegisterEvent('PLAYER_TOTEM_UPDATE')
+        let (s, mut view_v) = script_with(one(2, searing()), [false; 4]);
+        crate::script::live::lending(&mut view_v, || {
+            s.run(
+                "SEEN = {} local f = CreateFrame('Frame') f:RegisterEvent('PLAYER_TOTEM_UPDATE')
              f:SetScript('OnEvent', function(_, _, slot) SEEN[#SEEN + 1] = slot end)",
-        )
-        .unwrap();
-        let (live, seen): (bool, i64) = s
-            .eval("DestroyTotem(3) return (GetTotemInfo(3)), #SEEN")
+            )
             .unwrap();
-        assert!(!live);
-        assert_eq!(seen, 1);
-        assert_eq!(s.eval::<i64>("return SEEN[1]").unwrap(), 3);
-        assert_eq!(view.view().totem_destroys.borrow().as_slice(), [2]);
+            let (live, seen): (bool, i64) = s
+                .eval("DestroyTotem(3) return (GetTotemInfo(3)), #SEEN")
+                .unwrap();
+            assert!(!live);
+            assert_eq!(seen, 1);
+            assert_eq!(s.eval::<i64>("return SEEN[1]").unwrap(), 3);
+            assert_eq!(
+                crate::script::live::test_view(|v| v.totem_destroys.borrow().clone()),
+                [2]
+            );
 
-        // An empty slot sends and fires nothing.
-        s.run("DestroyTotem(1)").unwrap();
-        assert_eq!(view.view().totem_destroys.borrow().len(), 1);
-        assert_eq!(s.eval::<i64>("return #SEEN").unwrap(), 1);
+            // An empty slot sends and fires nothing.
+            s.run("DestroyTotem(1)").unwrap();
+            assert_eq!(
+                crate::script::live::test_view(|v| v.totem_destroys.borrow().len()),
+                1
+            );
+            assert_eq!(s.eval::<i64>("return #SEEN").unwrap(), 1);
+        });
     }
 
     /// Behind a queued script call the destroy keeps its turn: it is queued, and nothing is sent
     /// or fired in the call.
     #[test]
     fn a_destroy_behind_a_queued_call_keeps_its_turn() {
-        let (mut s, view) = script_with(one(0, searing()), [false; 4]);
-        s.run("TargetUnit('player') DestroyTotem(1)").unwrap();
-        assert!(view.view().totem_destroys.borrow().is_empty());
-        let calls = s.take_script_calls();
-        assert!(
-            matches!(
-                calls.last(),
-                Some(crate::script::ScriptCall::DestroyTotem(0))
-            ),
-            "{calls:?}"
-        );
+        let (mut s, mut view_v) = script_with(one(0, searing()), [false; 4]);
+        crate::script::live::lending(&mut view_v, || {
+            s.run("TargetUnit('player') DestroyTotem(1)").unwrap();
+            assert!(crate::script::live::test_view(|v| v
+                .totem_destroys
+                .borrow()
+                .is_empty()));
+            let calls = s.take_script_calls();
+            assert!(
+                matches!(
+                    calls.last(),
+                    Some(crate::script::ScriptCall::DestroyTotem(0))
+                ),
+                "{calls:?}"
+            );
+        });
     }
 }
