@@ -1467,6 +1467,8 @@ pub(crate) fn money(model: &super::Model) -> u64 {
 
 /// `f` over the view lent right now, `None` with none lent.
 pub fn read_live<R>(f: impl FnOnce(&dyn LiveState) -> R) -> Option<R> {
+    // A system that holds the VM in turn lends no `World`: its read would answer nothing.
+    super::world_loan::assert_not_quiet();
     let Some(ptr) = SLOT.with(Cell::get) else {
         return super::world_loan::live(|l| f(l));
     };
@@ -1478,6 +1480,7 @@ pub fn read_live<R>(f: impl FnOnce(&dyn LiveState) -> R) -> Option<R> {
 
 /// `f` over the view lent right now, mutably, for a verb that writes the state it reads; `None` with none lent.
 pub fn write_live<R>(f: impl FnOnce(&mut dyn LiveState) -> R) -> Option<R> {
+    super::world_loan::assert_not_quiet();
     let Some(mut ptr) = SLOT.with(Cell::get) else {
         return super::world_loan::live(f);
     };

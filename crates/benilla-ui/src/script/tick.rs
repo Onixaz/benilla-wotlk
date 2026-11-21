@@ -44,7 +44,10 @@ impl UiScript {
             self.fire_event("PLAYER_REGEN_ENABLED", Vec::new());
         } else {
             self.fire_event("PLAYER_REGEN_DISABLED", Vec::new());
-            self.model_mut().protected_actions_allowed = false;
+            // After the event's listeners, also when a host step queues the event in turn.
+            super::world_loan::in_turn_or_now(self, |s| {
+                s.model_mut().protected_actions_allowed = false;
+            });
         }
     }
 }

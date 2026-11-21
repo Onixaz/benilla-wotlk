@@ -35,13 +35,18 @@ impl super::UiScript {
     /// Fire `event` once for each token naming `guid`, the token first, then `args`
     /// (`0x60bf60`: `%s%s%s%d`, unit, name, rank, castCount).
     pub fn fire_unit_event(&mut self, guid: u64, event: &str, args: Vec<ScriptValue>) {
-        let tokens = self.model_ref().unit_guids.tokens_naming(guid);
-        for token in tokens {
-            let mut all = Vec::with_capacity(args.len() + 1);
-            all.push(ScriptValue::Str(token));
-            all.extend(args.iter().cloned());
-            self.fire_event(event, all);
-        }
+        // The tokens are read as the event fires, in a host step's turn too: `"npc"` is the
+        // interact target's (`0x60bece`), read through the lent `World`.
+        let event = event.to_string();
+        super::world_loan::in_turn_or_now(self, move |script| {
+            let tokens = script.model_ref().unit_guids.tokens_naming(guid);
+            for token in tokens {
+                let mut all = Vec::with_capacity(args.len() + 1);
+                all.push(ScriptValue::Str(token));
+                all.extend(args.iter().cloned());
+                script.fire_event(&event, all);
+            }
+        });
     }
 }
 

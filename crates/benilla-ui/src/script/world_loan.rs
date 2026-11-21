@@ -23,10 +23,88 @@ thread_local! {
     static HELD_ACROSS: RefCell<Option<String>> = const { RefCell::new(None) };
     /// The events a host step raised while it held the lent state, queued in turn.
     static IN_TURN: RefCell<Option<Vec<Raised>>> = const { RefCell::new(None) };
+    /// The host steps that must not run Lua open on this thread ([`Quiet`]), innermost last.
+    static QUIET: RefCell<Vec<&'static std::panic::Location<'static>>> =
+        const { RefCell::new(Vec::new()) };
 }
 
-/// One event a step raised in turn: its name and arguments.
-pub type Raised = (String, Vec<super::ScriptValue>);
+/// A host step that reaches the VM's model but must run no Lua (its raises queue in turn): while
+/// one is open, running a chunk or a script handler fails a debug build.
+pub struct Quiet(());
+
+impl Quiet {
+    /// Open a quiet step on this thread, named by its caller's place.
+    #[track_caller]
+    pub fn begin() -> Self {
+        let at = std::panic::Location::caller();
+        QUIET.with_borrow_mut(|q| q.push(at));
+        Quiet(())
+    }
+}
+
+impl Drop for Quiet {
+    fn drop(&mut self) {
+        QUIET.with_borrow_mut(|q| {
+            q.pop();
+        });
+    }
+}
+
+/// Fail a debug build when Lua is about to run inside a [`Quiet`] step.
+pub(crate) fn assert_not_quiet() {
+    if cfg!(debug_assertions) {
+        if let Some(at) = QUIET.with_borrow(|q| q.last().copied()) {
+            panic!(
+                "Lua or the live view ran inside a system that holds the VM in turn ({at}): a \
+                 system that runs Lua or reads the view is exclusive and lends the `World`"
+            );
+        }
+    }
+}
+
+/// One raise a step made in turn: an event, or a write into the VM that must keep its place
+/// among the events (the combat edge's flag `0x524600`).
+pub enum Raised {
+    /// An event and its arguments.
+    Event(String, Vec<super::ScriptValue>),
+    /// A write into the VM, run in its turn.
+    Op(Box<dyn FnOnce(&mut super::UiScript) + Send + Sync>),
+}
+
+impl Raised {
+    /// Fire the event, or run the write, on `script`.
+    pub fn run(self, script: &mut super::UiScript) {
+        match self {
+            Raised::Event(event, args) => script.fire_event(&event, args),
+            Raised::Op(op) => op(script),
+        }
+    }
+
+    /// The event's name; `None` for a write.
+    pub fn event(&self) -> Option<&str> {
+        match self {
+            Raised::Event(event, _) => Some(event),
+            Raised::Op(_) => None,
+        }
+    }
+}
+
+/// Run `op` on `script` in its turn: queued behind the step's raises while a step raises in turn
+/// ([`raises_in_turn`]), at once otherwise.
+pub fn in_turn_or_now(
+    script: &mut super::UiScript,
+    op: impl FnOnce(&mut super::UiScript) + Send + Sync + 'static,
+) {
+    let mut op = Some(op);
+    IN_TURN.with_borrow_mut(|q| {
+        if let Some(q) = q.as_mut() {
+            q.extend(op.take().map(|op| Raised::Op(Box::new(op))));
+        }
+    });
+    if let Some(op) = op {
+        op(script);
+    }
+}
 
 /// Puts the enclosing step's queue back on return and on unwind.
 struct Restore(Option<Vec<Raised>>);
@@ -38,13 +116,33 @@ impl Drop for Restore {
     }
 }
 
+/// A host step's turn: from [`Turn::begin`] every event raised on this thread queues in turn
+/// instead of firing, until the turn drops and the enclosing step's queue is put back (also on
+/// unwind). What is still queued at the drop is dropped: take it first ([`Turn::take`]).
+pub struct Turn {
+    _restore: Restore,
+}
+
+impl Turn {
+    /// Begin queueing this thread's raises in turn.
+    pub fn begin() -> Self {
+        Turn {
+            _restore: Restore(IN_TURN.with_borrow_mut(|q| q.replace(Vec::new()))),
+        }
+    }
+
+    /// The raises queued so far, in order; the turn keeps queueing.
+    pub fn take(&mut self) -> Vec<Raised> {
+        IN_TURN.with_borrow_mut(|q| q.as_mut().map(std::mem::take).unwrap_or_default())
+    }
+}
+
 /// Run `f`, a host step that holds the lent state, with every event it raises queued in turn
 /// instead of fired; the events, in order, for the caller to fire once its borrows end.
 pub fn raises_in_turn<R>(f: impl FnOnce() -> R) -> (R, Vec<Raised>) {
-    let restore = Restore(IN_TURN.with_borrow_mut(|q| q.replace(Vec::new())));
+    let mut turn = Turn::begin();
     let out = f();
-    let raised = IN_TURN.with_borrow_mut(|q| q.take()).unwrap_or_default();
-    drop(restore);
+    let raised = turn.take();
     (out, raised)
 }
 
@@ -55,7 +153,7 @@ pub(crate) fn queue_in_turn(
 ) -> Option<Vec<super::ScriptValue>> {
     IN_TURN.with_borrow_mut(|q| match q {
         Some(q) => {
-            q.push((event.to_string(), args));
+            q.push(Raised::Event(event.to_string(), args));
             None
         }
         None => Some(args),
@@ -194,7 +292,11 @@ mod tests {
             assert!(queue_in_turn("C", Vec::new()).is_none());
             (inner.1, ())
         });
-        let names = |q: &[Raised]| q.iter().map(|(e, _)| e.clone()).collect::<Vec<_>>();
+        let names = |q: &[Raised]| {
+            q.iter()
+                .filter_map(|r| r.event().map(str::to_string))
+                .collect::<Vec<_>>()
+        };
         assert_eq!(names(&inner), ["B"]);
         assert_eq!(names(&outer), ["A", "C"]);
         assert!(queue_in_turn("D", Vec::new()).is_some());

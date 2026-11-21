@@ -53,8 +53,8 @@ pub(crate) fn apply_in_call(lua: &mlua::Lua, call: ScriptCall) -> bool {
         // #1363 fires each at its step inside the press.
         if !raised.is_empty() {
             crate::ui_script::safe_world::lend(world, |script| {
-                for (event, args) in raised {
-                    script.fire_event(&event, args);
+                for raise in raised {
+                    raise.run(script);
                 }
             });
         }
