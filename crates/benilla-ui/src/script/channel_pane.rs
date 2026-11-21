@@ -220,6 +220,12 @@ fn group(model: &Model) -> Group {
 /// The list rebuild (`0x504840`) without its signal. Every entry is rebuilt, so a
 /// channel's listed roster size lasts only until the next rebuild, as in the reference.
 fn rebuild(model: &mut Model) {
+    rebuild_list(model);
+    rebuild_roster(model);
+}
+
+/// The list's entries alone, which read no unit.
+fn rebuild_list(model: &mut Model) {
     let g = group(model);
     let party_count = model.party.members.len() as u32 + 1;
     let raid_count = model.party.raid.len() as u32;
@@ -275,8 +281,11 @@ fn rebuild(model: &mut Model) {
     }
     pane.entries = entries;
     pane.active_voice = 0;
-    let selected = pane.selected.as_ref().map(|(k, _)| *k);
-    // `0x504dd0`: a selected group's roster is rebuilt with the list.
+}
+
+/// `0x504dd0`: a selected group's roster is rebuilt with the list, against our guid at the call.
+fn rebuild_roster(model: &mut Model) {
+    let selected = model.channel_pane.selected.as_ref().map(|(k, _)| *k);
     match selected {
         Some(Kind::Party) => {
             build_party(model);
@@ -476,8 +485,10 @@ impl super::UiScript {
                 pane.roster.clear();
                 pane.own_flags = 0;
             }
-            rebuild(model);
+            rebuild_list(model);
         }
+        // A host step's relist reads our guid in its turn, with the `World` lent.
+        super::world_loan::in_turn_or_now(self, |s| rebuild_roster(&mut s.model_mut()));
         self.fire_event("CHANNEL_UI_UPDATE", Vec::new());
     }
 

@@ -20,6 +20,8 @@ use crate::target::{ring_reaction, Factions, Selection};
 use crate::ui_script::{gate, UiDrain};
 
 mod held;
+#[cfg(test)]
+mod host_steps_tests;
 pub(crate) mod tokens;
 
 pub(crate) use tokens::{TokenView, UnitTokens, UnitVm, VmUnits};

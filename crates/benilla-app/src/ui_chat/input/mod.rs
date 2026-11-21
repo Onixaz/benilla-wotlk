@@ -43,6 +43,20 @@ fn target_player_name(
     names.resolve(guid, commands).map(str::to_string)
 }
 
+/// `DoEmote`'s second argument through the VM's resolver with the `World` lent (`0x520190`);
+/// `None` with no VM. A streamed object that is no player is the type test's miss.
+fn emote_token(world: &mut World, arg: Option<&str>) -> Option<benilla_ui::script::EmoteTarget> {
+    crate::ui_script::safe_world::lend(world, |s| {
+        s.emote_target(arg, |guid| {
+            let streamed = crate::ui_script::safe_world::with_world(|w| {
+                w.get_resource::<crate::net::GuidIndex>()
+                    .is_some_and(|i| i.0.contains_key(&guid))
+            });
+            streamed.unwrap_or(false) && !benilla_protocol::guid::is_player(guid)
+        })
+    })
+}
+
 /// The target guid a `CMSG_TEXT_EMOTE` carries (`DoEmote`'s caller): the selection, a token's guid
 /// or the name search's, 0 on a miss. Either way an emote at yourself goes out untargeted
 /// (`0x6ddaa0`).
@@ -190,7 +204,7 @@ fn manual_join_or_leave(
 
 /// One parsed line that runs no Lua, with its raises queued in turn for the drain to fire.
 fn chat_arm(
-    In((msg, parsed)): In<(String, ParsedChat)>,
+    In((msg, parsed, emote)): In<(String, ParsedChat, Option<benilla_ui::script::EmoteTarget>)>,
     mut script: crate::ui_script::InTurn,
     mut chat_log: ResMut<super::feed::ChatLog>,
     // Mutable because an explicit leave clears the channel's `ZONECHANNELS` bit; the zone walk's
@@ -603,9 +617,8 @@ fn chat_arm(
         }
         // The duel verbs join the intent queue `StartDuel` and `CancelDuel` feed: the stock
         // handlers are one-line calls to them, and `StartDuel` reads no name as the target.
-        ParsedChat::Duel { name } => {
-            script.start_duel(name.as_deref().unwrap_or(""));
-        }
+        // Run with the `World` lent by the drain.
+        ParsedChat::Duel { .. } => {}
         ParsedChat::Forfeit => {
             script.queue_duel_request(benilla_ui::script::DuelRequest::Cancel);
         }
@@ -673,7 +686,7 @@ fn chat_arm(
             }
         }
         // `DoEmote`: the gates in the client's order, then posture and packet.
-        ParsedChat::TextEmote { text_id, arg } => {
+        ParsedChat::TextEmote { text_id, .. } => {
             let (stand_state, flags) = self_player
                 .single()
                 .map_or((0, 0), |(_, m, _)| (m.stand_state, m.flags));
@@ -771,9 +784,7 @@ fn chat_arm(
                 }
             }
             let is_streamed = |guid: u64| guids.0.contains_key(&guid);
-            let target = script.emote_target(arg.as_deref(), |guid| {
-                is_streamed(guid) && !benilla_protocol::guid::is_player(guid)
-            });
+            let target = emote.unwrap_or(benilla_ui::script::EmoteTarget::Selection);
             let no_roster = crate::spell::group_relation::GroupRoster::default();
             let roster = chat_out.roster.as_deref().unwrap_or(&no_roster);
             let target = emote_target(
@@ -1111,8 +1122,19 @@ pub(crate) fn drain_chat_input(world: &mut World) {
                     system_line(world, text);
                 }
             }
+            // `StartDuel` resolves its token at the call (`0x60abf0`), with the `World` lent.
+            ParsedChat::Duel { name } => {
+                crate::ui_script::safe_world::lend(world, |s| {
+                    s.start_duel(name.as_deref().unwrap_or(""));
+                });
+            }
             parsed => {
-                let _ = world.run_system_cached_with(chat_arm, (msg, parsed));
+                // `DoEmote`'s token resolves with the `World` lent, before the arm reads the rest.
+                let emote = match &parsed {
+                    ParsedChat::TextEmote { arg, .. } => emote_token(world, arg.as_deref()),
+                    _ => None,
+                };
+                let _ = world.run_system_cached_with(chat_arm, (msg, parsed, emote));
             }
         }
         crate::ui_script::live::fire_handler_events(world);

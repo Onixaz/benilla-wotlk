@@ -585,20 +585,25 @@ pub(super) fn feed_party(
     }
     for &wire in &group.ready_checks[fed.ready_checks_fed..] {
         gate.audit("feed_party", "a ready-check packet");
+        // Each with the `World` lent: a confirm's `READY_CHECK_CONFIRM` names the tokens naming
+        // the member at its packet (`0x60bb70`).
         match wire {
             ReadyCheckWire::Started { initiator } => {
-                script.ready_check_armed(initiator);
+                script.lent(move |s| s.ready_check_armed(initiator));
                 fed.initiator_unnamed = Some(initiator);
             }
-            ReadyCheckWire::Confirm { guid, ready } => script.ready_check_confirmed(guid, ready),
-            ReadyCheckWire::Finished => script.ready_check_finished(),
+            ReadyCheckWire::Confirm { guid, ready } => {
+                script.lent(move |s| s.ready_check_confirmed(guid, ready));
+            }
+            ReadyCheckWire::Finished => script.lent(|s| s.ready_check_finished()),
         }
     }
     fed.ready_checks_fed = group.ready_checks.len();
     if let Some(guid) = fed.initiator_unnamed {
         if let Some(name) = names.player(guid) {
             fed.initiator_unnamed = None;
-            script.ready_check_initiated(name.unwrap_or(""));
+            let name = name.unwrap_or("").to_string();
+            script.lent(move |s| s.ready_check_initiated(&name));
         }
     }
 
@@ -1813,6 +1818,47 @@ mod roster_update_tests;
 mod tests {
     use super::super::pets::tests::{app, app_with, flag, frame, member, party, stream, ME};
     use super::*;
+
+    /// `MSG_RAID_READY_CHECK_CONFIRM`'s `READY_CHECK_CONFIRM` names each token naming the member
+    /// at the packet's step, read through the `World` it lends (`0x60bb70`), with no unit fixture.
+    #[test]
+    fn a_ready_check_confirm_names_the_members_token_off_the_world() {
+        let mut app = app();
+        app.init_resource::<crate::ui_script::live::UiEvents>()
+            .add_systems(
+                Update,
+                crate::ui_script::live::fire_handler_events.after(feed_party),
+            );
+        super::super::pets::tests::party(&mut app, 2, true);
+        // The feed's first run is the VM's reset, which skips what came before it.
+        frame(&mut app);
+        app.world_mut()
+            .non_send_resource::<UiScript>()
+            .run(
+                r#"READY = {}
+                   local f = CreateFrame("Frame")
+                   f:RegisterEvent("READY_CHECK_CONFIRM")
+                   f:SetScript("OnEvent", function(_, _, unit, ready)
+                       table.insert(READY, unit .. ":" .. tostring(ready))
+                   end)"#,
+            )
+            .unwrap();
+        {
+            let mut group = app.world_mut().resource_mut::<GroupState>();
+            group.apply_ready_check(ReadyCheckWire::Started { initiator: ME });
+            group.apply_ready_check(ReadyCheckWire::Confirm {
+                guid: member(2),
+                ready: true,
+            });
+        }
+        frame(&mut app);
+        let seen: Vec<String> = app
+            .world()
+            .non_send_resource::<UiScript>()
+            .eval("return READY")
+            .unwrap();
+        assert_eq!(seen, ["party2:true"]);
+    }
 
     /// A member or pet selected by guid alone snapshots as `"target"` off the records: the member
     /// as `partyN`'s unstreamed leg, the pet off its owner's pet block; a stranger has none.
