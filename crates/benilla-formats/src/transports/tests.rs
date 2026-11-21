@@ -477,7 +477,7 @@ fn a_rocked_ship_lifts_and_tilts_under_its_heading() {
     );
 }
 
-/// Docked, the ship rocks at its damped amplitude and never banks.
+/// Docked, the ship rocks at its damped amplitude, all three motions, and never banks.
 #[test]
 fn a_docked_ship_rocks_damped() {
     let tt = straight();
@@ -486,9 +486,47 @@ fn a_docked_ship_rocks_damped() {
         .step_by(100)
         .find(|&ms| !tt.sample(ms).moving)
         .expect("a stop");
-    let rocked = tt.sample_rocked(ms, &p);
+    let (plain, rocked) = (tt.sample(ms), tt.sample_rocked(ms, &p));
     let r = p.rocking(ms, 0.0, 0.0);
-    assert!((rocked.pos[2] - tt.sample(ms).pos[2] - r.wave).abs() < 1e-5);
+    assert!((rocked.pos[2] - plain.pos[2] - r.wave).abs() < 1e-5);
+    let want = physics::yaw_pitch_roll(plain.heading, r.pitch, r.roll);
+    let got = rocked.rotation.expect("rocked");
+    assert!(
+        got.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-5),
+        "{got:?} vs {want:?}"
+    );
+}
+
+/// The look-back's heading lookup by arc length agrees with the sample's own heading wherever
+/// the ship travels.
+#[test]
+fn the_heading_by_arc_length_is_the_sampled_heading() {
+    let nodes: Vec<_> = (0..24)
+        .map(|i| {
+            let a = i as f32 * 0.12;
+            node(
+                i,
+                [3000.0 * a.sin(), 3000.0 * (1.0 - a.cos()), 0.0],
+                i == 1 || i == 22,
+            )
+        })
+        .collect();
+    let tt = TransportTimetable::build(&nodes, 30.0, 1.0).expect("builds");
+    let mut checked = 0;
+    for ms in (0..tt.period_ms).step_by(250) {
+        let located = tt.locate(ms);
+        let Some(on) = located.on_leg else { continue };
+        let by_dist = tt.leg_heading_at(on.leg, on.leg_dist);
+        let mut d = (by_dist - located.sample.heading).abs();
+        d = d.min(std::f32::consts::TAU - d);
+        assert!(
+            d < 1e-3,
+            "at {ms} ms: {by_dist} vs {}",
+            located.sample.heading
+        );
+        checked += 1;
+    }
+    assert!(checked > 100, "{checked} travelling instants");
 }
 
 /// On a left turn the bank adds to the roll (`0x7f7dd0`'s turn estimate is positive), on a
