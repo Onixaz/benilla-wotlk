@@ -493,29 +493,27 @@ pub(super) fn seed_ui_fixture(
                 count: 1,
                 display_id: disp,
             };
-            (|g: Option<&mut crate::ui_quest::QuestGiver>| {
-                g.expect("the quest window").open(
-                    NPC_GUID,
-                    crate::ui_quest::QuestView::Detail(benilla_protocol::messages::QuestDetails {
-                        npc: NPC_GUID,
-                        quest_id: 783,
-                        title: "A Threat Within".into(),
-                        details:
-                            "Kobolds have infested the Echo Ridge Mine to the northeast. Slay them \
+            giver.as_deref_mut().expect("the quest window").open(
+                NPC_GUID,
+                crate::ui_quest::QuestView::Detail(benilla_protocol::messages::QuestDetails {
+                    npc: NPC_GUID,
+                    quest_id: 783,
+                    title: "A Threat Within".into(),
+                    details:
+                        "Kobolds have infested the Echo Ridge Mine to the northeast. Slay them \
                               and return to me."
-                                .into(),
-                        objectives: "Kill 8 Kobold Vermin.".into(),
-                        auto_launched: true,
-                        choices: vec![choice(92_001, DISP_SWORD), choice(92_002, DISP_STONE)],
-                        rewards: vec![choice(92_003, DISP_SHIELD)],
-                        extra: benilla_protocol::messages::QuestExtraRewards {
-                            money: 1234, // 12s 34c
-                            ..Default::default()
-                        },
+                            .into(),
+                    objectives: "Kill 8 Kobold Vermin.".into(),
+                    auto_launched: true,
+                    choices: vec![choice(92_001, DISP_SWORD), choice(92_002, DISP_STONE)],
+                    rewards: vec![choice(92_003, DISP_SHIELD)],
+                    extra: benilla_protocol::messages::QuestExtraRewards {
+                        money: 1234, // 12s 34c
                         ..Default::default()
-                    }),
-                )
-            })(giver.as_deref_mut());
+                    },
+                    ..Default::default()
+                }),
+            );
             // The panel's publish and event, as its packet's handler runs them.
             commands.queue(crate::ui_quest::publish_panel);
         }
@@ -537,36 +535,31 @@ pub(super) fn seed_ui_fixture(
                 }),
             );
             // The multi-quest greeting: two available quests, bullet rows under "Available Quests".
-            (|g: Option<&mut crate::ui_quest::QuestGiver>| {
-                g.expect("the quest window").open(
-                    NPC_GUID,
-                    crate::ui_quest::QuestView::Greeting(
-                        benilla_protocol::messages::QuestGiverList {
-                            npc: NPC_GUID,
-                            greeting: "Greetings, $N. The town of Goldshire needs able hands."
-                                .into(),
-                            emote_delay: 0,
-                            emote: 0,
-                            quests: vec![
-                                benilla_protocol::messages::QuestListEntry {
-                                    quest_id: 84,
-                                    icon: 0,
-                                    level: 4,
-                                    title: "Brotherhood of Thieves".into(),
-                                    ..Default::default()
-                                },
-                                benilla_protocol::messages::QuestListEntry {
-                                    quest_id: 40,
-                                    icon: 0,
-                                    level: 3,
-                                    title: "Eagan Peltskinner".into(),
-                                    ..Default::default()
-                                },
-                            ],
+            giver.as_deref_mut().expect("the quest window").open(
+                NPC_GUID,
+                crate::ui_quest::QuestView::Greeting(benilla_protocol::messages::QuestGiverList {
+                    npc: NPC_GUID,
+                    greeting: "Greetings, $N. The town of Goldshire needs able hands.".into(),
+                    emote_delay: 0,
+                    emote: 0,
+                    quests: vec![
+                        benilla_protocol::messages::QuestListEntry {
+                            quest_id: 84,
+                            icon: 0,
+                            level: 4,
+                            title: "Brotherhood of Thieves".into(),
+                            ..Default::default()
                         },
-                    ),
-                )
-            })(giver.as_deref_mut());
+                        benilla_protocol::messages::QuestListEntry {
+                            quest_id: 40,
+                            icon: 0,
+                            level: 3,
+                            title: "Eagan Peltskinner".into(),
+                            ..Default::default()
+                        },
+                    ],
+                }),
+            );
             commands.queue(crate::ui_quest::publish_panel);
         }
         UiFixture::QuestLog => {
@@ -1859,7 +1852,7 @@ fn seed_equipped_bags(
             }),
         );
         // After `set_container`: `OpenBag` refuses a container with no slots.
-        chunks.run(&format!("OpenBag({bag_id})"), move |_, e| {
+        chunks.run(format!("OpenBag({bag_id})"), move |_, e| {
             warn!("capture: equipped bag {bag_id} seed failed: {e}");
         });
     }

@@ -408,8 +408,8 @@ fn auction_step(
             results,
         } => {
             if !sent {
-                if can_query(&script) {
-                    crate::ui_script::run_or_warn(&script, "AuctionFrameBrowse_Search()");
+                if can_query(script) {
+                    crate::ui_script::run_or_warn(script, "AuctionFrameBrowse_Search()");
                     probe.phase = Phase::Browse {
                         since: now,
                         sent: true,
@@ -422,7 +422,7 @@ fn auction_step(
                 return;
             }
             if auction.wire.list_results[LIST] > results
-                && event_count(&script, "AUCTION_ITEM_LIST_UPDATE") > 0
+                && event_count(script, "AUCTION_ITEM_LIST_UPDATE") > 0
             {
                 let (batch, total, shown, name, prompt): (i64, i64, bool, String, bool) = eval!(
                     &script,
@@ -459,10 +459,10 @@ fn auction_step(
             results,
         } => {
             if !sent {
-                if can_query(&script) {
+                if can_query(script) {
                     // The Level header: a new column opens reversed, and the search re-asks.
                     crate::ui_script::run_or_warn(
-                        &script,
+                        script,
                         "AuctionFrame_OnClickSortColumn('list', 'level')",
                     );
                     probe.phase = Phase::Sort {
@@ -507,7 +507,7 @@ fn auction_step(
             results,
         } => {
             if !sent {
-                if !can_query(&script) {
+                if !can_query(script) {
                     if now - since > TIMEOUT_SECS {
                         fail(probe, "(6 filters) — CanSendAuctionQuery never reopened");
                         probe.phase = Phase::Done;
@@ -562,7 +562,7 @@ fn auction_step(
                     );
                 }
                 crate::ui_script::run_or_warn(
-                    &script,
+                    script,
                     "AuctionFrameBrowse_Reset(BrowseResetButton)",
                 );
                 probe.phase = Phase::EnsureItem {
@@ -692,8 +692,8 @@ fn auction_step(
                 return;
             }
             if done {
-                let start = event_args(&script, "AUCTION_MULTISELL_START");
-                let update = event_args(&script, "AUCTION_MULTISELL_UPDATE");
+                let start = event_args(script, "AUCTION_MULTISELL_START");
+                let update = event_args(script, "AUCTION_MULTISELL_UPDATE");
                 let (slot_empty, blocked): (bool, bool) = eval!(
                     &script,
                     "return GetAuctionSellItemInfo() == nil, AuctionsBlockFrame:IsShown() ~= nil",
@@ -726,8 +726,8 @@ fn auction_step(
                 let line = format!(
                     "(8 multisell) — listed {:?} of {NUM_STACKS}; FAILURE fired {} time(s); errors {:?}",
                     probe.listed,
-                    event_count(&script, "AUCTION_MULTISELL_FAILURE"),
-                    red_errors(&script)
+                    event_count(script, "AUCTION_MULTISELL_FAILURE"),
+                    red_errors(script)
                 );
                 fail(probe, &line);
                 probe.phase = Phase::Owned { since: now };
@@ -775,7 +775,7 @@ fn auction_step(
             } else if now - probe.last_ask > 5.0 {
                 // A revisit of the tab: the stock pane asks once per opening, the gate decides.
                 probe.last_ask = now;
-                crate::ui_script::run_or_warn(&script, "GetOwnerAuctionItems()");
+                crate::ui_script::run_or_warn(script, "GetOwnerAuctionItems()");
             }
         }
         Phase::BidSearch {
@@ -784,9 +784,9 @@ fn auction_step(
             results,
         } => {
             if !sent {
-                if can_query(&script) {
+                if can_query(script) {
                     crate::ui_script::run_or_warn(
-                        &script,
+                        script,
                         "AuctionFrameTab_OnClick(AuctionFrameTab1) AuctionFrameBrowse_Search()",
                     );
                     probe.phase = Phase::BidSearch {
@@ -884,7 +884,7 @@ fn auction_step(
                     probe,
                     &format!(
                         "({step}) — no BID_PLACED result; errors {:?}",
-                        red_errors(&script)
+                        red_errors(script)
                     ),
                 );
                 probe.phase = Phase::BidsTab { since: now };
@@ -925,7 +925,7 @@ fn auction_step(
                 return;
             }
             if !sent {
-                crate::ui_script::run_or_warn(&script, "AuctionFrameTab_OnClick(AuctionFrameTab3)");
+                crate::ui_script::run_or_warn(script, "AuctionFrameTab_OnClick(AuctionFrameTab3)");
                 // The Lua indexes the VM's sorted rows.
                 let indices: Vec<usize> = script
                     .auction_ids(OWNER)
@@ -935,7 +935,7 @@ fn auction_step(
                     .map(|(i, _)| i + 1)
                     .collect();
                 for i in indices.iter().rev() {
-                    crate::ui_script::run_or_warn(&script, &format!("CancelAuction({i})"));
+                    crate::ui_script::run_or_warn(script, &format!("CancelAuction({i})"));
                 }
                 probe.results_seen = auction.wire.results.len();
                 probe.phase = Phase::Cancel {
@@ -969,7 +969,7 @@ fn auction_step(
                 return;
             }
             probe.exited = true;
-            let errors = auction_errors(&script);
+            let errors = auction_errors(script);
             if errors.is_empty() {
                 pass(probe, "(14 lua) — Blizzard_AuctionUI raised no Lua error");
             } else {

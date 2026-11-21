@@ -500,7 +500,7 @@ fn charter_step(
                          the buy in step 5 would be refused SILENTLY (a bare `return` at \
                          PetitionsHandler.cpp:66), so the run is stopped here rather than \
                          reporting that as a wire failure. Lines seen: {:?}",
-                        probe_lines(&script)
+                        probe_lines(script)
                     ),
                 );
                 probe.phase = Phase::Done;
@@ -555,8 +555,8 @@ fn charter_step(
             };
             let open = gossip.npc == Some(npc) && !gossip.options.is_empty();
             // The rows are drawn once the frame is shown (`GOSSIP_SHOW`), not when the menu reads.
-            let pushed = vm_gossip_values(&script) as usize == gossip.options.len() * 2
-                && vm_visible(&script, "GossipFrame");
+            let pushed = vm_gossip_values(script) as usize == gossip.options.len() * 2
+                && vm_visible(script, "GossipFrame");
             if open && pushed {
                 probe.pass(
                     2,
@@ -572,7 +572,7 @@ fn charter_step(
                             .join(" ")
                     ),
                 );
-                assert_icon_and_select(probe, &gossip, &script, &net, npc, now);
+                assert_icon_and_select(probe, &gossip, script, net, npc, now);
             } else if now - sent_at > MENU_TIMEOUT_SECS {
                 probe.fail(
                     2,
@@ -582,7 +582,7 @@ fn charter_step(
                          npc={:?} options={} vm_values={})",
                         gossip.npc,
                         gossip.options.len(),
-                        vm_gossip_values(&script)
+                        vm_gossip_values(script)
                     ),
                 );
                 probe.phase = Phase::Done;
@@ -597,8 +597,8 @@ fn charter_step(
                 return;
             };
             let parked = registrar() == Some(npc);
-            let visible = vm_visible(&script, "GuildRegistrarFrame");
-            let cost = vm_charter_cost(&script);
+            let visible = vm_visible(script, "GuildRegistrarFrame");
+            let cost = vm_charter_cost(script);
             if parked && visible && cost == CHARTER_COST_COPPER {
                 // The portrait's `"npc"` token is reported, not asserted, and sampled up to
                 // `REGISTRAR_TOKEN_SETTLE_SECS` late.
@@ -648,7 +648,7 @@ fn charter_step(
                          falls through to ServerPacket::Other — that is what this reading looks \
                          like. Lines seen: {:?}",
                         registrar(),
-                        probe_lines(&script)
+                        probe_lines(script)
                     ),
                 );
                 probe.phase = Phase::Done;
@@ -750,7 +750,7 @@ fn charter_step(
                         } else {
                             "was never asked for"
                         },
-                        probe_lines(&script)
+                        probe_lines(script)
                     ),
                 );
                 // A charter seen without a template still goes to the cleanup.
@@ -777,7 +777,7 @@ fn charter_step(
             };
             if !sent {
                 // The control: a window already up would make the step meaningless.
-                if vm_visible(&script, "PetitionFrame") {
+                if vm_visible(script, "PetitionFrame") {
                     probe.fail(
                         6,
                         "open",
@@ -829,12 +829,12 @@ fn charter_step(
                 };
                 return;
             }
-            let visible = vm_visible(&script, "PetitionFrame");
-            let kind = vm_petition_str(&script, 1);
-            let originator = vm_is_originator(&script);
-            let names = vm_num_names(&script);
+            let visible = vm_visible(script, "PetitionFrame");
+            let kind = vm_petition_str(script, 1);
+            let originator = vm_is_originator(script);
+            let names = vm_num_names(script);
             if visible && kind == "guild" && originator == 1 && names == FRESH_SIGNATURES {
-                let at_open = vm_petition_str(&script, 2);
+                let at_open = vm_petition_str(script, 2);
                 probe.title_at_open = at_open.clone();
                 probe.pass(
                     6,
@@ -857,7 +857,7 @@ fn charter_step(
                          item-use fork never reached ItemUseRoute::ShowPetition (a charter that \
                          falls through to `Nothing` sends nothing at all — a silent \
                          failure) or the answer never became a window. Lines seen: {:?}",
-                        probe_lines(&script)
+                        probe_lines(script)
                     ),
                 );
                 probe.phase = Phase::Destroying {
@@ -871,8 +871,8 @@ fn charter_step(
         // arrives on `SMSG_PETITION_QUERY_RESPONSE`, keyed by petition id, and the feed re-fires
         // `PETITION_SHOW`. A FAIL leaves the window titleless.
         Phase::Record { since } => {
-            let title = vm_petition_str(&script, 2);
-            let max = vm_petition_max(&script);
+            let title = vm_petition_str(script, 2);
+            let max = vm_petition_max(script);
             if title == probe.bought && max == REQUIRED_SIGNATURES {
                 // At open the title was empty or already the bought name (the record beat the
                 // paint); anything else came from another charter's record.
@@ -948,11 +948,11 @@ fn charter_step(
                 };
                 return;
             }
-            let title = vm_petition_str(&script, 2);
+            let title = vm_petition_str(script, 2);
             // The bag tooltip must reach the same name: it is fed by the container snapshot,
             // whose rebuild is gated, so it can lag the window.
             let tip = charter_tooltip_lines(
-                &script,
+                script,
                 probe.charter.and_then(|(b, sl, _)| lua_bag_pos(b, sl)),
             );
             let tip_caught_up = tip.iter().any(|l| l.contains(&probe.renamed));
@@ -983,7 +983,7 @@ fn charter_step(
                          RenamePetition({renamed:?}). The echo is sent ONLY on success, so either \
                          the rename was refused (name taken/invalid/reserved) or the echo did not \
                          patch the record. Lines seen: {:?}",
-                        probe_lines(&script)
+                        probe_lines(script)
                     ),
                 );
                 probe.phase = Phase::Destroying {
@@ -1051,7 +1051,7 @@ fn charter_step(
                          CMSG_DESTROYITEM. Remove it by hand before the next run — otherwise its \
                          step 5 is refused silently for `the owner already has one` and reads as a \
                          buy that never sent. Lines seen: {:?}",
-                        probe_lines(&script)
+                        probe_lines(script)
                     ),
                 );
                 probe.phase = Phase::Done;

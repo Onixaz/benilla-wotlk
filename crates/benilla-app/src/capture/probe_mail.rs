@@ -329,9 +329,9 @@ fn mail_step(
 ) {
     // The arrival trace: every change of `HasNewMail()` and the senders, timestamped.
     if probe.step != Step::Init {
-        let lit = lua_bool(&script, "HasNewMail()");
+        let lit = lua_bool(script, "HasNewMail()");
         let senders = lua_str(
-            &script,
+            script,
             "table.concat((function(...) local t = {} for i = 1, select('#', ...) do \
              t[i] = tostring((select(i, ...))) end return t end)(GetLatestThreeSenders()), ', ')",
         );
@@ -351,7 +351,7 @@ fn mail_step(
                 probe.go(Step::Done, now);
                 return;
             }
-            run(&script, HOOKS);
+            run(script, HOOKS);
             let me = probe.me.clone();
             let [x, y, z] = MAILBOX_AT;
             match &probe.role {
@@ -414,7 +414,7 @@ fn mail_step(
             });
             if let Some((guid, ..)) = found {
                 info!("PROBE_MAIL: mailbox {:#x} in range, using it", guid.0);
-                probe.baseline = event_count(&script, "MAIL_INBOX_UPDATE");
+                probe.baseline = event_count(script, "MAIL_INBOX_UPDATE");
                 probe.mailbox = Some(guid.0);
                 {
                     mail.click(guid.0);
@@ -428,18 +428,18 @@ fn mail_step(
             }
         }
         Step::WaitList => {
-            if event_count(&script, "MAIL_INBOX_UPDATE") > probe.baseline
-                && lua_bool(&script, "MailFrame:IsShown()")
+            if event_count(script, "MAIL_INBOX_UPDATE") > probe.baseline
+                && lua_bool(script, "MailFrame:IsShown()")
             {
                 let (n, total) = (
-                    lua_i64(&script, "(GetInboxNumItems())"),
-                    lua_i64(&script, "select(2, GetInboxNumItems())"),
+                    lua_i64(script, "(GetInboxNumItems())"),
+                    lua_i64(script, "select(2, GetInboxNumItems())"),
                 );
                 probe.pass(&format!(
                     "(a) — MAIL_SHOW opened the stock window and the list landed: {n} shown of \
                      {total}"
                 ));
-                log_rows(&mail, &script);
+                log_rows(mail, script);
                 probe.first_list_at.get_or_insert(now);
                 let next = match probe.role {
                     Role::Solo => Step::Header,
@@ -455,21 +455,21 @@ fn mail_step(
 
         // ── Solo ──
         Step::Header => {
-            let Some(id) = row_by_subject(&mail, "probe items") else {
+            let Some(id) = row_by_subject(mail, "probe items") else {
                 if probe.timed_out(now, ACTION_TIMEOUT_SECS) {
                     probe.fail("(h) — the GM items mail is not listed");
                     probe.go(Step::ReadLetter, now);
                 }
                 return;
             };
-            let idx = index_of(&mail, id).unwrap_or(0);
+            let idx = index_of(mail, id).unwrap_or(0);
             let arity = script
                 .arity(&format!("GetInboxHeaderInfo({idx})"))
                 .unwrap_or(0);
-            let count = lua_i64(&script, &format!("select(8, GetInboxHeaderInfo({idx}))"));
-            let qty = lua_str(&script, &format!("select(14, GetInboxHeaderInfo({idx}))"));
+            let count = lua_i64(script, &format!("select(8, GetInboxHeaderInfo({idx}))"));
+            let qty = lua_str(script, &format!("select(14, GetInboxHeaderInfo({idx}))"));
             let names: Vec<String> = (1..=16)
-                .map(|j| lua_str(&script, &format!("(GetInboxItem({idx}, {j}))")))
+                .map(|j| lua_str(script, &format!("(GetInboxItem({idx}, {j}))")))
                 .filter(|n| n != "nil")
                 .collect();
             if arity == 14 && count == 2 && qty == "nil" && names.len() == 2 {
@@ -484,16 +484,16 @@ fn mail_step(
             probe.go(Step::ReadLetter, now);
         }
         Step::ReadLetter => {
-            let Some(id) = row_by_subject(&mail, "probe letter") else {
+            let Some(id) = row_by_subject(mail, "probe letter") else {
                 probe.fail("(b) — the plain letter is not listed");
                 probe.go(Step::TakeMoney, now);
                 return;
             };
             probe.target = Some(id);
-            let idx = index_of(&mail, id).unwrap_or(0);
-            let body = lua_str(&script, &format!("(GetInboxText({idx}))"));
+            let idx = index_of(mail, id).unwrap_or(0);
+            let body = lua_str(script, &format!("(GetInboxText({idx}))"));
             // The VM marks the row read at once; the app's row follows when the packet goes out.
-            let read_now = lua_bool(&script, &format!("select(9, GetInboxHeaderInfo({idx}))"));
+            let read_now = lua_bool(script, &format!("select(9, GetInboxHeaderInfo({idx}))"));
             if body == "hello" && read_now {
                 probe.pass("(b) — the inline body read and the row marked read at once");
             } else {
@@ -514,19 +514,19 @@ fn mail_step(
                 if !probe.ready(now) {
                     return;
                 }
-                if copied(&mail) {
+                if copied(mail) {
                     warn!("PROBE_MAIL: SKIP (b2) — the letter was copied by an earlier run");
                     probe.go(Step::ReadCopy, now);
                     return;
                 }
-                let idx = index_of(&mail, id).unwrap_or(0);
-                run(&script, &format!("TakeInboxTextItem({idx})"));
+                let idx = index_of(mail, id).unwrap_or(0);
+                run(script, &format!("TakeInboxTextItem({idx})"));
                 probe.sent = true;
-            } else if copied(&mail) {
+            } else if copied(mail) {
                 probe.pass("(b2) — MADE_PERMANENT set the row's copied flag");
                 probe.go(Step::ReadCopy, now);
             } else if probe.timed_out(now, ACTION_TIMEOUT_SECS) {
-                let msg = last_message(&script);
+                let msg = last_message(script);
                 probe.fail(&format!(
                     "(b2) — no MADE_PERMANENT result (last message {msg:?})"
                 ));
@@ -536,7 +536,7 @@ fn mail_step(
         Step::ReadCopy => {
             if !probe.sent {
                 let found = lua_i64(
-                    &script,
+                    script,
                     &format!(
                         "(function() for bag = 0, 4 do for slot = 1, (GetContainerNumSlots(bag) \
                          or 0) do local l = GetContainerItemLink(bag, slot) if l and \
@@ -546,12 +546,12 @@ fn mail_step(
                 );
                 if found >= 0 {
                     let (bag, slot) = (found / 100, found % 100);
-                    run(&script, &format!("UseContainerItem({bag}, {slot})"));
+                    run(script, &format!("UseContainerItem({bag}, {slot})"));
                     probe.baseline = found;
                     probe.sent = true;
                 } else if probe.timed_out(now, ACTION_TIMEOUT_SECS) {
                     let bags = lua_str(
-                        &script,
+                        script,
                         "(function() local t = {} for bag = 0, 4 do for slot = 1, \
                          (GetContainerNumSlots(bag) or 0) do local tex, n = \
                          GetContainerItemInfo(bag, slot) local l = GetContainerItemLink(bag, slot) \
@@ -563,14 +563,14 @@ fn mail_step(
                     probe.go(Step::TakeMoney, now);
                 }
             } else if lua_bool(
-                &script,
+                script,
                 "ItemTextFrame:IsShown() and string.find(ItemTextGetText() or '', 'hello', 1, true)",
             ) {
                 probe.pass("(b3) — the copy read by its item guid (CMSG_ITEM_TEXT_QUERY)");
                 let (bag, slot) = (probe.baseline / 100, probe.baseline % 100);
-                crate::ui_script::run_or_warn(&script, "CloseItemText()");
+                crate::ui_script::run_or_warn(script, "CloseItemText()");
                 crate::ui_script::run_or_warn(
-                    &script,
+                    script,
                     &format!("PickupContainerItem({bag}, {slot}) DeleteCursorItem()"),
                 );
                 // The reader took the interaction and closed the mailbox: use it again.
@@ -582,8 +582,8 @@ fn mail_step(
                 }
                 probe.go(Step::TakeMoney, now);
             } else if probe.timed_out(now, ACTION_TIMEOUT_SECS) {
-                let shown = lua_bool(&script, "ItemTextFrame:IsShown()");
-                let text = lua_str(&script, "ItemTextGetText()");
+                let shown = lua_bool(script, "ItemTextFrame:IsShown()");
+                let text = lua_str(script, "ItemTextGetText()");
                 probe.fail(&format!(
                     "(b3) — the reader never showed the letter (shown {shown}, text {text:?})"
                 ));
@@ -612,8 +612,8 @@ fn mail_step(
                     return;
                 };
                 probe.target = Some(id);
-                let idx = index_of(&mail, id).unwrap_or(0);
-                run(&script, &format!("TakeInboxMoney({idx})"));
+                let idx = index_of(mail, id).unwrap_or(0);
+                run(script, &format!("TakeInboxMoney({idx})"));
                 probe.sent = true;
             } else {
                 let id = probe.target.unwrap_or(0);
@@ -631,12 +631,12 @@ fn mail_step(
             }
         }
         Step::TakeItem => {
-            let Some(id) = row_by_subject(&mail, "probe items") else {
+            let Some(id) = row_by_subject(mail, "probe items") else {
                 probe.fail("(d) — the items mail is gone");
                 probe.go(Step::SendSelf, now);
                 return;
             };
-            let idx = index_of(&mail, id).unwrap_or(0);
+            let idx = index_of(mail, id).unwrap_or(0);
             if !probe.sent {
                 if !probe.ready(now) {
                     return;
@@ -644,19 +644,19 @@ fn mail_step(
                 probe.target = Some(id);
                 probe.baseline = mail.rows[idx - 1].num_attachments() as i64;
                 let slot = lua_i64(
-                    &script,
+                    script,
                     &format!(
                         "(function() for j = 1, 16 do if GetInboxItem({idx}, j) then return j end \
                          end return 0 end)()"
                     ),
                 );
-                run(&script, &format!("TakeInboxItem({idx}, {slot})"));
+                run(script, &format!("TakeInboxItem({idx}, {slot})"));
                 probe.sent = true;
             } else if (mail.rows[idx - 1].num_attachments() as i64) < probe.baseline {
                 probe.pass("(d) — one attachment taken by slot, the rest kept");
                 probe.go(Step::AutoLoot, now);
             } else if probe.timed_out(now, ACTION_TIMEOUT_SECS) {
-                let msg = last_message(&script);
+                let msg = last_message(script);
                 probe.fail(&format!(
                     "(d) — no ITEM_TAKEN result (last message {msg:?})"
                 ));
@@ -670,8 +670,8 @@ fn mail_step(
                 if !probe.ready(now) {
                     return;
                 }
-                let idx = index_of(&mail, id).unwrap_or(0);
-                run(&script, &format!("AutoLootMailItem({idx})"));
+                let idx = index_of(mail, id).unwrap_or(0);
+                run(script, &format!("AutoLootMailItem({idx})"));
                 probe.sent = true;
             } else if matches!(left, None | Some(0)) {
                 probe.pass("(d2) — AutoLootMailItem emptied the rest");
@@ -696,14 +696,14 @@ fn mail_step(
                 if !probe.ready(now) {
                     return;
                 }
-                probe.baseline = event_count(&script, "MAIL_FAILED");
+                probe.baseline = event_count(script, "MAIL_FAILED");
                 run(
-                    &script,
+                    script,
                     &format!("SendMail('{target}', 'probe refusal', 'x')"),
                 );
                 probe.sent = true;
-            } else if event_count(&script, "MAIL_FAILED") > probe.baseline {
-                let text = last_message(&script);
+            } else if event_count(script, "MAIL_FAILED") > probe.baseline {
+                let text = last_message(script);
                 if text.to_lowercase().contains(want) {
                     probe.pass(&format!("{tag} — refused with {text:?} and MAIL_FAILED"));
                 } else {
@@ -719,7 +719,7 @@ fn mail_step(
             let found = if probe.sent {
                 probe.target
             } else {
-                row_by_subject(&mail, "probe letter")
+                row_by_subject(mail, "probe letter")
             };
             let Some(id) = found else {
                 probe.fail("(g) — the letter is already gone");
@@ -730,11 +730,11 @@ fn mail_step(
                 if !probe.ready(now) {
                     return;
                 }
-                let idx = index_of(&mail, id).unwrap_or(0);
-                if !lua_bool(&script, &format!("InboxItemCanDelete({idx})")) {
+                let idx = index_of(mail, id).unwrap_or(0);
+                if !lua_bool(script, &format!("InboxItemCanDelete({idx})")) {
                     probe.fail("(g) — InboxItemCanDelete says no for an empty read letter");
                 }
-                run(&script, &format!("DeleteInboxItem({idx})"));
+                run(script, &format!("DeleteInboxItem({idx})"));
                 probe.target = Some(id);
                 probe.sent = true;
             } else if probe.timed_out(now, ACTION_TIMEOUT_SECS) {
@@ -748,11 +748,11 @@ fn mail_step(
         }
         Step::Close => {
             if !probe.sent {
-                probe.baseline = event_count(&script, "MAIL_CLOSED");
-                run(&script, "CloseMail()");
+                probe.baseline = event_count(script, "MAIL_CLOSED");
+                run(script, "CloseMail()");
                 probe.sent = true;
-            } else if event_count(&script, "MAIL_CLOSED") > probe.baseline
-                && !lua_bool(&script, "MailFrame:IsShown()")
+            } else if event_count(script, "MAIL_CLOSED") > probe.baseline
+                && !lua_bool(script, "MailFrame:IsShown()")
             {
                 probe.pass("(i) — CloseMail fired MAIL_CLOSED and hid the window");
                 probe.go(Step::Done, now);
@@ -765,10 +765,10 @@ fn mail_step(
         // ── Send ──
         Step::Attach => {
             if !probe.sent {
-                run(&script, "MailFrameTab_OnClick(nil, 2)");
+                run(script, "MailFrameTab_OnClick(nil, 2)");
                 for item in [LINEN, SILK] {
                     run(
-                        &script,
+                        script,
                         &format!(
                             "for bag = 0, 4 do for slot = 1, (GetContainerNumSlots(bag) or 0) do \
                              local l = GetContainerItemLink(bag, slot) if l and string.find(l, \
@@ -778,10 +778,10 @@ fn mail_step(
                     );
                 }
                 probe.sent = true;
-            } else if lua_bool(&script, "GetSendMailItem(1) and GetSendMailItem(2)") {
-                let price = lua_i64(&script, "GetSendMailPrice()");
+            } else if lua_bool(script, "GetSendMailItem(1) and GetSendMailItem(2)") {
+                let price = lua_i64(script, "GetSendMailPrice()");
                 let locked = lua_bool(
-                    &script,
+                    script,
                     "(function() for bag = 0, 4 do for slot = 1, (GetContainerNumSlots(bag) or \
                      0) do local _, _, l = GetContainerItemInfo(bag, slot) if l then return true \
                      end end end end)()",
@@ -810,10 +810,10 @@ fn mail_step(
                 if !probe.ready(now) {
                     return;
                 }
-                probe.baseline = event_count(&script, "MAIL_SUCCESS");
+                probe.baseline = event_count(script, "MAIL_SUCCESS");
                 let me = probe.me.clone();
                 run(
-                    &script,
+                    script,
                     &format!(
                         "SendMailNameEditBox:SetText('{peer}') \
                          SendMailSubjectEditBox:SetText('{subject}') \
@@ -822,9 +822,9 @@ fn mail_step(
                     ),
                 );
                 probe.sent = true;
-            } else if event_count(&script, "MAIL_SUCCESS") > probe.baseline {
-                let text = last_message(&script);
-                let reset = lua_bool(&script, "not GetSendMailItem(1)");
+            } else if event_count(script, "MAIL_SUCCESS") > probe.baseline {
+                let text = last_message(script);
+                let reset = lua_bool(script, "not GetSendMailItem(1)");
                 if reset {
                     probe.pass(&format!(
                         "{tag} — mailed {peer} {subject:?}: {text:?}, MAIL_SUCCESS, form reset"
@@ -833,8 +833,8 @@ fn mail_step(
                     probe.fail(&format!("{tag} — sent but the form kept its attachment"));
                 }
                 probe.go(next, now);
-            } else if event_count(&script, "MAIL_FAILED") > 0 && probe.timed_out(now, 2.0) {
-                probe.fail(&format!("{tag} — refused: {:?}", last_message(&script)));
+            } else if event_count(script, "MAIL_FAILED") > 0 && probe.timed_out(now, 2.0) {
+                probe.fail(&format!("{tag} — refused: {:?}", last_message(script)));
                 probe.go(next, now);
             } else if probe.timed_out(now, ACTION_TIMEOUT_SECS) {
                 probe.fail(&format!("{tag} — no MAIL_SUCCESS"));
@@ -846,15 +846,15 @@ fn mail_step(
         Step::ReadAll => {
             let n = mail.rows.len();
             for idx in 1..=n {
-                crate::ui_script::run_or_warn(&script, &format!("GetInboxText({idx})"));
+                crate::ui_script::run_or_warn(script, &format!("GetInboxText({idx})"));
             }
             probe.seen = mail.rows.iter().map(|r| r.entry.message_id).collect();
             info!("PROBE_MAIL: (r0) read all {n} row(s); closing to re-ask the server");
-            run(&script, "CloseMail()");
+            run(script, "CloseMail()");
             probe.go(Step::WaitDark, now);
         }
         Step::WaitDark => {
-            if !lua_bool(&script, "HasNewMail()") && probe.timed_out(now, 2.0) {
+            if !lua_bool(script, "HasNewMail()") && probe.timed_out(now, 2.0) {
                 probe.pass("(r0) — everything read: the re-query darkened the icon");
                 info!("PROBE_MAIL: READY t={now:.2} — waiting for an arrival");
                 probe.go(Step::WaitArrival, now);
@@ -872,9 +872,9 @@ fn mail_step(
                 Role::Receive(p) => p.clone(),
                 _ => None,
             };
-            let lit = lua_bool(&script, "HasNewMail()");
+            let lit = lua_bool(script, "HasNewMail()");
             let senders = lua_str(
-                &script,
+                script,
                 "table.concat((function(...) local t = {} for i = 1, select('#', ...) do \
                  t[i] = tostring((select(i, ...))) end return t end)(GetLatestThreeSenders()), \
                  '|')",
@@ -883,12 +883,12 @@ fn mail_step(
             let from_peer = peer.as_ref().is_none_or(|p| senders.contains(p.as_str()));
             if lit && named && from_peer {
                 run(
-                    &script,
+                    script,
                     "MiniMapMailFrame:GetScript('OnEnter')(MiniMapMailFrame)",
                 );
-                let tip = lua_str(&script, "GameTooltipTextLeft1:GetText()");
-                let shown = lua_bool(&script, "MiniMapMailFrame:IsShown()");
-                let head = lua_str(&script, "HAVE_MAIL_FROM");
+                let tip = lua_str(script, "GameTooltipTextLeft1:GetText()");
+                let shown = lua_bool(script, "MiniMapMailFrame:IsShown()");
+                let head = lua_str(script, "HAVE_MAIL_FROM");
                 let lines: Vec<&str> = senders.split('|').collect();
                 if shown && tip.starts_with(&head) && lines.iter().all(|s| tip.contains(s)) {
                     probe.pass(&format!(
@@ -899,7 +899,7 @@ fn mail_step(
                         "(r1) — icon shown {shown}, tooltip {tip:?}, senders {senders:?}"
                     ));
                 }
-                crate::ui_script::run_or_warn(&script, "GameTooltip:Hide()");
+                crate::ui_script::run_or_warn(script, "GameTooltip:Hide()");
                 probe.go(Step::WaitRelist, now);
             } else if probe.timed_out(now, wait) {
                 probe.fail(&format!(
@@ -914,7 +914,7 @@ fn mail_step(
             let since_list = now - probe.first_list_at.unwrap_or(now);
             if since_list >= RELIST_SECS {
                 probe.target = Some(1);
-                probe.baseline = event_count(&script, "MAIL_INBOX_UPDATE");
+                probe.baseline = event_count(script, "MAIL_INBOX_UPDATE");
                 if let Some(guid) = objects
                     .iter()
                     .find(|(_, n, s, tf)| {
@@ -941,7 +941,7 @@ fn mail_step(
                 .filter(|(_, r)| !probe.seen.contains(&r.entry.message_id))
                 .map(|(i, _)| i + 1)
                 .collect();
-            if event_count(&script, "MAIL_INBOX_UPDATE") <= probe.baseline || fresh.is_empty() {
+            if event_count(script, "MAIL_INBOX_UPDATE") <= probe.baseline || fresh.is_empty() {
                 if probe.timed_out(now, ACTION_TIMEOUT_SECS) {
                     probe.fail("(r2) — the re-list shows nothing new");
                     probe.go(Step::Done, now);
@@ -949,11 +949,11 @@ fn mail_step(
                 return;
             }
             if !probe.sent {
-                log_rows(&mail, &script);
+                log_rows(mail, script);
                 for idx in &fresh {
-                    let body = lua_str(&script, &format!("(GetInboxText({idx}))"));
+                    let body = lua_str(script, &format!("(GetInboxText({idx}))"));
                     let invoice = lua_str(
-                        &script,
+                        script,
                         &format!(
                             "table.concat({{tostring((GetInboxInvoiceInfo({idx}))), \
                              tostring(select(2, GetInboxInvoiceInfo({idx}))), \
@@ -966,7 +966,7 @@ fn mail_step(
                 // The first new row with money pays out.
                 if let Some(idx) = fresh.iter().find(|&&i| mail.rows[i - 1].entry.money > 0) {
                     probe.target = Some(mail.rows[idx - 1].entry.message_id);
-                    run(&script, &format!("TakeInboxMoney({idx})"));
+                    run(script, &format!("TakeInboxMoney({idx})"));
                 } else {
                     probe.target = None;
                 }
@@ -987,7 +987,7 @@ fn mail_step(
                     "(r2) — {} new row(s) listed and read{took}",
                     fresh.len()
                 ));
-                run(&script, "CloseMail()");
+                run(script, "CloseMail()");
                 probe.go(Step::Done, now);
             } else if probe.timed_out(now, ACTION_TIMEOUT_SECS) {
                 probe.fail("(r2) — the money take never resolved");

@@ -290,7 +290,10 @@ fn open_window(
 
 /// The world steps a frame of the probe queued, run once its calls are done, as `Commands` apply.
 #[derive(Default)]
-struct Queue(Vec<Box<dyn FnOnce(&mut World) + Send>>);
+struct Queue(Vec<WorldStep>);
+
+/// One queued world step.
+type WorldStep = Box<dyn FnOnce(&mut World) + Send>;
 
 impl Queue {
     fn queue(&mut self, step: impl FnOnce(&mut World) + Send + 'static) {
@@ -740,7 +743,7 @@ fn service_step(
                 probe.phase = Phase::Done;
                 return;
             };
-            let Some((bag, slot)) = find_item_slot(&script) else {
+            let Some((bag, slot)) = find_item_slot(script) else {
                 if now - since > BAG_TIMEOUT_SECS {
                     warn!(
                         "PROBE_SERVICE: SKIP (vendor fork, held cursor) — item {SELL_ITEM_ENTRY} \

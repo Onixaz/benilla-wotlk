@@ -346,7 +346,7 @@ fn binder_step(
             // Wait for the feed's push as well as the parse: step 3 reads the icon type back out
             // of the VM, so the snapshot must already be there.
             // The rows are drawn once the frame is shown (`GOSSIP_SHOW`), not when the menu reads.
-            let pushed = vm_gossip_values(&script) as usize == gossip.options.len() * 2
+            let pushed = vm_gossip_values(script) as usize == gossip.options.len() * 2
                 && script
                     .eval::<bool>("return GossipFrame and GossipFrame:IsShown() and true or false")
                     .unwrap_or(false);
@@ -362,14 +362,14 @@ fn binder_step(
                         .join(" ")
                 );
                 probe.passes += 1;
-                assert_icon_and_select(probe, &gossip, &script, &net, innkeeper, now);
+                assert_icon_and_select(probe, gossip, script, net, innkeeper, now);
             } else if now - sent_at > MENU_TIMEOUT_SECS {
                 error!(
                     "PROBE_BINDER: FAIL (2 menu) — no gossip menu for {innkeeper:#x} within \
                      {MENU_TIMEOUT_SECS}s (parsed npc={:?} options={} vm_values={})",
                     gossip.npc,
                     gossip.options.len(),
-                    vm_gossip_values(&script)
+                    vm_gossip_values(script)
                 );
                 probe.fails += 1;
                 probe.phase = Phase::Done;
@@ -384,8 +384,8 @@ fn binder_step(
                 return;
             };
             let pending = binder_npc == Some(innkeeper);
-            let fired = events_len(&script) > events_baseline;
-            let area = last_event(&script);
+            let fired = events_len(script) > events_baseline;
+            let area = last_event(script);
             if pending && fired && !area.is_empty() {
                 info!(
                     "PROBE_BINDER: PASS (5 confirm) — SMSG_BINDER_CONFIRM parked on \
@@ -435,7 +435,7 @@ fn binder_step(
                 return;
             }
             let name = home_name.clone();
-            let vm = vm_bind_location(&script);
+            let vm = vm_bind_location(script);
             if home_changed && !name.is_empty() && vm == name {
                 info!(
                     "PROBE_BINDER: PASS (6 bind) — HomeBind repopulated to area {:?} = {name:?} \
@@ -459,7 +459,7 @@ fn binder_step(
         Phase::Line { since } => {
             // `SMSG_PLAYERBOUND` prints `ERR_DEATHBIND_SUCCESS_S` as a system line.
             let want = bound_line(&probe.bound_name);
-            let lines = system_lines(&script);
+            let lines = system_lines(script);
             if lines.iter().any(|l| l == &want) {
                 info!("PROBE_BINDER: PASS (7 line) — the bind announced itself: {want:?}");
                 probe.passes += 1;

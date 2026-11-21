@@ -539,12 +539,6 @@ impl Owns for OwnsSelection {
     const SELECTION: bool = true;
 }
 
-/// The system writes [`crate::ui_action::PlayerActions`].
-pub(crate) struct OwnsActions;
-impl Owns for OwnsActions {
-    const ACTIONS: bool = true;
-}
-
 /// The system writes [`crate::pending_item_ops::PendingItemOps`].
 pub(crate) struct OwnsPending;
 impl Owns for OwnsPending {
@@ -2627,11 +2621,6 @@ impl<'w, 's, O: Owns> LendLive<'w, 's, O> {
     pub(crate) fn merchant_vendor(&self) -> Option<u64> {
         self.loan
             .with_view(|v| v.merchant.as_ref().and_then(|m| m.state().vendor))
-    }
-
-    /// `f` over the quest giver this parameter borrows, to write between calls into Lua; a verb reached from inside `f` panics.
-    pub(crate) fn with_giver_mut<R>(&mut self, f: impl FnOnce(Option<&mut QuestGiver>) -> R) -> R {
-        self.loan.with_view_mut(|v| f(v.lent.giver.get_mut()))
     }
 
     /// `f` over the guild bank this parameter borrows, to write between calls into Lua; a verb reached from inside `f` panics.

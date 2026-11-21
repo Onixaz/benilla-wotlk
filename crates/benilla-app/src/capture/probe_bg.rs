@@ -446,25 +446,25 @@ fn bg_step(
             }
             // Revive first: `CanInteractWithNPC` refuses a dead player, logged as an "invalid
             // creature".
-            gm(&net, ".revive");
+            gm(net, ".revive");
             // Wait for the real level: a missing one read as 0 would level a 60 to 120, above
             // every bracket ceiling (`battleground_template.max_lvl = 60`).
             let Some(level) = store.0.unit_level() else {
                 return;
             };
             if level < QUEUE_LEVEL {
-                gm(&net, format!(".levelup {}", QUEUE_LEVEL - level));
+                gm(net, format!(".levelup {}", QUEUE_LEVEL - level));
             }
             // Clear Deserter (26013): leaving before the match ends casts it
             // (`Player.cpp:2178/18816`), and the join handler then refuses the queue
             // (`BG_GROUPJOIN_DESERTERS`, `BattleGroundHandler.cpp:176`).
-            gm(&net, ".unaura 26013");
+            gm(net, ".unaura 26013");
             let [x, y, z] = arena.at;
             info!(
                 "PROBE bg: SETUP arena={} map={} level>={QUEUE_LEVEL} master={}({})",
                 arena.key, arena.map, arena.npc_name, arena.npc_entry,
             );
-            gm(&net, format!(".go xyz {x} {y} {z} 0"));
+            gm(net, format!(".go xyz {x} {y} {z} 0"));
             probe.phase = Phase::Hopped { sent_at: now };
         }
         Phase::Hopped { sent_at } => {
@@ -686,14 +686,14 @@ fn bg_step(
             if now < next_census {
                 return;
             }
-            let Some(mut script) = script else {
+            let Some(script) = script else {
                 error!("PROBE bg: FAILURE — the VM went away inside the battleground");
                 finish(probe, net);
                 return;
             };
             // Drained here, not in `census`, so the tap's self-heal can reach `probe`.
             let mut events = std::mem::take(&mut probe.pending_events);
-            events.push_str(&drain_events(probe, &mut script));
+            events.push_str(&drain_events(probe, script));
             let tap_broken = probe.tap_broken;
             census(
                 now - entered_at,
@@ -736,12 +736,12 @@ fn bg_step(
                 match arena.flag {
                     Some((entry, [x, y, z])) => {
                         info!("PROBE bg: FLAG — hopping to {entry} at ({x}, {y}, {z}) to take it");
-                        gm(&net, format!(".go xyz {x} {y} {z} {}", arena.map));
+                        gm(net, format!(".go xyz {x} {y} {z} {}", arena.map));
                         probe.phase = Phase::FlagHop { at: now };
                     }
                     None => {
                         info!("PROBE bg: FLAG — none for this battleground; on to the graveyard");
-                        gm(&net, ".die");
+                        gm(net, ".die");
                         probe.phase = Phase::Dying { sent_at: now };
                     }
                 }
@@ -805,7 +805,7 @@ fn bg_step(
                 }
                 None if now - at > 20.0 => {
                     error!("PROBE bg: FLAG FAILURE — {entry} never streamed within 15 yd in 20 s");
-                    gm(&net, ".die");
+                    gm(net, ".die");
                     probe.phase = Phase::Dying { sent_at: now };
                 }
                 None => {}
@@ -815,7 +815,7 @@ fn bg_step(
             if now - at < f64::from(samples + 1) * 3.0 {
                 return;
             }
-            let Some(mut script) = script else {
+            let Some(script) = script else {
                 error!("PROBE bg: FAILURE — the VM went away during the flag leg");
                 finish(probe, net);
                 return;
@@ -836,7 +836,7 @@ fn bg_step(
                     "#,
                 )
                 .unwrap_or_else(|e| format!("<raised: {e}>"));
-            let events = drain_events(probe, &mut script);
+            let events = drain_events(probe, script);
             info!(
                 "PROBE bg: FLAG t={:.0}s ws2338={} ws2339={} captures={}/{} buffs=[{}]{}",
                 now - at,
@@ -854,7 +854,7 @@ fn bg_step(
             let samples = samples + 1;
             if samples >= FLAG_SAMPLES {
                 info!("PROBE bg: FLAG done — on to the graveyard");
-                gm(&net, ".die");
+                gm(net, ".die");
                 probe.phase = Phase::Dying { sent_at: now };
             } else {
                 probe.phase = Phase::FlagUsed { at, samples };
@@ -884,7 +884,7 @@ fn bg_step(
             if now < next_sample {
                 return;
             }
-            let Some(mut script) = script else {
+            let Some(script) = script else {
                 finish(probe, net);
                 return;
             };
@@ -905,7 +905,7 @@ fn bg_step(
                      tostring(StaticPopup_Visible and StaticPopup_Visible(\"AREA_SPIRIT_HEAL\"))",
                 )
                 .unwrap_or_else(|e| format!("<raised: {e}>"));
-            let events = drain_events(probe, &mut script);
+            let events = drain_events(probe, script);
             info!(
                 "PROBE bg: GHOST t={:.0}s ghost={ghost} pos=({:.0},{:.0},{:.0}) area={:?} guide={} wave={wave}{}",
                 now - released_at,
@@ -944,7 +944,7 @@ fn bg_step(
             } else if now - sent_at > 15.0 {
                 error!("PROBE bg: FAILURE — LeaveBattlefield() did not port out in 15 s");
                 let [x, y, z] = arena.at;
-                gm(&net, format!(".go xyz {x} {y} {z} 0"));
+                gm(net, format!(".go xyz {x} {y} {z} 0"));
                 finish(probe, net);
             }
         }
