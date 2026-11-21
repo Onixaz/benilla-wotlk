@@ -89,24 +89,34 @@ pub(super) fn toggle_hud(keys: Res<ButtonInput<KeyCode>>, mut hud: ResMut<PerfHu
 
 /// Advance the HUD's 4 Hz snapshot, independent of whether anything drew, and re-ask
 /// [`top_centre_claimed`] on the same cadence.
+/// The snapshot's inputs, released before the band's chunk runs.
+type HudInputs = (
+    ResMut<'static, PerfHud>,
+    Res<'static, FrameStats>,
+    Res<'static, Time<Real>>,
+    Query<'static, 'static, &'static Window, With<PrimaryWindow>>,
+);
+
+/// Exclusive: the band's chunk runs with the `World` lent.
 pub(super) fn refresh_hud_snapshot(
-    mut hud: ResMut<PerfHud>,
-    stats: Res<FrameStats>,
-    time: Res<Time<Real>>,
-    (script, _live): (Option<NonSend<UiScript>>, crate::ui_script::LendLive),
-    windows: Query<&Window, With<PrimaryWindow>>,
+    world: &mut World,
+    inputs: &mut bevy::ecs::system::SystemState<HudInputs>,
 ) {
-    if !hud.visible {
-        return;
-    }
-    let now = time.elapsed_secs();
-    if !hud.maybe_refresh(&stats, now) {
-        return;
-    }
-    hud.top_claimed = match (script, windows.single()) {
-        (Some(script), Ok(win)) => top_centre_claimed(&script, win.height()),
-        _ => 0.0,
+    let height = {
+        let (mut hud, stats, time, windows) = inputs.get_mut(world);
+        if !hud.visible {
+            return;
+        }
+        let now = time.elapsed_secs();
+        if !hud.maybe_refresh(&stats, now) {
+            return;
+        }
+        windows.single().ok().map(Window::height)
     };
+    let claimed = height
+        .and_then(|h| crate::ui_script::safe_world::lend(world, |s| top_centre_claimed(s, h)))
+        .unwrap_or(0.0);
+    world.resource_mut::<PerfHud>().top_claimed = claimed;
 }
 
 /// How far down the top-centre band the game UI reaches, in window logical px (`0.0` when

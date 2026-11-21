@@ -808,6 +808,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                         });
                     }
                 }
+                drop(model);
+                super::calls::apply_queued(lua);
                 Ok(())
             },
         )?,
@@ -907,13 +909,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             let spell_id = resolve_spell_by_name(&live_book().book, &name).map(|s| s.spell_id);
             if let Some(spell_id) = spell_id {
-                crate::script::model_mut_of(lua)
-                    .script_calls
-                    .push(ScriptCall::CastSpell {
+                super::calls::make(
+                    lua,
+                    ScriptCall::CastSpell {
                         spell_id,
                         at,
                         via_book: !name.starts_with('!'),
-                    });
+                    },
+                );
             }
             Ok(())
         })?,
@@ -939,13 +942,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let known = super::read_live(|l| l.spell_known(spell_id))
                 .unwrap_or_else(|| stand_in_slot(spell_id).is_some());
             if spell_id != 0 && known {
-                crate::script::model_mut_of(lua)
-                    .script_calls
-                    .push(ScriptCall::CastSpell {
+                super::calls::make(
+                    lua,
+                    ScriptCall::CastSpell {
                         spell_id,
                         at,
                         via_book: false,
-                    });
+                    },
+                );
             }
             Ok(())
         })?,
@@ -968,9 +972,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "SpellStopCasting",
         lua.create_function(|lua, ()| {
             if super::live::read_live(|l| l.has_stoppable_cast()).unwrap_or(false) {
-                crate::script::model_mut_of(lua)
-                    .script_calls
-                    .push(ScriptCall::SpellStopCasting);
+                super::calls::make(lua, ScriptCall::SpellStopCasting);
                 Ok(Value::Integer(1))
             } else {
                 Ok(Value::Nil)
@@ -1025,9 +1027,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "SpellStopTargeting",
         lua.create_function(|lua, ()| {
             if targeting().active {
-                crate::script::model_mut_of(lua)
-                    .script_calls
-                    .push(ScriptCall::SpellStopTargeting);
+                super::calls::make(lua, ScriptCall::SpellStopTargeting);
                 Ok(Value::Integer(1))
             } else {
                 Ok(Value::Nil)

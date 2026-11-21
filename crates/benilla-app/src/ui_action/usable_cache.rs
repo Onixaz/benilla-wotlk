@@ -838,8 +838,13 @@ impl UsableRun<'_, '_> {
         if self.caches.read().sets_usable != sets_usable {
             self.caches.write().sets_usable = sets_usable;
         }
-        let events = run_into(&self.inputs, &mut self.caches, pass);
+        let events = self.run(pass);
         fire_into(script, events);
+    }
+
+    /// Run `pass`: what it signals, in order, for a caller that fires with no borrow held.
+    pub(crate) fn run(&mut self, pass: Pass) -> Vec<UsableEvent> {
+        run_into(&self.inputs, &mut self.caches, pass)
     }
 }
 

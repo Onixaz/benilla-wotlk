@@ -117,7 +117,8 @@ const KEPT: &[(&str, &str)] = &[
     ),
 ];
 
-/// Every system in [`super::UiFeed`] that holds the VM, off the built `Update` schedule.
+/// Every system in [`super::UiFeed`] that holds the VM or is exclusive, off the built `Update`
+/// schedule.
 fn scheduled_feeds() -> Vec<String> {
     use bevy::ecs::schedule::graph::Direction;
     use bevy::ecs::schedule::NodeId;
@@ -134,14 +135,14 @@ fn scheduled_feeds() -> Vec<String> {
             let feed_set = format!("{:?}", super::UiFeed);
             let graph = schedule.graph();
             for (key, system, _) in graph.systems.iter() {
-                if system.is_exclusive() {
-                    continue;
-                }
+                // An exclusive system in the set reaches the VM through the `World` it lends.
                 let Some(with_access) = graph.systems.get(key) else {
                     continue;
                 };
                 let access = with_access.access.combined_access();
-                if !(access.has_resource_read(vm) || access.has_resource_write(vm)) {
+                if !system.is_exclusive()
+                    && !(access.has_resource_read(vm) || access.has_resource_write(vm))
+                {
                     continue;
                 }
                 // Its sets, walked up the hierarchy to the outermost.

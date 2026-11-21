@@ -69,31 +69,65 @@ pub(crate) mod net {
             .net_handler(K::Disconnected, on_session_end);
     }
 
-    #[allow(clippy::too_many_arguments)] // a handler's full input set
-    fn on_requested(
+    /// What the challenge handler reads and writes before its raise.
+    #[derive(bevy::ecs::system::SystemParam)]
+    pub(crate) struct RequestedInputs<'w, 's> {
+        duel: ResMut<'w, DuelState>,
+        ui: ResMut<'w, UiEvents>,
+        commands: Res<'w, NetCommands>,
+        self_guid: Res<'w, crate::net::SelfGuid>,
+        social: Res<'w, crate::ui_social::SocialState>,
+        players: Players<'w, 's>,
+    }
+
+    /// Exclusive: `DUEL_REQUESTED` fires at its step (`0x5cfd8b`) with the
+    /// `World` lent and no borrow held, so a listener reads the arbiter stored before it and its
+    /// writes reach the rest of the handler, which stores the challenger after it (`0x5cfd99`).
+    pub(crate) fn on_requested(
         In(ev): In<SessionEvent>,
-        mut duel: ResMut<DuelState>,
-        mut ui: ResMut<UiEvents>,
-        commands: Res<NetCommands>,
-        self_guid: Res<crate::net::SelfGuid>,
-        social: Res<crate::ui_social::SocialState>,
-        players: Players,
+        world: &mut World,
+        inputs: &mut bevy::ecs::system::SystemState<RequestedInputs>,
     ) {
-        if let SessionEvent::DuelRequested {
+        let SessionEvent::DuelRequested {
             arbiter,
             challenger,
         } = ev
-        {
-            let held = players.player_name(challenger);
+        else {
+            return;
+        };
+        let challenge = {
+            let mut i = inputs.get_mut(world);
+            let held = i.players.player_name(challenger);
+            let ignored = i.social.is_ignored(challenger);
+            let own = i.self_guid.0;
+            let RequestedInputs {
+                duel, ui, commands, ..
+            } = &mut i;
             requested(
-                &mut duel,
-                &mut ui,
-                &commands,
+                duel,
+                ui,
+                commands,
                 (arbiter, challenger),
-                self_guid.0,
-                social.is_ignored(challenger),
+                own,
+                ignored,
                 held,
-            );
+            )
+        };
+        inputs.apply(world);
+        match challenge {
+            Challenge::Done => {}
+            Challenge::Store => {
+                store_challenger(&mut world.resource_mut::<DuelState>(), challenger)
+            }
+            Challenge::Raise(name) => {
+                crate::ui_script::safe_world::lend(world, |s| {
+                    let name = name
+                        .or_else(|| crate::ui_chat::combat::global_string(s, "UNKNOWNOBJECT"))
+                        .unwrap_or_default();
+                    s.fire_event("DUEL_REQUESTED", vec![ScriptValue::Str(name)]);
+                });
+                store_challenger(&mut world.resource_mut::<DuelState>(), challenger);
+            }
         }
     }
 
@@ -164,7 +198,17 @@ pub(crate) mod net {
         *duel = DuelState::default();
     }
 
-    /// `SMSG_DUEL_REQUESTED` (`0x5cfcd0`): ours accepts (`0x5cfd0a`), an ignored one declines (`0x5cfd33`), a held one fires `DUEL_REQUESTED` (`0x5cfd8b`).
+    /// What the challenge handler does after its first half.
+    pub(crate) enum Challenge {
+        /// Accepted (ours) or declined (ignored): nothing more.
+        Done,
+        /// No held player: the challenger is stored with no event.
+        Store,
+        /// `DUEL_REQUESTED` with the held name (`None` while uncached), then the store.
+        Raise(Option<String>),
+    }
+
+    /// `SMSG_DUEL_REQUESTED` (`0x5cfcd0`) up to its raise: ours accepts (`0x5cfd0a`), an ignored one declines (`0x5cfd33`), a held one fires `DUEL_REQUESTED` (`0x5cfd8b`), then [`store_challenger`].
     #[allow(clippy::too_many_arguments)] // the handler's inputs, passed through for its tests
     pub(crate) fn requested(
         duel: &mut DuelState,
@@ -174,27 +218,28 @@ pub(crate) mod net {
         own: Option<u64>,
         ignored: bool,
         held: Option<Option<String>>,
-    ) {
+    ) -> Challenge {
         duel.arbiter = arbiter;
         if Some(challenger) == own {
             // `0x5cfd0a`, ahead of the accept (`0x5cfd12`).
             show_in_turn(ui, "ui_duel", UiError::key("ERR_DUEL_REQUESTED"));
             let _ = commands.0.send(ClientCommand::DuelAccepted { arbiter });
-            return;
+            return Challenge::Done;
         }
         if ignored {
             let _ = commands.0.send(ClientCommand::DuelCancelled { arbiter });
             duel.arbiter = 0;
-            return;
+            return Challenge::Done;
         }
-        if let Some(name) = held {
-            ui.write(move |s| {
-                let name = name
-                    .or_else(|| crate::ui_chat::combat::global_string(s, "UNKNOWNOBJECT"))
-                    .unwrap_or_default();
-                s.fire_event("DUEL_REQUESTED", vec![ScriptValue::Str(name)]);
-            });
+        let _ = challenger;
+        match held {
+            Some(name) => Challenge::Raise(name),
+            None => Challenge::Store,
         }
+    }
+
+    /// The challenge stored after its event (`0x5cfd99`).
+    pub(crate) fn store_challenger(duel: &mut DuelState, challenger: u64) {
         duel.dueler = Some(challenger);
     }
 
@@ -378,7 +423,7 @@ mod tests {
     ) -> (Vec<&'static str>, Vec<ClientCommand>) {
         let (tx, rx) = crossbeam_channel::unbounded();
         let mut ui = UiEvents::default();
-        net::requested(
+        match net::requested(
             duel,
             &mut ui,
             &NetCommands(tx),
@@ -386,7 +431,20 @@ mod tests {
             Some(7),
             ignored,
             held,
-        );
+        ) {
+            net::Challenge::Done => {}
+            net::Challenge::Store => net::store_challenger(duel, challenger),
+            net::Challenge::Raise(name) => {
+                // The queued stand-in for the raise, for the handler-free assertions below.
+                ui.write(move |s| {
+                    s.fire_event(
+                        "DUEL_REQUESTED",
+                        vec![ScriptValue::Str(name.unwrap_or_default())],
+                    )
+                });
+                net::store_challenger(duel, challenger);
+            }
+        }
         (ui.names(), rx.try_iter().collect())
     }
 
@@ -548,5 +606,89 @@ mod tests {
         ] {
             assert!(by_key(key).is_none(), "{key} is engine-composed");
         }
+    }
+
+    /// The converted challenge handler raises `DUEL_REQUESTED` mid-handler (`0x5cfd8b`): the
+    /// listener reads the arbiter stored before the raise and no challenger yet (`0x5cfd99` comes
+    /// after), and its write (a cancel clearing the arbiter) is what the rest of the handler and
+    /// every later reader see.
+    #[test]
+    fn the_challenge_raises_mid_handler_with_the_world_lent() {
+        use benilla_protocol::messages::ObjectType;
+        use benilla_protocol::ObjectFields;
+        use benilla_protocol::SessionEvent;
+        use bevy::ecs::system::RunSystemOnce;
+        const CHALLENGER: u64 = 9;
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let mut world = World::new();
+        world.insert_resource(NetCommands(tx));
+        world.init_resource::<DuelState>();
+        world.init_resource::<UiEvents>();
+        world.init_resource::<crate::net::GuidIndex>();
+        world.init_resource::<NameCache>();
+        world.init_resource::<crate::ui_social::SocialState>();
+        world.insert_resource(crate::net::SelfGuid(Some(7)));
+        let e = world
+            .spawn(crate::net::ObjectStore(
+                ObjectFields::from_pairs(&[(benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19)])
+                    .into_created(ObjectType::Player),
+            ))
+            .id();
+        world
+            .resource_mut::<crate::net::GuidIndex>()
+            .0
+            .insert(CHALLENGER, e);
+        let script = UiScript::new().unwrap();
+        let lua = script.lua().clone();
+        let read = lua
+            .create_function(|_, ()| {
+                Ok(crate::ui_script::safe_world::with_world(|w| {
+                    let d = w.resource::<DuelState>();
+                    format!("{:#x}/{:?}", d.arbiter, d.dueler)
+                }))
+            })
+            .unwrap();
+        let cancel = lua
+            .create_function(|_, ()| {
+                Ok(crate::ui_script::safe_world::with_world(|w| {
+                    w.resource_mut::<DuelState>().arbiter = 0;
+                })
+                .is_some())
+            })
+            .unwrap();
+        lua.globals().set("LentDuel", read).unwrap();
+        lua.globals().set("LentCancelDuel", cancel).unwrap();
+        script
+            .run(
+                r#"SEEN = ""
+                   local f = CreateFrame("Frame")
+                   f:RegisterEvent("DUEL_REQUESTED")
+                   f:SetScript("OnEvent", function()
+                       SEEN = LentDuel()
+                       assert(LentCancelDuel())
+                   end)"#,
+            )
+            .unwrap();
+        world.insert_non_send_resource(script);
+        world
+            .run_system_once_with(
+                net::on_requested,
+                SessionEvent::DuelRequested {
+                    arbiter: 0xA1,
+                    challenger: CHALLENGER,
+                },
+            )
+            .unwrap();
+        let seen: String = world
+            .non_send_resource::<UiScript>()
+            .eval("return SEEN")
+            .unwrap();
+        assert_eq!(seen, "0xa1/None", "the state as of the raise");
+        let duel = world.resource::<DuelState>();
+        assert_eq!(
+            (duel.arbiter, duel.dueler),
+            (0, Some(CHALLENGER)),
+            "the listener's write stands, and the store after the raise applied"
+        );
     }
 }

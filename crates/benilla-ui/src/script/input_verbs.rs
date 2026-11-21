@@ -147,8 +147,7 @@ fn push(lua: &Lua, input: BindingInput) {
 }
 
 fn push_call(lua: &Lua, call: ScriptCall) {
-    let mut model = crate::script::model_mut_of(lua);
-    model.script_calls.push(call);
+    super::calls::make(lua, call);
 }
 
 /// A zoom's optional amount: `is-number` (a numeric string passes) then `tonumber`, else the stored

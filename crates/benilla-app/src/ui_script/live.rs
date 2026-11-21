@@ -3171,6 +3171,17 @@ pub(crate) enum LineArg {
 pub(crate) struct UiEvents(Vec<UiEvent>);
 
 impl UiEvents {
+    /// What waits now, taken: an applier's own raises then queue and fire apart from it.
+    pub(crate) fn set_aside(&mut self) -> Self {
+        Self(std::mem::take(&mut self.0))
+    }
+
+    /// Put what [`Self::set_aside`] took back ahead of anything queued since.
+    pub(crate) fn put_back(&mut self, earlier: Self) {
+        let later = std::mem::replace(&mut self.0, earlier.0);
+        self.0.extend(later);
+    }
+
     /// Nothing waits.
     pub(crate) fn is_empty(&self) -> bool {
         self.0.is_empty()
@@ -3250,26 +3261,12 @@ impl UiEvents {
     }
 }
 
-/// What [`with_live_world`] lends: the view as a system lends it, owning what it may write.
+/// What [`with_world_view`] lends: the view as a system lends it, owning what it may write.
 type WorldView = LendLive<'static, 'static, OwnsVerbWrites>;
 
-/// The cached parameter state [`with_live_world`] lends from.
+/// The cached parameter state [`with_world_view`] lends from.
 #[derive(Resource)]
 pub(super) struct LiveViewState(SystemState<WorldView>);
-
-/// The VM taken out of the world for a call, put back on return and on unwind.
-struct HeldScript<'w> {
-    world: &'w mut World,
-    script: Option<UiScript>,
-}
-
-impl Drop for HeldScript<'_> {
-    fn drop(&mut self) {
-        if let Some(script) = self.script.take() {
-            self.world.insert_non_send_resource(script);
-        }
-    }
-}
 
 /// The view's state taken out of the world for a call, put back on return and on unwind.
 struct HeldState<'w> {
@@ -3285,26 +3282,26 @@ impl Drop for HeldState<'_> {
     }
 }
 
-/// Run `f` on the VM with the `World` lent as its live view; `None` with no VM.
+/// Run `f` on the VM with the `World` lent to every verb it reaches; `None` with no VM.
 pub(crate) fn with_live_world<R>(
     world: &mut World,
     f: impl FnOnce(&mut UiScript) -> R,
 ) -> Option<R> {
-    let script = world.remove_non_send_resource::<UiScript>()?;
-    let mut held = HeldScript {
-        world,
-        script: Some(script),
-    };
-    let script = held.script.as_mut().expect("held until the drop");
-    Some(lend_world(held.world, script, f))
+    super::safe_world::lend(world, f)
 }
 
-/// Run `f` on `script`, a VM held outside the world, with the `World` lent as its live view.
+/// Run `f` on `script`, a VM held outside the world, with the `World` lent.
 pub(crate) fn lend_world<R>(
     world: &mut World,
     script: &mut UiScript,
     f: impl FnOnce(&mut UiScript) -> R,
 ) -> R {
+    super::safe_world::lend_to(world, script, f)
+}
+
+/// `f` with the `World`'s live view lent, for one read a verb makes through the `World` loan
+/// ([`super::safe_world`]); the view is built over the `World` it borrows for `f` alone.
+pub(crate) fn with_world_view<R>(world: &mut World, f: impl FnOnce() -> R) -> R {
     let state = match world.remove_resource::<LiveViewState>() {
         Some(state) => state,
         None => LiveViewState(SystemState::new(world)),
@@ -3314,9 +3311,8 @@ pub(crate) fn lend_world<R>(
         state: Some(state),
     };
     let state = held.state.as_mut().expect("held until the drop");
-    // Lent until it drops, after `f`.
     let _loan = state.0.get_mut(held.world);
-    f(script)
+    f()
 }
 
 /// `step` in turn after the events queued so far, or now with no event queue.

@@ -14,6 +14,8 @@ use benilla_world::schedule::WorldStage;
 
 /// The addon folder: discovery, manifests, the enable file and the load walk.
 pub(crate) mod addons;
+#[cfg(test)]
+mod borrow_census;
 mod content;
 pub(crate) mod extract;
 /// The stock glue screens.
@@ -23,6 +25,7 @@ pub(crate) mod glue_mgr;
 pub(crate) mod glue_scene;
 mod input;
 pub(crate) mod live;
+pub(crate) mod safe_world;
 pub(crate) use live::{
     LendLive, LentRef, OwnedMut, OwnsActions, OwnsCooldowns, OwnsMacros, OwnsPlace,
     OwnsScriptCalls, OwnsSelection, OwnsSpirit, OwnsTradeSkill,
@@ -258,6 +261,10 @@ pub(crate) struct PointerOverUiPanel(pub(crate) bool);
 /// `0x495320`) runs `OnUpdate` and the cooldown widgets.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct UiPress;
+
+/// [`PointerOverUi`]'s arbiter, in [`UiPress`] after the pointer feed.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct PointerArbiter;
 
 /// The player-UI feed phase, after [`UiPress`] and ungated (`UnitFeed` is the gated sub-phase):
 /// every push this frame's tick must see, as in the reference's frame, where packet dispatch
@@ -554,12 +561,13 @@ impl Plugin for UiScriptPlugin {
                     .after(crate::vplates::VPlateSet)
                     .before(crate::ui_pass::UiQuadAppend),
             )
-            // After the hover is known and before gameplay reads `PointerOverUi`.
+            // After the hover is known and before the world mouse latch reads `PointerOverUi`.
             .add_systems(
                 Update,
                 arbitrate_pointer_over_ui
-                    .after(UiInput)
-                    .before(WorldStage::Input),
+                    .in_set(PointerArbiter)
+                    .in_set(UiPress)
+                    .after(input::feed_ui_input),
             );
 
         // A UI capture's synthetic unit snapshots, after the real feed so they win.

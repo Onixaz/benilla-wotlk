@@ -827,18 +827,22 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     "Usage: SetActiveTalentGroup(groupIndex)".into(),
                 ));
             };
-            let mut model = crate::script::model_mut_of(lua);
+            let model = crate::script::model_mut_of(lua);
             let g = group as i64 - 1;
             if g >= 0
                 && (g as usize) != model.talents.active_group
                 && (g as usize) < model.talents.groups.len()
                 && (g as usize) < ACTIVATION_SPELLS.len()
             {
-                model.script_calls.push(super::ScriptCall::CastSpell {
-                    spell_id: ACTIVATION_SPELLS[g as usize],
-                    at: super::calls::CastAt::Player,
-                    via_book: false,
-                });
+                drop(model);
+                super::calls::make(
+                    lua,
+                    super::ScriptCall::CastSpell {
+                        spell_id: ACTIVATION_SPELLS[g as usize],
+                        at: super::calls::CastAt::Player,
+                        via_book: false,
+                    },
+                );
             }
             Ok(())
         })?,

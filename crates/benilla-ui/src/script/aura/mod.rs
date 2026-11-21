@@ -363,6 +363,24 @@ impl super::UiScript {
         model.unit_guids.focus = focus;
     }
 
+    /// The target global alone, as the selection setter writes it before it returns (`0x524f38`),
+    /// so a token read later in the same Lua call names the new target.
+    pub fn set_target_guid(&mut self, guid: u64) {
+        if self.model_ref().unit_guids.target != guid {
+            self.model_mut().unit_guids.target = guid;
+        }
+    }
+
+    /// The selection the last `PLAYER_TARGET_CHANGED` this VM heard announced; `None` in a new VM.
+    pub fn target_signalled(&self) -> Option<u64> {
+        self.model_ref().target_signalled
+    }
+
+    /// Record that `PLAYER_TARGET_CHANGED` announced `selection`.
+    pub fn set_target_signalled(&mut self, selection: Option<u64>) {
+        self.model_mut().target_signalled = selection;
+    }
+
     /// The arena slots alone, as an arena handler writes them before its `ARENA_OPPONENT_UPDATE`.
     pub fn set_arena_unit_guids(&mut self, arena: [u64; 5], pets: [u64; 5], count: usize) {
         let mut model = self.model_mut();

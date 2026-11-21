@@ -85,16 +85,8 @@ pub(super) fn control(
     // The body we drive, a possessed creature's included ([`BodyQuery`]).
     mut body: BodyQuery,
     window: Single<(&mut Window, &mut CursorOptions), With<PrimaryWindow>>,
-    // A press starts a look and arms a click test, which the release settles on time and travel.
-    mut world_clicks: (
-        MessageWriter<WorldClick>,
-        MessageWriter<WorldDropClick>,
-        MessageWriter<WorldRightClick>,
-    ),
-    mut click_test: (
-        Local<Option<camera::PressGesture>>,
-        Local<Option<camera::PressGesture>>,
-    ),
+    // A press starts a look and arms a click test, which the input pass settles at the release.
+    mut click_tests: ResMut<camera::WorldClickTests>,
     // The liquid query, the transports, and the parent chain from a deck collider to its transport.
     world_q: (
         benilla_world::world_point::WorldPoint,
@@ -103,7 +95,10 @@ pub(super) fn control(
     ),
 ) {
     let (world, transports, child_of) = (&world_q.0, &world_q.1, &world_q.2);
-    let (left_click, right_click) = (&mut *click_test.0, &mut *click_test.1);
+    let camera::WorldClickTests {
+        left: left_click,
+        right: right_click,
+    } = &mut *click_tests;
     let Ok((mut cam_t, mut cam)) = cameras.single_mut() else {
         return;
     };
@@ -257,9 +252,6 @@ pub(super) fn control(
         &mut opts_shadow,
         inspect.enabled,
         click_consumed.0,
-        &mut world_clicks.0,
-        &mut world_clicks.1,
-        &mut world_clicks.2,
         left_click,
         right_click,
         look_cfg,

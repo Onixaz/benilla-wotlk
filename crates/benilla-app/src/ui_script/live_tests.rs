@@ -142,7 +142,7 @@ fn with_no_vm_the_events_are_dropped() {
     assert_eq!(log, vec!["CHARZ_VALUES 0 taxi=nil"]);
 }
 
-/// A call into Lua that unwinds puts the VM and the view's state back, and ends the loan.
+/// A call into Lua that unwinds leaves the VM in the `World` and ends the loan.
 #[test]
 fn an_unwinding_call_puts_the_vm_and_the_view_back() {
     let mut app = app();
@@ -151,7 +151,7 @@ fn an_unwinding_call_puts_the_vm_and_the_view_back() {
     }));
     assert!(unwound.is_err());
     let world = app.world_mut();
-    assert!(world.contains_resource::<super::live::LiveViewState>());
+    assert!(!benilla_ui::script::world_loan::lent());
     let script = world.non_send_resource::<UiScript>();
     assert!(!script.has_live());
     assert_eq!(
@@ -167,20 +167,96 @@ fn an_unwinding_call_puts_the_vm_and_the_view_back() {
 /// system's `&mut Option<NonSendMut<UiScript>>` does not count).
 fn takes_vm(params: &str) -> bool {
     let flat: String = params.split_whitespace().collect();
+    // `NonSend[Mut]<UiScript>`, its path written out or not; a reference to one is a helper's.
     flat.match_indices("UiScript>").any(|(at, _)| {
         let head = &flat[..at];
-        let ty = &head[head.rfind(':').map_or(0, |c| c + 1)..];
-        let ty = ty.trim_start_matches('(');
-        !ty.starts_with('&') && ty.contains("NonSend")
+        let Some(open) = head.rfind('<') else {
+            return false;
+        };
+        let path = &head[open + 1..];
+        // A lifetime first: `NonSendMut<'w, UiScript>`.
+        let path = match path.strip_prefix('\'') {
+            Some(rest) => rest.split_once(',').map_or("", |(_, p)| p),
+            None => path,
+        };
+        let wrapper = &head[..open];
+        let ty = &wrapper[wrapper.rfind([':', ',', '(']).map_or(0, |c| c + 1)..];
+        path.chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == ':')
+            && (ty.ends_with("NonSend") || ty.ends_with("NonSendMut"))
+            && !ty.starts_with('&')
     })
 }
 
 /// Holders that call no Lua, argued: (file, item, why).
-const CALLS_NO_LUA: &[(&str, &str, &str)] = &[(
-    "spell/net.rs",
-    "SpellGoLoot",
-    "reads the modified-click table on the Rust side, and its handler writes the object stores      the view would read",
-)];
+const CALLS_NO_LUA: &[(&str, &str, &str)] = &[
+    (
+        "spell/net.rs",
+        "SpellGoLoot",
+        "reads the modified-click table on the Rust side, and its handler writes the object stores      the view would read",
+    ),
+    (
+        "ui_unit.rs",
+        "TargetSetTail",
+        "the selection setter's writes into the VM's model; its raises run after it with the `World` lent",
+    ),
+    (
+        "ui_summon.rs",
+        "drain_summon",
+        "takes the answers `ConfirmSummon` and `CancelSummon` queued, a field drain",
+    ),
+    (
+        "ui_tabard.rs",
+        "sync_tabard_booth",
+        "reads the designer's shown flag and the pane's facing off the model",
+    ),
+    (
+        "ui_net.rs",
+        "feed_net_stats",
+        "writes the latency field `GetNetStats` reads",
+    ),
+    (
+        "ui_layout.rs",
+        "load_layout",
+        "writes the placed frames' anchors and sizes into the model",
+    ),
+    (
+        "ui_quest_share.rs",
+        "drain_quest_share",
+        "takes the confirms `ConfirmAcceptQuest` queued, a field drain",
+    ),
+    (
+        "ui_socket.rs",
+        "drain_item_sends",
+        "takes the socket and refund sends the verbs queued, field drains",
+    ),
+    (
+        "ui_battlefield_score.rs",
+        "drain_battlefield_score",
+        "takes the score requests `RequestBattlefieldScoreData` queued, a field drain",
+    ),
+    (
+        "ui_follow.rs",
+        "drain_follow",
+        "takes the follow requests the verbs queued, a field drain",
+    ),
+    (
+        "ui_merchant/mod.rs",
+        "end_repair_mode_on_right_press",
+        "clears the repair-mode field",
+    ),
+];
+
+/// Whether `CALLS_NO_LUA` argues the scheduled system `name` (`crate::module::item`).
+fn argued_system(name: &str) -> bool {
+    CALLS_NO_LUA.iter().any(|&(file, item, _)| {
+        let module = file
+            .trim_end_matches(".rs")
+            .trim_end_matches("/mod")
+            .replace('/', "::");
+        name.ends_with(&format!("{module}::{item}"))
+    })
+}
 
 /// Whether `CALLS_NO_LUA` argues `item` in `rel`.
 fn argued(rel: &str, item: &str) -> bool {
@@ -189,9 +265,11 @@ fn argued(rel: &str, item: &str) -> bool {
         .any(|&(f, i, _)| f == rel && item.contains(i))
 }
 
-/// Every system parameter list or `SystemParam` struct that holds the VM also takes
-/// [`super::LendLive`], so every call into Lua from it reads the `World`: scheduled systems, packet
-/// handlers and observers alike. Read off the source, as no schedule lists handlers.
+/// A system that calls into Lua is exclusive and lends the `World` ([`super::safe_world`]), so no
+/// parameter list or `SystemParam` struct holds the VM: the ones that still do, beside the borrowed
+/// view ([`super::LendLive`]), are counted per file in [`super::borrow_census::STILL_BORROWS`], which
+/// only falls, and one that holds it with no view is argued in [`CALLS_NO_LUA`]. Read off the
+/// source, as no schedule lists handlers.
 #[test]
 fn every_holder_of_the_vm_lends_the_world() {
     use crate::test_support::{fn_items, rel_path, rust_files, src_dir};
@@ -199,7 +277,7 @@ fn every_holder_of_the_vm_lends_the_world() {
     let test_module =
         regex::Regex::new(r"\r?\n#\[cfg\(test\)\]\r?\n(?:#\[[^\n]*\]\r?\n)*mod \w+ \{")
             .expect("a valid pattern");
-    let mut checked = 0;
+    let mut borrowing = std::collections::BTreeMap::<String, usize>::new();
     let mut offenders = Vec::new();
     for file in rust_files(&src_dir()) {
         let rel = rel_path(&file);
@@ -233,8 +311,9 @@ fn every_holder_of_the_vm_lends_the_world() {
         }
         for f in fn_items(text) {
             if takes_vm(f.params) {
-                checked += 1;
-                if !f.params.contains("LendLive") {
+                if f.params.contains("LendLive") {
+                    *borrowing.entry(rel.clone()).or_default() += 1;
+                } else if !argued(&rel, f.name) {
                     offenders.push(format!("{rel}: fn {}", f.name));
                 }
             }
@@ -247,20 +326,32 @@ fn every_holder_of_the_vm_lends_the_world() {
             let body = &rest[open..close];
             let name = rest[..open].trim();
             if takes_vm(body) {
-                checked += 1;
-                if !body.contains("LendLive") && !argued(&rel, name) {
+                if body.contains("LendLive") {
+                    *borrowing.entry(rel.clone()).or_default() += 1;
+                } else if !argued(&rel, name) {
                     offenders.push(format!("{rel}: {name}"));
                 }
             }
         }
     }
-    // A floor that proves the scan reads the tree; the #1245 parts shrink the count it guards.
-    assert!(checked > 150, "the scan found only {checked} holders");
     assert!(
         offenders.is_empty(),
-        "these hold the VM and lend nothing, so a verb they reach reads no client state; take \
-         `crate::ui_script::LendLive` beside the VM:\n{}",
+        "these hold the VM with no view and are not argued in `CALLS_NO_LUA`; a system that calls \
+         into Lua is exclusive and lends the `World` (`safe_world::lend`):\n{}",
         offenders.join("\n")
+    );
+    let listed: std::collections::BTreeMap<String, usize> = super::borrow_census::STILL_BORROWS
+        .iter()
+        .map(|&(file, n)| (file.to_string(), n))
+        .collect();
+    let rows: String = borrowing
+        .iter()
+        .map(|(file, n)| format!("    (\"{file}\", {n}),\n"))
+        .collect();
+    assert!(
+        borrowing == listed,
+        "the holders of the VM that still borrow their view (`LendLive`) moved; the list only \
+         falls, a new system that calls into Lua is exclusive. The tree's rows:\n{rows}"
     );
 }
 
@@ -300,7 +391,7 @@ fn every_scheduled_holder_of_the_vm_lends_the_world() {
                 let access = with_access.access.combined_access();
                 if access.has_resource_read(vm) || access.has_resource_write(vm) {
                     holders += 1;
-                    if !access.has_resource_read(mark) {
+                    if !access.has_resource_read(mark) && !argued_system(&system.name()) {
                         offenders.push(format!("{label:?}: {}", system.name()));
                     }
                 }

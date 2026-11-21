@@ -1264,7 +1264,8 @@ pub(crate) mod schedule_tests {
     // Both are intentional: the observer reacts only to CVar changes, while the limiter must run
     // every frame to enforce the reference client's sleep-based cap.
     const FRAME_FLOOR: &[(&str, usize, usize)] = &[
-        ("Update", 643, 635),
+        // Counts `gate_doodad_anim`, every frame: a doodad's animation stops while it is not drawn.
+        ("Update", 644, 636),
         // Counts `apply_host_sequence` (ship state -> props), gated on `Changed<HostSequence>`.
         ("PostUpdate", 183, 142),
         ("PreUpdate", 60, 60),
@@ -1676,8 +1677,10 @@ pub(crate) mod schedule_tests {
          "`pending` holds only the VM's own `Screenshot()` asks, and the take spawns a capture, publishing nothing"),
         ("screenshot.rs", "report_captures", Because::FilledByVm,
          "the outcome chain starts with the VM's own `Screenshot()` call"),
-        ("script_calls.rs", "apply_script_calls", Because::FilledByVm,
-         "the queue holds only the VM's own script calls; the `PLAYER_TOTEM_UPDATE` it fires is a queued `DestroyTotem`'s, in that call's turn"),
+        ("ui_duel.rs", "on_requested", Because::Deliberate,
+         "runs in the challenge packet's handler turn, as 12340's handler fires `DUEL_REQUESTED` (`0x5cfd8b`); a packet before the interface loads has no listener in 12340 either"),
+        ("ui_unit.rs", "target_set_tail", Because::Deliberate,
+         "the selection setter's tail (`0x524f54`), run inside the script call that moved the selection"),
         ("sound/ui.rs", "feed_drivers", Because::MemoLatched,
          "the device list rides a `VmMemo` seed, glue VM included, which a gate would starve; a `SOUND_DEVICE_UPDATE` taken before the interface is up is the reference's own drop, as the sound device-change handler signals only once the game UI is initialised"),
         ("tutorial.rs", "drain_tutorials", Because::FilledByVm,
@@ -1692,8 +1695,6 @@ pub(crate) mod schedule_tests {
          "`feed.vm: VmMemo<CharFeedMemo>`; `vm_reset` fires every transition on a fresh memo"),
         ("ui_chat/recruitment.rs", "guild_recruitment_cascade", Because::SelfHealing,
          "`pending` is held until the zone mask and zone id are settled, which happens on the entry VM"),
-        ("ui_follow.rs", "feed_follow", Because::MemoLatched,
-         "`feed.vm: VmMemo<FollowFeedMemo>`; a fresh VM re-fires BEGIN for a follow in progress"),
         ("ui_gm_ticket.rs", "feed_gm_ticket", Because::MemoLatched,
          "`feed.vm: VmMemo<FedTicket>` counters restart per VM while `state.answers` keeps counting, so the latest answer is re-fired"),
         ("ui_inspect.rs", "feed_inspect", Because::MemoLatched,
@@ -1751,13 +1752,32 @@ pub(crate) mod schedule_tests {
             }
             let rel = rel_path(&file);
             for f in fn_items(&text) {
+                // A holder borrows the VM as a parameter, or is exclusive and lends the `World`.
+                let lends = f.params.contains("&mut World")
+                    && (f.body.contains("UiScript::share") || f.body.contains("safe_world::"));
                 let holds_vm = f.params.contains("NonSendMut<UiScript>")
-                    || f.params.contains("NonSend<UiScript>");
+                    || f.params.contains("NonSend<UiScript>")
+                    || lends;
                 if !holds_vm || !CONSUMES.iter().any(|m| f.body.contains(m)) {
                     continue;
                 }
                 let takes = f.body.contains("mem::take(") || f.body.contains(".drain(");
-                let memo = f.params.contains("VmMemo<");
+                // An exclusive holder's memo sits in its `SystemState`'s parameter struct.
+                let state_memo = f
+                    .params
+                    .split("SystemState<")
+                    .nth(1)
+                    .and_then(|rest| rest.split(['>', '<', ',']).next())
+                    .and_then(|ty| text.split(&format!("struct {}<", ty.trim())).nth(1))
+                    .and_then(|body| {
+                        body.split(
+                            "
+}",
+                        )
+                        .next()
+                    })
+                    .is_some_and(|body| body.contains("VmMemo<"));
+                let memo = f.params.contains("VmMemo<") || state_memo;
                 consumers.push((rel.clone(), f.name.to_string(), takes, memo));
             }
         }

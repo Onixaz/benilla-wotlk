@@ -111,7 +111,6 @@ struct UnitFeedMemo {
     entered_world: bool,
     /// Per token, the last snapshot pushed.
     last: HashMap<String, UnitState>,
-    target_guid: Option<u64>,
     last_xp: Option<(u32, u32)>,
     /// `(rest state, pool, PLAYER_FLAGS)`, pushed as one so no binding reads it half-updated.
     last_rest: Option<(u8, u32, u32)>,
@@ -1639,6 +1638,89 @@ struct Interactions<'w> {
     go_templates: Option<Res<'w, crate::go_templates::GameObjectTemplates>>,
 }
 
+/// The selection setter's tail after its write (`0x524bf0`): the getters then read the new
+/// target's object (`0x524f38`), its cast's bit is re-read (`0x524dbc`), the usable update runs
+/// (`0x524f48`) and `PLAYER_TARGET_CHANGED` fires (`0x524f54`), all before the setter returns.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct TargetSetTail<'w, 's> {
+    script: NonSendMut<'w, UiScript>,
+    selection: Res<'w, Selection>,
+    tables: SnapshotTables<'w>,
+    self_q: Query<'w, 's, (&'static ObjectStore, &'static Guid), With<SelfPlayer>>,
+    stores: Query<'w, 's, &'static ObjectStore>,
+    index: Option<Res<'w, crate::net::GuidIndex>>,
+    names: Res<'w, NameCache>,
+    commands: Res<'w, NetCommands>,
+    factions: Option<Res<'w, Factions>>,
+    reputations: Res<'w, Reputations>,
+    group: Res<'w, crate::ui_party::GroupState>,
+    guild: Res<'w, crate::ui_guild::GuildCache>,
+    instance: crate::ui_arena::ArenaInstance<'w>,
+    reread: Option<crate::ui_cast::TargetReread<'w, 's>>,
+    usable: Option<crate::ui_action::usable_cache::UsableRun<'w, 's>>,
+}
+
+/// The tail's writes for the selection as it stands, with no borrow left for its raises; `None`
+/// when the VM already heard this selection, else what the usable update signals.
+fn target_tail_writes(
+    mut tail: TargetSetTail,
+) -> Option<Vec<crate::ui_action::usable_cache::UsableEvent>> {
+    let guid = tail.selection.guid;
+    let script = &mut *tail.script;
+    script.set_target_guid(guid.unwrap_or(0));
+    if script.target_signalled() == guid {
+        return None;
+    }
+    script.set_target_signalled(guid);
+    let self_store = tail.self_q.iter().next().map(|(s, _)| s);
+    let held = held::HeldUnits {
+        names: &tail.names,
+        commands: &tail.commands,
+        factions: tail.factions.as_deref(),
+        reputations: &tail.reputations,
+        group: &tail.group,
+        self_store,
+        classes: tail.tables.classes(),
+        types: tail.tables.types(&tail.names),
+        loot_lists: tail.tables.loot_lists(),
+        arena: tail.instance.active(),
+    };
+    let entity = tail
+        .selection
+        .target
+        .or_else(|| guid.and_then(|g| tail.index.as_ref()?.0.get(&g).copied()));
+    let target = held.target(&tail.stores, &tail.guild, entity, guid);
+    script.set_unit("target", target);
+    if let (Some(target), Some(reread)) = (guid, tail.reread.as_mut()) {
+        reread.reread(target);
+    }
+    Some(
+        tail.usable
+            .as_mut()
+            .map(|u| u.run(crate::ui_action::usable_cache::Pass::Full))
+            .unwrap_or_default(),
+    )
+}
+
+/// Run the selection setter's tail inside the call that moved the selection: the writes, then the
+/// usable update's signals and `PLAYER_TARGET_CHANGED` with the `World` lent and no borrow held, so
+/// a listener's own select runs the whole setter nested and this tail's caller reads what it left.
+pub(crate) fn target_set_tail(world: &mut World) {
+    let Ok(Some(usable)) = world.run_system_cached(target_tail_writes) else {
+        return;
+    };
+    crate::ui_script::safe_world::lend(world, |script| {
+        crate::ui_action::usable_cache::fire_into(script, usable);
+        script.fire_event("PLAYER_TARGET_CHANGED", vec![]);
+    });
+}
+
+/// The units' feed in a test's own schedule, in `set`.
+#[cfg(test)]
+pub(crate) fn feed_units_in(schedule: &mut Schedule, set: impl bevy::ecs::schedule::SystemSet) {
+    schedule.add_systems(feed_units.in_set(set));
+}
+
 /// The world entry's inputs and the new target's cast re-read, one parameter under Bevy's 16.
 type EntryAndTarget<'w, 's> = (
     Option<MessageReader<'w, 's, crate::net::EnteredWorldMessage>>,
@@ -1811,22 +1893,7 @@ fn feed_units(
         loot_lists: tables.loot_lists(),
         arena: interact.instance.active(),
     };
-    let target = match (selection.target, selection.guid) {
-        (Some(e), Some(guid)) => stores.all.get(e).ok().map(|store| {
-            let mut s = held.state(store, guid);
-            s.guild = crate::ui_guild::unit_guild(&store.0, &guild, &commands);
-            s
-        }),
-        // A group member or pet selected by guid alone reads its roster record.
-        (None, Some(guid)) => crate::ui_party::unheld_group_state(
-            &group,
-            guid,
-            self_pair.and_then(|(store, _)| faction_group(store, factions.as_deref())),
-            chr,
-            types,
-        ),
-        _ => None,
-    };
+    let target = held.target(&stores.all, &guild, selection.target, selection.guid);
 
     // `"focus"`: the VM's focus guid while the object manager holds it, as `"target"` is read.
     let focus = index
@@ -1851,18 +1918,15 @@ fn feed_units(
 
     // `"player"` is pushed only while its descriptor exists: the roster seat stands in before
     // arrival, and `PLAYER_LOGOUT` handlers still read `UnitName("player")`, as the reference's do.
-    // `"target"` pushes its absence too; both diff against the event loop's memo.
+    // `"target"` pushes its absence too; `"player"` diffs against the event loop's memo.
     if let Some(cur) = &player {
         if memo.last.get("player") != Some(cur) {
             gate.audit("feed_units", "the player snapshot");
             script.set_unit("player", player.clone());
         }
     }
-    let target_dirty = match (&target, memo.last.get("target")) {
-        (Some(cur), Some(prev)) => cur != prev,
-        (None, None) => false,
-        _ => true,
-    };
+    // `"target"` diffs against the VM's own: the selection setter's tail writes it in the call.
+    let target_dirty = !script.holds_unit("target", target.as_ref());
     if target_dirty {
         gate.audit("feed_units", "the target snapshot");
         script.set_unit("target", target.clone());
@@ -2178,9 +2242,9 @@ fn feed_units(
 
     // `PLAYER_TARGET_CHANGED`, argless, when the selection changes. A `/reload`'s fresh memo fires
     // it for a kept selection, where the reference's shutdown clears the target.
-    if selection.guid != memo.target_guid {
+    if selection.guid != script.target_signalled() {
         gate.audit("feed_units", "the PLAYER_TARGET_CHANGED edge");
-        memo.target_guid = selection.guid;
+        script.set_target_signalled(selection.guid);
         // The target set re-reads the new target's not-interruptible bit, with no event
         // (`0x524dbc`), ahead of the change's event.
         if let (Some(target), Some(reread)) = (selection.guid, target_cast.as_mut()) {
