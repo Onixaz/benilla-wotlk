@@ -5981,3 +5981,143 @@ fn a_held_special_takes_the_remap_unless_the_kit_skips_it() {
         );
     }
 }
+
+/// A mount model resolves on its rider's anim tier (`0x7176f0` on the mount model reads the unit's
+/// tier): a still drake under a fly-tier rider stands in FlyStand 229, one under a ground rider in
+/// Stand.
+#[test]
+fn a_mount_resolves_on_its_riders_anim_tier() {
+    let row = |behavior: u16, tier: u8| AnimEntry {
+        weapon_flags: 0,
+        fallback: 0,
+        flags: 0,
+        behavior,
+        tier,
+    };
+    for (tier, want) in [(3u32, 229u16), (0, 0)] {
+        let mut app = app();
+        app.insert_resource(AnimData(AnimDataCatalog::from_rows([
+            (0, row(0, 0)),
+            (229, row(0, 3)),
+        ])));
+        let rider = app
+            .world_mut()
+            .spawn((
+                Transform::IDENTITY,
+                crate::net::ObjectStore(ObjectFields::from_pairs(&[
+                    (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                    (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+                    (benilla_protocol::field::FIELD_UNIT_BYTES_1, tier << 24),
+                ])),
+            ))
+            .id();
+        let mount = app
+            .world_mut()
+            .spawn((
+                ModelAnimations {
+                    graph: Handle::default(),
+                    clips: vec![clip(0, 1, true), clip(229, 2, true)],
+                    hand_close: [None, None],
+                    playable_animation_lookup: Vec::new(),
+                    animation_lookup: Vec::new(),
+                    global_bones: Vec::new(),
+                    first_seq: None,
+                    pose: Default::default(),
+                },
+                AnimationPlayer::default(),
+                AnimationTransitions::new(),
+                AnimDriver::default(),
+                Transform::IDENTITY,
+                crate::entities::mount::MountBody { host: rider },
+            ))
+            .id();
+        app.update();
+        assert_eq!(gait_of(&app, mount), Some(want), "rider tier {tier}");
+    }
+}
+
+/// ProtoDragon.m2 under a Dragonflayer Raider (`UNIT_FIELD_BYTES_1` tier 3): it authors Walk 4 and
+/// the fly tier's FlyStand 229 and FlySwim 271, not Swim 42 or Fly 135. A flying rider's swim pick
+/// asks the mount for 42: on the rider's tier that is FlySwim 271 (`0x7176f0`), where a ground
+/// resolve walks 42's fallback down to Walk 4.
+#[test]
+fn a_fly_tier_riders_drake_strokes_in_flyswim_not_the_ground_walk() {
+    let row = |behavior: u16, tier: u8, fallback: u16| AnimEntry {
+        weapon_flags: 0,
+        fallback,
+        flags: 0,
+        behavior,
+        tier,
+    };
+    // `AnimationData.dbc` (12340): id → (behavior, tier, fallback).
+    let catalog = || {
+        AnimData(AnimDataCatalog::from_rows([
+            (0, row(0, 0, 0)),
+            (4, row(4, 0, 0)),
+            (41, row(41, 0, 0)),
+            (42, row(42, 0, 4)),
+            (135, row(135, 0, 42)),
+            (229, row(0, 3, 376)),
+            (233, row(4, 3, 229)),
+            (270, row(41, 3, 229)),
+            (271, row(42, 3, 233)),
+            (364, row(135, 3, 271)),
+        ]))
+    };
+    for (tier, want) in [(3u32, 271u16), (0, 42)] {
+        let mut app = app();
+        app.insert_resource(catalog());
+        let rider = app
+            .world_mut()
+            .spawn((
+                Transform::IDENTITY,
+                MovementState {
+                    flags: move_flags::FLYING | move_flags::FORWARD,
+                    speed: 7.0,
+                    ..Default::default()
+                },
+                crate::net::ObjectStore(ObjectFields::from_pairs(&[
+                    (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                    (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+                    (benilla_protocol::field::FIELD_UNIT_BYTES_1, tier << 24),
+                ])),
+            ))
+            .id();
+        let mount = app
+            .world_mut()
+            .spawn((
+                ModelAnimations {
+                    graph: Handle::default(),
+                    clips: vec![
+                        clip(0, 1, true),
+                        clip(4, 2, true),
+                        clip(229, 3, true),
+                        clip(271, 4, true),
+                    ],
+                    hand_close: [None, None],
+                    playable_animation_lookup: Vec::new(),
+                    animation_lookup: Vec::new(),
+                    global_bones: Vec::new(),
+                    first_seq: None,
+                    pose: Default::default(),
+                },
+                AnimationPlayer::default(),
+                AnimationTransitions::new(),
+                AnimDriver::default(),
+                Transform::IDENTITY,
+                crate::entities::mount::MountBody { host: rider },
+            ))
+            .id();
+        app.update();
+        assert_eq!(gait_of(&app, mount), Some(want), "rider tier {tier}");
+        let playing = |node: u32| {
+            app.world()
+                .entity(mount)
+                .get::<AnimationPlayer>()
+                .unwrap()
+                .is_playing_animation(AnimationNodeIndex::new(node as usize))
+        };
+        // Tier 3 plays the FlySwim node (4); the ground resolve plays Walk's (2).
+        assert!(playing(if tier == 3 { 4 } else { 2 }), "rider tier {tier}");
+    }
+}

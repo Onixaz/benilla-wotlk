@@ -38,6 +38,8 @@ pub(super) struct Frame<'a> {
     pub(super) cast_start: Option<u16>,
     pub(super) wielded: Option<&'a Wielded>,
     pub(super) store: Option<&'a ObjectStore>,
+    /// `UNIT_FIELD_BYTES_1` byte 3 of the unit the model belongs to, the rider's for a mount.
+    pub(super) anim_tier: u8,
     pub(super) emote_sounds: Option<&'a EmoteSounds>,
     /// Whether this unit is the current interact NPC.
     pub(super) interacting: bool,
@@ -74,6 +76,7 @@ pub(super) fn run(
         cast_start,
         wielded,
         store,
+        anim_tier,
         emote_sounds,
         interacting,
         walk,
@@ -389,9 +392,7 @@ pub(super) fn run(
                         && cands.first()
                             == Some(&cast_start.unwrap_or(h.play.special(h.anim_id, wielded)))
                 });
-                let tier = store
-                    .filter(|_| !held_raw)
-                    .map_or(0, |s| s.0.unit_anim_tier());
+                let tier = if held_raw { 0 } else { anim_tier };
                 let mut tier_cands = [0u16; 8];
                 let cands: &[u16] = match catalog.filter(|_| tier != 0) {
                     Some(cat) => {
