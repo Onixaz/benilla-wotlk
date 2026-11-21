@@ -647,16 +647,15 @@ fn feed_framerate(
 }
 
 /// Synthetic player and target snapshots for a server-less UI capture, and its first events once.
-fn demo_unit_feed(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    mut fired: Local<VmMemo<bool>>,
-) {
+fn demo_unit_feed(world: &mut World, mut fired: Local<VmMemo<bool>>) {
+    safe_world::lend(world, |script| demo_units(script, &mut fired));
+}
+
+/// [`demo_unit_feed`]'s body on the VM, with the `World` lent.
+fn demo_units(script: &mut UiScript, fired: &mut VmMemo<bool>) {
     /// The synthetic target's guid: a creature high part; only its distinctness matters.
     const DEMO_TARGET_GUID: u64 = 0xF130_0000_0000_0001;
 
-    let Some(mut script) = script else {
-        return;
-    };
     // Session-keyed: a fresh VM needs the one-shot events and bar seeds again.
     let fired = fired.get(&script);
     // Debug (`WOW_CAPTURE_REHOVER=1`): re-fire the world hover every frame, a flapping raycast.
@@ -717,7 +716,7 @@ fn demo_unit_feed(
     // The combo dots need a rogue and banked points, seeded only for `ui-combopoints`.
     if std::env::var("WOW_CAPTURE").as_deref() == Ok("ui-combopoints") {
         crate::dev::set_fixture_player(
-            &mut script,
+            script,
             benilla_ui::script::PlayerReqState {
                 level: 12,
                 class_id: 4, // rogue

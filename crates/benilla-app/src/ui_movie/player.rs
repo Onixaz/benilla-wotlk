@@ -520,16 +520,42 @@ fn update_timing(p: &mut Playing) -> (MovieTick, Option<Vec<u8>>) {
 }
 
 /// Starts what `StartMovie` opened, stops what `StopMovie` closed, and runs the playing movie's
-/// frame, handing its tick to the VM.
-fn drive_movie(
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
+/// frame, handing its tick to the VM with the `World` lent.
+fn drive_movie(world: &mut World) {
+    let session = world
+        .get_non_send_resource::<UiScript>()
+        .map(UiScript::session);
+    let Ok(Some((frame, tick))) = world.run_system_cached_with(movie_frame, session) else {
+        return;
+    };
+    let finished = tick.finished;
+    if tick.finished || tick.advanced {
+        crate::ui_script::safe_world::lend(world, |script| script.movie_tick(frame, tick));
+    }
+    // The VM's stop closes through the host; a movie it no longer holds open closes regardless.
+    if finished {
+        world
+            .resource::<MovieShared>()
+            .mailbox
+            .lock_recover()
+            .closed
+            .push(frame);
+    }
+    if let Some(session) = session {
+        let _ = world.run_system_cached_with(movie_apply, session);
+    }
+}
+
+/// The movie's frame before the VM hears it: a movie whose VM went is closed, the mailbox applied,
+/// the timing run and the newest picture queued for upload; the playing frame and its tick.
+fn movie_frame(
+    In(session): In<Option<u64>>,
     shared: Res<MovieShared>,
     mut player: NonSendMut<Player>,
     mut out: Option<NonSendMut<SoundOutput>>,
     mut images: ResMut<Assets<Image>>,
     mut upload: ResMut<MovieUpload>,
-) {
-    let session = script.as_ref().map(|s| s.session());
+) -> Option<(benilla_ui::widget::FrameHandle, MovieTick)> {
     // A movie outlives neither its VM nor a swap to another one.
     if player
         .0
@@ -541,53 +567,70 @@ fn drive_movie(
         }
         shared.mailbox.lock_recover().draw = None;
     }
-    let Some(mut script) = script else {
-        return;
-    };
-    let session = script.session();
-    let apply = |player: &mut Player, out: Option<&mut SoundOutput>, images: &mut Assets<Image>| {
-        let (opened, closed) = {
-            let mut mb = shared.mailbox.lock_recover();
-            (mb.opened.take(), std::mem::take(&mut mb.closed))
-        };
-        for frame in closed {
-            if player.0.as_ref().is_some_and(|p| p.frame == frame) {
-                if let Some(mut p) = player.0.take() {
-                    p.close();
-                }
-            }
-        }
-        if let Some(o) = opened {
-            if let Some(mut p) = player.0.take() {
-                p.close();
-            }
-            player.0 = Some(start(o, session, out, images, &shared.image));
-        }
-    };
-    apply(&mut player, out.as_deref_mut(), &mut images);
+    let session = session?;
+    apply_mailbox(
+        &shared,
+        session,
+        &mut player,
+        out.as_deref_mut(),
+        &mut images,
+    );
     if let Some(out) = out.as_deref_mut() {
         out.movie_streams = player
             .0
             .as_ref()
             .map_or(0, |p| usize::from(p.sound.is_some()));
     }
-    let Some(p) = player.0.as_mut() else {
-        return;
-    };
+    let p = player.0.as_mut()?;
     let (tick, newest) = update_timing(p);
     if let Some(px) = newest {
         upload.0 = Some((shared.image.id(), p.width, p.height, px));
     }
-    let frame = p.frame;
-    let finished = tick.finished;
-    if tick.finished || tick.advanced {
-        script.movie_tick(frame, tick);
+    Some((p.frame, tick))
+}
+
+/// What the VM's tick opened or closed, applied after it.
+fn movie_apply(
+    In(session): In<u64>,
+    shared: Res<MovieShared>,
+    mut player: NonSendMut<Player>,
+    mut out: Option<NonSendMut<SoundOutput>>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    apply_mailbox(
+        &shared,
+        session,
+        &mut player,
+        out.as_deref_mut(),
+        &mut images,
+    );
+}
+
+/// Close what `StopMovie` closed and start what `StartMovie` opened.
+fn apply_mailbox(
+    shared: &MovieShared,
+    session: u64,
+    player: &mut Player,
+    out: Option<&mut SoundOutput>,
+    images: &mut Assets<Image>,
+) {
+    let (opened, closed) = {
+        let mut mb = shared.mailbox.lock_recover();
+        (mb.opened.take(), std::mem::take(&mut mb.closed))
+    };
+    for frame in closed {
+        if player.0.as_ref().is_some_and(|p| p.frame == frame) {
+            if let Some(mut p) = player.0.take() {
+                p.close();
+            }
+        }
     }
-    // The VM's stop closes through the host; a movie it no longer holds open closes regardless.
-    if finished {
-        shared.mailbox.lock_recover().closed.push(frame);
+    if let Some(o) = opened {
+        if let Some(mut p) = player.0.take() {
+            p.close();
+        }
+        player.0 = Some(start(o, session, out, images, &shared.image));
     }
-    apply(&mut player, out.as_deref_mut(), &mut images);
 }
 
 fn extract_movie_upload(
