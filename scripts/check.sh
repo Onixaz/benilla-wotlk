@@ -182,16 +182,18 @@ fi
 # player-tests: the player build, `benilla-app` without `dev`, which compiles out the debug panel,
 # perf HUD, inspector, capture harness and probes, so it fails when any other code names one of
 # them. Its test build compiles every line of the player graph but the `benilla` launcher, a shim
-# with no `dev` seam, so a `cargo build -p benilla --no-default-features` would add only the shim
-# and a link. It runs the unit tests of the `cfg(not(feature = "dev"))` code (the resolver skips
-# the source tree; the state folder sits beside the binary), which no other gate runs, with the data
-# for the shipped-UI tests that read FrameXML off the install. Without `dev` only
-# $BENILLA_ADDON_CORPUS finds the corpus.
+# with no `dev` seam, yet not the player build itself: the dev-dependencies turn `benilla-ui`'s
+# fixtures on in every test build, so a call to a fixture-only setter compiles there and not in the
+# shipped binary. player-build checks that graph, with no dev-dependencies. player-tests runs the
+# unit tests of the `cfg(not(feature = "dev"))` code (the resolver skips the source tree; the state
+# folder sits beside the binary), which no other gate runs, with the data for the shipped-UI tests
+# that read FrameXML off the install. Without `dev` only $BENILLA_ADDON_CORPUS finds the corpus.
 if in_scope benilla-app || in_scope benilla-formats; then
     run player-tests env ${wow_data:+WOW_DATA="$wow_data"} ${corpus:+BENILLA_ADDON_CORPUS="$corpus"} \
         ${require_data:+BENILLA_REQUIRE_DATA=1} BENILLA_SKIP_LOG="$skips" \
         cargo test -p benilla-formats -p benilla-app --no-default-features --lib
     report_skips player-tests
+    run player-build cargo check -p benilla --no-default-features
     if [ -n "$had_data" ]; then
         run player-tests-no-install no_data \
             cargo test -p benilla-formats -p benilla-app --no-default-features --lib

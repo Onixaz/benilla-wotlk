@@ -721,7 +721,7 @@ fn demo_unit_feed(
     if !*fired {
         // Battle-stance page slots (actions 73..); slot 80 is a consumable stack of 5, since stock
         // `ActionButton_UpdateCount` shows only a consumable's count (`ActionButton.lua:287`).
-        script.set_bonus_bar_offset(1);
+        crate::dev::set_fixture_bonus_bar_offset(&mut script, 1);
         // A macro on button 4; a capture has no character for `ui_macro::load_macros` to read.
         script.set_macros(benilla_ui::script::MacroState {
             account: vec![benilla_ui::script::MacroView {
@@ -775,7 +775,8 @@ fn demo_unit_feed(
             (49, "Interface\\Icons\\Spell_Fire_FlameBolt", 0x00, 107, 0),
             (60, "Interface\\Icons\\Spell_Holy_Heal", 0x00, 108, 0),
         ] {
-            script.set_action(
+            crate::dev::set_fixture_action(
+                &mut script,
                 action,
                 Some(ActionSlot {
                     texture: Some(icon.into()),
@@ -798,32 +799,35 @@ fn demo_unit_feed(
             );
         }
         // The stance bar: battle active (bonus offset 1), defensive uncastable, berserker cooling.
-        script.set_shapeshift_forms(vec![
-            benilla_ui::script::ShapeshiftFormView {
-                spell_id: 2457,
-                texture: Some("Interface\\Icons\\Ability_Warrior_OffensiveStance".into()),
-                name: "Battle Stance".into(),
-                active: true,
-                castable: true,
-                cooldown: None,
-            },
-            benilla_ui::script::ShapeshiftFormView {
-                spell_id: 71,
-                texture: Some("Interface\\Icons\\Ability_Warrior_DefensiveStance".into()),
-                name: "Defensive Stance".into(),
-                active: false,
-                castable: false,
-                cooldown: None,
-            },
-            benilla_ui::script::ShapeshiftFormView {
-                spell_id: 2458,
-                texture: Some("Interface\\Icons\\Ability_Racial_Avatar".into()),
-                name: "Berserker Stance".into(),
-                active: false,
-                castable: true,
-                cooldown: Some((900, 1500, true)),
-            },
-        ]);
+        crate::dev::set_fixture_shapeshift_forms(
+            &mut script,
+            vec![
+                benilla_ui::script::ShapeshiftFormView {
+                    spell_id: 2457,
+                    texture: Some("Interface\\Icons\\Ability_Warrior_OffensiveStance".into()),
+                    name: "Battle Stance".into(),
+                    active: true,
+                    castable: true,
+                    cooldown: None,
+                },
+                benilla_ui::script::ShapeshiftFormView {
+                    spell_id: 71,
+                    texture: Some("Interface\\Icons\\Ability_Warrior_DefensiveStance".into()),
+                    name: "Defensive Stance".into(),
+                    active: false,
+                    castable: false,
+                    cooldown: None,
+                },
+                benilla_ui::script::ShapeshiftFormView {
+                    spell_id: 2458,
+                    texture: Some("Interface\\Icons\\Ability_Racial_Avatar".into()),
+                    name: "Berserker Stance".into(),
+                    active: false,
+                    castable: true,
+                    cooldown: Some((900, 1500, true)),
+                },
+            ],
+        );
         script.fire_event("UPDATE_SHAPESHIFT_FORMS", vec![]);
         // 70% XP, set before `PLAYER_ENTERING_WORLD` so the bar's first update reads it.
         script.set_player_xp(4200, 6000);
