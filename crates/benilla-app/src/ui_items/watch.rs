@@ -93,39 +93,49 @@ pub(crate) fn fire_lock_edge_now(
     }
 }
 
-/// Lock or unlock `guid` and signal at its place (`0x706fe0`, `0x707020`): in a step that raises in
-/// turn the write waits behind the raises made before it, so their listeners read the slot as it
-/// stood when they were raised; an edge without `args` writes only.
-pub(crate) fn set_lock_with_edge(
-    script: &mut benilla_ui::script::UiScript,
-    pending: &mut crate::ui_script::OwnedMut<PendingItemOps>,
-    guid: u64,
-    locked: bool,
-    args: Option<Vec<ScriptValue>>,
+/// One lock or unlock a step makes (`0x706fe0`, `0x707020`), with its edge's arguments; `None`
+/// arguments write only.
+pub(crate) struct LockStep {
+    pub(crate) guid: u64,
+    pub(crate) locked: bool,
+    pub(crate) args: Option<Vec<ScriptValue>>,
+}
+
+/// Write `lock` and, on the bit's edge, signal at its place with the `World` lent before anything
+/// after it runs (`0x706feb`, `0x70702b`), so its listener reads the later locks still unwritten.
+pub(crate) fn lock_now(world: &mut World, lock: LockStep) {
+    let LockStep { guid, locked, args } = lock;
+    let changed = world
+        .get_resource_mut::<PendingItemOps>()
+        .is_some_and(|mut p| if locked { p.lock(guid) } else { p.unlock(guid) });
+    if let (true, Some(args)) = (changed, args) {
+        crate::ui_script::safe_world::lend(world, |s| fire_lock_edge_now(s, locked, args));
+    }
+}
+
+/// Run `step`, a send that raises in turn, then fire what it raised and write each lock it made,
+/// each lock's edge signalled before the next is written (`0x706fe0` -> `0x706feb`).
+pub(crate) fn run_lock_step<I: Send + 'static, M>(
+    world: &mut World,
+    step: impl IntoSystem<In<I>, Vec<LockStep>, M> + 'static,
+    input: I,
 ) {
-    let write = move |p: &mut PendingItemOps| {
-        if locked {
-            p.lock(guid)
-        } else {
-            p.unlock(guid)
-        }
-    };
-    if benilla_ui::script::world_loan::in_turn(script.lua()) {
-        benilla_ui::script::world_loan::in_turn_or_now(script, move |s| {
-            let changed = crate::ui_script::safe_world::with_world(|w| {
-                w.get_resource_mut::<PendingItemOps>()
-                    .is_some_and(|mut p| write(&mut p))
-            })
-            .unwrap_or(false);
-            if let (true, Some(args)) = (changed, args) {
-                fire_lock_edge_now(s, locked, args);
-            }
-        });
-        return;
+    let locks = world
+        .run_system_cached_with(step, input)
+        .unwrap_or_default();
+    crate::ui_script::live::fire_handler_events(world);
+    for lock in locks {
+        lock_now(world, lock);
     }
-    if let (true, Some(args)) = (write(&mut pending.write()), args) {
-        fire_lock_edge_now(script, locked, args);
-    }
+}
+
+/// [`lock_now`] for a step that holds the `World` while it raises in turn (an applier inside its
+/// call): the write and its edge run together at the step's raise, the `World` lent again there.
+pub(crate) fn lock_in_turn(script: &mut benilla_ui::script::UiScript, lock: LockStep) {
+    benilla_ui::script::world_loan::in_turn_or_now(script, move |_| {
+        crate::ui_script::safe_world::with_world(|w| lock_now(w, lock))
+            .expect("a lock in turn runs where the `World` is lent");
+    });
 }
 
 /// The item unlock (`0x513770` -> `0x707020`): a locked item unlocks and signals at its place; an unlocked or absent one does nothing.
@@ -625,5 +635,66 @@ pub(crate) fn open_container(world: &mut World, item: u64) {
         for id in ids {
             ui.fire("BAG_OPEN", vec![ScriptValue::Int(id)]);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use benilla_ui::script::UiScript;
+
+    const A: u64 = 0x4000_0000_0000_0A01;
+    const B: u64 = 0x4000_0000_0000_0B02;
+
+    /// A step that locks both ends of a swap.
+    fn swap_locks(In(()): In<()>) -> Vec<LockStep> {
+        [A, B]
+            .into_iter()
+            .map(|guid| LockStep {
+                guid,
+                locked: true,
+                args: Some(vec![ScriptValue::Int(guid as i64 & 0xff)]),
+            })
+            .collect()
+    }
+
+    /// Each lock's listener runs before the next lock is written, and the drain's later reads see
+    /// every lock (`0x706fe0` -> `0x706feb`, once per end).
+    #[test]
+    fn each_locks_listener_reads_the_later_lock_unwritten() {
+        let mut world = World::new();
+        world.init_resource::<PendingItemOps>();
+        world.init_resource::<UiEvents>();
+        let script = UiScript::new().expect("a VM");
+        let locked = script
+            .lua()
+            .create_function(|_, guid: i64| {
+                Ok(crate::ui_script::safe_world::with_world(|w| {
+                    w.resource::<PendingItemOps>()
+                        .is_locked(guid as u64 | 0x4000_0000_0000_0000)
+                }))
+            })
+            .unwrap();
+        script.lua().globals().set("ProbeLocked", locked).unwrap();
+        script
+            .run(
+                r#"SEEN = {}
+                   local f = CreateFrame("Frame")
+                   f:RegisterEvent("ITEM_LOCKED")
+                   f:SetScript("OnEvent", function(_, _, id)
+                       SEEN[#SEEN + 1] = id .. ":" .. tostring(ProbeLocked(0x0A01))
+                           .. "/" .. tostring(ProbeLocked(0x0B02))
+                   end)"#,
+            )
+            .unwrap();
+        world.insert_non_send_resource(script);
+        run_lock_step(&mut world, swap_locks, ());
+        let seen = world
+            .non_send_resource::<UiScript>()
+            .eval::<Vec<String>>("return SEEN")
+            .unwrap();
+        assert_eq!(seen, ["1:true/false", "2:true/true"]);
+        let ops = world.resource::<PendingItemOps>();
+        assert!(ops.is_locked(A) && ops.is_locked(B));
     }
 }

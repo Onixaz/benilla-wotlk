@@ -1174,35 +1174,16 @@ struct OpenWhileMoving<'w, 's> {
     dead: DeadUnitDeselect<'w, 's>,
 }
 
-/// The locks a loot close released: each unlock signals at the item's place as it clears (`0x707020`).
-#[derive(bevy::ecs::system::SystemParam)]
-struct LootUnlocks<'w, 's> {
-    pending: crate::ui_script::OwnedMut<'w, crate::pending_item_ops::PendingItemOps>,
-    objects: crate::net::Objects<'w, 's>,
+/// Sends the Lua asks: `LootSlot` takes (`0x589140`), `ConfirmLootSlot` confirms (`0x589300`);
+/// then each lock a loot close released unlocks and signals at the item's place, one before the
+/// next (`0x707020`).
+fn drain_loot(world: &mut World) {
+    crate::ui_items::watch::run_lock_step(world, drain_loot_asks, ());
 }
 
-impl LootUnlocks<'_, '_> {
-    fn flush(&mut self, loot: &mut LootState, mut script: Option<&mut UiScript>) {
-        for guid in loot.take_unlocks() {
-            let args = crate::ui_items::watch::lock_args(&self.objects, guid);
-            match script.as_deref_mut() {
-                Some(script) => crate::ui_items::watch::set_lock_with_edge(
-                    script,
-                    &mut self.pending,
-                    guid,
-                    false,
-                    args,
-                ),
-                None => {
-                    self.pending.write().unlock(guid);
-                }
-            }
-        }
-    }
-}
-
-/// Sends the Lua asks: `LootSlot` takes (`0x589140`), `ConfirmLootSlot` confirms (`0x589300`).
-fn drain_loot(
+/// [`drain_loot`]'s sends; the unlocks the closes released.
+fn drain_loot_asks(
+    In(()): In<()>,
     mut vm: crate::ui_script::InTurn,
     mut loot: ResMut<LootState>,
     mut latch: ResMut<LootLatch>,
@@ -1214,8 +1195,8 @@ fn drain_loot(
     mut move_start: ResMut<LootMoveStart>,
     mut dead: DeadUnitDeselect,
     mut errors: ResMut<UiErrorKeys>,
-    mut unlocks: LootUnlocks,
-) {
+    objects: crate::net::Objects,
+) -> Vec<crate::ui_items::watch::LockStep> {
     let mut script = vm.turn();
     if std::mem::take(&mut move_start.0) {
         dead.after_close(close_on_move_start(&mut loot, &mut latch, &commands));
@@ -1235,7 +1216,14 @@ fn drain_loot(
     for display_id in loot.take_pickups() {
         pickup.write(crate::sound::LootPickupSound { display_id });
     }
-    unlocks.flush(&mut loot, script.as_deref_mut());
+    loot.take_unlocks()
+        .into_iter()
+        .map(|guid| crate::ui_items::watch::LockStep {
+            guid,
+            locked: false,
+            args: crate::ui_items::watch::lock_args(&objects, guid),
+        })
+        .collect()
 }
 
 /// [`drain_loot`]'s Lua intents; the takes' pickup sounds queue on [`LootState`].

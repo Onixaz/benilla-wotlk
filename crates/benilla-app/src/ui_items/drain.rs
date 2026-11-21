@@ -12,6 +12,7 @@ use crate::items::Items;
 use crate::net::{ClientCommand, NetCommands, ObjectStore, Objects, SelfPlayer};
 use crate::pending_item_ops::PendingItemOps;
 
+use super::watch::LockStep;
 use super::{slot_guid, slot_guid_count, wire_pos, INVTYPE_AMMO};
 
 /// The one auto-equip sender, as in the reference (`AutoEquipCursorItem`); answers whether it sent.
@@ -157,7 +158,6 @@ pub(crate) struct ScriptItemUse<'w, 's> {
     /// The read call's queue, which runs it with the world once the use returns.
     queue: Commands<'w, 's>,
     targeting: crate::spell::cast_target::CastTargeting<'w, 's>,
-    pending_items: crate::ui_script::OwnedMut<'w, PendingItemOps>,
     // The loot latch the open arm sets, so `SMSG_LOOT_RESPONSE` admits an item loot.
     loot_latch: ResMut<'w, crate::ui_loot::LootLatch>,
     // The open arm's `CloseLoot(1, 0, 0)` and auto-loot flag (`0x6dcd9c`-`0x6dcdc7`).
@@ -176,8 +176,9 @@ fn aimed<'a>(
     aim.map_or_else(|| targeting.context(), |a| targeting.context_at(a))
 }
 
-/// `EquipItemByName`'s slotted send (`0x6dff90`): the soulbind deferral, then the lock and
-/// `CMSG_AUTOEQUIP_ITEM_SLOT`.
+/// `EquipItemByName`'s slotted send (`0x6dff90`): the soulbind deferral, then
+/// `CMSG_AUTOEQUIP_ITEM_SLOT` and the lock the caller writes and signals (`0x6e0136` ->
+/// `0x513740`); `None` when nothing was sent.
 pub(crate) fn send_equip_to_slot(
     script: &mut UiScript,
     gate: &mut crate::ui_bind_confirm::BindGate,
@@ -185,27 +186,29 @@ pub(crate) fn send_equip_to_slot(
     items: &Items,
     commands: &NetCommands,
     store: Option<&ObjectStore>,
-    pending: &mut crate::ui_script::OwnedMut<PendingItemOps>,
     (bag, slot, dst): (i64, u32, u8),
     suppress: bool,
-) {
+) -> Option<LockStep> {
     let (guid, _) = slot_guid_count(store, bag, slot, objects);
     if guid == 0 {
-        return;
+        return None;
     }
     if !suppress && gate.equip_binds(script, objects, items, commands, guid) {
         gate.defer_equip(
             script,
             crate::ui_bind_confirm::PendingEquip::Slot { bag, slot, dst },
         );
-        return;
+        return None;
     }
-    // The lock before the send (`0x6e0136` -> `0x513740`), its edge signalled at its place.
-    super::watch::set_lock_with_edge(script, pending, guid, true, Some(item_lock_args(bag, slot)));
     let _ = commands.0.send(ClientCommand::AutoEquipItemSlot {
         item: guid,
         slot: dst,
     });
+    Some(LockStep {
+        guid,
+        locked: true,
+        args: Some(item_lock_args(bag, slot)),
+    })
 }
 
 impl ScriptItemUse<'_, '_> {
@@ -260,17 +263,19 @@ impl ScriptItemUse<'_, '_> {
                 .line(crate::ui_action::UiError::key("ERR_EQUIP_TRADE_ITEM"));
             return;
         }
-        send_equip_to_slot(
+        let lock = send_equip_to_slot(
             script,
             &mut self.gate,
             &self.ladder.objects,
             &self.ladder.items,
             &self.ladder.commands,
             store,
-            &mut self.pending_items,
             (bag, slot, dst),
             false,
         );
+        if let Some(lock) = lock {
+            super::watch::lock_in_turn(script, lock);
+        }
     }
 
     /// `UseInventoryItem(id)`, a doll right-click, sent through [`super::send_item_use`], as the
@@ -359,7 +364,6 @@ impl ScriptItemUse<'_, '_> {
             equip_sound,
             queue,
             targeting,
-            pending_items,
             loot_latch,
             loot,
             loot_cfg,
@@ -554,9 +558,16 @@ impl ScriptItemUse<'_, '_> {
                 deselect.write(crate::target::DeselectGuid(g));
             }
             // Each unlock signals at the item's place as it clears (`0x707020`).
-            for item in loot.take_unlocks() {
-                let args = super::watch::lock_args(&ladder.objects, item);
-                super::watch::set_lock_with_edge(script, pending_items, item, false, args);
+            for guid in loot.take_unlocks() {
+                let args = super::watch::lock_args(&ladder.objects, guid);
+                super::watch::lock_in_turn(
+                    script,
+                    LockStep {
+                        guid,
+                        locked: false,
+                        args,
+                    },
+                );
             }
             let auto = crate::ui_loot::is_auto_looting(loot_cfg, Some(&*script));
             loot.set_auto_loot(auto, loot_latch, &ladder.commands);
@@ -568,12 +579,13 @@ impl ScriptItemUse<'_, '_> {
                 .next()
                 .map(|store| slot_guid_count(Some(store), bag, slot, &ladder.objects))
                 .unwrap_or((0, 0));
-            super::watch::set_lock_with_edge(
+            super::watch::lock_in_turn(
                 script,
-                pending_items,
-                guid,
-                true,
-                Some(item_lock_args(bag, slot)),
+                LockStep {
+                    guid,
+                    locked: true,
+                    args: Some(item_lock_args(bag, slot)),
+                },
             );
             let _ = ladder.commands.0.send(ClientCommand::OpenItem {
                 bag_index,
@@ -691,23 +703,25 @@ struct Clicked {
     is_charter: bool,
 }
 
-/// Sends the gift wraps and the moves `PickupContainerItem`/`SplitContainerItem` queued, the moves
-/// through [`send_container_move`].
-pub(super) fn drain_container_moves(
-    mut vm: crate::ui_script::InTurn,
-    commands: Res<NetCommands>,
-    self_q: Query<&ObjectStore, With<SelfPlayer>>,
-    objects: Objects,
-    items: Res<Items>,
-    mut pending: crate::ui_script::OwnedMut<PendingItemOps>,
-    mut gate: crate::ui_bind_confirm::BindGate,
-) {
+/// Sends the gift wraps and the moves `PickupContainerItem`/`SplitContainerItem` queued, each move
+/// through [`send_container_move`], its locks written and signalled before the next move.
+pub(super) fn drain_container_moves(world: &mut World) {
+    let _ = world.run_system_cached(send_container_wraps);
+    let moves = world
+        .get_non_send_resource_mut::<UiScript>()
+        .map(|mut s| s.take_container_moves())
+        .unwrap_or_default();
+    for mv in moves {
+        super::watch::run_lock_step(world, move_step, (mv, false));
+    }
+}
+
+/// The wraps a left-click with an armed paper queued: paper first, then the target. Eligibility is
+/// the server's, refused with an `ERR_CANT_WRAP_*` reason.
+fn send_container_wraps(mut vm: crate::ui_script::InTurn, commands: Res<NetCommands>) {
     let Some(mut script) = vm.turn() else {
         return;
     };
-    let store = self_q.iter().next();
-    // A left-click that spent an armed paper: paper first, then the target. Eligibility is the
-    // server's, refused with an `ERR_CANT_WRAP_*` reason.
     for (gift_bag, gift_slot, item_bag, item_slot) in script.take_container_wraps() {
         let (Some((gift_bag_index, gift_wire_slot)), Some((item_bag_index, item_wire_slot))) =
             (wire_pos(gift_bag, gift_slot), wire_pos(item_bag, item_slot))
@@ -729,19 +743,31 @@ pub(super) fn drain_container_moves(
             item_slot: item_wire_slot,
         });
     }
-    for mv in script.take_container_moves() {
-        send_container_move(
-            &mut script,
-            &mut gate,
-            &objects,
-            &items,
-            &commands,
-            store,
-            &mut pending,
-            mv,
-            false,
-        );
-    }
+}
+
+/// One move, `suppress` set for an accepted re-issue; the locks it made.
+fn move_step(
+    In((mv, suppress)): In<(benilla_ui::script::ContainerMove, bool)>,
+    mut vm: crate::ui_script::InTurn,
+    commands: Res<NetCommands>,
+    self_q: Query<&ObjectStore, With<SelfPlayer>>,
+    objects: Objects,
+    items: Res<Items>,
+    mut gate: crate::ui_bind_confirm::BindGate,
+) -> Vec<LockStep> {
+    let Some(mut script) = vm.turn() else {
+        return Vec::new();
+    };
+    send_container_move(
+        &mut script,
+        &mut gate,
+        &objects,
+        &items,
+        &commands,
+        self_q.iter().next(),
+        mv,
+        suppress,
+    )
 }
 
 /// The equip deferral's positions: slots 0..=22 (equipment and equipped bags) and 67..=73 (bank
@@ -754,7 +780,8 @@ fn is_equip_position(bag_index: u8, slot: u8) -> bool {
 /// One container move: the soulbind deferral, then the send and a lock on both ends. A whole stack
 /// is `CMSG_SWAP_INV_ITEM` when both ends are in the player's own array, else `CMSG_SWAP_ITEM`
 /// (destination first, `Server/Packets/Item.cpp:30-36`); a split is `CMSG_SPLIT_ITEM`. The
-/// accept's re-issue runs it with `suppress`. False when deferred behind `EQUIP_BIND_CONFIRM`.
+/// accept's re-issue runs it with `suppress`. The locks of both ends, for the caller to write and
+/// signal in order; none when deferred behind `EQUIP_BIND_CONFIRM`.
 pub(crate) fn send_container_move(
     script: &mut UiScript,
     gate: &mut crate::ui_bind_confirm::BindGate,
@@ -762,17 +789,16 @@ pub(crate) fn send_container_move(
     items: &Items,
     commands: &NetCommands,
     store: Option<&ObjectStore>,
-    pending: &mut crate::ui_script::OwnedMut<PendingItemOps>,
     mv: benilla_ui::script::ContainerMove,
     suppress: bool,
-) -> bool {
+) -> Vec<LockStep> {
     {
         let (Some(src), Some(dst)) = (
             wire_pos(mv.src_bag, mv.src_slot),
             wire_pos(mv.dst_bag, mv.dst_slot),
         ) else {
             debug!("ui_items: container move {mv:?} out of range — ignored");
-            return false;
+            return Vec::new();
         };
         // The deferral asks when exactly one end is an equip position, about the item at the other
         // end, which the swap equips; an unequip to an empty slot asks nothing.
@@ -798,7 +824,7 @@ pub(crate) fn send_container_move(
                             dst_slot: mv.dst_slot,
                         },
                     );
-                    return false;
+                    return Vec::new();
                 }
             }
         }
@@ -845,54 +871,53 @@ pub(crate) fn send_container_move(
             }
         }
         // The item at each end locks, its edge signalled at its place (`0x706fe0`).
-        for (bag, slot) in [(mv.src_bag, mv.src_slot), (mv.dst_bag, mv.dst_slot)] {
-            let (guid, _) = slot_guid_count(store, bag, slot, objects);
-            super::watch::set_lock_with_edge(
-                script,
-                pending,
-                guid,
-                true,
-                Some(item_lock_args(bag, slot)),
-            );
-        }
+        [(mv.src_bag, mv.src_slot), (mv.dst_bag, mv.dst_slot)]
+            .into_iter()
+            .map(|(bag, slot)| LockStep {
+                guid: slot_guid_count(store, bag, slot, objects).0,
+                locked: true,
+                args: Some(item_lock_args(bag, slot)),
+            })
+            .collect()
     }
-    true
 }
 
 /// Sends the destroys `DeleteCursorItem` queued as `CMSG_DESTROYITEM` (count 0 is the whole stack
-/// on both sides) and locks the one slot.
-pub(super) fn drain_container_destroys(
-    mut vm: crate::ui_script::InTurn,
+/// on both sides), each locking its one slot before the next is sent.
+pub(super) fn drain_container_destroys(world: &mut World) {
+    let destroys = world
+        .get_non_send_resource_mut::<UiScript>()
+        .map(|mut s| s.take_container_destroys())
+        .unwrap_or_default();
+    for destroy in destroys {
+        super::watch::run_lock_step(world, destroy_step, destroy);
+    }
+}
+
+/// One destroy; the lock it made.
+fn destroy_step(
+    In((bag, slot, count)): In<(i64, u32, u32)>,
     commands: Res<NetCommands>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     objects: Objects,
-    mut pending: crate::ui_script::OwnedMut<PendingItemOps>,
-) {
-    let Some(mut script) = vm.turn() else {
-        return;
+) -> Vec<LockStep> {
+    let Some((bag_index, wire_slot)) = wire_pos(bag, slot) else {
+        debug!("ui_items: destroy ({bag}, {slot}) out of range — ignored");
+        return Vec::new();
     };
-    let store = self_q.iter().next();
-    for (bag, slot, count) in script.take_container_destroys() {
-        let Some((bag_index, wire_slot)) = wire_pos(bag, slot) else {
-            debug!("ui_items: destroy ({bag}, {slot}) out of range — ignored");
-            continue;
-        };
-        let count = count.min(u32::from(u8::MAX)) as u8;
-        debug!("ui_items: destroy lua {bag}/{slot} × {count} (wire {bag_index}/{wire_slot})");
-        let _ = commands.0.send(ClientCommand::DestroyItem {
-            bag_index,
-            slot: wire_slot,
-            count,
-        });
-        let (guid, _) = slot_guid_count(store, bag, slot, &objects);
-        super::watch::set_lock_with_edge(
-            &mut script,
-            &mut pending,
-            guid,
-            true,
-            Some(item_lock_args(bag, slot)),
-        );
-    }
+    let count = count.min(u32::from(u8::MAX)) as u8;
+    debug!("ui_items: destroy lua {bag}/{slot} × {count} (wire {bag_index}/{wire_slot})");
+    let _ = commands.0.send(ClientCommand::DestroyItem {
+        bag_index,
+        slot: wire_slot,
+        count,
+    });
+    let (guid, _) = slot_guid_count(self_q.iter().next(), bag, slot, &objects);
+    vec![LockStep {
+        guid,
+        locked: true,
+        args: Some(item_lock_args(bag, slot)),
+    }]
 }
 
 /// The bag clicks as the frame applies them: the repair-mode drain, then the queued
@@ -902,24 +927,30 @@ fn run_container_clicks(world: &mut World) {
     use benilla_ui::script::ScriptCall;
     use bevy::ecs::system::RunSystemOnce;
     world.run_system_once(drain_container_repairs).unwrap();
-    world
-        .run_system_once(
-            |(mut script, _live): (
-                NonSendMut<UiScript>,
-                crate::ui_script::LendLive<(
-                    crate::ui_script::OwnsCooldowns,
-                    crate::ui_script::live::OwnsPending,
-                )>,
-            ),
-             mut items: ScriptItemUse| {
-                crate::script_calls::in_call_order(&mut script, |script, call| {
-                    if let ScriptCall::UseContainerItem { bag, slot } = call {
-                        items.use_container_item(script, bag, slot, None);
-                    }
-                });
-            },
-        )
-        .unwrap();
+    let Some(mut script) = world
+        .get_non_send_resource::<UiScript>()
+        .map(UiScript::share)
+    else {
+        return;
+    };
+    let lua = script.lua().clone();
+    crate::script_calls::in_call_order(&mut script, |_, call| {
+        let ScriptCall::UseContainerItem { bag, slot } = call else {
+            return;
+        };
+        // The applier's raises in turn, fired as it returns with the `World` lent.
+        let (_, raised) = benilla_ui::script::world_loan::raises_in_turn(&lua, || {
+            world.run_system_once_with(
+                |In((bag, slot)): In<(i64, u32)>,
+                 mut script: NonSendMut<UiScript>,
+                 mut items: ScriptItemUse| {
+                    items.use_container_item(&mut script, bag, slot, None);
+                },
+                (bag, slot),
+            )
+        });
+        crate::ui_script::safe_world::lend(world, |s| raised.into_iter().for_each(|r| r.run(s)));
+    });
 }
 
 #[cfg(test)]
@@ -1346,92 +1377,101 @@ fn cancel_occupants(
     }
 }
 
-/// The answers to `EquipPendingItem`/`CancelPendingEquip` (`0x6e01a0`): accept re-runs the original sender with `suppress` set, a slot that changed under the dialog judged afresh; cancel unlocks the record's two occupants, which its deferral never locked, so only an item another send locked fires.
-pub(super) fn drain_bind_confirm_answers(
+/// The answers to `EquipPendingItem`/`CancelPendingEquip` (`0x6e01a0`): accept re-runs the original sender with `suppress` set, a slot that changed under the dialog judged afresh; cancel unlocks the record's two occupants, which its deferral never locked, so only an item another send locked fires. Each answer's locks are written and signalled before the next answer runs.
+pub(super) fn drain_bind_confirm_answers(world: &mut World) {
+    let answers = world
+        .get_non_send_resource_mut::<UiScript>()
+        .map(|mut s| s.take_pending_equip_answers())
+        .unwrap_or_default();
+    for answer in answers {
+        super::watch::run_lock_step(world, bind_answer_step, answer);
+    }
+}
+
+/// One answer; the locks and unlocks it made, in order.
+fn bind_answer_step(
+    In(answer): In<benilla_ui::script::PendingEquipAnswer>,
     mut vm: crate::ui_script::InTurn,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
-    mut pending: crate::ui_script::OwnedMut<PendingItemOps>,
     objects: Objects,
     items: Res<Items>,
     commands: Res<NetCommands>,
     mut gate: crate::ui_bind_confirm::BindGate,
-) {
+) -> Vec<LockStep> {
     let Some(mut script) = vm.turn() else {
-        return;
+        return Vec::new();
     };
     let store = self_q.iter().next();
-    for answer in script.take_pending_equip_answers() {
-        // An unfiled index does nothing: the reference bounds-checks it and returns.
-        let Some(rec) = gate.equips.take(answer.index) else {
-            debug!(
-                "ui_items: bind answer for index {} — no such pending equip",
-                answer.index
-            );
-            continue;
-        };
-        if !answer.accept {
-            debug!("ui_items: pending equip {} cancelled", answer.index);
-            for guid in cancel_occupants(store, &objects, &rec) {
-                let args = super::watch::lock_args(&objects, guid);
-                super::watch::set_lock_with_edge(&mut script, &mut pending, guid, false, args);
-            }
-            continue;
-        }
-        match rec {
-            crate::ui_bind_confirm::PendingEquip::Swap {
+    // An unfiled index does nothing: the reference bounds-checks it and returns.
+    let Some(rec) = gate.equips.take(answer.index) else {
+        debug!(
+            "ui_items: bind answer for index {} — no such pending equip",
+            answer.index
+        );
+        return Vec::new();
+    };
+    if !answer.accept {
+        debug!("ui_items: pending equip {} cancelled", answer.index);
+        return cancel_occupants(store, &objects, &rec)
+            .into_iter()
+            .map(|guid| LockStep {
+                guid,
+                locked: false,
+                args: super::watch::lock_args(&objects, guid),
+            })
+            .collect();
+    }
+    match rec {
+        crate::ui_bind_confirm::PendingEquip::Swap {
+            src_bag,
+            src_slot,
+            dst_bag,
+            dst_slot,
+        } => send_container_move(
+            &mut script,
+            &mut gate,
+            &objects,
+            &items,
+            &commands,
+            store,
+            benilla_ui::script::ContainerMove {
                 src_bag,
                 src_slot,
                 dst_bag,
                 dst_slot,
-            } => {
-                send_container_move(
-                    &mut script,
-                    &mut gate,
-                    &objects,
-                    &items,
-                    &commands,
-                    store,
-                    &mut pending,
-                    benilla_ui::script::ContainerMove {
-                        src_bag,
-                        src_slot,
-                        dst_bag,
-                        dst_slot,
-                        count: None,
-                    },
-                    true,
-                );
-            }
-            crate::ui_bind_confirm::PendingEquip::Slot { bag, slot, dst } => {
-                send_equip_to_slot(
-                    &mut script,
-                    &mut gate,
-                    &objects,
-                    &items,
-                    &commands,
-                    store,
-                    &mut pending,
-                    (bag, slot, dst),
-                    true,
-                );
-            }
-            crate::ui_bind_confirm::PendingEquip::AutoEquip {
+                count: None,
+            },
+            true,
+        ),
+        crate::ui_bind_confirm::PendingEquip::Slot { bag, slot, dst } => send_equip_to_slot(
+            &mut script,
+            &mut gate,
+            &objects,
+            &items,
+            &commands,
+            store,
+            (bag, slot, dst),
+            true,
+        )
+        .into_iter()
+        .collect(),
+        crate::ui_bind_confirm::PendingEquip::AutoEquip {
+            bag_index,
+            slot,
+            guid,
+        } => {
+            send_auto_equip(
+                &mut script,
+                &mut gate,
+                &objects,
+                &items,
+                &commands,
                 bag_index,
                 slot,
-                guid,
-            } => {
-                send_auto_equip(
-                    &mut script,
-                    &mut gate,
-                    &objects,
-                    &items,
-                    &commands,
-                    bag_index,
-                    slot,
-                    Some(guid),
-                    true,
-                );
-            }
+                Some(guid),
+                true,
+            );
+            Vec::new()
         }
     }
 }

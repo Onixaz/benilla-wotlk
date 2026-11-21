@@ -15,7 +15,6 @@ use bevy::prelude::*;
 use benilla_formats::{SpellDisplay, SPELL_ATTR_IS_TRADESKILL};
 use benilla_protocol::messages::{ItemInfo, PLAYER_SKILL_SLOTS};
 use benilla_protocol::{SessionEvent, SessionEventKind};
-use benilla_ui::script::world_loan::in_turn_or_now;
 use benilla_ui::script::{
     TradeSkillDifficulty, TradeSkillGroup, TradeSkillReagent, TradeSkillRecipe, TradeSkillState,
 };
@@ -817,12 +816,10 @@ fn drain_trade_skill(
         if Some(ev.entity) != self_entity {
             continue;
         }
+        // The edges write the repeat at once, in the order read (start `0x5da0f0`, go `0x5da070`,
+        // failure `0x5da020`): the frame's packets precede its input and paint (`0x47f10d`).
         match ev.kind {
-            // In turn behind the sends' events, which their listeners read before it.
-            CastEventKind::Start { .. } => {
-                let id = ev.spell_id;
-                in_turn_or_now(&mut script, move |s| s.trade_skill_cast_started(id));
-            }
+            CastEventKind::Start { .. } => script.trade_skill_cast_started(ev.spell_id),
             CastEventKind::Go { .. } => {
                 if script.trade_skill_cast_done(ev.spell_id) {
                     debug!("ui_tradeskill: recast {}", ev.spell_id);
@@ -830,10 +827,7 @@ fn drain_trade_skill(
                     ladder.press.defer_in_turn(&mut script);
                 }
             }
-            CastEventKind::Fail { .. } => {
-                let id = ev.spell_id;
-                in_turn_or_now(&mut script, move |s| s.trade_skill_cast_failed(id));
-            }
+            CastEventKind::Fail { .. } => script.trade_skill_cast_failed(ev.spell_id),
             _ => {}
         }
     }
@@ -986,5 +980,91 @@ mod tests {
         );
 
         assert_eq!(app.world().resource::<TradeSkillOpen>().line, None);
+    }
+
+    /// A start and a go of one craft read in one drain commit the repeat, then spend one of it:
+    /// the go reads the start's commit (`0x5da0f0` then `0x5da070`).
+    #[test]
+    fn a_start_and_a_go_in_one_drain_run_the_repeat_in_order() {
+        use bevy::ecs::system::RunSystemOnce;
+        const ROD: u32 = 7421;
+        let mut app = crate::game_plugins::schedule_tests::headless_client();
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        app.insert_resource(NetCommands(tx));
+        let world = app.world_mut();
+        let me = world
+            .spawn((
+                SelfPlayer,
+                crate::net::Guid(0x10),
+                ObjectStore(benilla_protocol::ObjectFields::default()),
+            ))
+            .id();
+        world.resource_mut::<SelfGuid>().0 = Some(0x10);
+        let mut script = benilla_ui::script::UiScript::new().expect("a VM");
+        script.set_trade_skill(Some(TradeSkillState {
+            line: 333,
+            line_name: "Enchanting".into(),
+            alt_verb: String::new(),
+            rank: 1,
+            max_rank: 75,
+            list_link: None,
+            recipes: vec![TradeSkillRecipe {
+                spell_id: ROD,
+                name: "Runed Copper Rod".into(),
+                difficulty: TradeSkillDifficulty::Trivial,
+                num_available: 5,
+                trivial_high: 100,
+                group: Some(TradeSkillGroup::SubClass {
+                    class: 7,
+                    subclass: 12,
+                    name: Some("Enchanting".into()),
+                }),
+                item_level: 0,
+                inv_slots: 1 << 26,
+                creates_item: true,
+                product_item: 6218,
+                required_level: None,
+                icon: None,
+                min_made: 1,
+                max_made: 1,
+                cooldown_end: None,
+                description: None,
+                search_text: Vec::new(),
+                reagents: Vec::new(),
+                tools: Vec::new(),
+            }],
+        }));
+        script
+            .run(
+                r#"for i = 1, GetNumTradeSkills() do
+                       if select(2, GetTradeSkillInfo(i)) ~= "header" then
+                           SelectTradeSkill(i)
+                           DoTradeSkill(i, 3)
+                       end
+                   end"#,
+            )
+            .expect("the cast runs");
+        assert_eq!(script.take_trade_skill_casts(), [ROD]);
+        world.insert_non_send_resource(script);
+        for kind in [
+            CastEventKind::Start { visuals: true },
+            CastEventKind::Go { ends_cast: true },
+        ] {
+            world.write_message(CastEvent {
+                entity: me,
+                spell_id: ROD,
+                kind,
+                cast_count: 0,
+                seq: 0,
+            });
+        }
+        world
+            .run_system_once(drain_trade_skill)
+            .expect("the drain runs");
+        let left = world
+            .non_send_resource::<benilla_ui::script::UiScript>()
+            .eval::<i64>("return GetTradeskillRepeatCount()")
+            .expect("the count");
+        assert_eq!(left, 2, "the go spent one of the committed three");
     }
 }
