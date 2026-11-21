@@ -231,7 +231,7 @@ impl Plugin for ScreenshotPlugin {
             Update,
             (
                 report_captures.in_set(UiFeed),
-                ask_for_captures
+                crate::ui_script::raises::then_fire(ask_for_captures)
                     .in_set(UiDrain)
                     .after(crate::bindings::BindingSet),
             ),

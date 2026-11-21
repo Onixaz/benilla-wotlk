@@ -556,7 +556,7 @@ impl Plugin for UiSocialPlugin {
                     feed::feed_social
                         .in_set(UiFeed)
                         .run_if(crate::ui_script::ingame_ui_up),
-                    feed::drain_social.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(feed::drain_social).in_set(UiDrain),
                 ),
             );
     }

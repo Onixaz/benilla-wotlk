@@ -115,7 +115,7 @@ impl Plugin for NoticesPlugin {
                     feed_notices
                         .in_set(UiFeed)
                         .run_if(crate::ui_script::ingame_ui_up),
-                    drain_level_grant.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_level_grant).in_set(UiDrain),
                 ),
             );
     }

@@ -828,7 +828,7 @@ impl Plugin for UiInstancePlugin {
                     encounter_leave_world
                         .after(crate::net::apply_net_updates)
                         .before(crate::ui_script::UiPress),
-                    drain_instance.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_instance).in_set(UiDrain),
                 ),
             );
     }

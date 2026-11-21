@@ -679,6 +679,106 @@ fn what_follows_the_script_calls_still_follows_them() {
     }
 }
 
+/// Feed Pet through `DropItemOnUnit("pet")` clears the cursor after the send's events, at the
+/// drop's raise step (`0x80b556` signals inside the send), so the world click's payload leg that
+/// follows reads an empty cursor and raises no destroy confirm for the food just fed.
+#[test]
+fn a_fed_items_clear_lands_before_the_world_clicks_payload_leg() {
+    use bevy::ecs::system::RunSystemOnce;
+    const FEED_PET: u32 = 6991;
+    const FOOD: u32 = 2287;
+    const FOOD_GUID: u64 = 0x4000_0000_0000_0077;
+    let g = graph_or_skip!();
+    let drop = g.one("::drop_item_on_unit");
+    let leg = g.one("::drop_on_world_click");
+    assert!(
+        g.succ[drop]
+            .iter()
+            .any(|&s| g.names[s].ends_with("::raises::fire_raises") && g.reaches(s, leg)),
+        "a raise step runs right after the drop and before the world click's payload leg"
+    );
+    let mut rig = Rig::new(&[]).expect("names");
+    let world = rig.app.world_mut();
+    let index = world.resource::<GuidIndex>().0.clone();
+    world
+        .entity_mut(index[&ME])
+        .insert(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
+            (benilla_protocol::field::FIELD_UNIT_FLAGS, 0x8),
+            (
+                benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1,
+                FOOD_GUID as u32,
+            ),
+            (
+                benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1 + 1,
+                (FOOD_GUID >> 32) as u32,
+            ),
+        ])));
+    world
+        .entity_mut(index[&PET])
+        .insert(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_UNIT_CREATED_BY_SPELL, 883),
+            (benilla_protocol::field::FIELD_UNIT_CREATEDBY, ME as u32),
+            (benilla_protocol::field::FIELD_UNIT_CREATEDBY + 1, 0),
+        ])));
+    world
+        .resource_mut::<crate::ui_action::LearnedAbilities>()
+        .feed_pet = Some(FEED_PET);
+    rig.vm().set_container(
+        0,
+        Some(benilla_ui::script::ContainerState {
+            bag_family: 0,
+            name: Some("Backpack".into()),
+            num_slots: 16,
+            slots: HashMap::from([(
+                1,
+                benilla_ui::script::ContainerSlot {
+                    item_id: FOOD,
+                    count: 1,
+                    ..Default::default()
+                },
+            )]),
+        }),
+    );
+    rig.lua(
+        r#"CONFIRMS = 0
+           local f = CreateFrame("Frame")
+           f:RegisterEvent("DELETE_ITEM_CONFIRM")
+           f:SetScript("OnEvent", function() CONFIRMS = CONFIRMS + 1 end)
+           PickupContainerItem(0, 1)
+           DropItemOnUnit("pet")"#,
+    );
+    assert!(
+        rig.vm().eval::<bool>("return CursorHasItem()").unwrap(),
+        "fixture: the food is held"
+    );
+    // The same press's click, claimed for a payload drop, on open ground.
+    let world = rig.app.world_mut();
+    world.write_message(crate::target::WorldDropClick);
+    world
+        .run_system_once(crate::ui_action::drop_item::drop_item_on_unit)
+        .unwrap();
+    world
+        .run_system_once(crate::ui_script::raises::fire_raises)
+        .unwrap();
+    world
+        .run_system_once(crate::ui_action::drop_item::drop_on_world_click)
+        .unwrap();
+    world
+        .run_system_once(crate::ui_script::raises::fire_raises)
+        .unwrap();
+    rig.vm().tick(0.01);
+    assert!(
+        !rig.vm().eval::<bool>("return CursorHasItem()").unwrap(),
+        "Feed Pet cleared the cursor"
+    );
+    assert_eq!(
+        rig.vm().eval::<i64>("return CONFIRMS").unwrap(),
+        0,
+        "the fed food raises no destroy confirm"
+    );
+}
+
 /// The pointer arbiter reads the UI's hover after the input feed wrote it, and player control
 /// reads the arbiter's answer: a press over the UI never also turns the camera or clicks the world.
 #[test]

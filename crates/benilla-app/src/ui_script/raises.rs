@@ -178,8 +178,10 @@ pub(crate) fn fire_raises(world: &mut World) {
     super::live::fire_handler_events(world);
 }
 
-/// `holders`, [`InTurn`] systems outside the UI phases, with a raise step chained right after
-/// them, run while raises wait: what they queued fires before any later system runs Lua.
+/// `holders` with a raise step chained right after them, run while raises wait: what they queued
+/// fires before any later system runs, as a press, a drain or a handler raises at its step in 12340
+/// (`0x81b530` runs the listeners in the caller). Every [`InTurn`] system outside the feed phases
+/// takes one.
 pub(crate) fn then_fire<M>(
     holders: impl IntoScheduleConfigs<bevy::ecs::system::ScheduleSystem, M>,
 ) -> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {
@@ -215,7 +217,11 @@ pub(crate) fn schedule(app: &mut App) {
             fire_raises.after(UiPress).before(UiFeed),
             fire_raises.after(UiFeed).before(UiSignals),
             fire_raises.after(UiSignals).before(UiInput),
-            fire_raises.after(UiDrain).before(UiPaint),
+            // Before the world update: a drain's raises reached their listeners in the drain.
+            fire_raises
+                .after(UiDrain)
+                .before(UiPaint)
+                .before(benilla_world::schedule::WorldStage::Input),
             fire_raises.after(UiPaint),
         )
             .distributive_run_if(waiting),

@@ -12,6 +12,11 @@ use benilla_world::interact::WorldClick;
 use crate::spell::{CastCommit, TargetedBind};
 use crate::target::WorldDropClick;
 
+/// The two payload legs of a press, each with the step that fires what it raised: the world
+/// click's select reads the cursor they leave.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct DropSet;
+
 /// The feed validator's three gates, in order: is this a pet I can feed? The food is not checked
 /// here; the server judges the diet (`Spell.cpp:5912`, `SPELL_FAILED_WRONG_PET_FOOD`).
 fn feedable_pet(

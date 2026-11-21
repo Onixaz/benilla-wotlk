@@ -289,7 +289,7 @@ impl Plugin for UiLootRollPlugin {
                 // The feed before the input pass shows a new roll the same frame; the drain after
                 // it sends a vote the same frame.
                 feed_loot_rolls.in_set(UiFeed),
-                drain_loot_rolls.in_set(UiDrain),
+                crate::ui_script::raises::then_fire(drain_loot_rolls).in_set(UiDrain),
             ),
         );
     }

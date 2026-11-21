@@ -1164,7 +1164,7 @@ impl Plugin for BattlefieldPlugin {
                         .in_set(UiFeed)
                         .after(crate::ui_mail::send_query_next_mail_time_on_enter)
                         .before(crate::ui_unit::EnterWorldFeed),
-                    drain_battlefield.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_battlefield).in_set(UiDrain),
                 ),
             );
     }

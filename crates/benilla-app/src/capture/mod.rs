@@ -682,6 +682,7 @@ impl Plugin for CapturePlugin {
                     probes::run_probe_chunks,
                 )
                     .chain()
+                    .in_set(crate::ui_script::UiFeed)
                     .before(crate::ui_unit::UnitFeed),
             )
             .add_systems(

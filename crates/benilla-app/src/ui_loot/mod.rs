@@ -3199,4 +3199,63 @@ mod tests {
         app.update();
         assert_eq!(loot_events(&mut app), "LOOT_CLOSED=nil,LOOT_OPENED=0");
     }
+
+    /// A listener reads the model as of its raise (`0x81b530` runs it in the caller): a window
+    /// that replaced the shown one closes the old before the new one's snapshot is written, so the
+    /// close's listener reads no loot.
+    #[test]
+    fn a_replaced_windows_close_listener_does_not_see_the_new_window() {
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let mut app = App::new();
+        app.add_message::<crate::sound::LootPickupSound>()
+            .add_message::<crate::target::DeselectGuid>()
+            .init_resource::<LootMoveStart>()
+            .init_resource::<LootLatch>()
+            .init_resource::<crate::net::GuidIndex>()
+            .init_resource::<LootState>()
+            .init_resource::<crate::ui_chat::ChatLog>()
+            .init_resource::<GroupState>()
+            .init_resource::<NameCache>()
+            .init_resource::<Items>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<LootConfig>()
+            .init_resource::<crate::ui_script::live::UiEvents>()
+            .insert_resource(NetCommands(tx))
+            .add_systems(bevy::prelude::Update, feed_loot);
+        app.world_mut()
+            .resource_mut::<LootState>()
+            .open(0x42, loot_type::CORPSE, 5, Vec::new());
+        let script = UiScript::new().unwrap();
+        script
+            .run(
+                "SEEN = {} local f = CreateFrame('Frame') f:RegisterEvent('LOOT_CLOSED')
+                 f:SetScript('OnEvent', function() SEEN[#SEEN + 1] = GetNumLootItems() end)",
+            )
+            .unwrap();
+        app.insert_non_send_resource(script);
+        app.update();
+        crate::ui_script::raises::fire_raises(app.world_mut());
+        let shown = |app: &App| -> i64 {
+            app.world()
+                .non_send_resource::<UiScript>()
+                .eval("return GetNumLootItems()")
+                .unwrap()
+        };
+        assert!(shown(&app) > 0, "fixture: the first window is shown");
+        app.world_mut()
+            .resource_mut::<LootState>()
+            .open(0x43, loot_type::CORPSE, 9, Vec::new());
+        app.update();
+        crate::ui_script::raises::fire_raises(app.world_mut());
+        let seen: String = app
+            .world()
+            .non_send_resource::<UiScript>()
+            .eval("return table.concat(SEEN, ',')")
+            .unwrap();
+        assert_eq!(seen, "0", "the close's listener reads no window");
+        assert!(
+            shown(&app) > 0,
+            "the new window is written after the listener"
+        );
+    }
 }

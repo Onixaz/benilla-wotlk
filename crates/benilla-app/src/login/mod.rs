@@ -46,6 +46,7 @@ impl Plugin for LoginPlugin {
                         crate::ui_script::glue_scene::feed_stock_glue_preview,
                     )
                     .in_set(crate::portrait::GluePreviewFeed)
+                    .in_set(crate::ui_script::UiPaint)
                     .after(crate::target::TargetUpdate),
                     crate::ui_script::server_alert::open_launched
                         // Reads only its message, so no state orders it but the sets.

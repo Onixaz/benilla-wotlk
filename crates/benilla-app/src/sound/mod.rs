@@ -446,7 +446,7 @@ impl Plugin for SoundPlugin {
         .add_systems(
             Update,
             (
-                ui::drain_restart_request,
+                crate::ui_script::raises::then_fire(ui::drain_restart_request),
                 engine::restart_on_lost_device,
                 engine::restart_sound_system,
                 ui::feed_drivers,
@@ -454,7 +454,7 @@ impl Plugin for SoundPlugin {
                 .chain()
                 // After the registry drains the panel's `SetCVar`, which the same click makes.
                 .in_set(crate::ui_script::UiDrain)
-                .after(crate::cvars::sync_cvars)
+                .after(crate::cvars::CvarSync)
                 .in_set(engine::RestartSet),
         )
         .add_systems(PreUpdate, feed_world_hold)

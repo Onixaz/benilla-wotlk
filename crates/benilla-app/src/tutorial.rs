@@ -616,7 +616,7 @@ impl Plugin for TutorialPlugin {
                     feed_tutorials
                         .in_set(UiFeed)
                         .run_if(crate::ui_script::ingame_ui_up),
-                    drain_tutorials.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_tutorials).in_set(UiDrain),
                 ),
             )
             .add_systems(OnExit(ClientState::InWorld), on_world_leave);

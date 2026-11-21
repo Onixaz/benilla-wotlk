@@ -995,6 +995,77 @@ fn the_login_one_shots_wait_for_the_in_game_ui() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
+/// A listener reads the model as of its raise (`0x81b530` runs it in the caller): the unit
+/// feed's `PLAYER_XP_UPDATE` listener reads the XP pair written before it and not the rest pool
+/// the feed writes after it.
+#[test]
+fn the_xp_listener_does_not_see_the_unit_feeds_later_rest_write() {
+    use benilla_protocol::field::{
+        FIELD_PLAYER_BYTES_2, FIELD_PLAYER_NEXT_LEVEL_XP, FIELD_PLAYER_REST_STATE_EXPERIENCE,
+        FIELD_PLAYER_XP,
+    };
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (tmp, _c, _h) = hermetic_probe("unit-xp-rest");
+
+    let mut app = App::new();
+    app.add_plugins(crate::ui_unit::UiUnitPlugin);
+    app.init_resource::<super::AddOnIdentity>();
+    app.init_resource::<crate::minimap::MinimapZoom>();
+    app.init_resource::<super::ReloadUiPending>();
+    app.init_resource::<crate::target::Selection>();
+    app.init_resource::<crate::names::NameCache>();
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    app.insert_resource(crate::net::NetCommands(tx));
+    app.init_resource::<crate::net::Reputations>();
+    app.init_resource::<crate::ui_party::GroupState>();
+    app.init_resource::<crate::ui_chat::ChatLog>();
+    app.init_resource::<crate::ui_guild::GuildState>();
+    app.init_resource::<crate::ui_guild::GuildCache>();
+    app.init_resource::<super::live::UiEvents>();
+    app.add_message::<crate::creature_anim::SwingImpact>();
+    super::setup_script(app.world_mut());
+    super::install_boot_vm(app.world_mut());
+    app.world()
+        .non_send_resource::<benilla_ui::script::UiScript>()
+        .run(
+            "SEEN = {} local f = CreateFrame('Frame') f:RegisterEvent('PLAYER_XP_UPDATE') \
+             f:SetScript('OnEvent', function() \
+                 SEEN[#SEEN + 1] = UnitXP('player') .. '/' .. tostring(GetXPExhaustion()) end)",
+        )
+        .expect("probe frame");
+    app.world_mut().spawn((
+        crate::net::SelfPlayer,
+        crate::net::Guid(1),
+        crate::net::ObjectStore(
+            benilla_protocol::messages::ObjectFields::from_pairs(&[
+                (FIELD_PLAYER_XP, 100),
+                (FIELD_PLAYER_NEXT_LEVEL_XP, 400),
+                (FIELD_PLAYER_REST_STATE_EXPERIENCE, 500),
+                // Byte 3: rested.
+                (FIELD_PLAYER_BYTES_2, 1 << 24),
+            ])
+            .into_created(benilla_protocol::messages::ObjectType::Player),
+        ),
+    ));
+    app.insert_resource(State::new(crate::char_select::ClientState::InWorld));
+    app.update();
+    super::raises::fire_raises(app.world_mut());
+    let vm = app
+        .world()
+        .non_send_resource::<benilla_ui::script::UiScript>();
+    let seen: String = vm.eval("return table.concat(SEEN, ',')").unwrap();
+    let rest: String = vm.eval("return tostring(GetXPExhaustion())").unwrap();
+    assert_eq!(
+        seen, "100/nil",
+        "the listener reads the XP written before it and no rest pool yet"
+    );
+    assert_ne!(rest, "nil", "the rest pool is written after the listener");
+    drop(app);
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
 /// An addon that fails to load without raising (a `.toc` naming a file the package lacks) reaches
 /// no Lua error handler, so the `/errors` log (which collects off the handler) does not hold it:
 /// the engine's record keeps it, and `Logs\FrameXML.log` names it as the reference's does.

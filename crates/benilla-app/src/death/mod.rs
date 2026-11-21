@@ -1014,7 +1014,7 @@ impl Plugin for DeathPlugin {
             .add_systems(
                 Update,
                 (
-                    drain_death.in_set(UiDrain),
+                    crate::ui_script::raises::then_fire(drain_death).in_set(UiDrain),
                     drive_death_look,
                     // After the transport chain, so a corpse rides this frame's deck pose.
                     resolve_corpse_position

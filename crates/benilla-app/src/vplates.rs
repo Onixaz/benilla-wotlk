@@ -804,11 +804,12 @@ impl Plugin for VPlatesPlugin {
                 Update,
                 (
                     // After the drain of the VM's `SetCVar`s (a binding body, the Names panel).
-                    read_plate_cvars.after(crate::cvars::sync_cvars),
+                    read_plate_cvars.after(crate::cvars::CvarSync),
                     // After the targeting chain, itself after `WorldStage::Input`, so this projects
                     // through this frame's camera; `ui_script::extract::paint_script` runs after
                     // it, so the plates paint the same frame.
-                    crate::ui_script::raises::then_fire(drive_vplates.after(TargetUpdate)),
+                    crate::ui_script::raises::then_fire(drive_vplates.after(TargetUpdate))
+                        .in_set(crate::ui_script::UiPaint),
                 )
                     .chain()
                     .in_set(VPlateSet),

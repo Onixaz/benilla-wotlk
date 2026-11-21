@@ -235,7 +235,7 @@ impl Plugin for UiMailPlugin {
                     // Range-close, feed, then drain after input, so each edge lands the same
                     // frame; the feed runs after `UnitFeed` so a row's tooltip reads the template.
                     feed_mail.after(crate::ui_unit::UnitFeed).in_set(UiFeed),
-                    drain_mail
+                    crate::ui_script::raises::then_fire(drain_mail)
                         .in_set(UiDrain)
                         .before(crate::ui_social::drain_social),
                     // The cascade's order: the time query, this, then the battlefield status.

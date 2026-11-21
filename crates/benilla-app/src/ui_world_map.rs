@@ -517,7 +517,7 @@ impl Plugin for WorldMapUiPlugin {
             (
                 feed_world_map.in_set(UiDrain),
                 // After the script tick, so the jump hit-tests this tick's frame rects.
-                dev_map_jump.in_set(UiDrain),
+                crate::ui_script::raises::then_fire(dev_map_jump).in_set(UiDrain),
             ),
         );
     }

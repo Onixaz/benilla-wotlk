@@ -446,9 +446,11 @@ impl Plugin for TargetPlugin {
                     // The chat layer's by-name asks: `/target` and `/assist` commit through
                     // `scan::commit`; `/follow` hands its subject to `crate::player`.
                     (
-                        crate::ui_script::raises::then_fire(
-                            (script::target_by_name_requests, script::assist_requests).chain(),
-                        ),
+                        (
+                            crate::ui_script::raises::then_fire(script::target_by_name_requests),
+                            crate::ui_script::raises::then_fire(script::assist_requests),
+                        )
+                            .chain(),
                         by_name::follow_requests,
                     )
                         .chain(),
@@ -486,7 +488,7 @@ impl Plugin for TargetPlugin {
                     .chain()
                     .in_set(crate::ui_script::UiPress)
                     .after(crate::player::WorldClickSet)
-                    .after(crate::ui_action::drop_item::drop_on_world_click),
+                    .after(crate::ui_action::drop_item::DropSet),
             )
             // The script calls that touch the selection, the cast or the targeting cursor
             // (`TargetUnit`, `/target`, `ClearTarget`, `/cast`, `UseAction`, …), applied in the
@@ -496,8 +498,16 @@ impl Plugin for TargetPlugin {
                 Update,
                 (
                     crate::script_calls::apply_script_calls,
-                    crate::ui_action::drop_item::drop_item_on_unit,
-                    crate::ui_action::drop_item::drop_on_world_click,
+                    (
+                        crate::ui_script::raises::then_fire(
+                            crate::ui_action::drop_item::drop_item_on_unit,
+                        ),
+                        crate::ui_script::raises::then_fire(
+                            crate::ui_action::drop_item::drop_on_world_click,
+                        ),
+                    )
+                        .chain()
+                        .in_set(crate::ui_action::drop_item::DropSet),
                 )
                     .chain()
                     .in_set(crate::ui_script::UiPress)

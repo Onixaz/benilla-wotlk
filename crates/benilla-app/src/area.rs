@@ -438,7 +438,8 @@ impl Plugin for AreaPlugin {
                         .after(crate::char_select::RealmEntrySet)
                         .after(crate::ui_script::UiInput)
                         .after(benilla_world::terrain_stream::AreaAuthoritySet),
-                ),
+                )
+                .in_set(crate::ui_script::UiPaint),
             )
             .add_systems(
                 Update,
