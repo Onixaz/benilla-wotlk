@@ -575,8 +575,10 @@ impl Owns for OwnsCooldowns {
     const COOLDOWNS: bool = true;
 }
 
-/// The system lends the frame's [`UniqueSignals`] from its own borrow.
+/// The system lends the frame's [`UniqueSignals`] from its own borrow: the loan's own test.
+#[cfg(test)]
 pub(crate) struct OwnsSignals;
+#[cfg(test)]
 impl Owns for OwnsSignals {
     const LENT: u16 = lent::SIGNALS;
 }
@@ -3346,23 +3348,27 @@ impl UniqueSignals {
 }
 
 /// The game UI's idle tail (`0x52af40`): the watch timers run (`0x52b229`), then the frame's unique signals fire in queue order without arguments (`0x52b247` -> `0x614760`), after the feeds that queue them; with no VM they are dropped.
-pub(crate) fn flush_unique_signals(
-    (script, mut live): (Option<NonSendMut<UiScript>>, LendLive<'_, '_, OwnsSignals>),
-    mut signals: NonSendMut<UniqueSignals>,
-) {
-    let Some(mut script) = script else {
-        signals.clear();
+pub(crate) fn flush_unique_signals(world: &mut World) {
+    if world.get_non_send_resource::<UiScript>().is_none() {
+        if let Some(mut signals) = world.get_non_send_resource_mut::<UniqueSignals>() {
+            signals.clear();
+        }
+        return;
+    }
+    super::safe_world::lend(world, |script| script.update_quest_watch_timers());
+    // The count taken at entry, its entries still queued while they fire, so a re-queue matches one in flight (`0x6143f0`); the count is zeroed after the loop, dropping what the handlers queued (`0x6147a3`).
+    let Some(events) = world
+        .get_non_send_resource::<UniqueSignals>()
+        .map(|s| s.0.clone())
+    else {
         return;
     };
-    live.lending(&mut *signals, || script.update_quest_watch_timers());
-    // The count taken at entry, its entries still queued while they fire, so a re-queue matches one in flight (`0x6143f0`); the count is zeroed after the loop, dropping what the handlers queued (`0x6147a3`).
-    let events = signals.0.clone();
-    live.lending(&mut *signals, || {
+    super::safe_world::lend(world, |script| {
         for event in events {
             script.fire_event(event, Vec::new());
         }
     });
-    signals.clear();
+    world.non_send_resource_mut::<UniqueSignals>().clear();
 }
 
 /// The disconnect runs the game UI's shutdown, which empties the unique signals (`0x52902f`).

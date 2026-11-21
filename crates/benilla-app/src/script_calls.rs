@@ -1091,6 +1091,42 @@ mod tests {
         );
     }
 
+    /// A typed `/script` line runs with the `World` lent, so its `TargetUnit` is applied inside
+    /// the line and the line's next statement reads the new target (`0x524bf0`).
+    #[test]
+    fn a_script_lines_target_applies_inside_the_line() {
+        let mut f = frame(false);
+        // The stock `/script` row (`ChatFrame.lua`), which runs the rest of the line.
+        f.app
+            .world()
+            .non_send_resource::<UiScript>()
+            .run(
+                r#"SlashCmdList = { SCRIPT = function(msg) loadstring(msg)() end }
+                   SLASH_SCRIPT1 = "/script""#,
+            )
+            .expect("the row is declared");
+        f.app
+            .world_mut()
+            .insert_resource(crate::ui_chat::commands::SlashCommands::default());
+        f.app
+            .world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .push_chat_input(
+                r#"/script TargetUnit("party1") Seen = UnitExists("target") and 1 or 0"#.into(),
+            );
+        f.app
+            .world_mut()
+            .run_system_once(crate::ui_chat::drain_chat_input)
+            .expect("the drain runs as a one-shot system");
+        let seen = f
+            .app
+            .world()
+            .non_send_resource::<UiScript>()
+            .eval::<i64>("return Seen")
+            .unwrap();
+        assert_eq!((seen, selected(&f)), (1, Some(NEW)));
+    }
+
     /// The pick's selection is told before the cast it makes: `PLAYER_TARGET_CHANGED` fires inside
     /// the setter (`0x524f54`) the pick calls (`0x80d661`), ahead of the send's `UNIT_SPELLCAST_SENT`
     /// (`0x80b556`), and the send's listener reads the new target.

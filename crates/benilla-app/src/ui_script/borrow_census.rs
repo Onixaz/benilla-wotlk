@@ -39,7 +39,6 @@ pub(super) const STILL_BORROWS: &[(&str, usize)] = &[
     ("ui_action/drain.rs", 1),
     ("ui_action/drop_item.rs", 1),
     ("ui_action/equipment_sets.rs", 3),
-    ("ui_chat/input/mod.rs", 1),
     ("ui_dialog_verbs.rs", 1),
     ("ui_dressup.rs", 1),
     ("ui_guild_bank/mod.rs", 1),

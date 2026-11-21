@@ -140,6 +140,7 @@ pub(crate) fn waiting(queue: Option<Res<UiEvents>>) -> bool {
 }
 
 /// The UI phases a raise step follows: an [`InTurn`] system outside them chains its own step.
+#[cfg(test)]
 pub(crate) fn phases() -> [bevy::ecs::intern::Interned<dyn bevy::ecs::schedule::SystemSet>; 5] {
     use super::{UiDrain, UiFeed, UiPaint, UiPress, UiSignals};
     [
