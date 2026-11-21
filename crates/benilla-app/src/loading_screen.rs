@@ -710,17 +710,29 @@ fn pick_ship_route(
     screen.ship_pick = Some(pick);
 }
 
-/// The ridden transport's leg, last seen on this map, and the transport.
+/// The camera target's transport's leg, last seen on this map, and the transport.
 #[derive(Default)]
 struct SeenShipLeg(Option<(Entity, u32)>);
 
-/// A ridden type-15 that changes leg on the current map raises the screen over the leg it left
-/// (`0x7134a0` → `0x40ae30`): Undercity to Grom'gol's mid-route teleport and its wrap. The leg only
-/// updates while the transport samples this map, and the first sight of a transport, after boarding
-/// or a worldport (whose re-create is a new object there), only records it.
+/// A type-15 that changes leg on the current map with the camera's target aboard raises the screen
+/// over the leg it left (`0x7134a0` → `0x40ae30`; the passenger test is `0x7132e0`'s, against the
+/// camera's `+0x88` target, our [`crate::net::Embodied`]): Undercity to Grom'gol's mid-route
+/// teleport and its wrap. The leg only updates while the transport samples this map.
+///
+/// Deviation: the reference stays silent until the transport's model has loaded (its first
+/// sequence set); here the first sight of the transport with the target aboard, after boarding or a
+/// worldport (whose re-create is a new object there), only records the leg.
 #[allow(clippy::type_complexity)]
 fn follow_ship_leg(
     player: Option<Res<crate::player::Player>>,
+    embodied: Query<
+        (
+            Has<crate::net::SelfPlayer>,
+            Option<&crate::transport::TransportRider>,
+        ),
+        With<crate::net::Embodied>,
+    >,
+    index: Res<crate::net::GuidIndex>,
     current_map: Option<Res<CurrentMap>>,
     transports: Query<(
         &crate::net::Guid,
@@ -740,9 +752,14 @@ fn follow_ship_leg(
     let (Some(player), Some(current_map)) = (player, current_map) else {
         return;
     };
-    let Some((deck, (guid, transport, anchor))) = player
-        .ride_entity()
-        .and_then(|deck| transports.get(deck).ok().map(|t| (deck, t)))
+    // Our own body's ride is the player's; a possessed unit's is its rider tail.
+    let ride = match embodied.single() {
+        Ok((true, _)) => player.ride_entity(),
+        Ok((false, Some(rider))) => index.0.get(&rider.transport_guid).copied(),
+        _ => None,
+    };
+    let Some((deck, (guid, transport, anchor))) =
+        ride.and_then(|deck| transports.get(deck).ok().map(|t| (deck, t)))
     else {
         seen.0 = None;
         return;

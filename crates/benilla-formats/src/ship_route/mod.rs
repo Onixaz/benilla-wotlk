@@ -265,7 +265,7 @@ pub fn ship_route(
     let mut dots = Vec::with_capacity(segments as usize + 1);
     for _ in 0..=segments {
         t = t.clamp(0.0, 1.0);
-        dots.push(spline.pos(t));
+        dots.push(spline.point_at(t));
         t += step;
     }
     Some(ShipRoute {
@@ -308,7 +308,7 @@ impl ArcSpline {
     }
 
     /// The Catmull-Rom basis over `points[seg..seg + 4]` (`0x4c39d0`).
-    fn evaluate(&self, seg: usize, t: f32) -> [f32; 2] {
+    fn basis_point(&self, seg: usize, t: f32) -> [f32; 2] {
         const BASIS: [[f32; 4]; 4] = [
             [-0.5, 1.0, -0.5, 0.0],
             [1.5, -2.5, 0.0, 1.0],
@@ -325,11 +325,11 @@ impl ArcSpline {
     }
 
     fn seg_length(&self, seg: usize) -> f32 {
-        let mut prev = self.evaluate(seg, 0.0);
+        let mut prev = self.basis_point(seg, 0.0);
         let mut step = 0.05f32;
         let mut length = 0.0;
         for _ in 0..20 {
-            let cur = self.evaluate(seg, step);
+            let cur = self.basis_point(seg, step);
             length += ((cur[0] - prev[0]).powi(2) + (cur[1] - prev[1]).powi(2)).sqrt();
             prev = cur;
             step += 0.05;
@@ -338,20 +338,20 @@ impl ArcSpline {
     }
 
     /// The point at arc-length fraction `t`; the ends are the outer controls (`0x4c3870`).
-    fn pos(&self, t: f32) -> [f32; 2] {
+    fn point_at(&self, t: f32) -> [f32; 2] {
         if t <= 0.0 {
             return self.points[0];
         }
         if t >= 1.0 {
             return self.points[self.points.len() - 1];
         }
-        let (seg, seg_t) = self.arclength_seg_t(t);
-        self.evaluate(seg, seg_t)
+        let (seg, seg_t) = self.segment_at(t);
+        self.basis_point(seg, seg_t)
     }
 
     /// The segment holding `t` of the length and the fraction into it (`0x4c3bd0`). A zero-length
     /// segment divides by zero there; here it reads as its start.
-    fn arclength_seg_t(&self, t: f32) -> (usize, f32) {
+    fn segment_at(&self, t: f32) -> (usize, f32) {
         let seg_count = self.seg_lengths.len();
         if seg_count <= 1 {
             return (0, t);

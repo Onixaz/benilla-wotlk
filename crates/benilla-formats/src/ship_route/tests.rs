@@ -181,3 +181,29 @@ fn real_menethil_to_theramore_route() {
     assert!(ship_route(&splines, &legs, &continents, 301, 0).is_some());
     assert!(ship_route(&splines, &legs, &continents, 301, 1).is_some());
 }
+
+/// [`DockLegs::build`] walks the paths sorted by id where the reference walks the file
+/// (`0x40b0b0`): the same walk only while the 3.3.5a file runs path id then node index, unsplit.
+#[test]
+fn real_taxi_path_node_file_runs_path_then_index() {
+    let data = crate::wow_data_or_skip!();
+    let mut chain = crate::open_chain(&data).expect("open chain");
+    let bytes = chain
+        .read_file("DBFilesClient\\TaxiPathNode.dbc")
+        .expect("read TaxiPathNode.dbc");
+    let rs = crate::dbc::parse(&bytes, crate::taxi::taxi_path_node_schema(), "TaxiPathNode")
+        .expect("parse TaxiPathNode.dbc");
+    let order: Vec<(u32, u32)> = rs
+        .records()
+        .map(|r| {
+            (
+                crate::dbc::u32_at(r, 1).expect("PathID"),
+                crate::dbc::u32_at(r, 2).expect("NodeIndex"),
+            )
+        })
+        .collect();
+    assert!(
+        order.windows(2).all(|w| w[0] < w[1]),
+        "TaxiPathNode.dbc is not in path id, node index order"
+    );
+}
