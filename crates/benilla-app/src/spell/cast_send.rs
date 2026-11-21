@@ -147,6 +147,8 @@ pub(crate) struct CastLadder<'w, 's> {
     pub(crate) pet_list: Option<Res<'w, crate::ui_pet::PetList>>,
     /// The item use's requirement reads (`0x6dc3f0` at `0x708eb9`).
     pub(crate) use_reqs: crate::ui_items::feed::UseReqs<'w, 's>,
+    /// Our passenger record, the active-spell test's vehicle (`[unit+0xf60]`).
+    pub(crate) seat: Query<'w, 's, &'static crate::vehicle::Passenger, With<SelfPlayer>>,
 }
 
 /// What a targeting-cursor click bound: what the location bind or the target bind fills into the
@@ -200,6 +202,15 @@ impl CastLadder<'_, '_> {
         let none = benilla_formats::SummonPropertiesCatalog::default();
         let summons = self.summons.as_ref().map_or(&none, |s| &s.0);
         let critter = store.and_then(|s| s.0.unit_critter());
+        // The seat's vehicle (`0x747ff0`), when its `UNIT_FIELD_CREATEDBY` is us (`0x802d42`).
+        let me = store.and_then(|s| s.0.object_guid());
+        let own_vehicle = self
+            .seat
+            .single()
+            .ok()
+            .and_then(|p| self.objects.object(p.vehicle))
+            .filter(|v| me.is_some() && v.unit_created_by() == me)
+            .and_then(|v| v.object_entry());
         crate::ui_action::toggle::is_active_spell(
             spell_id,
             d,
@@ -207,6 +218,7 @@ impl CastLadder<'_, '_> {
             &spells.catalog,
             summons,
             critter,
+            own_vehicle,
         )
     }
 
