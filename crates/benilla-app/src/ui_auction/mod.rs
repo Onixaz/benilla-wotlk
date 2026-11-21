@@ -1131,4 +1131,42 @@ mod tests {
             "Quest offers no subclass rows"
         );
     }
+
+    /// A listener reads the model as of its raise (`0x81b530` runs it in the caller): the
+    /// house-disabled event's listener reads the query gate the feed writes after it unchanged.
+    #[test]
+    fn a_disabled_listener_does_not_see_the_feeds_later_gate_write() {
+        let mut app = App::new();
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        app.insert_resource(NetCommands(tx))
+            .init_resource::<AuctionOpen>()
+            .init_resource::<Items>()
+            .init_resource::<NameCache>()
+            .init_resource::<Time>()
+            .init_resource::<crate::ui_chat::ChatLog>()
+            .init_resource::<crate::sound::MessageSounds>()
+            .init_resource::<crate::ui_script::live::UiEvents>()
+            .add_systems(Update, feed_auction);
+        {
+            let mut auction = app.world_mut().resource_mut::<AuctionOpen>();
+            auction.disabled_requested = true;
+            // A browse query in flight closes its gate.
+            auction.pending[LIST] = 1;
+        }
+        let script = UiScript::new().expect("VM");
+        script
+            .run(
+                "SEEN = {} local f = CreateFrame('Frame') f:RegisterEvent('AUCTION_HOUSE_DISABLED')
+                 f:SetScript('OnEvent', function() SEEN[#SEEN + 1] = tostring(CanSendAuctionQuery()) end)",
+            )
+            .unwrap();
+        app.insert_non_send_resource(script);
+        app.update();
+        crate::ui_script::raises::fire_raises(app.world_mut());
+        let vm = app.world().non_send_resource::<UiScript>();
+        let seen: String = vm.eval("return table.concat(SEEN, ',')").unwrap();
+        let after: String = vm.eval("return tostring(CanSendAuctionQuery())").unwrap();
+        assert_eq!(seen, "1", "the listener ran before the gate closed");
+        assert_eq!(after, "nil", "the gate closes after the listener");
+    }
 }
