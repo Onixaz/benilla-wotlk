@@ -1,6 +1,6 @@
 //! The aura bindings, over the lists the app pushes in display order: the player's, kept by
 //! `benilla::ui_aura`, and every other unit's by guid. A token resolves to its guid as 12340's
-//! resolver `0x60abf0` does ([`super::UnitGuids`]), so `"mouseover"`, `"party1target"` and
+//! resolver `0x60abf0` does, so `"mouseover"`, `"party1target"` and
 //! `"PLAYER"` read the list of the unit they name, and a token naming the player reads the
 //! player's list.
 //!
@@ -225,7 +225,7 @@ pub(crate) fn find(model: &Model, q: &AuraQuery) -> Option<AuraState> {
     if q.index < 0 && q.name.is_none() {
         return None;
     }
-    let player = model.unit_guids.player;
+    let player = model.player_guid();
     let list = auras_of(model, &q.token)?;
     let mut admitted = list.iter().filter(|a| q.filter.admits(a, player));
     if q.index >= 0 {
@@ -246,7 +246,7 @@ pub(crate) fn find(model: &Model, q: &AuraQuery) -> Option<AuraState> {
 /// nobody or a unit with no list.
 pub(crate) fn auras_of<'m>(model: &'m Model, token: &str) -> Option<&'m [AuraState]> {
     model.token_guid(token).and_then(|g| {
-        if g == model.unit_guids.player {
+        if g == model.player_guid() {
             Some(model.player_auras.as_slice())
         } else {
             model.unit_auras.get(&g).map(Vec::as_slice)
@@ -255,14 +255,13 @@ pub(crate) fn auras_of<'m>(model: &'m Model, token: &str) -> Option<&'m [AuraSta
 }
 
 /// The token names a caster by: the first token the unit-event fan-out lists for it
-/// ([`super::UnitGuids::tokens_naming`]), else `mouseover`; nil for none.
+/// (`0x60bb70`), else `mouseover`; nil for none.
 fn caster_token(model: &Model, caster: u64) -> Option<String> {
-    let guids = &model.unit_guids;
-    guids
-        .tokens_naming(caster)
-        .into_iter()
-        .next()
-        .or_else(|| (caster != 0 && guids.mouseover == caster).then(|| "mouseover".into()))
+    let tokens = model.tokens();
+    tokens.tokens_naming(caster).into_iter().next().or_else(|| {
+        (caster != 0 && tokens.base_guid(super::UnitBase::Mouseover) == caster)
+            .then(|| "mouseover".into())
+    })
 }
 
 /// The eleven values `0x6147c0` pushes for a found aura: `name, rank, icon, count, debuffType,
@@ -351,24 +350,11 @@ impl super::UiScript {
         model.unit_auras.clear();
     }
 
-    /// Push the unit-token resolver's inputs, copied only when they moved.
+    /// The resolver's tables a call reads while no view lends the game's: a test's or a capture
+    /// fixture's, never the game's, which every call reads live.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_unit_guids(&mut self, guids: &super::UnitGuids) {
-        if self.model_ref().unit_guids.same_push(guids) {
-            return;
-        }
-        let mut model = self.model_mut();
-        // The focus is the VM's own: `FocusUnit` sets it, never a push.
-        let focus = model.unit_guids.focus;
-        model.unit_guids.clone_from(guids);
-        model.unit_guids.focus = focus;
-    }
-
-    /// The target global alone, as the selection setter writes it before it returns (`0x524f38`),
-    /// so a token read later in the same Lua call names the new target.
-    pub fn set_target_guid(&mut self, guid: u64) {
-        if self.model_ref().unit_guids.target != guid {
-            self.model_mut().unit_guids.target = guid;
-        }
+        self.model_mut().unit_fixture = Some(guids.clone());
     }
 
     /// The selection the last `PLAYER_TARGET_CHANGED` this VM heard announced; `None` in a new VM.
@@ -381,31 +367,31 @@ impl super::UiScript {
         self.model_mut().target_signalled = selection;
     }
 
-    /// The arena slots alone, as an arena handler writes them before its `ARENA_OPPONENT_UPDATE`.
+    /// A fixture's arena slots alone ([`Self::set_unit_guids`]).
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_arena_unit_guids(&mut self, arena: [u64; 5], pets: [u64; 5], count: usize) {
         let mut model = self.model_mut();
-        let g = &mut model.unit_guids;
+        let g = model.unit_fixture.get_or_insert_with(Default::default);
         (g.arena, g.arena_pets, g.arena_count) = (arena, pets, count);
     }
 
     /// The name lookup alone (`0x60a630`), for the host's resolver, which reads every other part
-    /// of a token live: the guid a group member's or pet's name in `token` names, and the hops
-    /// after it.
-    pub fn unit_by_name<'t>(&self, token: &'t str) -> Option<(u64, super::Hops<'t>)> {
+    /// of a token live and hands its own read of the bases and rows (`bases`, `counts`): the guid
+    /// a group member's or pet's name in `token` names, and the hops after it.
+    pub fn unit_by_name<'t>(
+        &self,
+        token: &'t str,
+        bases: super::HostBases<'_>,
+        counts: super::UnitCounts,
+    ) -> Option<(u64, super::Hops<'t>)> {
         let model = self.model_ref();
-        model
-            .unit_guids
-            .by_name(token, |unit, with_realm| model.token_name(unit, with_realm))
+        let tokens = super::unit::Tokens::host(bases, counts, model.focus);
+        tokens.by_name(token, |ask| model.unit_name(ask))
     }
 
-    /// The `"npc"` guid: the interact target through the lent view, else as last pushed; 0 for none.
-    pub fn npc_guid(&self) -> u64 {
-        self.model_ref().unit_guids.npc_guid()
-    }
-
-    /// Every token naming `guid` against the last push, for a per-token unit event (`0x60bb70`).
+    /// Every token naming `guid` at the call, for a per-token unit event (`0x60bb70`).
     pub fn unit_tokens(&self, guid: u64) -> Vec<String> {
-        self.model_ref().unit_guids.tokens_naming(guid)
+        self.model_ref().tokens().tokens_naming(guid)
     }
 
     /// The spell ids of the buffs (`helpful`) or debuffs of the unit `token` names, in the order
@@ -475,7 +461,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 ));
             };
             let mut model = crate::script::model_mut_of(lua);
-            let player = model.unit_guids.player;
+            let player = model.player_guid();
             if player == 0 || q.guid(&model) != Some(player) {
                 return Ok(());
             }

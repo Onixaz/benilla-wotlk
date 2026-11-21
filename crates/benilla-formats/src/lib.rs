@@ -447,7 +447,8 @@ pub use taxi::{load_taxi_path_nodes, TaxiPathNode, TaxiPathNodes};
 mod transport_period;
 mod transports;
 pub use transports::{
-    TransportSample, TransportTimetable, SHIP_MOVING, SHIP_STAND, SHIP_START, SHIP_STOP,
+    load_transport_physics, Rocking, TransportPhysics, TransportPhysicsTable, TransportSample,
+    TransportTimetable, SHIP_MOVING, SHIP_STAND, SHIP_START, SHIP_STOP,
 };
 // Type-11 elevator and tram keyframe paths and orientation keys.
 mod elevators;

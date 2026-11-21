@@ -411,3 +411,163 @@ fn ship_legs_open_after_a_teleport_and_at_a_map_change() {
     ];
     assert_eq!(ship_legs(&nodes), vec![0, 0, 0, 1, 1, 2, 2]);
 }
+
+fn node(i: u32, pos: [f32; 3], stop: bool) -> TaxiPathNode {
+    TaxiPathNode {
+        id: i,
+        path_id: 1,
+        node_index: i,
+        map_id: 0,
+        pos,
+        flags: if stop { 2 } else { 0 },
+        delay: if stop { 10 } else { 0 },
+    }
+}
+
+/// A straight run between two stops along +x, 2000 yd, and back's first node.
+fn straight() -> TransportTimetable {
+    let nodes: Vec<_> = (0..12)
+        .map(|i| node(i, [i as f32 * 200.0, 0.0, 0.0], i == 1 || i == 10))
+        .collect();
+    TransportTimetable::build(&nodes, 30.0, 1.0).expect("builds")
+}
+
+fn ship_physics() -> TransportPhysics {
+    TransportPhysics {
+        wave_amp: 0.5,
+        wave_time_scale: 0.5,
+        roll_amp: 0.1,
+        roll_time_scale: 0.25,
+        pitch_amp: 0.05,
+        pitch_time_scale: 0.1,
+        max_bank: 0.05,
+        max_bank_turn_speed: 0.7,
+        speed_damp_thresh: 25.0,
+        speed_damp: 0.1,
+    }
+}
+
+/// The cycle instant of the middle of the first run, at cruise.
+fn cruising(tt: &TransportTimetable) -> u32 {
+    (0..tt.period_ms)
+        .step_by(500)
+        .find(|&ms| {
+            let s = tt.sample(ms);
+            s.moving && s.pos[0] > 900.0
+        })
+        .expect("a cruising instant")
+}
+
+/// The rocked sample is the plain one with the wave on its height and the roll and pitch under
+/// its heading; with no turn the roll is the bare sine (`0x7f7b30`).
+#[test]
+fn a_rocked_ship_lifts_and_tilts_under_its_heading() {
+    let tt = straight();
+    let p = ship_physics();
+    let ms = cruising(&tt);
+    let (plain, rocked) = (tt.sample(ms), tt.sample_rocked(ms, &p));
+    let r = p.rocking(ms, 30.0, 0.0);
+    assert!((rocked.pos[2] - plain.pos[2] - r.wave).abs() < 1e-4);
+    assert_eq!(&rocked.pos[..2], &plain.pos[..2]);
+    let want = physics::yaw_pitch_roll(plain.heading, r.pitch, r.roll);
+    let got = rocked.rotation.expect("rocked");
+    assert!(
+        got.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-4),
+        "{got:?} vs {want:?}"
+    );
+}
+
+/// Docked, the ship rocks at its damped amplitude, all three motions, and never banks.
+#[test]
+fn a_docked_ship_rocks_damped() {
+    let tt = straight();
+    let p = ship_physics();
+    let ms = (0..tt.period_ms)
+        .step_by(100)
+        .find(|&ms| !tt.sample(ms).moving)
+        .expect("a stop");
+    let (plain, rocked) = (tt.sample(ms), tt.sample_rocked(ms, &p));
+    let r = p.rocking(ms, 0.0, 0.0);
+    assert!((rocked.pos[2] - plain.pos[2] - r.wave).abs() < 1e-5);
+    let want = physics::yaw_pitch_roll(plain.heading, r.pitch, r.roll);
+    let got = rocked.rotation.expect("rocked");
+    assert!(
+        got.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-5),
+        "{got:?} vs {want:?}"
+    );
+}
+
+/// The look-back's heading lookup by arc length agrees with the sample's own heading wherever
+/// the ship travels.
+#[test]
+fn the_heading_by_arc_length_is_the_sampled_heading() {
+    let nodes: Vec<_> = (0..24)
+        .map(|i| {
+            let a = i as f32 * 0.12;
+            node(
+                i,
+                [3000.0 * a.sin(), 3000.0 * (1.0 - a.cos()), 0.0],
+                i == 1 || i == 22,
+            )
+        })
+        .collect();
+    let tt = TransportTimetable::build(&nodes, 30.0, 1.0).expect("builds");
+    let mut checked = 0;
+    for ms in (0..tt.period_ms).step_by(250) {
+        let located = tt.locate(ms);
+        let Some(on) = located.on_leg else { continue };
+        let by_dist = tt.leg_heading_at(on.leg, on.leg_dist);
+        let mut d = (by_dist - located.sample.heading).abs();
+        d = d.min(std::f32::consts::TAU - d);
+        assert!(
+            d < 1e-3,
+            "at {ms} ms: {by_dist} vs {}",
+            located.sample.heading
+        );
+        checked += 1;
+    }
+    assert!(checked > 100, "{checked} travelling instants");
+}
+
+/// On a left turn the bank adds to the roll (`0x7f7dd0`'s turn estimate is positive), on a
+/// straight it adds nothing.
+#[test]
+fn a_turning_ship_banks_into_the_turn() {
+    // A long arc turning left (counter-clockwise) between two far stops.
+    let nodes: Vec<_> = (0..24)
+        .map(|i| {
+            let a = i as f32 * 0.12;
+            node(
+                i,
+                [3000.0 * a.sin(), 3000.0 * (1.0 - a.cos()), 0.0],
+                i == 1 || i == 22,
+            )
+        })
+        .collect();
+    let tt = TransportTimetable::build(&nodes, 30.0, 1.0).expect("builds");
+    let p = ship_physics();
+    let ms = (0..tt.period_ms)
+        .step_by(500)
+        .find(|&ms| {
+            let s = tt.sample(ms);
+            s.moving && s.pos[1] > 600.0
+        })
+        .expect("mid-arc");
+    let level = p.rocking(ms, 30.0, 0.0);
+    let rocked = tt.sample_rocked(ms, &p);
+    // Recover the roll: R(q)·(0,1,0)'s z is sin(roll)·cos(pitch) for Rz·Ry·Rx.
+    let [x, y, z, w] = rocked.rotation.unwrap();
+    let side_z = 2.0 * (y * z + w * x);
+    let roll = (side_z / level.pitch.cos()).asin();
+    assert!(roll > level.roll, "banked {roll} vs level {}", level.roll);
+    // Straight: no bank.
+    let tt = straight();
+    let ms = cruising(&tt);
+    let r = tt.sample_rocked(ms, &p).rotation.unwrap();
+    let want = physics::yaw_pitch_roll(
+        tt.sample(ms).heading,
+        p.rocking(ms, 30.0, 0.0).pitch,
+        p.rocking(ms, 30.0, 0.0).roll,
+    );
+    assert!(r.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-4));
+}

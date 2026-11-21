@@ -44,7 +44,7 @@ impl super::UiScript {
 fn start_duel(lua: &Lua, name: &str, exact: bool) {
     let mut model = crate::script::model_mut_of(lua);
     let token = if name.is_empty() {
-        Some(Some(model.unit_guids.target))
+        Some(Some(model.target_guid()))
     } else {
         model.resolve_token(name).ok()
     };

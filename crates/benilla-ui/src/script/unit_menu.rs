@@ -77,7 +77,7 @@ pub(crate) fn is_raf_player(model: &Model, unit: Option<&UnitState>) -> bool {
 
 /// The party or raid membership test: a party slot or a raid row holds the guid.
 pub(super) fn in_my_group(model: &Model, guid: u64) -> bool {
-    model.unit_guids.party.contains(&guid) || model.party.raid.iter().any(|m| m.guid == guid)
+    model.tokens().in_party(guid) || model.party.raid.iter().any(|m| m.guid == guid)
 }
 
 /// `MAINTANK` or `MAINASSIST`, case-insensitively, to its assignment bit; a non-string raises
@@ -415,7 +415,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, unit: Value| {
             let unit = optional_string(lua, &unit).unwrap_or_default();
             let model = model_of(lua);
-            let can = model.unit_guids.player != 0 && grant_level_refusal(&model, &unit) == 0;
+            let can = model.player_guid() != 0 && grant_level_refusal(&model, &unit) == 0;
             Ok(if can { Value::Integer(1) } else { Value::Nil })
         })?,
     )?;
@@ -426,8 +426,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let unit = optional_string(lua, &unit).unwrap_or_default();
             let now = super::clock::now(lua);
             let model = model_of(lua);
-            let can =
-                model.unit_guids.player != 0 && summon_friend_refusal(&model, &unit, now) == 0;
+            let can = model.player_guid() != 0 && summon_friend_refusal(&model, &unit, now) == 0;
             Ok(if can { Value::Integer(1) } else { Value::Nil })
         })?,
     )?;

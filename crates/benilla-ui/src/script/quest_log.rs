@@ -1262,8 +1262,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(guid) = model.token_guid(&token).filter(|&g| g != 0) else {
                 return Ok(Value::Nil);
             };
-            let guids = &model.unit_guids;
-            if guid != guids.player && !guids.party.contains(&guid) {
+            let tokens = model.tokens();
+            if guid != tokens.player() && !tokens.in_party(guid) {
                 return Ok(Value::Nil);
             }
             let on = model.unit(&token).is_some_and(|u| {

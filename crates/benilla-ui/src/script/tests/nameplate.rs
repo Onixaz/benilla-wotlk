@@ -495,6 +495,50 @@ fn an_engine_health_write_fires_onvaluechanged_with_the_plate_as_parent() {
     assert_eq!(s.eval::<i64>("return Fired").unwrap(), 1);
 }
 
+/// The plate driver is a feed that holds the VM in turn: a sync's `OnValueChanged` and a retire's
+/// `OnHide` wait for its raise step, never running Lua inside the step.
+#[test]
+fn a_sync_in_turn_fires_the_plates_handlers_at_the_raise() {
+    use crate::script::world_loan::{Quiet, Turn};
+    let mut s = vm();
+    drive(&mut s, &[plate("Wolf", 30.0, 40.0)]);
+    s.run(
+        r#"
+        Seen = {}
+        local plate = WorldFrame:GetChildren()
+        local healthbar = plate:GetChildren()
+        healthbar:SetScript("OnValueChanged", function(self, v) Seen[#Seen + 1] = "value " .. v end)
+        plate:SetScript("OnHide", function() Seen[#Seen + 1] = "hide" end)
+    "#,
+    )
+    .unwrap();
+    let in_turn = |s: &mut UiScript, step: &dyn Fn(&mut UiScript)| {
+        let mut turn = Turn::begin(s.lua());
+        let quiet = Quiet::begin(s.lua());
+        step(s);
+        drop(quiet);
+        turn.take()
+    };
+    let raised = in_turn(&mut s, &|s| {
+        s.sync_nameplates(geometry(), &[plate("Wolf", 12.0, 40.0)])
+    });
+    assert_eq!(raised.len(), 1, "the sync's handlers wait in turn");
+    assert_eq!(s.eval::<i64>("return #Seen").unwrap(), 0);
+    for r in raised {
+        r.run(&mut s);
+    }
+    let raised = in_turn(&mut s, &|s| s.retire_nameplates());
+    assert_eq!(raised.len(), 1, "the retire's handlers wait in turn");
+    for r in raised {
+        r.run(&mut s);
+    }
+    assert_eq!(
+        s.eval::<String>("return table.concat(Seen, ',')").unwrap(),
+        "value 12,hide"
+    );
+    assert!(s.take_errors().is_empty());
+}
+
 /// The driver writes a plate's static properties once, at creation, so an addon's takeover (pfUI
 /// blanks all six regions, ShaguTweaks reparents the raid icon) survives.
 #[test]

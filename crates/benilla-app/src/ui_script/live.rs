@@ -51,6 +51,8 @@ pub(crate) struct LiveView<'w, 's> {
     pub(crate) cooldowns: Option<ResMut<'w, crate::spell::Cooldowns>>,
     pub(crate) pet_bar: Option<ResMut<'w, crate::ui_pet::PetBar>>,
     pub(crate) selection: Option<ResMut<'w, crate::target::Selection>>,
+    /// The unit-token resolver's tables (`0x60abf0`), the target global apart: the selection's.
+    units: crate::ui_unit::TokenView<'w, 's>,
     pub(crate) place: Option<ResMut<'w, crate::area::PlayerPlace>>,
     /// The player's cast state, which every loan owns: the pending cast (`0x805f30`), the queued
     /// on-swing strike, the auto-repeating spell (`0x7fe130`) and the ground-targeting cursor.
@@ -807,6 +809,54 @@ impl LiveState for LiveView<'_, '_> {
     /// Our `UNIT_FIELD_CHARM` or `UNIT_FIELD_SUMMON` (`0x5a1b11`); no player object refuses too (`0x5a1b0b`).
     fn unit_pet(&self, guid: u64) -> Option<u64> {
         self.unit(guid)?.unit_pet_guid()
+    }
+
+    fn unit_base(&self, base: benilla_ui::script::UnitBase) -> Option<u64> {
+        let units = self
+            .units
+            .at(self.selection.as_deref().and_then(|s| s.guid));
+        Some(crate::ui_unit::tokens::base(&units, base).unwrap_or(0))
+    }
+
+    fn unit_token(
+        &self,
+        base: benilla_ui::script::UnitBase,
+        hops: benilla_ui::script::Hops<'_>,
+        focus: u64,
+    ) -> Option<Option<u64>> {
+        use benilla_ui::script::UnitBase;
+        let units = self
+            .units
+            .at(self.selection.as_deref().and_then(|s| s.guid));
+        let guid = match base {
+            UnitBase::Focus => focus,
+            // The interact target (`0x60af67`) and the quest window's source (`0x6081b0`).
+            UnitBase::Npc => self.interact_target().unwrap_or(0),
+            UnitBase::QuestNpc => self.quest_npc().unwrap_or(0),
+            base => crate::ui_unit::tokens::base(&units, base).unwrap_or(0),
+        };
+        // A base naming nobody with text after it goes to the name lookup.
+        Some(
+            (guid != 0 || hops.is_empty())
+                .then(|| crate::ui_unit::tokens::follow(&units, guid, hops))
+                .flatten(),
+        )
+    }
+
+    fn unit_hops(&self, guid: u64, hops: benilla_ui::script::Hops<'_>) -> Option<Option<u64>> {
+        let units = self
+            .units
+            .at(self.selection.as_deref().and_then(|s| s.guid));
+        Some(crate::ui_unit::tokens::follow(&units, guid, hops))
+    }
+
+    fn unit_tables(&self) -> Option<benilla_ui::script::UnitGuids> {
+        let units = self
+            .units
+            .at(self.selection.as_deref().and_then(|s| s.guid));
+        let mut tables = crate::ui_unit::tokens::tables(&units);
+        tables.npc = self.interact_target().unwrap_or(0);
+        Some(tables)
     }
 
     fn charm_or_summon(&self) -> bool {
@@ -2269,6 +2319,8 @@ pub(crate) fn lend_world<R>(
 /// `f` over the `World`'s live view, built over the `World` it borrows for `f` alone: one read or
 /// write a verb makes through the `World` loan ([`super::safe_world`]).
 pub(crate) fn with_world_view<R>(world: &mut World, f: impl FnOnce(&mut LiveView) -> R) -> R {
+    #[cfg(test)]
+    VIEW_BUILDS.with(|n| n.set(n.get() + 1));
     let state = match world.remove_resource::<LiveViewState>() {
         Some(state) => state,
         None => LiveViewState(SystemState::new(world)),
@@ -2280,6 +2332,12 @@ pub(crate) fn with_world_view<R>(world: &mut World, f: impl FnOnce(&mut LiveView
     let state = held.state.as_mut().expect("held until the drop");
     let mut view = state.0.get_mut(held.world);
     f(&mut view)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many views [`with_world_view`] built on this thread, for the cost tests.
+    pub(crate) static VIEW_BUILDS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
 /// `step` in turn after the events queued so far, or now with no event queue.

@@ -39,7 +39,7 @@ impl super::UiScript {
         // interact target's (`0x60bece`), read through the lent `World`.
         let event = event.to_string();
         super::world_loan::in_turn_or_now(self, move |script| {
-            let tokens = script.model_ref().unit_guids.tokens_naming(guid);
+            let tokens = script.model_ref().tokens().tokens_naming(guid);
             for token in tokens {
                 let mut all = Vec::with_capacity(args.len() + 1);
                 all.push(ScriptValue::Str(token));

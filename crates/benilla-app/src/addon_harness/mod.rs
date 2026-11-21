@@ -1089,10 +1089,13 @@ fn seat_a_session(script: &mut UiScript) {
     // there is content (a buff bar, a target frame, cooldown text) is separated from one that
     // failed.
     // The player's guid, which a token resolves to before its aura list is read.
-    script.set_unit_guids(&benilla_ui::script::UnitGuids {
-        player: 1,
-        ..Default::default()
-    });
+    crate::dev::set_fixture_units(
+        script,
+        benilla_ui::script::UnitGuids {
+            player: 1,
+            ..Default::default()
+        },
+    );
     script.set_player_auras(vec![benilla_ui::script::AuraState {
         spell_id: 1243,
         name: Some("Power Word: Fortitude".into()),

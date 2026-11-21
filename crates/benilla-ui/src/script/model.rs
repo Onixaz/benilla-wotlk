@@ -267,12 +267,10 @@ pub(crate) struct Model {
     /// addon's own `UIParent:SetScale` stands until the dial moves.
     pub(crate) ui_scale: Option<f32>,
 
-    /// Each unit token's state as pushed this frame, keyed lowercased because 1.12's resolver
-    /// matches case-insensitively: read it only through `unit`, where the fold lives.
+    /// Each unit token's state as pushed this frame, keyed by its ASCII fold as the resolver's compares fold (`0x60abf0`): read it only through `unit`, where the fold lives.
     pub(crate) units_by_lower: HashMap<String, UnitState>,
-    /// The snapshot of each unit a `target` chain can end on, by guid, which the app pushes for
-    /// [`super::UnitGuids::chain_ends`]: a token with a hop that no push names reads its
-    /// resolved guid's entry here.
+    /// The snapshot of each unit a `target` chain can end on, by guid: a token whose own push
+    /// names another unit, or that has none, reads its resolved guid's entry here.
     pub(crate) units_by_guid: HashMap<u64, UnitState>,
     /// The selection `PLAYER_TARGET_CHANGED` last announced to this VM
     /// ([`super::UiScript::set_target_signalled`]).
@@ -283,8 +281,13 @@ pub(crate) struct Model {
     /// Every other unit's auras by guid, ascending aura slot: one list per unit, whatever token
     /// names it.
     pub(crate) unit_auras: HashMap<u64, Vec<AuraState>>,
-    /// The unit-token resolver's inputs, which the aura bindings resolve through.
-    pub(crate) unit_guids: super::UnitGuids,
+    /// The focus `[0xbd07d0]`, which `FocusUnit` and `ClearFocus` set through the setter
+    /// (`0x51ff20`); 0 for none.
+    pub(crate) focus: u64,
+    /// The resolver's tables a call reads while no view lends the game's: a test's or a capture
+    /// fixture's ([`super::UiScript::set_unit_guids`]).
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) unit_fixture: Option<super::UnitGuids>,
     /// Spell ids the cancel verbs queued (`CancelUnitBuff`, `SetTracking`, …), one
     /// `CMSG_CANCEL_AURA` each.
     pub(crate) cancel_aura_requests: Vec<u32>,
@@ -1206,8 +1209,29 @@ impl Model {
         self.warnings.push(msg);
     }
 
-    /// The state of the unit `token` names, as the `Unit*` getters read it: the snapshot the app
-    /// pushed under the token, else, for a token with a `target` hop, the chain's end.
+    /// The resolver over the state at the call: the game's through the lent view, else a
+    /// fixture's.
+    pub(crate) fn tokens(&self) -> super::unit::Tokens<'_> {
+        #[cfg(any(test, feature = "fixtures"))]
+        let fixture = self.unit_fixture.as_ref();
+        #[cfg(not(any(test, feature = "fixtures")))]
+        let fixture = None;
+        super::unit::Tokens::new(fixture, self.focus)
+    }
+
+    /// Our guid at the call, 0 without the player object.
+    pub(crate) fn player_guid(&self) -> u64 {
+        self.tokens().player()
+    }
+
+    /// The target global at the call, 0 for none.
+    pub(crate) fn target_guid(&self) -> u64 {
+        self.tokens().target()
+    }
+
+    /// The state of the unit `token` names, as the `Unit*` getters read it: the token resolved at
+    /// the call, then a snapshot of that guid, the token's own push first. With no game lent, the
+    /// push under the token, else, for a token with a `target` hop, the chain's end.
     pub(crate) fn unit(&self, token: &str) -> Option<&UnitState> {
         if token.eq_ignore_ascii_case("focus") {
             return self.focus_unit();
@@ -1218,7 +1242,29 @@ impl Model {
         if token.eq_ignore_ascii_case("npc") {
             return self.npc_unit();
         }
-        self.pushed_unit(token).or_else(|| self.chained_unit(token))
+        let resolved = self.tokens().resolve_live(token, |ask| self.unit_name(ask));
+        let Some(resolved) = resolved else {
+            return self.pushed_unit(token).or_else(|| self.chained_unit(token));
+        };
+        self.unit_named(token, resolved.ok().flatten()?)
+    }
+
+    /// The snapshot of `guid`, which `token` resolved to: the token's own push first.
+    pub(crate) fn unit_named(&self, token: &str, guid: u64) -> Option<&UnitState> {
+        self.pushed_unit(token)
+            .filter(|u| u.guid == guid)
+            .or_else(|| self.unit_by_guid(guid))
+    }
+
+    /// Whichever snapshot holds `guid`: the per-guid feed's, else the token push first in token order.
+    fn unit_by_guid(&self, guid: u64) -> Option<&UnitState> {
+        self.units_by_guid.get(&guid).or_else(|| {
+            self.units_by_lower
+                .iter()
+                .filter(|(_, u)| u.exists && u.guid == guid)
+                .min_by(|a, b| a.0.cmp(b.0))
+                .map(|(_, u)| u)
+        })
     }
 
     /// The `"npc"` unit by the interact target read at the call (`0xbd07a8`), as the getters look its object up; with none held, nil (`0x60af67`).
@@ -1231,48 +1277,34 @@ impl Model {
         let guid = target?;
         pushed
             .filter(|u| u.guid == guid)
-            .or_else(|| self.units_by_guid.get(&guid))
-            .or_else(|| {
-                self.units_by_lower
-                    .values()
-                    .find(|u| u.exists && u.guid == guid)
-            })
+            .or_else(|| self.unit_by_guid(guid))
     }
 
     /// The focus's unit by guid, as the getters look its object up: the app's `focus` push while it
     /// names that guid, else whichever snapshot holds it, so `FocusUnit` resolves the frame it
     /// runs.
     fn focus_unit(&self) -> Option<&UnitState> {
-        let guid = self.unit_guids.focus;
+        let guid = self.focus;
         if guid == 0 || guid == super::focus::NOBODY {
             return None;
         }
         self.units_by_lower
             .get("focus")
             .filter(|u| u.guid == guid)
-            .or_else(|| self.units_by_guid.get(&guid))
-            .or_else(|| {
-                self.units_by_lower
-                    .values()
-                    .find(|u| u.exists && u.guid == guid)
-            })
+            .or_else(|| self.unit_by_guid(guid))
     }
 
     /// The seated player's vehicle by guid, as the getters look its object up (`0x468460`):
-    /// whichever snapshot holds it, the per-guid feed's ([`super::UnitGuids::chain_ends`]) first.
+    /// whichever snapshot holds it, the per-guid feed's first.
     fn vehicle_unit(&self) -> Option<&UnitState> {
-        let guid = self.unit_guids.vehicle;
+        let guid = self.tokens().base_guid(super::UnitBase::Vehicle);
         if guid == 0 {
             return None;
         }
-        self.units_by_guid.get(&guid).or_else(|| {
-            self.units_by_lower
-                .values()
-                .find(|u| u.exists && u.guid == guid)
-        })
+        self.unit_by_guid(guid)
     }
 
-    /// The snapshot pushed under `token` itself, folded as 1.12's resolver folds (`_strnicmp`:
+    /// The snapshot pushed under `token` itself, folded as the resolver folds (`_strnicmp`:
     /// `A`..`Z` only, never a byte of 0x80 or more), so `to_ascii_lowercase`, never `to_lowercase`.
     pub(crate) fn pushed_unit(&self, token: &str) -> Option<&UnitState> {
         if token.bytes().any(|b| b.is_ascii_uppercase()) {
@@ -1292,19 +1324,15 @@ impl Model {
             _ => return None,
         }
         let guid = self.resolve_token(token).ok().flatten()?;
-        self.units_by_guid.get(&guid).or_else(|| {
-            self.units_by_lower
-                .values()
-                .find(|u| u.exists && u.guid == guid)
-        })
+        self.unit_by_guid(guid)
     }
 
     /// The guid `token` names (`0x60abf0`, with no target default), the name lookup reading the
     /// names the units' snapshots go by: `None` for nobody, `Err` where the reference answers
     /// false.
     pub(crate) fn resolve_token(&self, token: &str) -> Result<Option<u64>, ()> {
-        self.unit_guids
-            .resolve_named(token, |unit, with_realm| self.token_name(unit, with_realm))
+        self.tokens()
+            .resolve_named(token, |ask| self.unit_name(ask))
     }
 
     /// Whether the resolver refuses `token` whatever units the host holds now: the empty token, or
@@ -1315,8 +1343,8 @@ impl Model {
         match parse_unit_token(token) {
             UnitTokenParse::Empty => true,
             UnitTokenParse::Name => self
-                .unit_guids
-                .by_name(token, |unit, with_realm| self.token_name(unit, with_realm))
+                .tokens()
+                .by_name(token, |ask| self.unit_name(ask))
                 .is_none(),
             UnitTokenParse::Nobody | UnitTokenParse::Unit { .. } => false,
         }
@@ -1330,12 +1358,13 @@ impl Model {
     /// The name a base token's unit goes by (`0x60a360`): ours from the local name buffer, any
     /// other unit's from its snapshot, else, for a unit out of view, the name cache's record or the
     /// roster's; with the realm asked for, a player of another realm's as `Name-Realm`.
-    pub(crate) fn token_name(&self, token: &str, with_realm: bool) -> Option<String> {
-        let guid = self
-            .unit_guids
-            .resolve_named(token, |_, _| None)
-            .ok()
-            .flatten()?;
+    pub(crate) fn unit_name(&self, ask: super::unit::NameAsk<'_>) -> Option<String> {
+        let super::unit::NameAsk {
+            token,
+            guid,
+            ours,
+            with_realm,
+        } = ask;
         let record = self.name_records.get(&guid);
         let snapshot = || {
             self.pushed_unit(token)
@@ -1354,7 +1383,7 @@ impl Model {
                 })
                 .filter(|n| !n.is_empty())
         };
-        let name = if guid == self.unit_guids.player && !self.player_record.name.is_empty() {
+        let name = if ours && !self.player_record.name.is_empty() {
             self.player_record.name.as_str()
         } else {
             snapshot()
@@ -1462,7 +1491,9 @@ impl Model {
             target_signalled: None,
             player_auras: Vec::new(),
             unit_auras: HashMap::new(),
-            unit_guids: Default::default(),
+            focus: 0,
+            #[cfg(any(test, feature = "fixtures"))]
+            unit_fixture: None,
             cancel_aura_requests: Vec::new(),
             minimap_tracking: Default::default(),
             script_calls: Vec::new(),
@@ -2355,5 +2386,32 @@ impl std::ops::DerefMut for ModelCell {
     fn deref_mut(&mut self) -> &mut Model {
         self.epoch = self.epoch.wrapping_add(1);
         &mut self.inner
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A guid several token pushes hold, with no per-guid entry, reads the same push every time:
+    /// the first in token order, whatever the map's order.
+    #[test]
+    fn a_guid_held_by_several_pushes_reads_the_first_token() {
+        const GUID: u64 = 0x21;
+        for _ in 0..32 {
+            let mut m = Model::new();
+            for token in ["target", "raid2", "party1", "mouseover"] {
+                let unit = UnitState {
+                    exists: true,
+                    guid: GUID,
+                    name: Some(token.into()),
+                    ..Default::default()
+                };
+                m.units_by_lower.insert(token.into(), unit);
+            }
+            m.focus = GUID;
+            let name = m.unit("focus").and_then(|u| u.name.clone());
+            assert_eq!(name.as_deref(), Some("mouseover"));
+        }
     }
 }

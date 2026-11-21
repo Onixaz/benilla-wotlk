@@ -279,15 +279,20 @@ fn update_bar(lua: &Lua, h: FrameHandle, unit: Option<&UnitState>) {
         let mut model = crate::script::model_mut_of(lua);
         model.arena.set_shown(bar, shown);
     }
-    if changed {
-        let (id, value) = {
-            let mut model = crate::script::model_mut_of(lua);
-            let v = match model.arena.frame(bar).map(|f| &f.kind_state) {
-                Some(KindState::StatusBar(sb)) => sb.value,
-                _ => 0.0,
-            };
-            (model.frame_id(bar), v)
+    if !changed {
+        return;
+    }
+    let (id, value) = {
+        let mut model = crate::script::model_mut_of(lua);
+        let v = match model.arena.frame(bar).map(|f| &f.kind_state) {
+            Some(KindState::StatusBar(sb)) => sb.value,
+            _ => 0.0,
         };
+        (model.frame_id(bar), v)
+    };
+    // A feed that pushes the unit holds the VM in turn: the handler fires at its raise step, with
+    // the value this write set.
+    super::world_loan::lua_in_turn_or_now(lua, move |lua| {
         if let Err(e) = super::event::fire_widget_handler(
             lua,
             id,
@@ -296,7 +301,7 @@ fn update_bar(lua: &Lua, h: FrameHandle, unit: Option<&UnitState>) {
         ) {
             crate::script::model_mut_of(lua).record_lua_error(&e);
         }
-    }
+    });
 }
 
 /// A `set_unit` push of the unit a tooltip shows updates its health bar without rebuilding the
@@ -392,7 +397,7 @@ impl super::UiScript {
             }
             let world_owned = t.world_owned;
             let token = std::iter::once("mouseover".to_string())
-                .chain(model.unit_guids.tokens_naming(guid))
+                .chain(model.tokens().tokens_naming(guid))
                 .find(|token| {
                     model
                         .unit(token)
@@ -593,10 +598,7 @@ pub(super) fn set_unit_link(
         let same = shown
             && crate::script::tooltip::tip_mut(&mut model, h)
                 .is_ok_and(|t| t.unit_guid == Some(guid));
-        (
-            same,
-            model.unit_guids.tokens_naming(guid).into_iter().next(),
-        )
+        (same, model.tokens().tokens_naming(guid).into_iter().next())
     };
     if same {
         crate::script::tooltip::hide_tooltip(lua, h);
@@ -622,7 +624,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 else {
                     return Ok(mlua::MultiValue::new());
                 };
-                let token = model.unit_guids.tokens_naming(guid).into_iter().next();
+                let token = model.tokens().tokens_naming(guid).into_iter().next();
                 let name = token
                     .as_deref()
                     .and_then(|t| model.unit(t))

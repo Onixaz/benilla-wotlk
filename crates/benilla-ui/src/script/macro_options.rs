@@ -200,11 +200,11 @@ fn button_name(n: i64) -> String {
 /// Evaluate one condition against `token`, the group's unit (`target` when it named none).
 fn holds(model: &Model, token: &str, c: &Condition<'_>) -> Option<bool> {
     let unit = model.unit(token);
-    // The token resolves off the pushed unit guids until the unit tokens read live (#1289).
     let guid = model.token_guid(token);
     let args = &c.args[..];
-    let in_party = |g: u64| g == model.unit_guids.player || model.unit_guids.party.contains(&g);
-    let in_raid = |g: u64| model.unit_guids.raid.contains(&g);
+    let tokens = model.tokens();
+    let in_party = |g: u64| g == tokens.player() || tokens.in_party(g);
+    let in_raid = |g: u64| tokens.in_raid(g);
     Some(match c.name {
         // Table row 0, `""`, and any unknown name's default: holds (`0x8c8de0`).
         "" => true,
@@ -223,8 +223,9 @@ fn holds(model: &Model, token: &str, c: &Condition<'_>) -> Option<bool> {
         "raid" => boolean(guid.is_some_and(|g| in_party(g) || in_raid(g)), args),
         // `group`, `group:party`, `group:raid` (`0x5eeed0`).
         "group" => {
-            let party = model.unit_guids.party.iter().any(|&g| g != 0);
-            let raid = !model.unit_guids.raid.is_empty();
+            let counts = tokens.counts();
+            let party = counts.party != 0;
+            let raid = counts.raid != 0;
             if args.is_empty() {
                 party || raid
             } else {
@@ -292,7 +293,7 @@ fn holds(model: &Model, token: &str, c: &Condition<'_>) -> Option<bool> {
         ),
         // The player's running channel, by spell name when arguments say (`0x5efeb0`).
         "channeling" => {
-            let player = model.unit_guids.player;
+            let player = model.player_guid();
             let channel = super::live::read_live(|l| l.unit_cast(player, true))
                 .flatten()
                 .filter(|c| model.now * 1000.0 < c.end_ms);

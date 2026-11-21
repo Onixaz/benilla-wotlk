@@ -95,8 +95,8 @@ pub(crate) fn threat_warning_enabled(model: &super::Model) -> bool {
         0 => false,
         1 => matches!(model.instance_type, Some(1 | 2)),
         2 => {
-            let g = &model.unit_guids;
-            g.party.iter().any(|&p| p != 0) || g.raid.iter().any(|&r| r != 0)
+            let counts = model.tokens().counts();
+            counts.party != 0 || counts.raid != 0
         }
         _ => true,
     }
