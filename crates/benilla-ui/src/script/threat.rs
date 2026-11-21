@@ -122,7 +122,7 @@ impl super::UiScript {
 /// highest, `THREAT_TOOLTIP` filled with `trunc(percent - 0.5)`, and the colour of the status, 1
 /// for one past the table.
 pub(super) fn tooltip_line(model: &super::Model, mob: u64) -> Option<(i64, u8)> {
-    let me = model.unit_guids.player;
+    let me = model.player_guid();
     if me == 0 || !super::instance::threat_warning_enabled(model) {
         return None;
     }

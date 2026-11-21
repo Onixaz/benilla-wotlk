@@ -315,7 +315,6 @@ struct ThreatInputs<'w, 's> {
     units: Query<'w, 's, (&'static ObjectStore, &'static Transform)>,
     me: Res<'w, SelfGuid>,
     sounds: ResMut<'w, crate::sound::MessageSounds>,
-    tutorials: Option<MessageWriter<'w, crate::tutorial::TutorialEvent>>,
 }
 
 /// Exclusive: the tooltip refreshes and the unit signals run with the `World` lent, after the
@@ -328,14 +327,13 @@ fn feed_threat(
     let script = world
         .get_non_send_resource::<UiScript>()
         .map(UiScript::share);
-    let (tooltips, signals) = {
+    let (tooltips, signals, tutorial) = {
         let ThreatInputs {
             mut threat,
             index,
             units,
             me,
             mut sounds,
-            mut tutorials,
         } = inputs.get_mut(world);
         let unit_of = |guid: u64| {
             index
@@ -394,22 +392,18 @@ fn feed_threat(
                 sounds.push_kit(id);
             }
         }
-        if std::mem::take(&mut threat.tutorial) && script.threat_warning_enabled() {
-            let level =
-                me.0.and_then(unit_of)
-                    .and_then(|(s, _)| s.0.unit_level())
-                    .unwrap_or(0);
-            if level >= TUTORIAL_LEVEL {
-                if let Some(t) = tutorials.as_mut() {
-                    t.write(crate::tutorial::TutorialEvent::trigger(
-                        crate::tutorial::id::THREAT,
-                    ));
-                }
-            }
-        }
+        // The threat tutorial owed at our level; its warning gate reads the group at the call.
+        let tutorial = std::mem::take(&mut threat.tutorial)
+            && me
+                .0
+                .and_then(unit_of)
+                .and_then(|(s, _)| s.0.unit_level())
+                .unwrap_or(0)
+                >= TUTORIAL_LEVEL;
         (
             std::mem::take(&mut threat.tooltips),
             std::mem::take(&mut threat.signals),
+            tutorial,
         )
     };
     inputs.apply(world);
@@ -417,6 +411,18 @@ fn feed_threat(
         return;
     };
     crate::ui_script::safe_world::lend_to(world, &mut script, |script| {
+        if tutorial && script.threat_warning_enabled() {
+            crate::ui_script::safe_world::with_world(|w| {
+                if let Some(mut t) = w.get_resource_mut::<bevy::ecs::message::Messages<
+                    crate::tutorial::TutorialEvent,
+                >>()
+                {
+                    t.write(crate::tutorial::TutorialEvent::trigger(
+                        crate::tutorial::id::THREAT,
+                    ));
+                }
+            });
+        }
         for unit in tooltips {
             script.refresh_unit_tooltip(unit);
         }
@@ -432,6 +438,60 @@ mod tests {
 
     const ME: u64 = 0x10;
     const TANK: u64 = 0x21;
+
+    /// `threatWarning` 2 gates the threat tutorial on the group (`0x52b370`), read at the feed's
+    /// step against the group the `World` holds, with no unit fixture: in a party it fires, alone
+    /// it does not.
+    #[test]
+    fn the_threat_tutorial_reads_the_group_held_at_the_feed() {
+        use bevy::ecs::message::Messages;
+        use bevy::ecs::system::RunSystemOnce;
+        let tutorials = |grouped: bool| {
+            let mut world = World::new();
+            world.init_resource::<Threat>();
+            world.init_resource::<crate::sound::MessageSounds>();
+            world.init_resource::<Messages<crate::tutorial::TutorialEvent>>();
+            world.init_resource::<crate::ui_party::GroupState>();
+            world.insert_resource(SelfGuid(Some(ME)));
+            let me = world
+                .spawn((
+                    crate::net::SelfPlayer,
+                    crate::net::Guid(ME),
+                    Transform::default(),
+                    ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                        (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
+                        (benilla_protocol::field::FIELD_UNIT_LEVEL, TUTORIAL_LEVEL),
+                    ])),
+                ))
+                .id();
+            let mut index = GuidIndex::default();
+            index.0.insert(ME, me);
+            world.insert_resource(index);
+            if grouped {
+                world
+                    .resource_mut::<crate::ui_party::GroupState>()
+                    .members
+                    .push(benilla_protocol::messages::GroupMemberEntry {
+                        name: "Bob".into(),
+                        guid: TANK,
+                        status: 1,
+                        flags: 0,
+                        roles: 0,
+                    });
+            }
+            let script = UiScript::new().expect("a VM");
+            script.register_cvars([("threatWarning", "2")]);
+            world.insert_non_send_resource(script);
+            world.resource_mut::<Threat>().tutorial = true;
+            world.run_system_once(feed_threat).unwrap();
+            world
+                .resource_mut::<Messages<crate::tutorial::TutorialEvent>>()
+                .drain()
+                .count()
+        };
+        assert_eq!(tutorials(true), 1);
+        assert_eq!(tutorials(false), 0);
+    }
     const MOB: u64 = 0xF130_0000_0C35_0001;
 
     fn status(t: &Threat, guid: u64) -> (u8, u8) {

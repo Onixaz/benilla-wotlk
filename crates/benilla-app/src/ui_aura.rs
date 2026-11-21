@@ -624,7 +624,6 @@ fn feed_auras(
 fn end_session_aura_state(mut script: crate::ui_script::InTurn) {
     if let Some(mut script) = script.turn() {
         script.clear_auras();
-        script.set_unit_guids(&Default::default());
         script.clear_tracking();
     }
     // No `AuraFeedMemory` reset: its edge keys die with the VM.

@@ -315,7 +315,7 @@ impl super::UiScript {
                 let template = global_text(lua, "RAID_MEMBER_NOT_READY");
                 check.lines.push(template.replacen("%s", &name, 1));
             }
-            for token in model.unit_guids.tokens_naming(guid) {
+            for token in model.tokens().tokens_naming(guid) {
                 model.ready_check.events.push((
                     "READY_CHECK_CONFIRM",
                     vec![ScriptValue::Str(token), ScriptValue::Bool(ready)],

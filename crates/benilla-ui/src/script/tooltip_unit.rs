@@ -397,7 +397,7 @@ impl super::UiScript {
             }
             let world_owned = t.world_owned;
             let token = std::iter::once("mouseover".to_string())
-                .chain(model.unit_guids.tokens_naming(guid))
+                .chain(model.tokens().tokens_naming(guid))
                 .find(|token| {
                     model
                         .unit(token)
@@ -598,10 +598,7 @@ pub(super) fn set_unit_link(
         let same = shown
             && crate::script::tooltip::tip_mut(&mut model, h)
                 .is_ok_and(|t| t.unit_guid == Some(guid));
-        (
-            same,
-            model.unit_guids.tokens_naming(guid).into_iter().next(),
-        )
+        (same, model.tokens().tokens_naming(guid).into_iter().next())
     };
     if same {
         crate::script::tooltip::hide_tooltip(lua, h);
@@ -627,7 +624,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 else {
                     return Ok(mlua::MultiValue::new());
                 };
-                let token = model.unit_guids.tokens_naming(guid).into_iter().next();
+                let token = model.tokens().tokens_naming(guid).into_iter().next();
                 let name = token
                     .as_deref()
                     .and_then(|t| model.unit(t))

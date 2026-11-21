@@ -51,8 +51,6 @@ fn on_channel_list(
     In(ev): In<SessionEvent>,
     mut chat_log: ResMut<ChatLog>,
     mut script: crate::ui_script::InTurn,
-    names: Option<Res<crate::names::NameCache>>,
-    commands: Option<Res<NetCommands>>,
 ) {
     let SessionEvent::ChannelList {
         display,
@@ -74,13 +72,22 @@ fn on_channel_list(
     let Some(mut script) = script.turn() else {
         return;
     };
-    script.display_channel_list(&channel, flags, &members, |guid| {
-        let (Some(names), Some(commands)) = (names.as_deref(), commands.as_deref()) else {
-            return None;
-        };
-        names
-            .answer(crate::names::NameKey::Player(guid), guid, commands)
-            .map(|name| name.map(str::to_string))
+    // With the `World` lent: our own row is the active player's at the packet (`0x503990`).
+    script.lent(move |s| {
+        s.display_channel_list(&channel, flags, &members, |guid| {
+            crate::ui_script::safe_world::with_world(|w| {
+                let (Some(names), Some(commands)) = (
+                    w.get_resource::<crate::names::NameCache>(),
+                    w.get_resource::<NetCommands>(),
+                ) else {
+                    return None;
+                };
+                names
+                    .answer(crate::names::NameKey::Player(guid), guid, commands)
+                    .map(|name| name.map(str::to_string))
+            })
+            .flatten()
+        });
     });
 }
 
@@ -712,5 +719,47 @@ mod tests {
                 benilla_ui::messages::MsgKind::Info
             )]
         );
+    }
+
+    /// A display `SMSG_CHANNEL_LIST` seats our own row's flags against the active player the
+    /// `World` holds at the handler (`0x503990`), with no unit fixture: the owner gate reads it.
+    #[test]
+    fn a_display_list_seats_our_own_row_against_the_player_held() {
+        use benilla_ui::script::{ChannelSlotInfo, UiScript};
+        const ME: u64 = 0x10;
+        const GENERAL: &str = "General - Elwynn Forest";
+        let mut world = World::new();
+        world.init_resource::<ChatLog>();
+        world.init_resource::<crate::ui_script::live::UiEvents>();
+        world.spawn((crate::net::SelfPlayer, crate::net::Guid(ME)));
+        let mut script = UiScript::new().expect("a VM");
+        script.set_channel_slots(vec![Some(ChannelSlotInfo {
+            name: GENERAL.into(),
+            shortcut: Some("General".into()),
+            active: true,
+        })]);
+        script
+            .run("SetSelectedDisplayChannel(3)")
+            .expect("the channel is listed under the world header");
+        world.insert_non_send_resource(script);
+        let owner = |w: &World| {
+            w.non_send_resource::<UiScript>()
+                .eval::<bool>("return IsDisplayChannelOwner() == 1")
+                .unwrap()
+        };
+        assert!(!owner(&world));
+        world
+            .run_system_once_with(
+                on_channel_list,
+                SessionEvent::ChannelList {
+                    display: true,
+                    channel: GENERAL.into(),
+                    flags: 0x18,
+                    members: vec![(ME, 0x01), (0x20, 0)],
+                },
+            )
+            .unwrap();
+        crate::ui_script::live::fire_handler_events(&mut world);
+        assert!(owner(&world), "our row carries the owner bit");
     }
 }

@@ -453,6 +453,31 @@ pub trait LiveState {
         None
     }
 
+    /// The guid a token's base names at the call (`0x60abf0`), `Some(0)` for nobody; `None` where no view lends the resolver's state. `focus`, `npc` and `questnpc` are read apart.
+    fn unit_base(&self, _base: super::UnitBase) -> Option<u64> {
+        None
+    }
+
+    /// The guid `base` then `hops` name (`0x60abf0`, hops `0x60aaa0`) in one read, `focus` the VM's; `Some(None)` sends the token to the name lookup; `None` where no view lends the resolver's state.
+    fn unit_token(
+        &self,
+        _base: super::UnitBase,
+        _hops: super::Hops<'_>,
+        _focus: u64,
+    ) -> Option<Option<u64>> {
+        None
+    }
+
+    /// The hops from `guid` (`0x60aaa0`) in one read, `Some(None)` where they fail; `None` where no view lends the resolver's state.
+    fn unit_hops(&self, _guid: u64, _hops: super::Hops<'_>) -> Option<Option<u64>> {
+        None
+    }
+
+    /// Every base's guid and each numbered base's rows at the call, in one read; `None` where no view lends them.
+    fn unit_tables(&self) -> Option<super::UnitGuids> {
+        None
+    }
+
     /// An open-stable aura is on us (`0x5a19c0`).
     fn open_stable_aura(&self) -> bool {
         false

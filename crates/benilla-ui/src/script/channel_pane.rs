@@ -220,6 +220,12 @@ fn group(model: &Model) -> Group {
 /// The list rebuild (`0x504840`) without its signal. Every entry is rebuilt, so a
 /// channel's listed roster size lasts only until the next rebuild, as in the reference.
 fn rebuild(model: &mut Model) {
+    rebuild_list(model);
+    rebuild_roster(model);
+}
+
+/// The list's entries alone, which read no unit.
+fn rebuild_list(model: &mut Model) {
     let g = group(model);
     let party_count = model.party.members.len() as u32 + 1;
     let raid_count = model.party.raid.len() as u32;
@@ -275,8 +281,11 @@ fn rebuild(model: &mut Model) {
     }
     pane.entries = entries;
     pane.active_voice = 0;
-    let selected = pane.selected.as_ref().map(|(k, _)| *k);
-    // `0x504dd0`: a selected group's roster is rebuilt with the list.
+}
+
+/// `0x504dd0`: a selected group's roster is rebuilt with the list, against our guid at the call.
+fn rebuild_roster(model: &mut Model) {
+    let selected = model.channel_pane.selected.as_ref().map(|(k, _)| *k);
     match selected {
         Some(Kind::Party) => {
             build_party(model);
@@ -305,7 +314,7 @@ fn sort_members(roster: &mut [Member]) {
 /// The party roster (`0x5045c0`): the player and the party, the leader as owner (`5`, else `4`),
 /// each with the `0x10` of a member not silenced; the count, 0 outside a party.
 fn build_party(model: &mut Model) -> u32 {
-    let own = model.unit_guids.player;
+    let own = model.player_guid();
     if own == 0 {
         return 0;
     }
@@ -346,7 +355,7 @@ fn build_party(model: &mut Model) -> u32 {
 /// and moderator (`7`), an assistant as moderator (`6`), others `4`, each with the not-silenced
 /// `0x10`; the count, 0 outside a raid.
 fn build_raid(model: &mut Model) -> u32 {
-    let own = model.unit_guids.player;
+    let own = model.player_guid();
     if own == 0 {
         return 0;
     }
@@ -476,8 +485,10 @@ impl super::UiScript {
                 pane.roster.clear();
                 pane.own_flags = 0;
             }
-            rebuild(model);
+            rebuild_list(model);
         }
+        // A host step's relist reads our guid in its turn, with the `World` lent.
+        super::world_loan::in_turn_or_now(self, |s| rebuild_roster(&mut s.model_mut()));
         self.fire_event("CHANNEL_UI_UPDATE", Vec::new());
     }
 
@@ -497,7 +508,7 @@ impl super::UiScript {
         {
             let mut model = self.model_mut();
             let model: &mut Model = &mut model;
-            let own = model.unit_guids.player;
+            let own = model.player_guid();
             let pane = &mut model.channel_pane;
             if !pane.is_selected(Kind::Channel, channel) {
                 return;

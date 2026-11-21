@@ -1408,13 +1408,29 @@ fn a_hit_on_the_open_vendor_fires_unit_combat_for_npc() {
         pin(&rig.take(), &["UNIT_COMBAT"], &[])
     };
     assert_eq!(hit(&mut rig), ["UNIT_COMBAT npc WOUND CRITICAL 7 1"]);
+    let focus = rig
+        .app
+        .world()
+        .non_send_resource::<benilla_ui::script::UiScript>()
+        .focus_guid();
+    let walked = rig
+        .app
+        .world_mut()
+        .run_system_cached_with(
+            |bevy::prelude::In(focus): bevy::prelude::In<u64>,
+             units: crate::ui_unit::TokenView,
+             selection: bevy::prelude::Res<crate::target::Selection>,
+             interact: bevy::prelude::Res<crate::ui_session::InteractTarget>| {
+                units
+                    .walk(focus, selection.guid, interact.0.unwrap_or(0))
+                    .held
+            },
+            focus,
+        )
+        .unwrap();
     assert!(
-        rig.app
-            .world()
-            .non_send_resource::<benilla_ui::script::UiScript>()
-            .held_unit_guids()
-            .contains(&NPC),
-        "the aura walk holds the interact target's unit"
+        walked.contains(&NPC),
+        "the walk holds the interact target's unit"
     );
     call(&mut rig, "CloseMerchant()");
     assert!(hit(&mut rig).is_empty(), "no interact target, no \"npc\"");

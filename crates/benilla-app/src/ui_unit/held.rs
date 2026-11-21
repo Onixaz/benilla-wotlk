@@ -5,7 +5,7 @@
 //! answers a `Unit*` getter however the token spelled it. The app pushes a snapshot for each base
 //! token by name ([`UiScript::set_unit`]); a chain such as `party1target` names a unit no base
 //! does, so the VM resolves it to a guid and reads that guid's snapshot, which [`feed_chain_units`]
-//! pushes for the guids [`UiScript::chain_end_guids`] lists.
+//! pushes for the guids a chain can end on now ([`super::tokens::walk`]).
 
 #[cfg(test)]
 use benilla_ui::script::UiScript;
@@ -146,8 +146,8 @@ pub(super) struct ChainMemo {
 
 /// Push the snapshot of each held unit a `target` chain can end on, by guid, so `UnitName`,
 /// `UnitHealth` and the other getters answer for `party1target`, `raid3target` and `pettarget`
-/// (then each getter reads the guid's object). The guids are the resolver's own inputs
-/// ([`UiScript::chain_end_guids`]), which the aura feed pushes each frame, so this runs after it. A
+/// (then each getter reads the guid's object). The guids are walked from the live state
+/// ([`super::tokens::walk`]). A
 /// guid the object manager does not hold, or holds as anything but a unit, gets no snapshot. The
 /// reference still answers such a guid: `UnitExists` from the roster, `UnitHealth` from the roster
 /// or pet record, and `UnitName` from the pet record or the name cache, else `UNKNOWNOBJECT`; those
@@ -169,12 +169,20 @@ pub(super) fn feed_chain_units(
     changed: Query<(), (Changed<ObjectStore>, Without<crate::items::ItemObject>)>,
     mut removed: RemovedComponents<Guid>,
     mut memo: Local<VmMemo<ChainMemo>>,
+    (units, selection, interact): (
+        super::tokens::TokenView,
+        Res<crate::target::Selection>,
+        Option<Res<crate::ui_session::InteractTarget>>,
+    ),
 ) {
     let Some(mut script) = script.turn() else {
         return;
     };
     let (memo, vm_reset) = memo.get_reset(&script);
-    let ends = script.chain_end_guids();
+    let interact = interact.as_ref().and_then(|t| t.0).unwrap_or(0);
+    let ends = units
+        .walk(script.focus_guid(), selection.guid, interact)
+        .ends;
 
     // The gate: every input read below, despawns included (invisible to `Changed`), and the
     // guids themselves, which move with the selection, the hover, the group and every held
@@ -321,8 +329,7 @@ mod tests {
     /// The world: we target `MOB`, which targets party1 (`A`), who targets `BOSS`, which targets
     /// `GONE`; raid3 (`B`) targets `ADD`, our pet `FOE`, and `C` nobody. `LONER` is held and
     /// targets `EXTRA`. The group is a raid of us, `A`, `B` and `C`, all in our subgroup, so the
-    /// three are also party slots 1 to 3. The aura feed, whose resolver inputs the chain feed
-    /// reads, and the chain feed run.
+    /// three are also party slots 1 to 3. The aura feed and the chain feed run.
     fn app() -> App {
         let (tx, _rx) = crossbeam_channel::unbounded();
         let mut app = App::new();
@@ -368,7 +375,19 @@ mod tests {
                 );
             }
         }
-        let me = spawn(&mut app, ME, player(MOB, 900));
+        // Our pet is our `SUMMON`, as the `pet` base reads it (`0x60acc3`-`0x60acd3`).
+        let summon = benilla_protocol::field::FIELD_UNIT_SUMMON;
+        let ours = ObjectStore(ObjectFields::from_pairs(&[
+            (OBJECT_TYPE, 0x19),
+            (TARGET, MOB as u32),
+            (TARGET + 1, (MOB >> 32) as u32),
+            (HEALTH, 900),
+            (MAXHEALTH, 5000),
+            (LEVEL, 60),
+            (summon, MY_PET as u32),
+            (summon + 1, (MY_PET >> 32) as u32),
+        ]));
+        let me = spawn(&mut app, ME, ours);
         app.world_mut().entity_mut(me).insert(SelfPlayer);
         spawn(&mut app, A, player(BOSS, 800));
         spawn(&mut app, B, player(ADD, 700));
@@ -399,33 +418,32 @@ mod tests {
         app
     }
 
-    fn script(app: &App) -> &UiScript {
-        app.world().non_send_resource::<UiScript>()
+    /// `src` evaluated with the world lent, as every call into Lua runs: the tokens resolve
+    /// against it at the call.
+    fn eval<T: mlua::FromLua>(app: &mut App, src: &str) -> T {
+        crate::ui_script::live::with_live_world(app.world_mut(), |s| s.eval(src).unwrap())
+            .expect("a VM")
     }
 
-    fn name(app: &App, token: &str) -> Option<String> {
-        script(app)
-            .eval(&format!("return UnitName({token:?})"))
-            .unwrap()
+    fn name(app: &mut App, token: &str) -> Option<String> {
+        eval(app, &format!("return UnitName({token:?})"))
     }
 
-    fn number(app: &App, call: &str, token: &str) -> i64 {
-        script(app)
-            .eval(&format!("return {call}({token:?})"))
-            .unwrap()
+    fn number(app: &mut App, call: &str, token: &str) -> i64 {
+        eval(app, &format!("return {call}({token:?})"))
     }
 
-    fn health(app: &App, token: &str) -> i64 {
+    fn health(app: &mut App, token: &str) -> i64 {
         number(app, "UnitHealth", token)
     }
 
     /// Whether the Lua expression holds.
-    fn holds(app: &App, expr: &str) -> bool {
-        script(app).eval(&format!("return {expr}")).unwrap()
+    fn holds(app: &mut App, expr: &str) -> bool {
+        eval(app, &format!("return {expr}"))
     }
 
-    /// The getters answer for a chain through the feeds that run in the client: the aura feed's
-    /// resolver inputs name the guid, and this feed's snapshot of it answers, so `party1target`,
+    /// The getters answer for a chain through the feeds that run in the client: the token resolves
+    /// to a guid at the call, and this feed's snapshot of it answers, so `party1target`,
     /// `raid3target` and `pettarget` read the unit at the end of the chain and any break in the
     /// chain reads nobody. No token names `ADD` or `FOE` but a chain.
     #[test]
@@ -443,43 +461,47 @@ mod tests {
             ("targettargettarget", "Boss", 4000),
         ] {
             assert_eq!(
-                name(&app, token).as_deref(),
+                name(&mut app, token).as_deref(),
                 Some(want),
                 "UnitName({token})"
             );
-            assert_eq!(health(&app, token), hp, "UnitHealth({token})");
-            assert_eq!(number(&app, "UnitHealthMax", token), 5000, "{token}");
-            assert_eq!(number(&app, "UnitLevel", token), 60, "{token}");
+            assert_eq!(health(&mut app, token), hp, "UnitHealth({token})");
+            assert_eq!(number(&mut app, "UnitHealthMax", token), 5000, "{token}");
+            assert_eq!(number(&mut app, "UnitLevel", token), 60, "{token}");
             assert!(
-                holds(&app, &format!("UnitExists({token:?}) == 1")),
+                holds(&mut app, &format!("UnitExists({token:?}) == 1")),
                 "UnitExists({token})"
             );
         }
         assert!(holds(
-            &app,
+            &mut app,
             r#"UnitIsUnit("raid2target", "party1target") == 1"#
         ));
         assert!(holds(
-            &app,
+            &mut app,
             r#"UnitIsUnit("raid2target", "raid3target") == nil"#
         ));
         // `BOSS` targets `GONE`, which nobody holds: 0 and nil, and a name the unbuilt name-cache
         // leg would give, so it is not asserted.
-        assert_eq!(health(&app, "party1targettarget"), 0);
-        assert!(holds(&app, r#"UnitExists("party1targettarget") == nil"#));
+        assert_eq!(health(&mut app, "party1targettarget"), 0);
+        assert!(holds(
+            &mut app,
+            r#"UnitExists("party1targettarget") == nil"#
+        ));
         // `C` targets nobody; party4 is nobody.
         for token in ["raid4target", "party4target", "raid9target"] {
-            assert_eq!(name(&app, token), None, "UnitName({token})");
-            assert_eq!(health(&app, token), 0, "UnitHealth({token})");
+            assert_eq!(name(&mut app, token), None, "UnitName({token})");
+            assert_eq!(health(&mut app, token), 0, "UnitHealth({token})");
             assert!(
-                holds(&app, &format!("UnitExists({token:?}) == nil")),
+                holds(&mut app, &format!("UnitExists({token:?}) == nil")),
                 "UnitExists({token})"
             );
         }
-        // The plain tokens read their own push and nothing else: this world pushes none, so
-        // `raid2` answers nil though a chain ends on it, and a token pushed by name wins.
-        assert_eq!(name(&app, "raid2"), None);
-        assert_eq!(name(&app, "target"), None);
+        // A plain token reads the unit its guid names at the call, as 12340's getters look the
+        // resolved guid's object up (`0x60c1f0`): `raid2` and `target` answer through the
+        // snapshot of that guid, and a push under the token that names another unit does not.
+        assert_eq!(name(&mut app, "raid2").as_deref(), Some("Alia"));
+        assert_eq!(name(&mut app, "target").as_deref(), Some("Mob"));
         app.world_mut()
             .non_send_resource_mut::<UiScript>()
             .set_unit(
@@ -490,7 +512,23 @@ mod tests {
                     ..Default::default()
                 }),
             );
-        assert_eq!(name(&app, "target").as_deref(), Some("Pushed"));
+        assert_eq!(name(&mut app, "target").as_deref(), Some("Mob"));
+        app.world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .set_unit(
+                "target",
+                Some(UnitState {
+                    exists: true,
+                    guid: MOB,
+                    name: Some("Pushed".into()),
+                    ..Default::default()
+                }),
+            );
+        assert_eq!(
+            name(&mut app, "target").as_deref(),
+            Some("Pushed"),
+            "the token's own push of that guid first"
+        );
     }
 
     /// Each input of the feed's gate reaches the getters: a descriptor that moves, a chain that
@@ -499,7 +537,7 @@ mod tests {
     fn the_feed_follows_the_world() {
         let mut app = app();
         app.update();
-        assert_eq!(health(&app, "party1target"), 4000);
+        assert_eq!(health(&mut app, "party1target"), 4000);
 
         // A descriptor moves.
         let boss = app.world().resource::<GuidIndex>().0[&BOSS];
@@ -507,11 +545,11 @@ mod tests {
             .entity_mut(boss)
             .insert(creature(GONE, 1000));
         app.update();
-        assert_eq!(health(&app, "party1target"), 1000);
+        assert_eq!(health(&mut app, "party1target"), 1000);
 
         // Selecting `LONER` gives `targettarget` a unit that no chain ended on, and moves no
         // descriptor and no name.
-        assert_eq!(name(&app, "targettarget").as_deref(), Some("Alia"));
+        assert_eq!(name(&mut app, "targettarget").as_deref(), Some("Alia"));
         let loner = app.world().resource::<GuidIndex>().0[&LONER];
         app.insert_resource(Selection {
             target: Some(loner),
@@ -519,21 +557,20 @@ mod tests {
             ..Default::default()
         });
         app.update();
-        assert_eq!(name(&app, "targettarget").as_deref(), Some("Extra"));
-        assert_eq!(health(&app, "targettarget"), 45);
+        assert_eq!(name(&mut app, "targettarget").as_deref(), Some("Extra"));
+        assert_eq!(health(&mut app, "targettarget"), 45);
 
         // `ADD` leaves the object manager, and `raid3target` with it. The chain is still
         // `raid3`'s target, so the resolver's guid holds; the snapshot is what goes.
-        assert_eq!(name(&app, "raid3target").as_deref(), Some("Add"));
+        assert_eq!(name(&mut app, "raid3target").as_deref(), Some("Add"));
         let add = app.world_mut().resource_mut::<GuidIndex>().0.remove(&ADD);
         app.world_mut().despawn(add.unwrap());
         app.update();
         // The name would be the name cache's, which a chain's end does not read yet.
-        assert_eq!(health(&app, "raid3target"), 0);
+        assert_eq!(health(&mut app, "raid3target"), 0);
     }
 
-    /// The chain feed reads the resolver inputs the aura feed pushes in the same frame, so the
-    /// declared order puts the feed after it: read off the schedule graph.
+    /// The chain feed is declared after the aura feed, read off the schedule graph.
     #[test]
     fn the_chain_feed_runs_after_the_aura_feed_it_reads() {
         use crate::game_plugins::schedule_tests::{census, headless_client, SyncPoints};

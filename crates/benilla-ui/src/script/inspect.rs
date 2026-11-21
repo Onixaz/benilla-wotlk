@@ -64,13 +64,6 @@ impl super::UiScript {
         set_field!(self, unit_reach, reach);
     }
 
-    /// The guids of the held units the resolver's inputs reach ([`Self::set_unit_guids`]): every
-    /// unit a token can name, the `target` chains included, that the object manager holds. These
-    /// are the guids [`Self::set_unit_reach`] is measured for.
-    pub fn held_unit_guids(&self) -> Vec<u64> {
-        self.model_ref().unit_guids.held.keys().copied().collect()
-    }
-
     /// Push (or clear, with `None`) the inspected unit's equipment. It fires nothing: the app fires
     /// `UNIT_INVENTORY_CHANGED` for the token, which the stock slot buttons listen for.
     pub fn set_inspect(&mut self, view: Option<InspectView>) {
@@ -162,13 +155,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(guid) = model.resolve_token(&unit).ok().flatten() else {
                 return Ok(Value::Nil);
             };
-            let guids = &model.unit_guids;
-            let ours = guid == guids.player
-                || guid == guids.pet
-                || guids.party.contains(&guid)
-                || guids.party_pets.contains(&guid)
-                || guids.raid.contains(&guid)
-                || guids.raid_pets.contains(&guid);
+            let ours = model.tokens().is_member_or_pet(guid);
             let near = model
                 .unit_reach
                 .get(&guid)
