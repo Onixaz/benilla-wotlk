@@ -22,8 +22,7 @@ use benilla_protocol::messages::mail_flags;
 use benilla_protocol::EntityKind;
 use benilla_ui::script::UiScript;
 
-use super::probes::ProbeClock;
-use crate::net::{ChatKind, ClientCommand, Guid, NetCommands, NetEntity, ObjectStore, SelfPlayer};
+use crate::net::{ChatKind, ClientCommand, NetCommands};
 use crate::player::Player;
 use crate::ui_mail::MailOpen;
 
@@ -262,35 +261,72 @@ fn log_rows(mail: &MailOpen, script: &UiScript) {
     }
 }
 
-fn mail_probe(
-    time: ProbeClock,
-    mut probe: ResMut<MailProbe>,
-    mut mail: ResMut<MailOpen>,
-    (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
-    self_player: Query<(), With<SelfPlayer>>,
-    player: Res<Player>,
-    objects: Query<(&Guid, &NetEntity, &ObjectStore, &Transform), Without<SelfPlayer>>,
-    net: Res<NetCommands>,
-    loading: Res<crate::loading_screen::LoadingScreen>,
-    mut exit: MessageWriter<AppExit>,
-) {
-    if self_player.is_empty() {
+fn mail_probe(world: &mut World) {
+    if !super::probes::in_world(world) {
         return;
     }
-    let clock = time.elapsed_secs_f64();
-    if loading.covering() {
-        probe.clear_since = None;
+    let clock = f64::from(super::probes::probe_secs(world));
+    if world
+        .resource::<crate::loading_screen::LoadingScreen>()
+        .covering()
+    {
+        world.resource_mut::<MailProbe>().clear_since = None;
         return;
     }
-    let clear_since = *probe.clear_since.get_or_insert(clock);
-    if probe.step == Step::Init && clock - clear_since < SETTLE_SECS {
-        return;
+    {
+        let mut probe = world.resource_mut::<MailProbe>();
+        let clear_since = *probe.clear_since.get_or_insert(clock);
+        if probe.step == Step::Init && clock - clear_since < SETTLE_SECS {
+            return;
+        }
     }
-    let Some(script) = script else {
+    let mut mail = world.resource::<MailOpen>().clone();
+    let objects = super::probes::seen(world);
+    let pos = world.resource::<Player>().pos;
+    let net = NetCommands(world.resource::<NetCommands>().0.clone());
+    let Some(mut probe) = world.remove_resource::<MailProbe>() else {
         return;
     };
-    let now = time.elapsed_secs_f64();
+    let mut clicks = Vec::new();
+    let mut exit = Vec::new();
+    super::probes::with_vm(world, |script| {
+        if let Some(script) = script {
+            mail_step(
+                &mut probe,
+                script,
+                clock,
+                &mut mail,
+                &mut clicks,
+                &objects,
+                pos,
+                &net,
+                &mut exit,
+            );
+        }
+    });
+    world.insert_resource(probe);
+    for mailbox in clicks {
+        world.resource_mut::<MailOpen>().click(mailbox);
+    }
+    for e in exit {
+        world.write_message(e);
+    }
+}
 
+/// One frame of the probe on the VM, the `World` lent; `mail` is the frame's snapshot, and the
+/// mailbox clicks are applied after it.
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+fn mail_step(
+    probe: &mut MailProbe,
+    script: &mut UiScript,
+    now: f64,
+    mail: &mut MailOpen,
+    clicks: &mut Vec<u64>,
+    objects: &super::probes::Seen,
+    pos: Vec3,
+    net: &NetCommands,
+    exit: &mut Vec<AppExit>,
+) {
     // The arrival trace: every change of `HasNewMail()` and the senders, timestamped.
     if probe.step != Step::Init {
         let lit = lua_bool(&script, "HasNewMail()");
@@ -330,7 +366,7 @@ fn mail_probe(
                         ".additem 2672 -40".to_string(),
                         ".additem 2835 -40".to_string(),
                     ] {
-                        say(&net, text);
+                        say(net, text);
                     }
                     for text in [
                         format!(".send mail {me} \"probe letter\" \"hello\""),
@@ -339,7 +375,7 @@ fn mail_probe(
                             ".send items {me} \"probe items\" \"two stacks\" {LINEN}:5 {SILK}:2"
                         ),
                     ] {
-                        say(&net, text);
+                        say(net, text);
                     }
                 }
                 Role::Send(peer) => {
@@ -352,7 +388,7 @@ fn mail_probe(
                         format!(".additem {SILK} 4"),
                         ".modify money 100000".to_string(),
                     ] {
-                        say(&net, text);
+                        say(net, text);
                     }
                 }
                 Role::Receive(peer) => {
@@ -361,12 +397,8 @@ fn mail_probe(
             }
             // A `.go` re-enters the world even onto the spot already stood on, and the world
             // enter resets the mail session, so only a character away from the mailbox moves.
-            if player
-                .pos
-                .distance(benilla_assets::coords::wow_to_bevy([x, y, z]))
-                > MAILBOX_SCAN_RANGE
-            {
-                say(&net, format!(".go xyz {x} {y} {z} 0"));
+            if pos.distance(benilla_assets::coords::wow_to_bevy([x, y, z])) > MAILBOX_SCAN_RANGE {
+                say(net, format!(".go xyz {x} {y} {z} 0"));
             }
             probe.go(Step::FindMailbox, now);
         }
@@ -374,7 +406,7 @@ fn mail_probe(
             if now - probe.since < SETTLE_SECS {
                 return;
             }
-            let me = player.pos;
+            let me = pos;
             let found = objects.iter().find(|(_, n, s, tf)| {
                 n.kind == EntityKind::GameObject
                     && s.0.gameobject_type_id() == GO_TYPE_MAILBOX
@@ -384,7 +416,10 @@ fn mail_probe(
                 info!("PROBE_MAIL: mailbox {:#x} in range, using it", guid.0);
                 probe.baseline = event_count(&script, "MAIL_INBOX_UPDATE");
                 probe.mailbox = Some(guid.0);
-                mail.click(guid.0);
+                {
+                    mail.click(guid.0);
+                    clicks.push(guid.0);
+                }
                 probe.step = Step::WaitList;
                 probe.since = now;
             } else if probe.timed_out(now, SCAN_TIMEOUT_SECS) {
@@ -540,7 +575,10 @@ fn mail_probe(
                 );
                 // The reader took the interaction and closed the mailbox: use it again.
                 if let Some(guid) = probe.mailbox {
+                    {
                     mail.click(guid);
+                    clicks.push(guid);
+                }
                 }
                 probe.go(Step::TakeMoney, now);
             } else if probe.timed_out(now, ACTION_TIMEOUT_SECS) {
@@ -550,7 +588,10 @@ fn mail_probe(
                     "(b3) — the reader never showed the letter (shown {shown}, text {text:?})"
                 ));
                 if let Some(guid) = probe.mailbox {
+                    {
                     mail.click(guid);
+                    clicks.push(guid);
+                }
                 }
                 probe.go(Step::TakeMoney, now);
             }
@@ -879,11 +920,14 @@ fn mail_probe(
                     .find(|(_, n, s, tf)| {
                         n.kind == EntityKind::GameObject
                             && s.0.gameobject_type_id() == GO_TYPE_MAILBOX
-                            && tf.translation.distance(player.pos) < MAILBOX_SCAN_RANGE
+                            && tf.translation.distance(pos) < MAILBOX_SCAN_RANGE
                     })
                     .map(|(g, ..)| g.0)
                 {
-                    mail.click(guid);
+                    {
+                        mail.click(guid);
+                        clicks.push(guid);
+                    }
                 }
                 probe.step = Step::ReadNew;
                 probe.since = now;
@@ -956,13 +1000,13 @@ fn mail_probe(
             }
             probe.exited = true;
             if matches!(probe.role, Role::Send(_)) {
-                say(&net, ".gm on".to_string());
+                say(net, ".gm on".to_string());
             }
             info!(
                 "PROBE_MAIL: DONE pass={} fail={}",
                 probe.passes, probe.fails
             );
-            exit.write(AppExit::Success);
+            exit.push(AppExit::Success);
             std::thread::spawn(|| {
                 std::thread::sleep(std::time::Duration::from_secs(5));
                 warn!("PROBE_MAIL: still alive 5s after AppExit — hard exit");

@@ -55,6 +55,7 @@ fn package_view(row: &benilla_formats::PackageRow) -> benilla_ui::script::Packag
 }
 
 /// One inbox row: the wire row, its attachments filed by slot, and the client's own mark.
+#[derive(Clone)]
 pub(crate) struct MailRow {
     pub(crate) entry: MailListEntry,
     /// Sixteen slots; the list handler files each attachment as `0x571e29` does.
@@ -129,6 +130,7 @@ fn leading_u64(s: &str) -> u64 {
 }
 
 /// One step of a result's or list's effect on the window, applied by [`feed_mail`] in order.
+#[derive(Clone)]
 pub(crate) enum MailEffect {
     /// A message line by key.
     Message(&'static str),
@@ -148,7 +150,7 @@ pub(crate) enum MailEffect {
 
 /// The mail session: the open mailbox, the inbox rows (kept past a close, as the reference keeps
 /// them until a world change, `0x571730`), and the queued effects.
-#[derive(Resource, Default)]
+#[derive(Resource, Default, Clone)]
 pub(crate) struct MailOpen {
     /// The open mailbox.
     pub(crate) mailbox: Option<u64>,
