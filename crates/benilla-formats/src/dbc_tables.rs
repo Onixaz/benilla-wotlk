@@ -72,6 +72,7 @@ tables! {
         },
         "CreatureFamily" => creature_families::family_schema(),
         "CreatureModelData" => creatures::creature_model_data_schema(&LAYOUTS.creature_model_data),
+        "CreatureMovementInfo" => creature_movement_info::schema(),
         "CreatureSoundData" => creature_sound::csd_schema(),
         "CreatureType" => creature_types::creature_type_schema(),
         "CurrencyCategory" => currency::categories_schema(),

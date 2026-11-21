@@ -1635,6 +1635,7 @@ fn quest_progress_in_both_packet_orders() {
                 civilian: false,
                 racial_leader: false,
                 modifiers: (1.0, 1.0),
+                movement_id: 0,
             },
             kill_quest_template(),
             self_values(&[(FIELD_PLAYER_QUEST_LOG_1_1, QUEST)]),
@@ -1854,6 +1855,7 @@ fn progress_completed_and_confirm_fire_in_their_packets_turn() {
                 civilian: false,
                 racial_leader: false,
                 modifiers: (1.0, 1.0),
+                movement_id: 0,
             },
             kill_quest_template(),
             self_values(&[(FIELD_PLAYER_QUEST_LOG_1_1, QUEST)]),
@@ -4102,6 +4104,7 @@ fn creature_answer(entry: u32, name: &str) -> SessionEvent {
         civilian: false,
         racial_leader: false,
         modifiers: (0.0, 0.0),
+        movement_id: 0,
     }
 }
 
@@ -5196,6 +5199,7 @@ fn family_answer(entry: u32, pet_family: u32) -> SessionEvent {
         civilian,
         racial_leader,
         modifiers,
+        movement_id,
         ..
     } = creature_answer(entry, "Wolf")
     else {
@@ -5214,6 +5218,7 @@ fn family_answer(entry: u32, pet_family: u32) -> SessionEvent {
         civilian,
         racial_leader,
         modifiers,
+        movement_id,
     }
 }
 
