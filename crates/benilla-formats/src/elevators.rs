@@ -211,8 +211,9 @@ pub fn load_rotation_paths(chain: &mut Chain) -> Result<RotationPaths> {
 /// The reference's type-11 orientation at `cycle_ms` (`0x70dc10`): the key whose span holds the
 /// time, slerped toward the next (ring order) and turned by `parent_rotation`, as `slerp · parent`.
 /// A span ends at the next key's time, or at `cycle_end_ms` (the last keyframe's time) when that
-/// key's time is 0; its fraction is taken against the next key's time even then, so the wrapping
-/// span slerps with a negative fraction, as the reference does. `None` under two keys, where the
+/// key's time is 0; its fraction is taken against the next key's time even then, as an unsigned
+/// difference, so the wrapping span divides by nearly 2^32 and holds the last key. `None` under
+/// two keys, where the
 /// car keeps its own rotation; also `None` when no span holds the time, where the reference's
 /// walk never ends.
 pub fn elevator_rotation(
@@ -236,7 +237,8 @@ pub fn elevator_rotation(
             };
             cycle_ms >= c.time_ms && cycle_ms < end
         })?;
-    let span = following.time_ms as f32 - current.time_ms as f32;
+    // An unsigned difference, as the reference converts it: the wrapping span's is near 2^32.
+    let span = following.time_ms.wrapping_sub(current.time_ms) as f32;
     // Two keys at one time divide by zero in the reference; hold the first.
     let t = if span == 0.0 {
         0.0
@@ -413,15 +415,13 @@ mod tests {
         assert!(!close(q, quat_mul(parent, roll)));
     }
 
-    /// The wrapping span ends at the cycle's end but divides by the first key's time, 0: the
-    /// fraction goes negative and the slerp runs back past the last key, as the reference's does.
+    /// The wrapping span ends at the cycle's end but divides by the unsigned `0 - 1000`, near
+    /// 2^32: the fraction is all but 0 and the car holds the last key (`0x70dc10`).
     #[test]
-    fn the_wrapping_span_slerps_with_a_negative_fraction() {
+    fn the_wrapping_span_holds_the_last_key() {
         let keys = [key(0, IDENT), key(1000, yaw(1.0))];
-        // t = (1500 - 1000) / (0 - 1000) = -0.5: half a turn back from yaw(1.0) toward
-        // identity's far side, yaw(1.0 + 0.5).
         let q = elevator_rotation(&keys, 2000, IDENT, 1500).unwrap();
-        assert!(close(q, yaw(1.5)), "{q:?}");
+        assert!(close(q, yaw(1.0)), "{q:?}");
     }
 
     /// No span holds a time before the first key when it is past 0; the reference never returns.
