@@ -340,8 +340,10 @@ impl<'a> VmUnits<'a> {
         self.0.map(UiScript::focus_guid)
     }
 
-    fn unit_by_name<'t>(self, token: &'t str) -> Option<(u64, Hops<'t>)> {
-        self.0?.unit_by_name(token)
+    /// The VM's name lookup over the host's own bases and rows, read off `w`.
+    fn unit_by_name<'t>(self, token: &'t str, w: &impl UnitWorld) -> Option<(u64, Hops<'t>)> {
+        let bases = |b: UnitBase| base(w, b).unwrap_or(0);
+        self.0?.unit_by_name(token, &bases, counts(w))
     }
 }
 
@@ -496,7 +498,7 @@ impl UnitTokens<'_, '_> {
             }
             UnitTokenParse::Name => {}
         }
-        let (guid, hops) = vm.unit_by_name(token)?;
+        let (guid, hops) = vm.unit_by_name(token, &w)?;
         follow(&w, guid, hops).filter(|&g| g != 0)
     }
 }

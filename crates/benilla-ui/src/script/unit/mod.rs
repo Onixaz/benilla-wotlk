@@ -619,8 +619,8 @@ mod tests;
 
 pub(crate) use resolve::Tokens;
 pub use resolve::{
-    parse_unit_token, split_name, Hop, Hops, UnitBase, UnitCounts, UnitGuids, UnitTokenParse,
-    PET_OF_ANYONE,
+    parse_unit_token, split_name, Hop, Hops, HostBases, UnitBase, UnitCounts, UnitGuids,
+    UnitTokenParse, PET_OF_ANYONE,
 };
 
 pub(super) use bindings::install;

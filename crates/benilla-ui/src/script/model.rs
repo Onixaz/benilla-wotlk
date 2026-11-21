@@ -1371,7 +1371,16 @@ impl Model {
     /// other unit's from its snapshot, else, for a unit out of view, the name cache's record or the
     /// roster's; with the realm asked for, a player of another realm's as `Name-Realm`.
     pub(crate) fn token_name(&self, token: &str, with_realm: bool) -> Option<String> {
-        let tokens = self.tokens();
+        self.token_name_in(self.tokens(), token, with_realm)
+    }
+
+    /// [`Self::token_name`] over `tokens`.
+    pub(crate) fn token_name_in(
+        &self,
+        tokens: super::unit::Tokens<'_>,
+        token: &str,
+        with_realm: bool,
+    ) -> Option<String> {
         let guid = tokens.resolve_named(token, |_, _| None).ok().flatten()?;
         let record = self.name_records.get(&guid);
         let snapshot = || {

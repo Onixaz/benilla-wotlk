@@ -309,9 +309,15 @@ enum Src<'a> {
     Live,
     /// A test's or a capture fixture's.
     Fixture(&'a UnitGuids),
+    /// The host's own read of the game's bases and rows, for a host resolving while it holds
+    /// the state itself.
+    Host(HostBases<'a>, UnitCounts),
     /// No game and no fixture: every table names nobody.
     Empty,
 }
+
+/// A host's read of a token base's guid, 0 for nobody.
+pub type HostBases<'a> = &'a dyn Fn(UnitBase) -> u64;
 
 /// The resolver over the client's state at the call (`0x60abf0`): the game's through the lent
 /// view, or, where no view lends it, a fixture's. The focus `[0xbd07d0]` is the VM's own.
@@ -333,6 +339,14 @@ impl<'a> Tokens<'a> {
             None => Src::Empty,
         };
         Self { src, focus }
+    }
+
+    /// The host's own bases and rows, for a name lookup made while the host holds its state.
+    pub(crate) fn host(bases: HostBases<'a>, counts: UnitCounts, focus: u64) -> Self {
+        Self {
+            src: Src::Host(bases, counts),
+            focus,
+        }
     }
 
     /// `fixture`'s tables alone, whatever view is lent.
@@ -369,6 +383,7 @@ impl<'a> Tokens<'a> {
                 arena: g.arena_count.min(g.arena.len()),
                 boss: g.boss.len(),
             },
+            Src::Host(_, counts) => counts,
             Src::Empty => UnitCounts::default(),
         }
     }
@@ -378,7 +393,7 @@ impl<'a> Tokens<'a> {
         match self.src {
             Src::Live => read_live(|l| l.unit_target(guid)).flatten(),
             Src::Fixture(g) => g.held.get(&guid).copied(),
-            Src::Empty => None,
+            Src::Host(..) | Src::Empty => None,
         }
     }
 
@@ -432,6 +447,7 @@ impl<'a> Tokens<'a> {
             base => match self.src {
                 Src::Live => read_live(|l| l.unit_base(base)).flatten().unwrap_or(0),
                 Src::Fixture(g) => g.table_base(base),
+                Src::Host(bases, _) => bases(base),
                 Src::Empty => 0,
             },
         }

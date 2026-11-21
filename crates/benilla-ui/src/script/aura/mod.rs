@@ -376,13 +376,19 @@ impl super::UiScript {
     }
 
     /// The name lookup alone (`0x60a630`), for the host's resolver, which reads every other part
-    /// of a token live: the guid a group member's or pet's name in `token` names, and the hops
-    /// after it.
-    pub fn unit_by_name<'t>(&self, token: &'t str) -> Option<(u64, super::Hops<'t>)> {
+    /// of a token live and hands its own read of the bases and rows (`bases`, `counts`): the guid
+    /// a group member's or pet's name in `token` names, and the hops after it.
+    pub fn unit_by_name<'t>(
+        &self,
+        token: &'t str,
+        bases: super::HostBases<'_>,
+        counts: super::UnitCounts,
+    ) -> Option<(u64, super::Hops<'t>)> {
         let model = self.model_ref();
-        model
-            .tokens()
-            .by_name(token, |unit, with_realm| model.token_name(unit, with_realm))
+        let tokens = super::unit::Tokens::host(bases, counts, model.focus);
+        tokens.by_name(token, |unit, with_realm| {
+            model.token_name_in(tokens, unit, with_realm)
+        })
     }
 
     /// Every token naming `guid` at the call, for a per-token unit event (`0x60bb70`).
