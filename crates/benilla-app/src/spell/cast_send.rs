@@ -348,8 +348,13 @@ impl CastLadder<'_, '_> {
             start_sent_cast(&mut self.ecs, None, spell_id, false);
         }
         let now = Instant::now();
-        if let CastCommit::Item { entry, .. } = commit {
-            self.pending.write().arm_item(spell_id, entry, now);
+        if let CastCommit::Item {
+            entry, item_guid, ..
+        } = commit
+        {
+            self.pending
+                .write()
+                .arm_item(spell_id, entry, item_guid, now);
         } else {
             // The ladder's `normal_cast` predicate; a ranged shot never raises the cursor.
             let guards = self
@@ -403,6 +408,8 @@ impl CastLadder<'_, '_> {
             }
         }
         if self.ground.read().active() {
+            let item = self.ground.read().cast_item();
+            self.press.cast_item_cancelled(item);
             self.ground.write().clear();
             self.press.selection();
         }
@@ -783,6 +790,7 @@ fn send_spell_cast(
     // with no packet, and continues down the ladder.
     if ground.active() {
         debug!("ui_action: cast {spell_id} supersedes the targeting cursor");
+        press.cast_item_cancelled(ground.cast_item());
         ground.clear();
         // The cursor's cast ends, and its finish runs the selection update (`0x8054f0`).
         press.selection();
@@ -1299,8 +1307,11 @@ fn send_spell_cast(
     // match a ranged shot; only `normal_cast` and the item arm guard. The item arm's deadline is
     // shorter because vmangos answers some `CMSG_USE_ITEM` legs with
     // `SMSG_INVENTORY_CHANGE_FAILURE` and no cast result.
-    if let CastCommit::Item { entry, .. } = commit {
-        pending.arm_item(spell_id, entry, now);
+    if let CastCommit::Item {
+        entry, item_guid, ..
+    } = commit
+    {
+        pending.arm_item(spell_id, entry, item_guid, now);
     } else {
         pending.arm(spell_id, now, normal_cast);
     }

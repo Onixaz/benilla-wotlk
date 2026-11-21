@@ -44,6 +44,8 @@ struct PendingCastState {
     guards: bool,
     /// The entry of the item that started it, which the current-item test (`0x805fc0`) reads.
     item: Option<u32>,
+    /// That item's guid, which the cancel tests the trade's enchanting item against (`0x80624d`).
+    item_guid: Option<u64>,
 }
 
 impl PendingCast {
@@ -86,18 +88,28 @@ impl PendingCast {
             deadline: now + SEND_PROVISIONAL,
             guards,
             item: None,
+            item_guid: None,
         });
     }
 
     /// Arm on an item use: the client's item use goes through the cast attempt, so it writes the
     /// same inflight id and meets the same gate. Only the deadline differs.
-    pub(crate) fn arm_item(&mut self, spell_id: u32, entry: u32, now: Instant) {
+    pub(crate) fn arm_item(&mut self, spell_id: u32, entry: u32, item_guid: u64, now: Instant) {
         self.0 = Some(PendingCastState {
             spell_id,
             deadline: now + ITEM_SEND_PROVISIONAL,
             guards: true,
             item: Some(entry),
+            item_guid: Some(item_guid),
         });
+    }
+
+    /// The guid of the item that started `spell_id`'s cast, when one did.
+    pub(crate) fn cast_item(&self, spell_id: u32) -> Option<u64> {
+        self.0
+            .as_ref()
+            .filter(|p| p.spell_id == spell_id)
+            .and_then(|p| p.item_guid)
     }
 
     /// Tighten the deadline to the server's real cast time once `SMSG_SPELL_START` names it.
@@ -406,6 +418,8 @@ impl SelfCancel<'_, '_> {
                 if *crate::net::CAST_TRACE {
                     info!("cast-trace: LOCAL self-cancel — {slot:?} ({by:?}), CMSG_CANCEL_CAST");
                 }
+                // The cast's item releases the trade's enchanting item ahead of the send (`0x806258`).
+                press.cast_item_cancelled(pending.cast_item(spell_id));
                 let _ = net.0.send(ClientCommand::CancelCast { spell_id });
                 match slot {
                     Inflight::Cast(_) => {
@@ -513,7 +527,7 @@ mod tests {
         const HEARTHSTONE: u32 = 6948;
         let t0 = Instant::now();
         let mut g = PendingCast::default();
-        g.arm_item(HEARTH_SPELL, HEARTHSTONE, t0);
+        g.arm_item(HEARTH_SPELL, HEARTHSTONE, 0x40, t0);
         assert_eq!(g.current_item(t0), Some(HEARTHSTONE));
         assert_eq!(g.current_item(t0 + ITEM_SEND_PROVISIONAL), None);
         g.clear_if(HEARTH_SPELL);
@@ -904,6 +918,84 @@ mod tests {
                 ),
                 "the second press reaches the cast half"
             );
+        }
+
+        /// The cancel of a cast an item started releases the trade's enchanting item ahead of the cast's end (`0x806258`); another item's cast leaves it locked (`0x80624d`).
+        #[test]
+        fn cancelling_an_items_cast_releases_the_trades_enchanting_item() {
+            use benilla_ui::script::{ContainerSlot, ContainerState, TradeItemFacts, TradeState};
+            const SCROLL: u64 = 0x4000_0000_0000_0001;
+            let cancelled = |cast_item: u64| {
+                let (mut app, _rx) = harness(HashMap::new());
+                let mut script = UiScript::new().unwrap();
+                let slot = ContainerSlot {
+                    guid: SCROLL,
+                    item_id: 38_682,
+                    count: 1,
+                    ..Default::default()
+                };
+                script.set_container(
+                    0,
+                    Some(ContainerState {
+                        bag_family: 0,
+                        name: None,
+                        num_slots: 16,
+                        slots: HashMap::from([(1, slot)]),
+                    }),
+                );
+                let mut trade = TradeState::default();
+                trade.target.slots[6] = Some(Default::default());
+                script.set_trade(Some(trade));
+                let facts = TradeItemFacts {
+                    enchants_on_use: true,
+                    ..Default::default()
+                };
+                script.set_trade_item_facts(0, 1, facts);
+                script.run("UseContainerItem(0, 1)").unwrap();
+                script.take_script_calls();
+                script
+                    .run(
+                        "LOG = {} local f = CreateFrame('Frame') f:RegisterEvent('ITEM_UNLOCKED') \
+                         f:RegisterEvent('UNIT_SPELLCAST_INTERRUPTED') \
+                         f:SetScript('OnEvent', function(_, e) LOG[#LOG + 1] = e end)",
+                    )
+                    .unwrap();
+                app.insert_non_send_resource(script);
+                app.world_mut().resource_mut::<PendingCast>().arm_item(
+                    FIREBALL,
+                    38_682,
+                    cast_item,
+                    Instant::now(),
+                );
+                mark_casting(&mut app, FIREBALL);
+                let edges = app
+                    .world_mut()
+                    .run_system_once(|mut cancel: SelfCancel| {
+                        cancel.cancel_player_spells();
+                        let edges = cancel.press.pending().to_vec();
+                        cancel.press.flush(&mut cancel.ecs);
+                        edges
+                    })
+                    .unwrap();
+                let log = app
+                    .world()
+                    .non_send_resource::<UiScript>()
+                    .eval::<String>("return table.concat(LOG, ' ')")
+                    .unwrap();
+                (edges, log)
+            };
+            use crate::ui_cast::CastBarEdge;
+            let end = [
+                CastBarEdge::Cancelled { caster: 10 },
+                CastBarEdge::Selection,
+            ];
+            let (edges, log) = cancelled(SCROLL);
+            assert_eq!(edges[0], CastBarEdge::CastItemCancelled(SCROLL));
+            assert_eq!(edges[1..], end, "the release is ahead of the cast's end");
+            assert_eq!(log, "ITEM_UNLOCKED");
+            let (edges, log) = cancelled(SCROLL + 1);
+            assert_eq!(edges[0], CastBarEdge::CastItemCancelled(SCROLL + 1));
+            assert_eq!(log, "", "another item's cast leaves it locked");
         }
 
         /// The client-controls clear cancels the cast whatever its `InterruptFlags`, and leaves a

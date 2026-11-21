@@ -347,6 +347,8 @@ pub(crate) fn use_action(
                     "ui_action: cast {} re-pressed — targeting toggles off",
                     b.action
                 );
+                let item = ladder.ground.read().cast_item();
+                ladder.press.cast_item_cancelled(item);
                 ladder.ground.write().clear();
                 return UseOutcome::Done;
             }

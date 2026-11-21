@@ -79,6 +79,8 @@ pub(crate) enum CastBarEdge {
     Selection,
     /// A plain signal a write inside the press raised, such as the auto-repeat spell's.
     Signal(&'static str),
+    /// A cancelled cast's item, which the trade's enchanting item is released against, ahead of the cancel's send and end (`0x806258`).
+    CastItemCancelled(u64),
     /// A refusal's line, shown where it is raised (`0x808200`).
     Refused(crate::ui_action::CastFail),
     /// A line the press raised through the message display (`0x5216f0`), such as an attack
@@ -175,6 +177,13 @@ impl PressSignals<'_, '_> {
     pub(crate) fn selection(&mut self) {
         if let Some(edges) = self.edges.as_mut() {
             edges.0.push(CastBarEdge::Selection);
+        }
+    }
+
+    /// A cast is being cancelled (`0x806200`): the item that cast it, when one did (`0x80624d`).
+    pub(crate) fn cast_item_cancelled(&mut self, item: Option<u64>) {
+        if let (Some(edges), Some(item)) = (self.edges.as_mut(), item.filter(|&g| g != 0)) {
+            edges.0.push(CastBarEdge::CastItemCancelled(item));
         }
     }
 
@@ -291,6 +300,7 @@ impl PressSignals<'_, '_> {
                 }
                 CastBarEdge::Selection => crate::ui_action::signals::selection_now(script),
                 CastBarEdge::Signal(event) => script.fire_event(event, Vec::new()),
+                CastBarEdge::CastItemCancelled(item) => script.cast_item_cancelled(item),
                 CastBarEdge::CooldownStart { on_hold } => {
                     crate::ui_action::signals::cooldown_site_now(
                         script,
@@ -640,6 +650,12 @@ pub(crate) fn apply_edge(world: &mut World, edge: CastBarEdge) {
         }
         _ => {}
     }
+    if let CastBarEdge::CastItemCancelled(item) = edge {
+        if let Some(mut ui) = world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
+            ui.write(move |script| script.cast_item_cancelled(item));
+        }
+        return;
+    }
     if let CastBarEdge::CooldownStart { on_hold } = edge {
         if let Some(mut ui) = world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
             crate::ui_action::signals::cooldown_site(
@@ -703,7 +719,10 @@ fn edge_system(
     let units = &mut *units;
     match edge {
         // Run by `apply_edge` before this system.
-        CastBarEdge::CooldownStart { .. } | CastBarEdge::Refused(_) | CastBarEdge::Line(_) => {}
+        CastBarEdge::CooldownStart { .. }
+        | CastBarEdge::Refused(_)
+        | CastBarEdge::Line(_)
+        | CastBarEdge::CastItemCancelled(_) => {}
         CastBarEdge::Selection => crate::ui_action::signals::selection(&mut ui),
         CastBarEdge::Signal(event) => ui.fire(event, Vec::new()),
         CastBarEdge::Sent { spell_id, target } => {
