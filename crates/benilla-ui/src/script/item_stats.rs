@@ -130,7 +130,7 @@ pub struct ItemTemplateView {
     /// The socket bonus's `SpellItemEnchantment` row, 0 for none, and its name.
     pub socket_bonus: u32,
     pub socket_bonus_name: Option<String>,
-    /// `GemProperties` (template `+0x1e8`), nonzero on a gem; a socket takes only such an item.
+    /// `GemProperties` (template `+0x1dc`), nonzero on a gem; a socket takes only such an item.
     pub gem_properties: u32,
     /// The gem's `GemProperties.dbc` row: its colour mask (`Type`), its socket enchant
     /// (`EnchantID`) and that enchant's name, the gem tooltip's line and a socket's once filled.

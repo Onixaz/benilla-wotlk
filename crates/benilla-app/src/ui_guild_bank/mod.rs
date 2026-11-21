@@ -404,6 +404,8 @@ pub(crate) struct SwapInputs<'w, 's> {
     objects: Objects<'w, 's>,
     items: Res<'w, Items>,
     guild: Res<'w, GuildState>,
+    /// A binding enchant binds its item (`0x7073e0`).
+    enchants: Option<Res<'w, crate::items::Enchants>>,
 }
 
 /// Drain the engine's sends: each gated on the open banker as the reference's senders are.
@@ -558,6 +560,18 @@ fn room(max: u32, held: u32) -> u32 {
     max.saturating_sub(held)
 }
 
+/// The deposit gate's one line for five tests, in order (`0x5a51aa`-`0x5a51fa` -> `0x5a53f6`): the template's conjured flag `0x2`, its flag `0x10000` beside a duration above 0 (`0x5a51c5`), the item's own duration running (`0x5a51d8`), then a template bound to a zone (`0x5a51e4`) or to a map (`0x5a51f3`).
+fn deposit_refused_as_conjured(
+    t: &benilla_protocol::messages::ItemInfo,
+    item: &benilla_protocol::ObjectFields,
+) -> bool {
+    t.flags & 0x2 != 0
+        || (t.flags & 0x1_0000 != 0 && t.duration > 0)
+        || item.item_duration().unwrap_or(0) != 0
+        || t.area != 0
+        || t.map != 0
+}
+
 /// The bag-to-bank swap (`0x5a50c0`): a bag item onto bank slot `(tab, slot)`, slot `0xFF` for the
 /// first that fits. Its refusals keep the cursor; a send clears it.
 #[allow(clippy::too_many_arguments)]
@@ -591,8 +605,8 @@ fn deposit_item(
         return GuildBankVerdict::Nothing;
     };
     let item_flags = item.item_flags().unwrap_or(0);
-    // Bound (`ITEM_FIELD_FLAGS & 1`), a quest item's own line first.
-    if item_flags & 0x1 != 0 {
+    // Bound, by its flag or a binding enchant (`0x5a515c` -> `0x708520`), a quest item's own line first (`0x5a5165`).
+    if crate::items::already_bound(item, inputs.enchants.as_deref()) {
         let key = if t.bonding == 4 {
             "ERR_GUILD_BANK_QUEST_ITEM"
         } else {
@@ -600,11 +614,10 @@ fn deposit_item(
         };
         return GuildBankVerdict::Refused(key);
     }
-    // Conjured (template flag `0x2`), or timed. The template's own duration is not read: a timed
-    // item streams its `ITEM_FIELD_DURATION`.
-    if t.flags & 0x2 != 0 || item.item_duration().unwrap_or(0) != 0 {
+    if deposit_refused_as_conjured(t, item) {
         return GuildBankVerdict::Refused("ERR_GUILD_BANK_CONJURED_ITEM");
     }
+    // Wrapped (`ITEM_FIELD_FLAGS & 8`, `0x5a5206`).
     if item_flags & 0x8 != 0 {
         return GuildBankVerdict::Refused("ERR_GUILD_BANK_WRAPPED_ITEM");
     }
@@ -904,6 +917,85 @@ mod swap_tests {
             .non_send_resource_mut::<UiScript>()
             .take_guild_bank_requests()
             .is_empty());
+    }
+
+    /// The deposit's one line for five tests (`0x5a53f6`): the conjured flag, flag `0x10000` beside a duration above 0 (`0x5a51c5`; either alone, or a negative duration, passes), the item's running duration (`0x5a51d8`), a zone-bound and a map-bound template (`0x5a51e4`, `0x5a51f3`).
+    #[test]
+    fn the_deposit_gate_refuses_a_conjured_timed_or_place_bound_item() {
+        use benilla_protocol::field::FIELD_ITEM_DURATION;
+        let t = |set: fn(&mut benilla_protocol::messages::ItemInfo)| {
+            let mut t = crate::items::test_template("Flurry Axe");
+            set(&mut t);
+            t
+        };
+        let plain = ObjectFields::from_pairs(&[]);
+        assert!(!deposit_refused_as_conjured(&t(|_| {}), &plain));
+        assert!(deposit_refused_as_conjured(&t(|t| t.flags = 0x2), &plain));
+        let timed = |t: &mut benilla_protocol::messages::ItemInfo| {
+            t.flags = 0x1_0000;
+            t.duration = 60;
+        };
+        assert!(deposit_refused_as_conjured(&t(timed), &plain));
+        assert!(!deposit_refused_as_conjured(
+            &t(|t| t.duration = 60),
+            &plain
+        ));
+        assert!(!deposit_refused_as_conjured(
+            &t(|t| t.flags = 0x1_0000),
+            &plain
+        ));
+        let negative = |t: &mut benilla_protocol::messages::ItemInfo| {
+            t.flags = 0x1_0000;
+            t.duration = -1;
+        };
+        assert!(!deposit_refused_as_conjured(&t(negative), &plain));
+        assert!(deposit_refused_as_conjured(&t(|t| t.area = 1519), &plain));
+        assert!(deposit_refused_as_conjured(&t(|t| t.map = 533), &plain));
+        let running = ObjectFields::from_pairs(&[(FIELD_ITEM_DURATION, 30)]);
+        assert!(deposit_refused_as_conjured(&t(|_| {}), &running));
+    }
+
+    /// A zone-bound item's deposit shows the conjured line inside the verb, the cursor still holding and nothing sent (`0x5a51e4` -> `0x5a53f6`), ahead of the wrapped test (`0x5a5206`).
+    #[test]
+    fn a_zone_bound_item_is_refused_before_the_wrapped_test() {
+        use benilla_protocol::field::{FIELD_ITEM_FLAGS, FIELD_OBJECT_ENTRY};
+        let (mut app, rx) = world(false, 0x2);
+        let mut zone_bound = crate::items::test_template("Flurry Axe");
+        zone_bound.area = 1519;
+        app.world_mut()
+            .resource_mut::<Items>()
+            .insert_template(ENTRY, Some(zone_bound));
+        // Wrapped as well: the zone's line wins.
+        let item = app.world().resource::<crate::net::GuidIndex>().0[&ITEM];
+        app.world_mut()
+            .entity_mut(item)
+            .insert(ObjectStore(ObjectFields::from_pairs(&[
+                (FIELD_OBJECT_ENTRY, ENTRY),
+                (FIELD_ITEM_FLAGS, 0x8),
+            ])));
+        app.world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .run(
+                r#"f2 = CreateFrame("Frame") f2:RegisterEvent("UI_ERROR_MESSAGE")
+                   f2:SetScript("OnEvent", function(_, _, text) Line = text end)
+                   ERR_GUILD_BANK_CONJURED_ITEM = "conjured" ERR_GUILD_BANK_WRAPPED_ITEM = "wrapped""#,
+            )
+            .unwrap();
+        assert_eq!(
+            run(
+                &mut app,
+                "PickupContainerItem(0, 1) PickupGuildBankItem(1, 1)"
+            ),
+            ["UI_ERROR_MESSAGE:item", "after:item"]
+        );
+        assert_eq!(
+            app.world()
+                .non_send_resource::<UiScript>()
+                .eval::<String>("return Line")
+                .unwrap(),
+            "conjured"
+        );
+        assert!(rx.try_iter().next().is_none(), "nothing goes out");
     }
 
     /// The right-click's auto-store runs the same swap inside `UseContainerItem` (`0x5a56e3`), slot `0xFF`; a rank with no deposit right is refused there, the item where it was (`0x5a52e8`).

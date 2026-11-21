@@ -136,6 +136,8 @@ pub struct ItemInfo {
     pub scaling_stat_value: u32,
     /// `ArmorDamageModifier` (`ItemRec+0x1e4`), a float; above 0 the armor line reads green.
     pub armor_damage_modifier: f32,
+    /// `Duration` in seconds (`ItemRec+0x1e8`), signed; 0 for an item that does not expire.
+    pub duration: i32,
 }
 
 impl ItemInfo {
@@ -421,7 +423,7 @@ pub(super) fn read_item_query_response_wotlk(r: &mut &[u8]) -> io::Result<(u32, 
     let gem_properties = read_u32_le(r)?;
     let required_disenchant_skill = read_i32_le(r)?;
     let armor_damage_modifier = read_f32_le(r)?;
-    let _duration = read_u32_le(r)?;
+    let duration = read_i32_le(r)?;
     let item_limit_category = read_u32_le(r)?;
     let _holiday = read_u32_le(r)?;
 
@@ -490,6 +492,7 @@ pub(super) fn read_item_query_response_wotlk(r: &mut &[u8]) -> io::Result<(u32, 
             scaling_stat_distribution,
             scaling_stat_value,
             armor_damage_modifier,
+            duration,
         }),
     ))
 }
