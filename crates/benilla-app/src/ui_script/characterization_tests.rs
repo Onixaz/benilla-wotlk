@@ -7619,3 +7619,36 @@ fn a_refusal_line_fires_in_its_call_and_never_from_the_feed() {
         "the feed shows the line no second time"
     );
 }
+
+/// A verb's refusal line fires inside its call with the `World` lent, ahead of the event a packet's handler fires in its turn on the next frame (#1306): the display fires the line in the verb's call (`0x5216f0` -> `0x52188a`), the learn's handler fires its own in the packet's turn. A line queued for the feed would show in the handler's frame, after its event.
+#[test]
+fn a_refusal_line_lands_before_the_next_handlers_event() {
+    let Some(mut rig) = Rig::login_after(vec![book(&[FIREBALL_1])], &[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run(
+            "Log = {} local f = CreateFrame('Frame') \
+             f:RegisterEvent('UI_ERROR_MESSAGE') f:RegisterEvent('SPELLS_CHANGED') \
+             f:SetScript('OnEvent', function(_, e) Log[#Log + 1] = e end) \
+             NotWhileDeadError() Log[#Log + 1] = 'after'",
+        )
+    })
+    .expect("a VM")
+    .expect("the chunk runs");
+    rig.packets(
+        vec![SessionEvent::SpellLearned {
+            spell_id: FROSTBOLT_1,
+        }],
+        2,
+    );
+    let log =
+        super::live::with_live_world(rig.app.world_mut(), |s| s.eval::<Vec<String>>("return Log"))
+            .expect("a VM")
+            .expect("the log");
+    assert_eq!(
+        log,
+        ["UI_ERROR_MESSAGE", "after", "SPELLS_CHANGED"],
+        "the line inside the verb's call, the learn's event in the packet's turn, no line again"
+    );
+}
