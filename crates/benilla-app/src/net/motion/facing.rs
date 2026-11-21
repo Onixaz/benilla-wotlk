@@ -199,6 +199,7 @@ pub(crate) fn apply_walk_end_facing(
                 wire: wire.rem_euclid(std::f32::consts::TAU),
                 hist: [0.0; 4],
                 velocity: 0.0,
+                shown: None,
                 deck: None,
             });
         }
@@ -294,8 +295,18 @@ fn damped_step(cur: f32, goal: f32, rate: f32, dt: f32, velocity: &mut f32) -> f
     let change = dt * (offset * rate + *velocity);
     let value = (offset + change) * damping + goal;
     *velocity = (*velocity - rate * change) * damping;
+    // Deviation: within a millionth of a radian and all but at rest, the turn takes the goal. The
+    // reference has no snap; without one a yaw closing on 0 creeps through ever finer floats for
+    // most of a minute, rewriting the transform each frame for an invisible change.
+    if (value - goal).abs() < SETTLE_BAND && velocity.abs() < SETTLE_BAND * rate {
+        *velocity = 0.0;
+        return goal.rem_euclid(TAU);
+    }
     value.rem_euclid(TAU)
 }
+
+/// The damped turn's settle band (rad), far under a visible turn.
+const SETTLE_BAND: f32 = 1.0e-6;
 
 /// Turns every stationary unit toward the goal the client's chain picks, in its branch order (the
 /// order is the behaviour):
