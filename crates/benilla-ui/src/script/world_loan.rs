@@ -147,6 +147,23 @@ pub fn in_turn_or_now(
     }
 }
 
+/// [`in_turn_or_now`] for a caller holding `&Lua`, such as a model write that fires a widget
+/// handler: queued in turn while a host step raises, run at once otherwise.
+pub(crate) fn lua_in_turn_or_now(lua: &Lua, op: impl FnOnce(&Lua) + Send + Sync + 'static) {
+    let mut op = Some(op);
+    with_turn(lua, |t| {
+        if let Some(q) = t.queue.as_mut() {
+            q.extend(
+                op.take()
+                    .map(|op| Raised::Op(Box::new(move |s: &mut super::UiScript| op(s.lua())))),
+            );
+        }
+    });
+    if let Some(op) = op {
+        op(lua);
+    }
+}
+
 /// A host step's turn on one VM: from [`Turn::begin`] every event raised on it queues in turn
 /// instead of firing, until the turn drops and the enclosing step's queue is put back (also on
 /// unwind). What is still queued at the drop is dropped: take it first ([`Turn::take`]).

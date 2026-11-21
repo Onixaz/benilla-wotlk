@@ -643,6 +643,54 @@ fn world_hover_drive_and_health_watcher() {
     assert!(s.take_errors().is_empty());
 }
 
+/// A feed pushes a hovered unit's health inside a host step that holds the VM in turn: the bar
+/// takes the value at once and its `OnValueChanged` waits for the step's raises, never running Lua
+/// inside the step.
+#[test]
+fn a_health_push_in_turn_fires_the_bars_handler_at_the_raise() {
+    use crate::script::world_loan::{Quiet, Turn};
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.set_unit("mouseover", Some(wolf()));
+    s.run(
+        r#"
+        changed = {}
+        UIParent = CreateFrame("Frame", "UIParent"); UIParent:SetAllPoints()
+        local tt = CreateFrame("GameTooltip", "GameTooltip"); tt:Hide()
+        tt:SetScript("OnTooltipSetDefaultAnchor", function()
+            GameTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+            GameTooltip:SetPoint("BOTTOMRIGHT", "UIParent", "BOTTOMRIGHT", -13, 70)
+        end)
+        local bar = CreateFrame("StatusBar", "GameTooltipStatusBar", tt)
+        bar:SetScript("OnValueChanged", function(self, v) changed[#changed + 1] = v end)
+    "#,
+    )
+    .unwrap();
+    assert!(s.world_tooltip_unit("mouseover"), "the hover shows");
+    s.run("changed = {}").unwrap();
+    let mut hurt = wolf();
+    hurt.health = 12;
+    let raised = {
+        let mut turn = Turn::begin(s.lua());
+        let quiet = Quiet::begin(s.lua());
+        s.set_unit("mouseover", Some(hurt));
+        drop(quiet);
+        turn.take()
+    };
+    assert_eq!(raised.len(), 1, "the handler waits in turn");
+    s.run(
+        r#"assert(#changed == 0 and GameTooltipStatusBar:GetValue() == 12,
+                  "the value lands at once, the handler waits")"#,
+    )
+    .unwrap();
+    for r in raised {
+        r.run(&mut s);
+    }
+    s.run(r#"assert(#changed == 1 and changed[1] == 12, "the handler fires at the raise")"#)
+        .unwrap();
+    assert!(s.take_errors().is_empty());
+}
+
 /// The minimap blip tooltip (`minimap_tooltip`): refused without `UIParent`, otherwise one line
 /// in `ANCHOR_CURSOR` (`0x57d181`) that follows the pointer, hidden at once on hover loss.
 #[test]
