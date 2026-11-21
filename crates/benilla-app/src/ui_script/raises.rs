@@ -36,6 +36,7 @@ impl InTurn<'_> {
             script,
             queue: self.queue.as_deref_mut(),
             turn,
+            raised: false,
         })
     }
 
@@ -58,9 +59,26 @@ pub(crate) struct VmTurn<'a> {
     script: &'a mut UiScript,
     queue: Option<&'a mut UiEvents>,
     turn: Option<(Turn, Quiet)>,
+    /// Whether this turn has raised: its raises moved onto the queue or wait in the turn.
+    raised: bool,
 }
 
 impl VmTurn<'_> {
+    /// Whether this turn has raised anything yet.
+    pub(crate) fn has_raised(&self) -> bool {
+        self.raised || benilla_ui::script::world_loan::raised_in_turn(self.script.lua())
+    }
+
+    /// Write the model with `op` once the raises made so far have reached their listeners, which
+    /// read the model as of their raise; at once when this turn has raised nothing.
+    pub(crate) fn after_raises(&mut self, op: impl FnOnce(&mut UiScript) + Send + Sync + 'static) {
+        if self.raised {
+            benilla_ui::script::world_loan::in_turn_or_now(self.script, op);
+        } else {
+            after_raises(self.script, op);
+        }
+    }
+
     /// The handler queue behind the raises made so far, so a `ui.fire` keeps its place among them.
     #[cfg(test)]
     pub(crate) fn ui(&mut self) -> &mut UiEvents {
@@ -71,6 +89,8 @@ impl VmTurn<'_> {
     /// The handler queue behind the raises made so far; `None` in a harness without one.
     pub(crate) fn queue(&mut self) -> Option<&mut UiEvents> {
         self.flush();
+        // What the caller queues there is a raise of this turn.
+        self.raised = true;
         self.queue.as_deref_mut()
     }
 
@@ -83,6 +103,7 @@ impl VmTurn<'_> {
         if raised.is_empty() {
             return;
         }
+        self.raised = true;
         if let Some(queue) = self.queue.as_deref_mut() {
             queue.write(move |script| run(script, raised));
         } else {
@@ -121,6 +142,19 @@ impl Drop for VmTurn<'_> {
     fn drop(&mut self) {
         self.flush();
         self.turn = None;
+    }
+}
+
+/// Write the model with `op` once the raises the open turn made so far have reached their
+/// listeners, which read the model as of their raise; at once when it has raised nothing.
+pub(crate) fn after_raises(
+    script: &mut UiScript,
+    op: impl FnOnce(&mut UiScript) + Send + Sync + 'static,
+) {
+    if benilla_ui::script::world_loan::raised_in_turn(script.lua()) {
+        benilla_ui::script::world_loan::in_turn_or_now(script, op);
+    } else {
+        op(script);
     }
 }
 

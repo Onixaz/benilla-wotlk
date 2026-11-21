@@ -36,11 +36,11 @@ mod characterization_tests;
 #[cfg(test)]
 mod feed_census_tests;
 #[cfg(test)]
-mod raise_census_tests;
-#[cfg(test)]
 mod layer_tests;
 mod load_log;
 mod manifest;
+#[cfg(test)]
+mod raise_census_tests;
 /// The server alert's fetch and `LaunchURL`'s browser, for the stock glue screens.
 pub(crate) mod server_alert;
 #[cfg(test)]

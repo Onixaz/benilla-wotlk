@@ -191,6 +191,11 @@ fn takes_vm(params: &str) -> bool {
 /// Holders that call no Lua, argued: (file, item, why).
 const CALLS_NO_LUA: &[(&str, &str, &str)] = &[
     (
+        "ui_lfg.rs",
+        "show_step",
+        "reads the money line's global strings off the VM",
+    ),
+    (
         "target/click.rs",
         "act_on_right_click",
         "reads and takes the cursor's sale off the model; its talks run as steps with the `World`",

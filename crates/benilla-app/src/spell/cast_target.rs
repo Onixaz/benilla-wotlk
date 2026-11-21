@@ -288,9 +288,7 @@ impl CastTargeting<'_, '_> {
 
     /// The selection as it stands now, for a token's resolve.
     pub(crate) fn selection(&self) -> Selection {
-        self.selection
-            .as_deref().cloned()
-            .unwrap_or_default()
+        self.selection.as_deref().cloned().unwrap_or_default()
     }
 
     /// This frame's [`CastContext`].

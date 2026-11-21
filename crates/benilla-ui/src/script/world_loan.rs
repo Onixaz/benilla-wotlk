@@ -44,6 +44,8 @@ thread_local! {
 struct TurnState {
     queue: Option<Vec<Raised>>,
     quiet: Vec<&'static std::panic::Location<'static>>,
+    /// Whether the open step's queue was taken with raises in it.
+    taken: bool,
 }
 
 /// `f` over `lua`'s turn state, made on first use.
@@ -126,6 +128,14 @@ pub fn in_turn(lua: &Lua) -> bool {
     with_turn(lua, |t| t.queue.is_some())
 }
 
+/// Whether the open step on `lua` has raised in turn: a raise or a write waits in its queue, or
+/// one was taken from it.
+pub fn raised_in_turn(lua: &Lua) -> bool {
+    with_turn(lua, |t| {
+        t.taken || t.queue.as_ref().is_some_and(|q| !q.is_empty())
+    })
+}
+
 /// Run `op` on `script` in its turn: queued behind the step's raises while a step raises in turn
 /// ([`raises_in_turn`]), at once otherwise.
 pub fn in_turn_or_now(
@@ -149,22 +159,28 @@ pub fn in_turn_or_now(
 pub struct Turn {
     lua: Lua,
     outer: Option<Vec<Raised>>,
+    outer_taken: bool,
 }
 
 impl Turn {
     /// Begin queueing `lua`'s raises in turn.
     pub fn begin(lua: &Lua) -> Self {
-        let outer = with_turn(lua, |t| t.queue.replace(Vec::new()));
+        let (outer, outer_taken) = with_turn(lua, |t| {
+            (t.queue.replace(Vec::new()), std::mem::take(&mut t.taken))
+        });
         Turn {
             lua: lua.clone(),
             outer,
+            outer_taken,
         }
     }
 
     /// The raises queued so far, in order; the turn keeps queueing.
     pub fn take(&mut self) -> Vec<Raised> {
         with_turn(&self.lua, |t| {
-            t.queue.as_mut().map(std::mem::take).unwrap_or_default()
+            let taken = t.queue.as_mut().map(std::mem::take).unwrap_or_default();
+            t.taken |= !taken.is_empty();
+            taken
         })
     }
 }
@@ -172,7 +188,11 @@ impl Turn {
 impl Drop for Turn {
     fn drop(&mut self) {
         let outer = self.outer.take();
-        with_turn(&self.lua, |t| t.queue = outer);
+        let outer_taken = self.outer_taken;
+        with_turn(&self.lua, |t| {
+            t.queue = outer;
+            t.taken = outer_taken;
+        });
     }
 }
 

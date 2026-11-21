@@ -1922,18 +1922,21 @@ fn feed_units(
 
     // `"player"` is pushed only while its descriptor exists: the roster seat stands in before
     // arrival, and `PLAYER_LOGOUT` handlers still read `UnitName("player")`, as the reference's do.
+    // Each snapshot written after a raise lands once that raise's listeners have run.
     // `"target"` pushes its absence too; `"player"` diffs against the event loop's memo.
     if let Some(cur) = &player {
         if memo.last.get("player") != Some(cur) {
             gate.audit("feed_units", "the player snapshot");
-            script.set_unit("player", player.clone());
+            let unit = player.clone();
+            script.after_raises(move |s| s.set_unit("player", unit));
         }
     }
     // `"target"` diffs against the VM's own: the selection setter's tail writes it in the call.
     let target_dirty = !script.holds_unit("target", target.as_ref());
     if target_dirty {
         gate.audit("feed_units", "the target snapshot");
-        script.set_unit("target", target.clone());
+        let unit = target.clone();
+        script.after_raises(move |s| s.set_unit("target", unit));
     }
     // Absence is data here too: the target dropping its target clears the token.
     let tot_dirty = match (&tot, memo.last.get("targettarget")) {
@@ -1943,7 +1946,8 @@ fn feed_units(
     };
     if tot_dirty {
         gate.audit("feed_units", "the target-of-target snapshot");
-        script.set_unit("targettarget", tot.clone());
+        let unit = tot.clone();
+        script.after_raises(move |s| s.set_unit("targettarget", unit));
     }
     let focus_dirty = match (&focus, memo.last.get("focus")) {
         (Some(cur), Some(prev)) => cur != prev,
@@ -1952,7 +1956,8 @@ fn feed_units(
     };
     if focus_dirty {
         gate.audit("feed_units", "the focus snapshot");
-        script.set_unit("focus", focus.clone());
+        let unit = focus.clone();
+        script.after_raises(move |s| s.set_unit("focus", unit));
     }
 
     // `"npc"`: the interact target (`0xbd07a8`). No guild leg, as for `"targettarget"`.
@@ -1975,7 +1980,8 @@ fn feed_units(
     };
     if npc_dirty {
         gate.audit("feed_units", "the interaction-NPC snapshot");
-        script.set_unit("npc", npc.clone());
+        let unit = npc.clone();
+        script.after_raises(move |s| s.set_unit("npc", unit));
         match &npc {
             Some(cur) => {
                 memo.last.insert("npc".to_string(), cur.clone());
@@ -2003,7 +2009,8 @@ fn feed_units(
     };
     if quest_npc_dirty {
         gate.audit("feed_units", "the questgiver snapshot");
-        script.set_unit("questnpc", quest_npc.clone());
+        let unit = quest_npc.clone();
+        script.after_raises(move |s| s.set_unit("questnpc", unit));
         match &quest_npc {
             Some(cur) => {
                 memo.last.insert("questnpc".to_string(), cur.clone());
@@ -2023,7 +2030,7 @@ fn feed_units(
         if memo.last_xp != Some((xp, next)) {
             gate.audit("feed_units", "the XP pair");
             memo.last_xp = Some((xp, next));
-            script.set_player_xp(xp, next);
+            script.after_raises(move |s| s.set_player_xp(xp, next));
             script.fire_event("PLAYER_XP_UPDATE", vec![]);
         }
     }
@@ -2044,13 +2051,19 @@ fn feed_units(
             gate.audit("feed_units", "the rest snapshot");
             let prev = memo.last_rest;
             memo.last_rest = Some(rest);
-            script.set_rest_state(rest.0, rest.1, rest.2 & PLAYER_FLAGS_RESTING != 0);
+            script.after_raises(move |s| {
+                s.set_rest_state(rest.0, rest.1, rest.2 & PLAYER_FLAGS_RESTING != 0)
+            });
             // The play-time bits share the dword and the memo; only the events split by bit.
-            script.set_play_time(
-                rest.2 & PLAYER_FLAGS_PARTIAL_PLAY_TIME != 0,
-                rest.2 & PLAYER_FLAGS_NO_PLAY_TIME != 0,
-            );
-            script.set_xp_user_disabled(rest.2 & PLAYER_FLAGS_NO_XP_GAIN != 0);
+            script.after_raises(move |s| {
+                s.set_play_time(
+                    rest.2 & PLAYER_FLAGS_PARTIAL_PLAY_TIME != 0,
+                    rest.2 & PLAYER_FLAGS_NO_PLAY_TIME != 0,
+                );
+            });
+            script.after_raises(move |s| {
+                s.set_xp_user_disabled(rest.2 & PLAYER_FLAGS_NO_XP_GAIN != 0)
+            });
             if prev.map(|p| (p.0, p.1)) != Some((rest.0, rest.1)) {
                 script.fire_event("UPDATE_EXHAUSTION", vec![]);
             }
@@ -2103,7 +2116,7 @@ fn feed_units(
         if memo.action_bar_toggles != Some(toggles) {
             gate.audit("feed_units", "the action-bar toggle byte");
             memo.action_bar_toggles = Some(toggles);
-            script.set_action_bar_toggles(toggles);
+            script.after_raises(move |s| s.set_action_bar_toggles(toggles));
         }
     }
 
@@ -2183,7 +2196,8 @@ fn feed_units(
         };
         if dirty {
             gate.audit("feed_units", "a boss or arena snapshot");
-            script.set_unit(token, snap.clone());
+            let unit = snap.clone();
+            script.after_raises(move |s| s.set_unit(token, unit));
         }
     }
 
@@ -2319,7 +2333,7 @@ fn feed_units(
         if memo.worn_hidden != Some(hidden) {
             gate.audit("feed_units", "the worn-display pair");
             memo.worn_hidden = Some(hidden);
-            script.set_worn_display(!hidden.0, !hidden.1);
+            script.after_raises(move |s| s.set_worn_display(!hidden.0, !hidden.1));
         }
     }
 }

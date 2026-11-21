@@ -498,10 +498,7 @@ impl ScriptCursor<'_, '_> {
         let Some(spell_id) = held else {
             return;
         };
-        let selection = self
-            .selection
-            .as_deref().cloned()
-            .unwrap_or_default();
+        let selection = self.selection.as_deref().cloned().unwrap_or_default();
         match self
             .tokens
             .resolve(token, &selection, crate::ui_unit::VmUnits::of(vm))
