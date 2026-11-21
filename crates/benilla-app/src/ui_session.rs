@@ -19,9 +19,12 @@ impl Plugin for UiSessionPlugin {
             .add_systems(
                 Update,
                 (
-                    // Ahead of the press, as the world frame's update runs before input.
+                    // Ahead of the press, as the world frame's update runs before input. Before our
+                    // re-created body is tagged, so a purge that took us clears the target while we
+                    // are gone (`0x51fe5c`); unordered, the tag's commands could land first.
                     update_interact_target
                         .after(crate::net::apply_net_updates)
+                        .before(crate::net::tag_self_player)
                         .before(crate::ui_script::UiPress),
                     deliver_interact_cues.before(benilla_world::schedule::WorldStage::Present),
                 ),
