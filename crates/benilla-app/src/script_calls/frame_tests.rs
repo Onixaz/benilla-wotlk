@@ -805,14 +805,27 @@ fn the_world_clicks_resolve_against_this_frames_pick() {
     assert!(g.before("::controller::control", "::update_hover"));
     for pick in [latch, "::update_hover"] {
         for leg in [
-            "::commit_ground_cast_on_click",
-            "::commit_object_cast_on_click",
             "::act_on_arrival",
             "::act_on_right_click",
             "::act_on_interact",
         ] {
             assert!(g.before(pick, leg), "{leg} follows {pick}");
         }
+    }
+    // The cursor commits read the press latch alone, after the gated select and before the tick,
+    // as 12340's input pass commits (`0x480410`) before the paint (`0x495320`).
+    for leg in [
+        "::commit_ground_cast_on_click",
+        "::commit_object_cast_on_click",
+    ] {
+        assert!(
+            g.before(Step::WorldSelect.suffix(), leg),
+            "{leg} follows the select"
+        );
+        assert!(
+            g.before(leg, Step::Tick.suffix()),
+            "{leg} precedes the tick"
+        );
     }
 }
 
@@ -1118,7 +1131,8 @@ fn the_rune_regen_runs_before_the_tick() {
 /// made them and before the frame's feed and tick, as 12340's input pass (`0x480410`, at
 /// `0x47f12d`) precedes the paint (`0x47f163` -> `0x495320`), and their raise step fires the GCD
 /// arm's signals (`0x805d70` -> `0x805ec3`) there: a Create click, a bag click under the item
-/// cursor and the soulstone's item leg each show their sweep in the frame of the press.
+/// cursor, the soulstone's item leg and a ground- or object-targeted world click each show their
+/// sweep in the frame of the press.
 #[test]
 fn the_presses_outside_the_script_calls_cast_before_the_feed_and_tick() {
     let g = graph_or_skip!();
@@ -1126,6 +1140,8 @@ fn the_presses_outside_the_script_calls_cast_before_the_feed_and_tick() {
         "::ui_tradeskill::drain_trade_skill",
         "::targeting::item::commit_item_cast_on_pick",
         "::death::drain_death",
+        "::commit_ground_cast_on_click",
+        "::commit_object_cast_on_click",
     ] {
         assert!(
             g.before(Step::UiInput.suffix(), press),

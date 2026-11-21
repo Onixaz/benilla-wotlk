@@ -26,20 +26,26 @@ use super::TargetingWants;
 /// keeps the mode. [`crate::target::click::select_on_click`] holds off while targeting, so the
 /// click neither selects nor deselects.
 ///
-/// Runs after `select_on_click`, which reads the mode this clears.
-pub(crate) fn commit_ground_cast_on_click(
+/// Runs in the press pass after `select_on_click`, which reads the mode this clears, as a press
+/// of its own: its raises fire at its step, so the GCD it arms reaches the frame's tick
+/// (`0x480410` before `0x495320`). A click claimed for a held item's drop is a terrain click too:
+/// the pending location cast takes it first (`0x52737a` -> `0x80c340`).
+pub(crate) fn commit_ground_cast_on_click(world: &mut World) {
+    crate::script_calls::press_step(world, ground_commit, ());
+}
+
+fn ground_commit(
     mut clicks: MessageReader<WorldClick>,
+    mut drops: MessageReader<crate::target::WorldDropClick>,
     // The point the press ray hit (the reference's `+0x2e8`), read unchanged at the release.
     press: Res<crate::target::PressPick>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
     mut ladder: crate::spell::CastLadder,
 ) {
     let occlusion = press.occlusion;
-    if !ladder.ground.active() {
+    let clicked = clicks.read().count() + drops.read().count() > 0;
+    if !ladder.ground.active() || !clicked {
         // A click buffered while idle must not replay as a commit once the mode turns on.
-        clicks.clear();
-        return;
-    }
-    if clicks.read().last().is_none() {
         return;
     }
     // The location-wanted test: a word without it binds nothing and the mode stays.
@@ -61,8 +67,18 @@ pub(crate) fn commit_ground_cast_on_click(
     debug!("ui_action: ground cast {spell_id} committed at {at:?} as {bound:?}");
     // The cast send: a thrown grenade commits as `CMSG_USE_ITEM` with the location block.
     ladder.commit_targeted(spell_id, commit, bound);
-    // No VM here: the commit's cast-bar edges fire once this system's commands apply.
-    ladder.press.flush(&mut ladder.ecs);
+    // The commit's cast-bar edges, fired at its step (`0x80b556`).
+    ladder.press.defer(&mut ui);
+}
+
+/// Whether a pending location cast takes this terrain click (`0x80c340`): a cast whose word still
+/// wants a source or a destination (`0x80c356`, `0x80c387`) and a ground point under the click.
+/// Else the held item's drop runs (`0x52738e`).
+pub(crate) fn location_cast_takes(
+    ground: &super::SpellTargeting,
+    occlusion: &crate::target::PickOcclusion,
+) -> bool {
+    ground.pending_for(TargetingWants::Location).is_some() && occlusion.ground_target().is_some()
 }
 
 /// The object leg. A left-click on an object goes to the selection set, whose first act while
@@ -79,21 +95,23 @@ pub(crate) fn commit_ground_cast_on_click(
 /// ([`super::corpse::bind_target_corpse`]). A lock word has no unit bit, so it puts no unit in the
 /// pick and the click reaches what stands behind one ([`super::pick`]).
 ///
-/// Runs after `select_on_click`, as the terrain commit does.
-pub(crate) fn commit_object_cast_on_click(
+/// Runs after `select_on_click`, as the terrain commit does, as a press of its own.
+pub(crate) fn commit_object_cast_on_click(world: &mut World) {
+    crate::script_calls::press_step(world, object_commit, ());
+}
+
+fn object_commit(
     mut clicks: MessageReader<WorldClick>,
     // The press's pick: the object the gesture started on.
     press: Res<crate::target::PressPick>,
     checks: super::BindChecks,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
     mut ladder: crate::spell::CastLadder,
 ) {
     let (hovered, hovered_object) = (press.hovered, press.object);
-    if !ladder.ground.active() {
+    let clicked = clicks.read().count() > 0;
+    if !ladder.ground.active() || !clicked {
         // A click buffered while idle must not replay as a commit once the mode turns on.
-        clicks.clear();
-        return;
-    }
-    if clicks.read().last().is_none() {
         return;
     }
     // The object-wanted test: without it the pick holds no GameObject.
@@ -105,7 +123,7 @@ pub(crate) fn commit_object_cast_on_click(
         } else if let Some((entity, guid)) = hovered.corpse.zip(hovered.corpse_guid) {
             super::corpse::bind_target_corpse(&mut ladder, &checks, entity, guid);
         }
-        ladder.press.flush(&mut ladder.ecs);
+        ladder.press.defer(&mut ui);
         return;
     }
     let held = ladder.ground.pending_for(TargetingWants::GameObject);
@@ -118,8 +136,8 @@ pub(crate) fn commit_object_cast_on_click(
     debug!("ui_action: cast {spell_id} committed at gameobject {guid:#x}");
     // `CMSG_CAST_SPELL` mask `0x800` and the packed guid, or `CMSG_USE_ITEM` for a key.
     ladder.commit_targeted(spell_id, commit, TargetedBind::Object(guid));
-    // No VM here: the commit's cast-bar edges fire once this system's commands apply.
-    ladder.press.flush(&mut ladder.ecs);
+    // The commit's cast-bar edges, fired at its step (`0x80b556`).
+    ladder.press.defer(&mut ui);
 }
 
 #[cfg(test)]
@@ -158,6 +176,7 @@ mod tests {
         world.init_resource::<crate::spell::HeldForPick>();
         world.init_resource::<Messages<crate::creature_anim::SheathRequest>>();
         world.init_resource::<Messages<WorldClick>>();
+        world.init_resource::<Messages<crate::target::WorldDropClick>>();
         // The commit legs read the press latch, not the live hover.
         world.init_resource::<crate::target::PressPick>();
         // Registered, not `run_system_once`: the reader drain is state across frames, and a fresh
@@ -257,6 +276,37 @@ mod tests {
             rx.try_recv(),
             Ok(ClientCommand::CastSpellAtSource { .. })
         ));
+    }
+
+    /// A click claimed for a held item's drop is a terrain click: the pending location cast takes
+    /// it first and sends (`0x52737a` -> `0x80c340` -> `0x80ac90`).
+    #[test]
+    fn a_drop_claimed_click_commits_the_pending_location_cast() {
+        const BLIZZARD: u32 = 10;
+        let (mut world, rx, _) = fixture();
+        let id = world.register_system(commit_ground_cast_on_click);
+        world.resource_mut::<super::super::SpellTargeting>().enter(
+            BLIZZARD,
+            crate::spell::cast_send::CastCommit::Spell,
+            0x0040,
+        );
+        world.resource_mut::<crate::target::PressPick>().occlusion = crate::target::PickOcclusion {
+            distance: 5.0,
+            point: Some(Vec3::new(1.0, 2.0, 3.0)),
+            ..Default::default()
+        };
+        world
+            .resource_mut::<Messages<crate::target::WorldDropClick>>()
+            .write(crate::target::WorldDropClick);
+        world.run_system(id).expect("the ground commit runs");
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ClientCommand::CastSpellAtDest {
+                spell_id: BLIZZARD,
+                ..
+            })
+        ));
+        assert!(!world.resource::<super::super::SpellTargeting>().active());
     }
 
     /// A click on a hull nearer than the world binds there; a boat's deck binds the boat's guid

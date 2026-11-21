@@ -126,14 +126,20 @@ pub(crate) fn drop_on_world_click(world: &mut World) {
     }
 }
 
-/// The press pick of a click this frame settled, plain or a drop.
+/// The press pick of a click this frame settled, plain or a drop, unless a pending location cast
+/// takes the terrain click first (`0x52737a` -> `0x80c340`, the item's leg only on false at
+/// `0x52738e`).
 fn settled_click(
     press: Res<crate::target::PressPick>,
+    ground: Option<Res<crate::spell::SpellTargeting>>,
     mut clicks: MessageReader<WorldClick>,
     mut drops: MessageReader<WorldDropClick>,
 ) -> Option<benilla_ui::script::WorldPick> {
     let clicked = clicks.read().count() + drops.read().count() > 0;
-    clicked.then(|| press.world_pick())
+    let taken = ground
+        .as_deref()
+        .is_some_and(|g| crate::spell::targeting::location_cast_takes(g, &press.occlusion));
+    (clicked && !taken).then(|| press.world_pick())
 }
 
 #[cfg(test)]
