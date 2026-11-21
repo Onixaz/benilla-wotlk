@@ -387,6 +387,18 @@ fn the_character_sheet_fields_read_where_the_12340_stat_verbs_read_them() {
     assert_eq!(f.player_combat_rating(25), None);
 }
 
+/// `GAMEOBJECT_BYTES_1` byte 2 is the art kit, a signed byte; with no field it is 0.
+#[test]
+fn a_gameobject_reads_its_art_kit_as_a_signed_byte() {
+    let kit = |bytes: u32| {
+        ObjectFields::from_pairs(&[(FIELD_GAMEOBJECT_BYTES_1, bytes)]).gameobject_art_kit()
+    };
+    assert_eq!(kit(0x0001_0001), 1);
+    assert_eq!(kit(0x0051_0601), 81);
+    assert_eq!(kit(0xFFFF_0601), -1, "0xff names no row");
+    assert_eq!(ObjectFields::from_pairs(&[]).gameobject_art_kit(), 0);
+}
+
 /// `GAMEOBJECT_BYTES_1` holds the state and type; `GAMEOBJECT_DYNAMIC`'s low half the dynamic
 /// flags under a path progress. The parent rotation is not the spawn's own.
 #[test]
@@ -407,6 +419,11 @@ fn a_gameobject_reads_its_packed_bytes_and_its_rotation_from_movement() {
     let f = f.into_created(ObjectType::GameObject);
     assert_eq!(f.gameobject_state(), Some(1));
     assert_eq!(f.gameobject_type_id(), 19);
+    assert_eq!(
+        f.gameobject_art_kit(),
+        0,
+        "byte 3 is the progress, not the art kit"
+    );
     assert_eq!(f.gameobject_dynamic_flags(), 0x4);
     assert_eq!(f.gameobject_displayid(), Some(5_000));
     assert_eq!(f.gameobject_faction(), 35);

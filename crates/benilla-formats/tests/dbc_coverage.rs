@@ -23,7 +23,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("BannedAddOns", "#245 the addon ban list"),
     ("DanceMoves", "#243 dance studio emotes"),
     ("DestructibleModelData", "#243 destructible buildings"),
-    ("GameObjectArtKit", "#243 game object art kits"),
     ("ItemPurchaseGroup", "#239 merchant purchase groups"),
     ("LoadingScreenTaxiSplines", "#243 the taxi loading screen"),
     ("MailTemplate", "#245 templated mail text: GetInboxText"),

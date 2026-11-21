@@ -27,7 +27,7 @@ pub(crate) fn apply_net_updates(world: &mut World) {
 /// Tags our own streamed entity with [`SelfPlayer`] by matching [`Guid`] against [`SelfGuid`].
 /// A pass of its own, not at spawn, so either arrival order of our guid and our create block works;
 /// a cross-map worldport re-streams the avatar and it is tagged again.
-pub(super) fn tag_self_player(
+pub(crate) fn tag_self_player(
     mut commands: Commands,
     self_guid: Res<SelfGuid>,
     untagged: Query<(Entity, &Guid), Without<SelfPlayer>>,
