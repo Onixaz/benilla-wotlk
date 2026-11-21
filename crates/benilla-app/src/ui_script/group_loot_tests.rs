@@ -562,30 +562,32 @@ fn ctrl_and_shift_on_the_roll_icon_preview_and_post_its_link() {
         "the rolled item's full escaped link landed in the chat box"
     );
 
-    s.record_writes();
-    s.set_modifiers(false, true, false);
-    s.mouse_button(x, y, "LeftButton", true);
-    s.mouse_button(x, y, "LeftButton", false);
-    s.set_modifiers(false, false, false);
-    assert_eq!(
-        s.take_dressup_edits(),
-        vec![DressUpIntent::Dress, DressUpIntent::TryOn(25, [0; 4])],
-        "re-dress first, then try the rolled item on"
-    );
-    assert!(
-        s.take_loot_roll_votes().is_empty() && s.take_loot_roll_confirms().is_empty(),
-        "no modified icon click may vote"
-    );
+    let mut writes_v = crate::ui_script::test_live::View;
+    crate::ui_script::test_live::lending(&mut writes_v, || {
+        s.set_modifiers(false, true, false);
+        s.mouse_button(x, y, "LeftButton", true);
+        s.mouse_button(x, y, "LeftButton", false);
+        s.set_modifiers(false, false, false);
+        assert_eq!(
+            s.take_dressup_edits(),
+            vec![DressUpIntent::Dress, DressUpIntent::TryOn(25, [0; 4])],
+            "re-dress first, then try the rolled item on"
+        );
+        assert!(
+            s.take_loot_roll_votes().is_empty() && s.take_loot_roll_confirms().is_empty(),
+            "no modified icon click may vote"
+        );
 
-    let (nx, ny) = quad_center(&quads, "UI-GroupLoot-Dice-Up");
-    s.mouse_button(nx, ny, "LeftButton", true);
-    s.mouse_button(nx, ny, "LeftButton", false);
-    assert_eq!(
-        s.take_loot_roll_votes(),
-        vec![(8, 1)],
-        "the Need button still votes"
-    );
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+        let (nx, ny) = quad_center(&quads, "UI-GroupLoot-Dice-Up");
+        s.mouse_button(nx, ny, "LeftButton", true);
+        s.mouse_button(nx, ny, "LeftButton", false);
+        assert_eq!(
+            s.take_loot_roll_votes(),
+            vec![(8, 1)],
+            "the Need button still votes"
+        );
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    });
 }
 
 /// Addons inherit `GroupLootFrameTemplate` by its 1.12 name and reach for its children; the icon

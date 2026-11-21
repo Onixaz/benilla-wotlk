@@ -135,15 +135,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::UnitCast;
-    use crate::script::live::{lend_test, LiveLoan, TestView};
+    use crate::script::live::TestView;
     use crate::script::{ScriptValue, UiScript, UnitGuids};
 
-    /// `casts` lent as the units' held casts and channels, by `(guid, channel)`.
-    fn lend(casts: Vec<((u64, bool), UnitCast)>) -> LiveLoan<TestView> {
-        lend_test(TestView {
+    /// A view answering `casts` as the units' held casts and channels, by `(guid, channel)`.
+    fn lend(casts: Vec<((u64, bool), UnitCast)>) -> TestView {
+        TestView {
             unit_casts: casts.into_iter().collect(),
             ..Default::default()
-        })
+        }
     }
 
     const ME: u64 = 0x10;
@@ -179,33 +179,37 @@ mod tests {
     fn casting_info_answers_nine_values_while_the_cast_runs() {
         let mut s = script();
         assert_eq!(s.arity(r#"UnitCastingInfo("player")"#).unwrap(), 0);
-        let _view = lend(vec![((ME, false), heal())]);
-        assert_eq!(s.arity(r#"UnitCastingInfo("player")"#).unwrap(), 9);
-        assert_eq!(
-            s.eval::<String>(
-                r#"local n, r, t, i, a, b, ts, id, ni = UnitCastingInfo("player")
+        let mut view_v = lend(vec![((ME, false), heal())]);
+        crate::script::live::lending(&mut view_v, || {
+            assert_eq!(s.arity(r#"UnitCastingInfo("player")"#).unwrap(), 9);
+            assert_eq!(
+                s.eval::<String>(
+                    r#"local n, r, t, i, a, b, ts, id, ni = UnitCastingInfo("player")
                    return table.concat({n, r, t, i, a, b, tostring(ts), id, tostring(ni)}, "|")"#
-            )
-            .unwrap(),
-            r"Lesser Heal|Rank 1|Lesser Heal|Interface\Icons\Spell_Holy_LesserHeal|10000|11500|false|7|false"
-        );
-        assert_eq!(s.arity(r#"UnitChannelInfo("player")"#).unwrap(), 0);
-        assert_eq!(s.arity(r#"UnitCastingInfo("target")"#).unwrap(), 0);
-        s.set_now(11.5);
-        assert_eq!(
-            s.arity(r#"UnitCastingInfo("player")"#).unwrap(),
-            0,
-            "past its end"
-        );
-        let err = s.run("UnitCastingInfo()").unwrap_err().to_string();
-        assert!(err.contains(r#"Usage: UnitCastingInfo("unit")"#), "{err}");
+                )
+                .unwrap(),
+                r"Lesser Heal|Rank 1|Lesser Heal|Interface\Icons\Spell_Holy_LesserHeal|10000|11500|false|7|false"
+            );
+            assert_eq!(s.arity(r#"UnitChannelInfo("player")"#).unwrap(), 0);
+            assert_eq!(s.arity(r#"UnitCastingInfo("target")"#).unwrap(), 0);
+            s.set_now(11.5);
+            assert_eq!(
+                s.arity(r#"UnitCastingInfo("player")"#).unwrap(),
+                0,
+                "past its end"
+            );
+            let err = s.run("UnitCastingInfo()").unwrap_err().to_string();
+            assert!(err.contains(r#"Usage: UnitCastingInfo("unit")"#), "{err}");
+        });
     }
 
     #[test]
     fn channel_info_answers_eight_values() {
         let s = script();
-        let _view = lend(vec![((MOB, true), heal())]);
-        assert_eq!(s.arity(r#"UnitChannelInfo("target")"#).unwrap(), 8);
+        let mut view_v = lend(vec![((MOB, true), heal())]);
+        crate::script::live::lending(&mut view_v, || {
+            assert_eq!(s.arity(r#"UnitChannelInfo("target")"#).unwrap(), 8);
+        });
     }
 
     /// `0x612090` says `CHANNELING` only to the literal `"player"` token, in any case: the same
@@ -219,20 +223,22 @@ mod tests {
             ..Default::default()
         });
         s.run("CHANNELING = 'Channeling'").unwrap();
-        let _view = lend(vec![(
+        let mut view_v = lend(vec![(
             (ME, true),
             UnitCast {
                 channeling_text: true,
                 ..heal()
             },
         )]);
-        let text = |s: &UiScript, token: &str| {
-            s.eval::<String>(&format!("return (select(3, UnitChannelInfo({token:?})))"))
-                .unwrap()
-        };
-        assert_eq!(text(&s, "player"), "Channeling");
-        assert_eq!(text(&s, "PLAYER"), "Channeling");
-        assert_eq!(text(&s, "target"), "Lesser Heal");
+        crate::script::live::lending(&mut view_v, || {
+            let text = |s: &UiScript, token: &str| {
+                s.eval::<String>(&format!("return (select(3, UnitChannelInfo({token:?})))"))
+                    .unwrap()
+            };
+            assert_eq!(text(&s, "player"), "Channeling");
+            assert_eq!(text(&s, "PLAYER"), "Channeling");
+            assert_eq!(text(&s, "target"), "Lesser Heal");
+        });
     }
 
     /// One fire per token naming the caster, the token first.

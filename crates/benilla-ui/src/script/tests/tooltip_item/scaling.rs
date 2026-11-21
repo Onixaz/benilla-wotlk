@@ -62,35 +62,34 @@ fn setup(
     level: u32,
     class_flags: u32,
     proficiency: u32,
-) -> (
-    UiScript,
-    crate::script::live::LiveLoan<crate::script::live::TestView>,
-) {
+) -> (UiScript, crate::script::live::TestView) {
     let mut s = script();
     s.set_screen_size(800.0, 600.0);
     s.run(STRINGS).unwrap();
-    let loan = crate::script::live::lend_test(crate::script::live::TestView {
+    let mut loan = crate::script::live::TestView {
         item_tables: Some(ItemTables {
             scaling: tables(),
             ..Default::default()
         }),
         ..Default::default()
-    });
-    s.set_item_template(9100, chest());
-    s.set_player_req_state(PlayerReqState {
-        level,
-        class_id: 1,
-        class_flags,
-        proficiency: [(4, proficiency)].into_iter().collect(),
-        ..Default::default()
-    });
-    s.run(
+    };
+    crate::script::live::lending(&mut loan, || {
+        s.set_item_template(9100, chest());
+        s.set_player_req_state(PlayerReqState {
+            level,
+            class_id: 1,
+            class_flags,
+            proficiency: [(4, proficiency)].into_iter().collect(),
+            ..Default::default()
+        });
+        s.run(
         r#"
         local a = CreateFrame("Button", "Slot"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
         CreateFrame("GameTooltip", "TT")
         "#,
     )
     .unwrap();
+    });
     (s, loan)
 }
 
@@ -102,79 +101,85 @@ fn texts(s: &mut UiScript) -> Vec<String> {
 /// the range line names it, and the rating and spell power lines read the same row.
 #[test]
 fn a_linked_heirloom_reads_the_links_level() {
-    let (mut s, _tables) = setup(40, 0, 1 << 4);
-    let read = |s: &mut UiScript, level: u32| {
-        s.run(&format!(
-            r#"TT:SetOwner(Slot, "ANCHOR_RIGHT")
+    let (mut s, mut tables_v) = setup(40, 0, 1 << 4);
+    crate::script::live::lending(&mut tables_v, || {
+        let read = |s: &mut UiScript, level: u32| {
+            s.run(&format!(
+                r#"TT:SetOwner(Slot, "ANCHOR_RIGHT")
                TT:SetHyperlink("|Hitem:9100:0:0:0:0:0:0:0:{level}|h[Heirloom Chest]|h")"#
-        ))
-        .unwrap();
-        texts(s)
-    };
-    let at2 = read(&mut s, 2);
-    assert_eq!(
-        at2,
-        [
-            "Heirloom Chest",
-            "[ITEM_BIND_TO_ACCOUNT]",
-            "[INVTYPE_CHEST]",
-            "[ARMOR 20]",
-            "[MOD_AGILITY +200]",
-            "[MOD_STAMINA +100]",
-            "[RANGE 1 80 2]",
-            "[ONEQUIP] [MOD_HIT_RATING 50]",
-            "[ONEQUIP] [MOD_SPELL_POWER 2]",
-        ]
-    );
-    let at10 = read(&mut s, 10);
-    assert!(at10.contains(&"[ARMOR 100]".to_string()), "{at10:?}");
-    assert!(at10.contains(&"[RANGE 1 80 10]".to_string()), "{at10:?}");
-    // A link with no level field shows the player's.
-    s.run(
+            ))
+            .unwrap();
+            texts(s)
+        };
+        let at2 = read(&mut s, 2);
+        assert_eq!(
+            at2,
+            [
+                "Heirloom Chest",
+                "[ITEM_BIND_TO_ACCOUNT]",
+                "[INVTYPE_CHEST]",
+                "[ARMOR 20]",
+                "[MOD_AGILITY +200]",
+                "[MOD_STAMINA +100]",
+                "[RANGE 1 80 2]",
+                "[ONEQUIP] [MOD_HIT_RATING 50]",
+                "[ONEQUIP] [MOD_SPELL_POWER 2]",
+            ]
+        );
+        let at10 = read(&mut s, 10);
+        assert!(at10.contains(&"[ARMOR 100]".to_string()), "{at10:?}");
+        assert!(at10.contains(&"[RANGE 1 80 10]".to_string()), "{at10:?}");
+        // A link with no level field shows the player's.
+        s.run(
         r#"TT:SetOwner(Slot, "ANCHOR_RIGHT"); TT:SetHyperlink("|Hitem:9100|h[Heirloom Chest]|h")"#,
     )
     .unwrap();
-    assert!(texts(&mut s).contains(&"[RANGE 1 80 40]".to_string()));
+        assert!(texts(&mut s).contains(&"[RANGE 1 80 40]".to_string()));
+    });
 }
 
 /// A loot row's requester is the loot's source (`0x62e638`): a unit source's level picks the row,
 /// any other source (a chest, a bobber) leaves the player's.
 #[test]
 fn a_looted_heirloom_reads_the_source_units_level() {
-    let (mut s, _tables) = setup(40, 0, 1 << 4);
-    let read = |s: &mut UiScript, source_unit: bool, source_level: u32| {
-        s.set_loot(Some(LootState {
-            source_unit,
-            source_level,
-            master_candidates: Vec::new(),
-            rows: vec![Some(LootRow {
-                name: Some("Heirloom Chest".into()),
-                texture: None,
-                quantity: 1,
-                quality: Some(7),
-                is_coin: false,
-                item_id: 9100,
-                link: Some("|cffe6cc80|Hitem:9100:0:0:0:0:0:0:0:0|h[Heirloom Chest]|h|r".into()),
-                random_property_id: 0,
-                locked: false,
-            })],
-            fishing: false,
-        }));
-        s.run(r#"TT:SetOwner(Slot, "ANCHOR_RIGHT"); TT:SetLootItem(1)"#)
-            .unwrap();
-        texts(s)
-    };
-    let corpse = read(&mut s, true, 12);
-    assert!(corpse.contains(&"[ARMOR 120]".to_string()), "{corpse:?}");
-    assert!(
-        corpse.contains(&"[RANGE 1 80 12]".to_string()),
-        "{corpse:?}"
-    );
-    let chest = read(&mut s, false, 0);
-    assert!(chest.contains(&"[RANGE 1 80 40]".to_string()), "{chest:?}");
-    // Above the distribution's maximum the source is held to it, as any requester is.
-    let boss = read(&mut s, true, 83);
-    assert!(boss.contains(&"[RANGE 1 80 80]".to_string()), "{boss:?}");
+    let (mut s, mut tables_v) = setup(40, 0, 1 << 4);
+    crate::script::live::lending(&mut tables_v, || {
+        let read = |s: &mut UiScript, source_unit: bool, source_level: u32| {
+            s.set_loot(Some(LootState {
+                source_unit,
+                source_level,
+                master_candidates: Vec::new(),
+                rows: vec![Some(LootRow {
+                    name: Some("Heirloom Chest".into()),
+                    texture: None,
+                    quantity: 1,
+                    quality: Some(7),
+                    is_coin: false,
+                    item_id: 9100,
+                    link: Some(
+                        "|cffe6cc80|Hitem:9100:0:0:0:0:0:0:0:0|h[Heirloom Chest]|h|r".into(),
+                    ),
+                    random_property_id: 0,
+                    locked: false,
+                })],
+                fishing: false,
+            }));
+            s.run(r#"TT:SetOwner(Slot, "ANCHOR_RIGHT"); TT:SetLootItem(1)"#)
+                .unwrap();
+            texts(s)
+        };
+        let corpse = read(&mut s, true, 12);
+        assert!(corpse.contains(&"[ARMOR 120]".to_string()), "{corpse:?}");
+        assert!(
+            corpse.contains(&"[RANGE 1 80 12]".to_string()),
+            "{corpse:?}"
+        );
+        let chest = read(&mut s, false, 0);
+        assert!(chest.contains(&"[RANGE 1 80 40]".to_string()), "{chest:?}");
+        // Above the distribution's maximum the source is held to it, as any requester is.
+        let boss = read(&mut s, true, 83);
+        assert!(boss.contains(&"[RANGE 1 80 80]".to_string()), "{boss:?}");
+    });
 }
 
 /// The plate piece reads as mail for a class flagged `0x20` with the mail bit, leather without
@@ -187,16 +192,18 @@ fn a_flagged_class_reads_scaling_plate_as_the_armor_it_wears() {
         (0, 1 << 3, "Plate", true),
         (0x20, 1 << 4, "Plate", false),
     ] {
-        let (mut s, _tables) = setup(10, flags, proficiency);
-        s.run(r#"TT:SetOwner(Slot, "ANCHOR_RIGHT"); SetItemByIdForTest(TT, 9100)"#)
-            .unwrap();
-        let right: String = s.eval("return TTTextRight3:GetText()").unwrap();
-        assert_eq!(
-            right, want_right,
-            "flags {flags:#x} proficiency {proficiency:#x}"
-        );
-        let color = super::right_color(&mut s, want_right);
-        assert_eq!(color[1] < 0.5, red, "flags {flags:#x}: {color:?}");
+        let (mut s, mut tables_v) = setup(10, flags, proficiency);
+        crate::script::live::lending(&mut tables_v, || {
+            s.run(r#"TT:SetOwner(Slot, "ANCHOR_RIGHT"); SetItemByIdForTest(TT, 9100)"#)
+                .unwrap();
+            let right: String = s.eval("return TTTextRight3:GetText()").unwrap();
+            assert_eq!(
+                right, want_right,
+                "flags {flags:#x} proficiency {proficiency:#x}"
+            );
+            let color = super::right_color(&mut s, want_right);
+            assert_eq!(color[1] < 0.5, red, "flags {flags:#x}: {color:?}");
+        });
     }
 }
 
@@ -204,51 +211,54 @@ fn a_flagged_class_reads_scaling_plate_as_the_armor_it_wears() {
 /// headerless; shift, a closed vendor or a plain item answer nil.
 #[test]
 fn the_compare_offset_three_shows_the_heirloom_at_a_vendor() {
-    let (mut s, _tables) = setup(40, 0, 1 << 4);
-    s.set_unit(
-        "player",
-        Some(UnitState {
-            exists: true,
-            ..Default::default()
-        }),
-    );
-    s.set_item_template(
-        9101,
-        ItemTemplateView {
-            name: "Plain".into(),
-            inventory_type: 5,
-            ..Default::default()
-        },
-    );
-    let link = "|Hitem:9100:0:0:0:0:0:0:0:40|h[Heirloom Chest]|h";
-    let ask = |s: &mut UiScript, link: &str, shift: bool| -> Option<i64> {
-        s.eval(&format!(
-            r#"TT:SetOwner(Slot, "ANCHOR_RIGHT")
+    let (mut s, mut tables_v) = setup(40, 0, 1 << 4);
+    crate::script::live::lending(&mut tables_v, || {
+        s.set_unit(
+            "player",
+            Some(UnitState {
+                exists: true,
+                ..Default::default()
+            }),
+        );
+        s.set_item_template(
+            9101,
+            ItemTemplateView {
+                name: "Plain".into(),
+                inventory_type: 5,
+                ..Default::default()
+            },
+        );
+        let link = "|Hitem:9100:0:0:0:0:0:0:0:40|h[Heirloom Chest]|h";
+        let ask = |s: &mut UiScript, link: &str, shift: bool| -> Option<i64> {
+            s.eval(&format!(
+                r#"TT:SetOwner(Slot, "ANCHOR_RIGHT")
                return TT:SetHyperlinkCompareItem("{link}", 3, {shift})"#
-        ))
-        .unwrap()
-    };
-    assert_eq!(ask(&mut s, link, false), None, "no vendor open");
-    s.set_merchant(Some(MerchantState::default()));
-    assert_eq!(ask(&mut s, link, true), None, "shift held");
-    assert_eq!(
-        ask(&mut s, "|Hitem:9101|h[Plain]|h", false),
-        None,
-        "a plain item"
-    );
-    assert_eq!(ask(&mut s, link, false), Some(1));
-    let t = texts(&mut s);
-    assert_eq!(t[0], "Heirloom Chest", "no header: {t:?}");
-    assert!(t.contains(&"[RANGE 1 80 1]".to_string()), "{t:?}");
+            ))
+            .unwrap()
+        };
+        assert_eq!(ask(&mut s, link, false), None, "no vendor open");
+        s.set_merchant(Some(MerchantState::default()));
+        assert_eq!(ask(&mut s, link, true), None, "shift held");
+        assert_eq!(
+            ask(&mut s, "|Hitem:9101|h[Plain]|h", false),
+            None,
+            "a plain item"
+        );
+        assert_eq!(ask(&mut s, link, false), Some(1));
+        let t = texts(&mut s);
+        assert_eq!(t[0], "Heirloom Chest", "no header: {t:?}");
+        assert!(t.contains(&"[RANGE 1 80 1]".to_string()), "{t:?}");
+    });
 }
 
 /// `GetItemStats` reads a heirloom link at its level field (`0x6207a0`), and the player's level
 /// without one.
 #[test]
 fn get_item_stats_follows_the_links_level() {
-    let (s, _tables) = setup(30, 0, 1 << 4);
-    s.run(
-        r#"
+    let (s, mut tables_v) = setup(30, 0, 1 << 4);
+    crate::script::live::lending(&mut tables_v, || {
+        s.run(
+            r#"
         local function stam(level)
             local t = GetItemStats("|Hitem:9100:0:0:0:0:0:0:0:" .. level .. "|h[x]|h")
             return t.ITEM_MOD_STAMINA_SHORT, t.RESISTANCE0_NAME
@@ -258,8 +268,9 @@ fn get_item_stats_follows_the_links_level() {
         assert(stam(10) == 500)
         assert(stam(0) == 1500, "the player's level")
         "#,
-    )
-    .unwrap();
+        )
+        .unwrap();
+    });
 }
 
 /// The bind region by template flag `0x8000000`, bound state, and a class 10 item in and out of
@@ -319,26 +330,28 @@ fn the_bind_line_follows_the_account_flag_and_skips_class_ten() {
 /// Bonus armor: an armor damage modifier above 0 greens the template's armor line (`0x629089`).
 #[test]
 fn bonus_armor_reads_green() {
-    let (mut s, _tables) = setup(10, 0, 0);
-    for (id, modifier) in [(9200, 0.0), (9201, 1.0)] {
-        s.set_item_template(
-            id,
-            ItemTemplateView {
-                name: format!("Cloak {id}"),
-                inventory_type: 16,
-                armor: 50 + id - 9200,
-                armor_damage_modifier: modifier,
-                ..Default::default()
-            },
-        );
-    }
-    for (id, want) in [(9200, [1.0, 1.0, 1.0, 1.0]), (9201, [0.0, 1.0, 0.0, 1.0])] {
-        s.run(&format!(
-            r#"TT:SetOwner(Slot, "ANCHOR_RIGHT"); SetItemByIdForTest(TT, {id})"#
-        ))
-        .unwrap();
-        let armor = format!("[ARMOR {}]", 50 + id - 9200);
-        let line = lines_of(&mut s).into_iter().find(|(t, _)| *t == armor);
-        assert_eq!(line.map(|(_, c)| c), Some(want), "{id}");
-    }
+    let (mut s, mut tables_v) = setup(10, 0, 0);
+    crate::script::live::lending(&mut tables_v, || {
+        for (id, modifier) in [(9200, 0.0), (9201, 1.0)] {
+            s.set_item_template(
+                id,
+                ItemTemplateView {
+                    name: format!("Cloak {id}"),
+                    inventory_type: 16,
+                    armor: 50 + id - 9200,
+                    armor_damage_modifier: modifier,
+                    ..Default::default()
+                },
+            );
+        }
+        for (id, want) in [(9200, [1.0, 1.0, 1.0, 1.0]), (9201, [0.0, 1.0, 0.0, 1.0])] {
+            s.run(&format!(
+                r#"TT:SetOwner(Slot, "ANCHOR_RIGHT"); SetItemByIdForTest(TT, {id})"#
+            ))
+            .unwrap();
+            let armor = format!("[ARMOR {}]", 50 + id - 9200);
+            let line = lines_of(&mut s).into_iter().find(|(t, _)| *t == armor);
+            assert_eq!(line.map(|(_, c)| c), Some(want), "{id}");
+        }
+    });
 }

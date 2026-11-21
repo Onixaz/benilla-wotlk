@@ -973,29 +973,30 @@ impl benilla_ui::script::LiveState for GuildBankTestView {
     }
 }
 
-/// Lend `bank` with `money` copper in it until the loan drops.
+/// A view of `bank` with `money` copper in it, to lend around a test's calls into Lua.
 pub(crate) fn lend_guild_bank(
     bank: benilla_ui::script::GuildBankView,
     money: u64,
-) -> benilla_ui::script::LiveLoan<GuildBankTestView> {
-    benilla_ui::script::LiveLoan::new(GuildBankTestView {
+) -> GuildBankTestView {
+    GuildBankTestView {
         bank,
         locks: Vec::new(),
         tab: 0,
         money,
         withdraw_money: -1,
-    })
+    }
 }
 
-/// Lend an open bank with `slots` purchased and the next slot at `cost` until the loan drops.
-pub(crate) fn lend_bank(slots: u8, cost: u32) -> benilla_ui::script::LiveLoan<BankView> {
-    benilla_ui::script::LiveLoan::new(BankView {
+/// A view of an open bank with `slots` purchased and the next slot at `cost`, to lend around a
+/// test's calls into Lua.
+pub(crate) fn lend_bank(slots: u8, cost: u32) -> BankView {
+    BankView {
         slots,
         cost,
         banker: Some(0x42),
         interacting: true,
         purchases: std::cell::Cell::new(0),
-    })
+    }
 }
 
 #[cfg(test)]

@@ -455,91 +455,97 @@ fn stats(hunter: bool, happiness: Option<u32>, damage: f32) -> benilla_ui::scrip
 /// return (`PetFrame_SetHappiness`, `PetFrame.lua:144-161`), so it names the bucket that painted.
 #[test]
 fn the_happiness_icon_shows_per_bucket_and_hides_for_a_non_hunter_pet() {
-    benilla_formats::wow_data_or_skip!();
-    let mut s = load_pet_frame();
-    s.set_unit("pet", Some(pet("Grimjaw", 72, 45, 80, 2)));
+    crate::ui_script::test_live::lending(&mut crate::ui_script::test_live::View, || {
+        benilla_formats::wow_data_or_skip!();
+        let mut s = load_pet_frame();
+        s.set_unit("pet", Some(pet("Grimjaw", 72, 45, 80, 2)));
 
-    for (bucket, tip, damage) in [
-        (3u32, "Happy", 125.0f32),
-        (2, "Content", 100.0),
-        (1, "Unhappy", 75.0),
-    ] {
-        s.set_pet_stats(true, stats(true, Some(bucket), damage));
-        s.fire_event("UNIT_PET", vec![ScriptValue::Str("player".into())]);
-        assert!(
-            s.eval::<bool>("return PetFrameHappiness:IsVisible()")
-                .unwrap(),
-            "bucket {bucket} must show the icon"
-        );
-        assert_eq!(
-            s.eval::<String>("return PetFrameHappiness.tooltip")
-                .unwrap(),
-            tip,
-            "bucket {bucket} took the wrong texcoord branch"
-        );
-        assert_eq!(
-            s.eval::<String>("return PetFrameHappiness.tooltipDamage")
-                .unwrap(),
-            format!("Causes {}% of normal damage", damage as i32),
-            "bucket {bucket} damage line"
-        );
-    }
+        for (bucket, tip, damage) in [
+            (3u32, "Happy", 125.0f32),
+            (2, "Content", 100.0),
+            (1, "Unhappy", 75.0),
+        ] {
+            s.set_pet_stats(true, stats(true, Some(bucket), damage));
+            s.fire_event("UNIT_PET", vec![ScriptValue::Str("player".into())]);
+            assert!(
+                s.eval::<bool>("return PetFrameHappiness:IsVisible()")
+                    .unwrap(),
+                "bucket {bucket} must show the icon"
+            );
+            assert_eq!(
+                s.eval::<String>("return PetFrameHappiness.tooltip")
+                    .unwrap(),
+                tip,
+                "bucket {bucket} took the wrong texcoord branch"
+            );
+            assert_eq!(
+                s.eval::<String>("return PetFrameHappiness.tooltipDamage")
+                    .unwrap(),
+                format!("Causes {}% of normal damage", damage as i32),
+                "bucket {bucket} damage line"
+            );
+        }
 
-    // A warlock's imp: `HasPetUI`'s second return is nil, so the icon hides (`PetFrame.lua:147`).
-    s.set_pet_stats(true, stats(false, Some(3), 125.0));
-    s.fire_event("UNIT_HAPPINESS", vec![]);
-    assert!(!s
-        .eval::<bool>("return PetFrameHappiness:IsVisible()")
-        .unwrap());
+        // A warlock's imp: `HasPetUI`'s second return is nil, so the icon hides (`PetFrame.lua:147`).
+        s.set_pet_stats(true, stats(false, Some(3), 125.0));
+        s.fire_event("UNIT_HAPPINESS", vec![]);
+        assert!(!s
+            .eval::<bool>("return PetFrameHappiness:IsVisible()")
+            .unwrap());
+    });
 }
 
 /// The frame hides on `not happiness`, and 0 is truthy in Lua: `GetPetHappiness` (`0x5d3b00`)
 /// answers a bucket as a number, never a nil.
 #[test]
 fn happiness_bucket_zero_keeps_the_icon_showing() {
-    benilla_formats::wow_data_or_skip!();
-    let mut s = load_pet_frame();
-    s.set_unit("pet", Some(pet("Grimjaw", 72, 45, 80, 2)));
+    crate::ui_script::test_live::lending(&mut crate::ui_script::test_live::View, || {
+        benilla_formats::wow_data_or_skip!();
+        let mut s = load_pet_frame();
+        s.set_unit("pet", Some(pet("Grimjaw", 72, 45, 80, 2)));
 
-    s.set_pet_stats(true, stats(true, Some(0), 100.0));
-    s.fire_event("UNIT_PET", vec![ScriptValue::Str("player".into())]);
-    assert!(
-        s.eval::<bool>("return PetFrameHappiness:IsVisible()")
-            .unwrap(),
-        "bucket 0 is a number, not the hide case"
-    );
+        s.set_pet_stats(true, stats(true, Some(0), 100.0));
+        s.fire_event("UNIT_PET", vec![ScriptValue::Str("player".into())]);
+        assert!(
+            s.eval::<bool>("return PetFrameHappiness:IsVisible()")
+                .unwrap(),
+            "bucket 0 is a number, not the hide case"
+        );
 
-    // A nil does hide it.
-    s.set_pet_stats(true, stats(true, None, 100.0));
-    s.fire_event("UNIT_HAPPINESS", vec![]);
-    assert!(!s
-        .eval::<bool>("return PetFrameHappiness:IsVisible()")
-        .unwrap());
+        // A nil does hide it.
+        s.set_pet_stats(true, stats(true, None, 100.0));
+        s.fire_event("UNIT_HAPPINESS", vec![]);
+        assert!(!s
+            .eval::<bool>("return PetFrameHappiness:IsVisible()")
+            .unwrap());
+    });
 }
 
 /// `UNIT_HAPPINESS` repaints the icon alone (`PetFrame.lua:91-92`).
 #[test]
 fn unit_happiness_repaints_only_the_icon() {
-    benilla_formats::wow_data_or_skip!();
-    let mut s = load_pet_frame();
-    s.set_unit("pet", Some(pet("Grimjaw", 72, 45, 80, 2)));
-    s.set_pet_stats(true, stats(true, Some(1), 75.0));
-    s.fire_event("UNIT_PET", vec![ScriptValue::Str("player".into())]);
-    assert_eq!(
-        s.eval::<String>("return PetFrameHappiness.tooltip")
-            .unwrap(),
-        "Unhappy"
-    );
+    crate::ui_script::test_live::lending(&mut crate::ui_script::test_live::View, || {
+        benilla_formats::wow_data_or_skip!();
+        let mut s = load_pet_frame();
+        s.set_unit("pet", Some(pet("Grimjaw", 72, 45, 80, 2)));
+        s.set_pet_stats(true, stats(true, Some(1), 75.0));
+        s.fire_event("UNIT_PET", vec![ScriptValue::Str("player".into())]);
+        assert_eq!(
+            s.eval::<String>("return PetFrameHappiness.tooltip")
+                .unwrap(),
+            "Unhappy"
+        );
 
-    s.set_pet_stats(true, stats(true, Some(3), 125.0));
-    s.fire_event("UNIT_HAPPINESS", vec![]);
-    assert_eq!(
-        s.eval::<String>("return PetFrameHappiness.tooltip")
-            .unwrap(),
-        "Happy",
-        "UNIT_HAPPINESS must re-cut the icon on its own"
-    );
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+        s.set_pet_stats(true, stats(true, Some(3), 125.0));
+        s.fire_event("UNIT_HAPPINESS", vec![]);
+        assert_eq!(
+            s.eval::<String>("return PetFrameHappiness.tooltip")
+                .unwrap(),
+            "Happy",
+            "UNIT_HAPPINESS must re-cut the icon on its own"
+        );
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    });
 }
 
 /// The art draws over the bar fills, which only frame level can hold. The art frame is anonymous,
@@ -566,63 +572,65 @@ fn the_pet_art_paints_over_the_bars() {
 /// goes (#323).
 #[test]
 fn the_stock_pet_bar_shows_with_the_pet_and_slides_out_after_it() {
-    use benilla_ui::script::PetActionView;
-    benilla_formats::wow_data_or_skip!();
-    let (_lock, mut s) = load_stock_pet_frame();
-    assert!(!s
-        .eval::<bool>("return PetActionBarFrame:IsShown()")
-        .unwrap());
+    crate::ui_script::test_live::lending(&mut crate::ui_script::test_live::View, || {
+        use benilla_ui::script::PetActionView;
+        benilla_formats::wow_data_or_skip!();
+        let (_lock, mut s) = load_stock_pet_frame();
+        assert!(!s
+            .eval::<bool>("return PetActionBarFrame:IsShown()")
+            .unwrap());
 
-    let attack = PetActionView {
-        name: Some("PET_ACTION_ATTACK".into()),
-        texture: Some("PET_ATTACK_TEXTURE".into()),
-        is_token: true,
-        packed: 0x0700_0002,
-        slot_usable: true,
-        ..Default::default()
-    };
-    let firebolt = PetActionView {
-        name: Some("Firebolt".into()),
-        texture: Some(r"Interface\Icons\Spell_Fire_FireBolt".into()),
-        packed: 0x0100_0C26,
-        slot_usable: false,
-        ..Default::default()
-    };
-    let mut slots = vec![PetActionView::default(); 10];
-    slots[0] = attack;
-    slots[3] = firebolt;
-    s.set_unit("pet", Some(pet("Jubgup", 100, 80, 80, 0)));
-    s.set_pet_actions(true, true, true, slots);
-    s.run(
+        let attack = PetActionView {
+            name: Some("PET_ACTION_ATTACK".into()),
+            texture: Some("PET_ATTACK_TEXTURE".into()),
+            is_token: true,
+            packed: 0x0700_0002,
+            slot_usable: true,
+            ..Default::default()
+        };
+        let firebolt = PetActionView {
+            name: Some("Firebolt".into()),
+            texture: Some(r"Interface\Icons\Spell_Fire_FireBolt".into()),
+            packed: 0x0100_0C26,
+            slot_usable: false,
+            ..Default::default()
+        };
+        let mut slots = vec![PetActionView::default(); 10];
+        slots[0] = attack;
+        slots[3] = firebolt;
+        s.set_unit("pet", Some(pet("Jubgup", 100, 80, 80, 0)));
+        s.set_pet_actions(true, true, true, slots);
+        s.run(
         "ProbeDesat = {} local orig = SetDesaturation          SetDesaturation = function(t, d) ProbeDesat[t:GetName()] = d return orig(t, d) end",
     )
     .unwrap();
-    s.fire_event("PET_BAR_UPDATE", vec![]);
-    s.run(
-        r#"
+        s.fire_event("PET_BAR_UPDATE", vec![]);
+        s.run(
+            r#"
         assert(PetActionBarFrame:IsShown(), "the bar shows with the pet")
         assert(PetActionButton1:IsShown() and PetActionButton4:IsShown())
         assert(PetActionButton1Icon:GetTexture() ~= nil)
         "#,
-    )
-    .unwrap();
-    // A slot the pet cannot use now desaturates its icon (`PetActionBarFrame.lua:153`).
-    assert!(s
+        )
+        .unwrap();
+        // A slot the pet cannot use now desaturates its icon (`PetActionBarFrame.lua:153`).
+        assert!(s
         .eval::<bool>(
             "return ProbeDesat.PetActionButton4Icon == 1 and ProbeDesat.PetActionButton1Icon == nil"
         )
         .unwrap());
 
-    // The teardown: no bar, no pet; the bar slides out over its slide time.
-    s.set_unit("pet", None);
-    s.set_pet_actions(false, false, false, Vec::new());
-    s.fire_event("PET_BAR_UPDATE", vec![]);
-    for _ in 0..10 {
-        s.tick(0.1);
-    }
-    assert!(!s
-        .eval::<bool>("return PetActionBarFrame:IsShown()")
-        .unwrap());
-    let errors = pet_errors(&mut s);
-    assert!(errors.is_empty(), "pet bar errors: {errors:#?}");
+        // The teardown: no bar, no pet; the bar slides out over its slide time.
+        s.set_unit("pet", None);
+        s.set_pet_actions(false, false, false, Vec::new());
+        s.fire_event("PET_BAR_UPDATE", vec![]);
+        for _ in 0..10 {
+            s.tick(0.1);
+        }
+        assert!(!s
+            .eval::<bool>("return PetActionBarFrame:IsShown()")
+            .unwrap());
+        let errors = pet_errors(&mut s);
+        assert!(errors.is_empty(), "pet bar errors: {errors:#?}");
+    });
 }

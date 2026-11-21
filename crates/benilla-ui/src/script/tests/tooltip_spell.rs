@@ -66,36 +66,37 @@ fn spellbook_hover_renders_the_verified_shape() {
 /// hold a different spell at slot 1.
 #[test]
 fn a_pet_book_hover_reads_the_pets_book_not_the_players() {
-    let mut s = script();
-    s.set_screen_size(800.0, 600.0);
-    s.set_spell_tooltip(133, fireball());
-    // The pet book's flag is the builder's unit selector, so its hover reads the pet's view.
-    s.set_pet_spell_tooltip(
-        3110,
-        SpellTooltipView {
-            name: "Firebolt".into(),
-            description: "Hurls a fiery ball.".into(),
+    crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+        let mut s = script();
+        s.set_screen_size(800.0, 600.0);
+        s.set_spell_tooltip(133, fireball());
+        // The pet book's flag is the builder's unit selector, so its hover reads the pet's view.
+        s.set_pet_spell_tooltip(
+            3110,
+            SpellTooltipView {
+                name: "Firebolt".into(),
+                description: "Hurls a fiery ball.".into(),
+                ..Default::default()
+            },
+        );
+        s.set_spellbook(SpellBookState {
+            tabs: Vec::new(),
+            slots: vec![SpellSlotView {
+                spell_id: 133,
+                name: "Fireball".into(),
+                ..Default::default()
+            }],
             ..Default::default()
-        },
-    );
-    s.set_spellbook(SpellBookState {
-        tabs: Vec::new(),
-        slots: vec![SpellSlotView {
-            spell_id: 133,
-            name: "Fireball".into(),
-            ..Default::default()
-        }],
-        ..Default::default()
-    });
-    let _book = s.set_pet_book(PetBookState {
-        token: Some("DEMON".into()),
-        slots: vec![SpellSlotView {
-            spell_id: 3110,
-            name: "Firebolt".into(),
-            ..Default::default()
-        }],
-    });
-    s.run(
+        });
+        let _book = s.set_pet_book(PetBookState {
+            token: Some("DEMON".into()),
+            slots: vec![SpellSlotView {
+                spell_id: 3110,
+                name: "Firebolt".into(),
+                ..Default::default()
+            }],
+        });
+        s.run(
         r#"
         local a = CreateFrame("Button", "SB1"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
         local tt = CreateFrame("GameTooltip", "TT")
@@ -118,7 +119,8 @@ fn a_pet_book_hover_reads_the_pets_book_not_the_players() {
     "#,
     )
     .unwrap();
-    assert!(s.take_errors().is_empty());
+        assert!(s.take_errors().is_empty());
+    });
 }
 
 /// `SetSpellByID` (`0x625b90`), the totem bar's hover: a known spell's tooltip, the rank column on
@@ -899,80 +901,82 @@ fn firebolt() -> SpellTooltipView {
 /// `SetTrainerService`; the player's book, a class service and a recipe pass 0.
 #[test]
 fn the_unit_selector_setters_read_the_pet_view() {
-    let mut s = script();
-    s.set_screen_size(800.0, 600.0);
-    let view = |description: &str| SpellTooltipView {
-        name: "Sacrifice".into(),
-        description: description.into(),
-        ..Default::default()
-    };
-    s.set_spell_tooltip(7812, view("absorb 305 damage"));
-    s.set_pet_spell_tooltip(7812, view("absorb 318 damage"));
-    let _pets = crate::script::live::lend_pets(
-        true,
-        true,
-        true,
-        vec![
-            PetActionView {
-                name: Some("Sacrifice".into()),
-                spell_id: Some(7812),
-                ..Default::default()
-            },
-            PetActionView {
-                name: Some("PET_MODE_PASSIVE".into()),
-                is_token: true,
-                ..Default::default()
-            },
-        ],
-    );
-    let slot = SpellSlotView {
-        spell_id: 7812,
-        name: "Sacrifice".into(),
-        ..Default::default()
-    };
-    let _book = s.set_pet_book(PetBookState {
-        token: Some("DEMON".into()),
-        slots: vec![slot.clone()],
-    });
-    s.set_spellbook(SpellBookState {
-        tabs: Vec::new(),
-        slots: vec![slot],
-        ..Default::default()
-    });
-    let service = |alt_caster| {
-        trainer_service(
-            100,
-            "Sacrifice",
-            TrainerTooltip::Spell {
+    crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+        let mut s = script();
+        s.set_screen_size(800.0, 600.0);
+        let view = |description: &str| SpellTooltipView {
+            name: "Sacrifice".into(),
+            description: description.into(),
+            ..Default::default()
+        };
+        s.set_spell_tooltip(7812, view("absorb 305 damage"));
+        s.set_pet_spell_tooltip(7812, view("absorb 318 damage"));
+        let mut pets_v = crate::script::live::lend_pets(
+            true,
+            true,
+            true,
+            vec![
+                PetActionView {
+                    name: Some("Sacrifice".into()),
+                    spell_id: Some(7812),
+                    ..Default::default()
+                },
+                PetActionView {
+                    name: Some("PET_MODE_PASSIVE".into()),
+                    is_token: true,
+                    ..Default::default()
+                },
+            ],
+        );
+        crate::script::live::lending(&mut pets_v, || {
+            let slot = SpellSlotView {
                 spell_id: 7812,
-                alt_caster,
-            },
-        )
-    };
-    s.set_trainer(Some(TrainerState {
-        services: vec![service(true), service(false)],
-        ..Default::default()
-    }));
-    s.set_trade_skill(Some(enchant_book(&[(7812, "Sacrifice")])));
-    // The pet bar paged onto the main bar: slot 121 holds the pet bar's first action.
-    s.set_action(
-        121,
-        Some(ActionSlot {
-            kind: 0x10,
-            action: 0,
-            pet_spell: Some(7812),
-            ..Default::default()
-        }),
-    );
-    s.set_action(
-        122,
-        Some(ActionSlot {
-            kind: 0x10,
-            action: 1,
-            ..Default::default()
-        }),
-    );
-    s.run(
+                name: "Sacrifice".into(),
+                ..Default::default()
+            };
+            let _book = s.set_pet_book(PetBookState {
+                token: Some("DEMON".into()),
+                slots: vec![slot.clone()],
+            });
+            s.set_spellbook(SpellBookState {
+                tabs: Vec::new(),
+                slots: vec![slot],
+                ..Default::default()
+            });
+            let service = |alt_caster| {
+                trainer_service(
+                    100,
+                    "Sacrifice",
+                    TrainerTooltip::Spell {
+                        spell_id: 7812,
+                        alt_caster,
+                    },
+                )
+            };
+            s.set_trainer(Some(TrainerState {
+                services: vec![service(true), service(false)],
+                ..Default::default()
+            }));
+            s.set_trade_skill(Some(enchant_book(&[(7812, "Sacrifice")])));
+            // The pet bar paged onto the main bar: slot 121 holds the pet bar's first action.
+            s.set_action(
+                121,
+                Some(ActionSlot {
+                    kind: 0x10,
+                    action: 0,
+                    pet_spell: Some(7812),
+                    ..Default::default()
+                }),
+            );
+            s.set_action(
+                122,
+                Some(ActionSlot {
+                    kind: 0x10,
+                    action: 1,
+                    ..Default::default()
+                }),
+            );
+            s.run(
         r#"
         local a = CreateFrame("Button", "PB1"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
         CreateFrame("GameTooltip", "TT")
@@ -993,50 +997,56 @@ fn the_unit_selector_setters_read_the_pet_view() {
     "#,
     )
     .unwrap();
-    let got = |name: &str| s.eval::<String>(&format!("return {name}")).unwrap();
-    assert_eq!(got("PET_BAR"), "absorb 318 damage");
-    assert_eq!(got("PET_SLOT"), "absorb 318 damage");
-    assert_eq!(
-        got("MODE_SLOT"),
-        "Passive/1",
-        "a mode slot shows its text alone"
-    );
-    assert_eq!(got("PET_BOOK"), "absorb 318 damage");
-    assert_eq!(got("PET_SERVICE"), "absorb 318 damage");
-    assert_eq!(got("BOOK"), "absorb 305 damage");
-    assert_eq!(got("SERVICE"), "absorb 305 damage");
-    assert_eq!(got("CRAFT"), "absorb 305 damage");
-    assert!(s.take_errors().is_empty());
+            let got = |name: &str| s.eval::<String>(&format!("return {name}")).unwrap();
+            assert_eq!(got("PET_BAR"), "absorb 318 damage");
+            assert_eq!(got("PET_SLOT"), "absorb 318 damage");
+            assert_eq!(
+                got("MODE_SLOT"),
+                "Passive/1",
+                "a mode slot shows its text alone"
+            );
+            assert_eq!(got("PET_BOOK"), "absorb 318 damage");
+            assert_eq!(got("PET_SERVICE"), "absorb 318 damage");
+            assert_eq!(got("BOOK"), "absorb 305 damage");
+            assert_eq!(got("SERVICE"), "absorb 305 damage");
+            assert_eq!(got("CRAFT"), "absorb 305 damage");
+            assert!(s.take_errors().is_empty());
+        });
+    });
 }
 
 /// The unit selector reads the pet's view alone: with only the player's view of the id, the pet
 /// bar's hover is the slot's name.
 #[test]
 fn the_pet_selector_never_reads_the_players_view() {
-    let mut s = script();
-    s.set_screen_size(800.0, 600.0);
-    let _pets = crate::script::live::lend_pets(true, true, true, vec![firebolt_slot()]);
-    s.set_spell_tooltip(3110, firebolt());
-    let hover = r#"
+    crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+        let mut s = script();
+        s.set_screen_size(800.0, 600.0);
+        let mut pets_v = crate::script::live::lend_pets(true, true, true, vec![firebolt_slot()]);
+        crate::script::live::lending(&mut pets_v, || {
+            s.set_spell_tooltip(3110, firebolt());
+            let hover = r#"
         local a = PB1 or CreateFrame("Button", "PB1"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
         local tt = TT or CreateFrame("GameTooltip", "TT")
         TT:SetOwner(PB1, "ANCHOR_RIGHT")
         TT:SetPetAction(1)
     "#;
-    s.run(hover).unwrap();
-    assert_eq!(left_lines(&mut s), vec!["Firebolt"]);
-    s.set_pet_spell_tooltip(3110, firebolt());
-    s.run(hover).unwrap();
-    assert_eq!(
-        left_lines(&mut s),
-        vec![
-            "Firebolt",
-            "10 Mana",
-            "1 sec cast",
-            "Deals 7 to 10 Fire damage to a target."
-        ]
-    );
-    assert!(s.take_errors().is_empty());
+            s.run(hover).unwrap();
+            assert_eq!(left_lines(&mut s), vec!["Firebolt"]);
+            s.set_pet_spell_tooltip(3110, firebolt());
+            s.run(hover).unwrap();
+            assert_eq!(
+                left_lines(&mut s),
+                vec![
+                    "Firebolt",
+                    "10 Mana",
+                    "1 sec cast",
+                    "Deals 7 to 10 Fire damage to a target."
+                ]
+            );
+            assert!(s.take_errors().is_empty());
+        });
+    });
 }
 
 /// A recipe's spell hover has no fallback name, so its miss is a hidden plate; with the views
@@ -1100,10 +1110,12 @@ fn a_hidden_miss_shows_nothing_and_a_view_fills_the_next_hover() {
 /// `SetTextColor`, or new content that reads the same as the miss's line.
 #[test]
 fn a_line_rewritten_in_place_ends_the_wait() {
-    let mut s = script();
-    s.set_screen_size(800.0, 600.0);
-    let _pets = crate::script::live::lend_pets(true, true, true, vec![firebolt_slot()]);
-    s.run(
+    crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+        let mut s = script();
+        s.set_screen_size(800.0, 600.0);
+        let mut pets_v = crate::script::live::lend_pets(true, true, true, vec![firebolt_slot()]);
+        crate::script::live::lending(&mut pets_v, || {
+            s.run(
         r#"
         local a = CreateFrame("Button", "PB1"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
         CreateFrame("GameTooltip", "APP")
@@ -1122,21 +1134,23 @@ fn a_line_rewritten_in_place_ends_the_wait() {
     "#,
     )
     .unwrap();
-    s.set_pet_spell_tooltip(3110, firebolt());
-    assert_eq!(
-        s.eval::<(i64, String)>("return APP:NumLines(), APPTextLeft1:GetText()")
-            .unwrap(),
-        (1, "Firebolt (Pet)".to_string())
-    );
-    assert_eq!(
-        s.eval::<(i64, f32, f32)>(
-            "local r, g = COLTextLeft1:GetTextColor(); return COL:NumLines(), r, g"
-        )
-        .unwrap(),
-        (1, 1.0, 0.0)
-    );
-    assert_eq!(s.eval::<i64>("return SAM:NumLines()").unwrap(), 1);
-    assert!(s.take_errors().is_empty());
+            s.set_pet_spell_tooltip(3110, firebolt());
+            assert_eq!(
+                s.eval::<(i64, String)>("return APP:NumLines(), APPTextLeft1:GetText()")
+                    .unwrap(),
+                (1, "Firebolt (Pet)".to_string())
+            );
+            assert_eq!(
+                s.eval::<(i64, f32, f32)>(
+                    "local r, g = COLTextLeft1:GetTextColor(); return COL:NumLines(), r, g"
+                )
+                .unwrap(),
+                (1, 1.0, 0.0)
+            );
+            assert_eq!(s.eval::<i64>("return SAM:NumLines()").unwrap(), 1);
+            assert!(s.take_errors().is_empty());
+        });
+    });
 }
 
 /// Find Minerals as the book feeds it.

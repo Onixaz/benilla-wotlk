@@ -56,10 +56,10 @@ impl LiveState for Menu {
     }
 }
 
-/// A [`Menu`] lent to every verb on the test's thread, with the quest selects and closes it saw.
-pub(super) struct MenuLoan(benilla_ui::script::LiveLoan<LoanedMenu>);
+/// The lent [`LoanedMenu`], reached between calls into Lua.
+pub(super) struct MenuLoan;
 
-/// The loaned menu and the sends it records.
+/// A [`Menu`] lent as the live view, with the quest selects and closes it saw.
 #[derive(Default)]
 pub(super) struct LoanedMenu {
     menu: Menu,
@@ -107,19 +107,19 @@ impl LiveState for LoanedMenu {
     }
 }
 
-/// Lend an empty [`Menu`] for the rest of the test.
-pub(super) fn gossip_loan() -> MenuLoan {
-    MenuLoan(benilla_ui::script::LiveLoan::new(LoanedMenu::default()))
+/// An empty [`Menu`], to lend around the test's calls into Lua.
+pub(super) fn gossip_loan() -> LoanedMenu {
+    LoanedMenu::default()
 }
 
 impl MenuLoan {
-    pub(super) fn set(&mut self, menu: Menu) {
-        self.0.with_view_mut(|v| v.menu = menu);
+    pub(super) fn set(&self, menu: Menu) {
+        super::test_live::lent_view(|v: &mut LoanedMenu| v.menu = menu);
     }
 
     /// The 1-based options selected since the last take.
-    pub(super) fn take_selects(&mut self) -> Vec<(u32, Option<String>)> {
-        self.0.with_view_mut(|v| {
+    pub(super) fn take_selects(&self) -> Vec<(u32, Option<String>)> {
+        super::test_live::lent_view(|v: &mut LoanedMenu| {
             std::mem::take(&mut v.menu.selects)
                 .into_iter()
                 .map(|(slot, code)| (slot as u32 + 1, code))
@@ -128,8 +128,8 @@ impl MenuLoan {
     }
 
     /// The 1-based whole-menu quest rows selected since the last take.
-    pub(super) fn take_quest_selects(&mut self) -> Vec<u32> {
-        self.0.with_view_mut(|v| {
+    pub(super) fn take_quest_selects(&self) -> Vec<u32> {
+        super::test_live::lent_view(|v: &mut LoanedMenu| {
             std::mem::take(&mut v.quest_selects)
                 .into_iter()
                 .map(|r| r as u32 + 1)
@@ -138,8 +138,8 @@ impl MenuLoan {
     }
 
     /// Whether `CloseGossip` ran since the last take.
-    pub(super) fn take_close(&mut self) -> bool {
-        self.0.with_view_mut(|v| std::mem::take(&mut v.closes) > 0)
+    pub(super) fn take_close(&self) -> bool {
+        super::test_live::lent_view(|v: &mut LoanedMenu| std::mem::take(&mut v.closes) > 0)
     }
 }
 

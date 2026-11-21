@@ -161,27 +161,12 @@ pub(super) fn has_spell(model: &Model, id: u32, is_pet: bool) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::script::live::{lend_test, LiveLoan, TestView};
+    use crate::script::live::TestView;
     use crate::script::{SpellSlotView, UiScript};
 
-    /// The bar's lists and tables, lent for as long as the script lives.
-    struct Bar(UiScript, #[allow(dead_code)] LiveLoan<TestView>);
-
-    impl std::ops::Deref for Bar {
-        type Target = UiScript;
-        fn deref(&self) -> &UiScript {
-            &self.0
-        }
-    }
-
-    impl std::ops::DerefMut for Bar {
-        fn deref_mut(&mut self) -> &mut UiScript {
-            &mut self.0
-        }
-    }
-
-    fn script() -> Bar {
-        let view = lend_test(TestView {
+    /// The VM and the bar's lists and tables.
+    fn script() -> (UiScript, TestView) {
+        let view = TestView {
             multicast_lists: [vec![3599], vec![8071, 2484], vec![], vec![]],
             totem_categories: [(3599, [4, 0]), (8071, [2, 0]), (2484, [2, 0])]
                 .into_iter()
@@ -193,58 +178,62 @@ mod tests {
             .into_iter()
             .collect(),
             ..Default::default()
-        });
-        Bar(UiScript::new().unwrap(), view)
+        };
+        (UiScript::new().unwrap(), view)
     }
 
     #[test]
     fn each_slot_answers_its_element_list() {
-        let s = script();
-        assert_eq!(
-            s.eval::<f64>("return GetMultiCastBarOffset()").unwrap(),
-            6.0
-        );
-        let earth: (i64, i64) = s.eval("return GetMultiCastTotemSpells(2)").unwrap();
-        assert_eq!(earth, (8071, 2484));
-        // `(slot - 1) & 3`: slot 6 is earth again.
-        let again: (i64, i64) = s.eval("return GetMultiCastTotemSpells(6)").unwrap();
-        assert_eq!(again, earth);
-        assert_eq!(
-            s.eval::<i64>("return select('#', GetMultiCastTotemSpells(3))")
-                .unwrap(),
-            0
-        );
-        assert!(s.run("GetMultiCastTotemSpells('x')").is_err());
+        let (s, mut view_v) = script();
+        crate::script::live::lending(&mut view_v, || {
+            assert_eq!(
+                s.eval::<f64>("return GetMultiCastBarOffset()").unwrap(),
+                6.0
+            );
+            let earth: (i64, i64) = s.eval("return GetMultiCastTotemSpells(2)").unwrap();
+            assert_eq!(earth, (8071, 2484));
+            // `(slot - 1) & 3`: slot 6 is earth again.
+            let again: (i64, i64) = s.eval("return GetMultiCastTotemSpells(6)").unwrap();
+            assert_eq!(again, earth);
+            assert_eq!(
+                s.eval::<i64>("return select('#', GetMultiCastTotemSpells(3))")
+                    .unwrap(),
+                0
+            );
+            assert!(s.run("GetMultiCastTotemSpells('x')").is_err());
+        });
     }
 
     #[test]
     fn a_totem_of_the_slots_element_is_set_and_another_refused() {
-        let mut s = script();
-        // Lua action 134 is page 1's earth slot.
-        s.run("SetMultiCastSpell(134, 8071)").unwrap();
-        assert!(s.eval::<bool>("return HasAction(134)").unwrap());
-        assert_eq!(s.take_action_sets(), vec![(134, 8071)]);
-        s.run("SetMultiCastSpell(133, 8071)").unwrap();
-        assert!(
-            !s.eval::<bool>("return HasAction(133)").unwrap(),
-            "earth is not fire"
-        );
-        assert_eq!(
-            s.take_shown_s(),
-            vec![("ERR_MULTI_CAST_ACTION_TOTEM_S", "Fire Totem".to_string())]
-        );
-        s.run("SetMultiCastSpell(134, 0)").unwrap();
-        assert!(
-            !s.eval::<bool>("return HasAction(134)").unwrap(),
-            "0 clears"
-        );
-        assert_eq!(s.take_action_sets(), vec![(134, 0)]);
-        s.run("SetMultiCastSpell(12, 8071)").unwrap();
-        assert!(
-            s.take_action_sets().is_empty(),
-            "a main-bar action is ignored"
-        );
-        assert!(s.run("SetMultiCastSpell('a', 'b')").is_err());
+        let (mut s, mut view_v) = script();
+        crate::script::live::lending(&mut view_v, || {
+            // Lua action 134 is page 1's earth slot.
+            s.run("SetMultiCastSpell(134, 8071)").unwrap();
+            assert!(s.eval::<bool>("return HasAction(134)").unwrap());
+            assert_eq!(s.take_action_sets(), vec![(134, 8071)]);
+            s.run("SetMultiCastSpell(133, 8071)").unwrap();
+            assert!(
+                !s.eval::<bool>("return HasAction(133)").unwrap(),
+                "earth is not fire"
+            );
+            assert_eq!(
+                s.take_shown_s(),
+                vec![("ERR_MULTI_CAST_ACTION_TOTEM_S", "Fire Totem".to_string())]
+            );
+            s.run("SetMultiCastSpell(134, 0)").unwrap();
+            assert!(
+                !s.eval::<bool>("return HasAction(134)").unwrap(),
+                "0 clears"
+            );
+            assert_eq!(s.take_action_sets(), vec![(134, 0)]);
+            s.run("SetMultiCastSpell(12, 8071)").unwrap();
+            assert!(
+                s.take_action_sets().is_empty(),
+                "a main-bar action is ignored"
+            );
+            assert!(s.run("SetMultiCastSpell('a', 'b')").is_err());
+        });
     }
 
     #[test]
@@ -259,48 +248,52 @@ mod tests {
                 passive: false,
             })
         };
-        let mut s = script();
-        s.set_cursor_for_test(held(3599));
-        assert!(
-            !s.eval::<bool>("return PlaceAction(134)").unwrap(),
-            "fire on earth"
-        );
-        assert_eq!(
-            s.take_shown_s(),
-            vec![("ERR_MULTI_CAST_ACTION_TOTEM_S", "Earth Totem".to_string())]
-        );
-        assert!(
-            s.eval::<bool>("return CursorHasSpell()").unwrap(),
-            "still held"
-        );
-        assert!(
-            s.eval::<bool>("return PlaceAction(133)").unwrap(),
-            "fire on fire"
-        );
-        assert!(s.eval::<bool>("return HasAction(133)").unwrap());
-        // A main-bar slot takes the same spell as before.
-        s.set_cursor_for_test(held(8071));
-        assert!(s.eval::<bool>("return PlaceAction(5)").unwrap());
-        assert!(s.take_shown_s().is_empty());
+        let (mut s, mut view_v) = script();
+        crate::script::live::lending(&mut view_v, || {
+            s.set_cursor_for_test(held(3599));
+            assert!(
+                !s.eval::<bool>("return PlaceAction(134)").unwrap(),
+                "fire on earth"
+            );
+            assert_eq!(
+                s.take_shown_s(),
+                vec![("ERR_MULTI_CAST_ACTION_TOTEM_S", "Earth Totem".to_string())]
+            );
+            assert!(
+                s.eval::<bool>("return CursorHasSpell()").unwrap(),
+                "still held"
+            );
+            assert!(
+                s.eval::<bool>("return PlaceAction(133)").unwrap(),
+                "fire on fire"
+            );
+            assert!(s.eval::<bool>("return HasAction(133)").unwrap());
+            // A main-bar slot takes the same spell as before.
+            s.set_cursor_for_test(held(8071));
+            assert!(s.eval::<bool>("return PlaceAction(5)").unwrap());
+            assert!(s.take_shown_s().is_empty());
+        });
     }
 
     #[test]
     fn is_spell_known_reads_the_book() {
-        let mut s = script();
-        s.set_spellbook(super::super::SpellBookState {
-            slots: vec![SpellSlotView {
-                spell_id: 8071,
+        let (mut s, mut view_v) = script();
+        crate::script::live::lending(&mut view_v, || {
+            s.set_spellbook(super::super::SpellBookState {
+                slots: vec![SpellSlotView {
+                    spell_id: 8071,
+                    ..Default::default()
+                }],
                 ..Default::default()
-            }],
-            ..Default::default()
+            });
+            assert!(s.eval::<bool>("return IsSpellKnown(8071)").unwrap());
+            assert!(!s.eval::<bool>("return IsSpellKnown(3599)").unwrap());
+            assert!(
+                !s.eval::<bool>("return IsSpellKnown(8071, true)").unwrap(),
+                "not the pet's"
+            );
+            assert!(s.run("IsSpellKnown(0)").is_err());
+            assert!(s.run("IsSpellKnown()").is_err());
         });
-        assert!(s.eval::<bool>("return IsSpellKnown(8071)").unwrap());
-        assert!(!s.eval::<bool>("return IsSpellKnown(3599)").unwrap());
-        assert!(
-            !s.eval::<bool>("return IsSpellKnown(8071, true)").unwrap(),
-            "not the pet's"
-        );
-        assert!(s.run("IsSpellKnown(0)").is_err());
-        assert!(s.run("IsSpellKnown()").is_err());
     }
 }

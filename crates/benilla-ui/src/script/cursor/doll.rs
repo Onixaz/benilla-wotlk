@@ -818,33 +818,35 @@ mod tests {
     /// The held-payload test runs first in both seams, the bag's and the doll's.
     #[test]
     fn the_armed_item_half_reroutes_bag_and_doll_clicks() {
-        let mut s = UiScript::new().unwrap();
-        s.set_inventory_slots(doll_slots());
-        s.set_container(0, Some(one_fitting_bag_item()));
+        crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+            let mut s = UiScript::new().unwrap();
+            s.set_inventory_slots(doll_slots());
+            s.set_container(0, Some(one_fitting_bag_item()));
 
-        // Unarmed, both seams do their ordinary gesture and queue nothing.
-        assert!(s.eval::<bool>("return PickupInventoryItem(1)").unwrap());
-        assert!(s.cursor_item().is_some());
-        assert!(s.take_item_picks().is_empty());
+            // Unarmed, both seams do their ordinary gesture and queue nothing.
+            assert!(s.eval::<bool>("return PickupInventoryItem(1)").unwrap());
+            assert!(s.cursor_item().is_some());
+            assert!(s.take_item_picks().is_empty());
 
-        // Armed but holding: the payload wins.
-        s.set_item_pick_armed(true);
-        s.run("PickupContainerItem(0, 1)").unwrap();
-        assert!(
-            s.take_item_picks().is_empty(),
-            "a click while carrying an item is a place, not a bind"
-        );
+            // Armed but holding: the payload wins.
+            s.set_item_pick_armed(true);
+            s.run("PickupContainerItem(0, 1)").unwrap();
+            assert!(
+                s.take_item_picks().is_empty(),
+                "a click while carrying an item is a place, not a bind"
+            );
 
-        // Armed with an empty cursor: both seams bind and leave the cursor empty.
-        s.run("ClearCursor()").unwrap();
-        assert!(s.cursor_item().is_none());
-        assert!(!s.eval::<bool>("return PickupInventoryItem(1)").unwrap());
-        s.run("PickupContainerItem(0, 1)").unwrap();
-        assert_eq!(
-            s.take_item_picks(),
-            vec![(EQUIPMENT_BAG, 1), (0, 1)],
-            "the doll reports in the ONE bag space; the bag reports its own id"
-        );
-        assert!(s.cursor_item().is_none(), "a bind never stages a payload");
+            // Armed with an empty cursor: both seams bind and leave the cursor empty.
+            s.run("ClearCursor()").unwrap();
+            assert!(s.cursor_item().is_none());
+            assert!(!s.eval::<bool>("return PickupInventoryItem(1)").unwrap());
+            s.run("PickupContainerItem(0, 1)").unwrap();
+            assert_eq!(
+                s.take_item_picks(),
+                vec![(EQUIPMENT_BAG, 1), (0, 1)],
+                "the doll reports in the ONE bag space; the bag reports its own id"
+            );
+            assert!(s.cursor_item().is_none(), "a bind never stages a payload");
+        });
     }
 }

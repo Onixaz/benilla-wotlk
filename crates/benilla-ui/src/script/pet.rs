@@ -663,34 +663,38 @@ mod tests {
             .eval::<Option<f64>>("return GetPetTimeRemaining()")
             .unwrap()
             .is_none());
-        let lend = |ms: Option<u32>| {
-            crate::script::live::lend_test(crate::script::live::TestView {
-                pet_bar: Some(super::PetBarLive {
-                    has_bar: true,
-                    time_remaining_ms: ms,
-                    ..Default::default()
-                }),
+        let lend = |ms: Option<u32>| crate::script::live::TestView {
+            pet_bar: Some(super::PetBarLive {
+                has_bar: true,
+                time_remaining_ms: ms,
                 ..Default::default()
-            })
+            }),
+            ..Default::default()
         };
-        let loan = lend(Some(2500));
-        assert_eq!(
-            s.eval::<f64>("return GetPetTimeRemaining()").unwrap(),
-            2500.0
-        );
-        drop(loan);
-        let loan = lend(Some(u32::MAX - 499));
-        assert_eq!(
-            s.eval::<f64>("return GetPetTimeRemaining()").unwrap(),
-            f64::from(u32::MAX - 499),
-            "0.5 s past it"
-        );
-        drop(loan);
-        let _none = lend(None);
-        assert!(s
-            .eval::<Option<f64>>("return GetPetTimeRemaining()")
-            .unwrap()
-            .is_none());
+        let mut loan_v = lend(Some(2500));
+        crate::script::live::lending(&mut loan_v, || {
+            assert_eq!(
+                s.eval::<f64>("return GetPetTimeRemaining()").unwrap(),
+                2500.0
+            );
+        });
+
+        let mut loan_v = lend(Some(u32::MAX - 499));
+        crate::script::live::lending(&mut loan_v, || {
+            assert_eq!(
+                s.eval::<f64>("return GetPetTimeRemaining()").unwrap(),
+                f64::from(u32::MAX - 499),
+                "0.5 s past it"
+            );
+        });
+
+        let mut none_v = lend(None);
+        crate::script::live::lending(&mut none_v, || {
+            assert!(s
+                .eval::<Option<f64>>("return GetPetTimeRemaining()")
+                .unwrap()
+                .is_none());
+        });
     }
 
     /// With nothing possessed the bar is hidden by a real `false`, and each slot reads three nils.
@@ -729,54 +733,58 @@ mod tests {
             cancel_icon: Some("cancel-icon".into()),
             cancel_enabled: true,
         };
-        let lend = |p: Option<super::PossessView>| {
-            crate::script::live::lend_test(crate::script::live::TestView {
-                possess: p,
-                ..Default::default()
-            })
+        let lend = |p: Option<super::PossessView>| crate::script::live::TestView {
+            possess: p,
+            ..Default::default()
         };
-        let loan = lend(Some(held.clone()));
-        assert_eq!(
-            s.eval::<mlua::Value>("return IsPossessBarVisible()")
-                .unwrap(),
-            mlua::Value::Boolean(true)
-        );
         let slot = |s: &UiScript, i: &str| {
             s.eval::<(Option<String>, Option<String>, Option<bool>)>(&format!(
                 "return GetPossessInfo({i})"
             ))
             .unwrap()
         };
-        let spell = (held.icon.clone(), held.name.clone(), Some(true));
-        let cancel = (held.cancel_icon.clone(), held.name.clone(), Some(true));
-        assert_eq!(slot(&s, "1"), spell);
-        assert_eq!(slot(&s, "1.4"), spell, "rounded");
-        assert_eq!(slot(&s, "'2'"), cancel, "a numeric string is a number");
-        assert_eq!(slot(&s, "1.6"), cancel, "rounded up");
-        assert_eq!(slot(&s, "3"), (None, None, None));
+        let mut loan_v = lend(Some(held.clone()));
+        crate::script::live::lending(&mut loan_v, || {
+            assert_eq!(
+                s.eval::<mlua::Value>("return IsPossessBarVisible()")
+                    .unwrap(),
+                mlua::Value::Boolean(true)
+            );
+            let spell = (held.icon.clone(), held.name.clone(), Some(true));
+            let cancel = (held.cancel_icon.clone(), held.name.clone(), Some(true));
+            assert_eq!(slot(&s, "1"), spell);
+            assert_eq!(slot(&s, "1.4"), spell, "rounded");
+            assert_eq!(slot(&s, "'2'"), cancel, "a numeric string is a number");
+            assert_eq!(slot(&s, "1.6"), cancel, "rounded up");
+            assert_eq!(slot(&s, "3"), (None, None, None));
 
-        // A vehicle's control aura hides the bar; a sign-bit spell disables the cancel button; a
-        // spell with no record empties slot 1 and names nothing on slot 2.
-        drop(loan);
-        let loan = lend(Some(super::PossessView {
+            // A vehicle's control aura hides the bar; a sign-bit spell disables the cancel button; a
+            // spell with no record empties slot 1 and names nothing on slot 2.
+        });
+
+        let mut loan_v = lend(Some(super::PossessView {
             bar_visible: false,
             cancel_enabled: false,
             name: None,
             ..held
         }));
-        assert_eq!(
-            s.eval::<mlua::Value>("return IsPossessBarVisible()")
-                .unwrap(),
-            mlua::Value::Boolean(false)
-        );
-        assert_eq!(slot(&s, "1"), (None, None, None));
-        assert_eq!(
-            slot(&s, "2"),
-            (Some("cancel-icon".into()), None, Some(false))
-        );
-        drop(loan);
-        let _none = lend(None);
-        assert_eq!(slot(&s, "2"), (None, None, None));
+        crate::script::live::lending(&mut loan_v, || {
+            assert_eq!(
+                s.eval::<mlua::Value>("return IsPossessBarVisible()")
+                    .unwrap(),
+                mlua::Value::Boolean(false)
+            );
+            assert_eq!(slot(&s, "1"), (None, None, None));
+            assert_eq!(
+                slot(&s, "2"),
+                (Some("cancel-icon".into()), None, Some(false))
+            );
+        });
+
+        let mut none_v = lend(None);
+        crate::script::live::lending(&mut none_v, || {
+            assert_eq!(slot(&s, "2"), (None, None, None));
+        });
     }
 
     /// Attack (a token, attacking), Claw (a spell, autocasting, cooling down), an empty slot.
@@ -809,153 +817,166 @@ mod tests {
         assert!(s.eval::<bool>("return PetHasActionBar() == nil").unwrap());
         assert!(s.eval::<bool>("return GetPetActionInfo(1) == nil").unwrap());
 
-        let _pets = crate::script::live::lend_pets(true, true, true, slots());
-        assert_eq!(s.eval::<i64>("return PetHasActionBar()").unwrap(), 1);
-        assert_eq!(s.eval::<i64>("return GetPetActionsUsable()").unwrap(), 1);
+        let mut pets_v = crate::script::live::lend_pets(true, true, true, slots());
+        crate::script::live::lending(&mut pets_v, || {
+            assert_eq!(s.eval::<i64>("return PetHasActionBar()").unwrap(), 1);
+            assert_eq!(s.eval::<i64>("return GetPetActionsUsable()").unwrap(), 1);
 
-        let (name, subtext, texture, is_token, active, allowed, enabled) = s
-            .eval::<(
-                String,
-                Option<String>,
-                String,
-                Option<i64>,
-                Option<i64>,
-                Option<i64>,
-                Option<i64>,
-            )>("return GetPetActionInfo(1)")
-            .unwrap();
-        assert_eq!(
-            (
-                name.as_str(),
-                subtext,
-                texture.as_str(),
-                is_token,
-                active,
-                allowed,
-                enabled
-            ),
-            (
-                "PET_ACTION_ATTACK",
-                None,
-                "PET_ATTACK_TEXTURE",
-                Some(1),
-                Some(1),
-                None,
-                None
-            )
-        );
+            let (name, subtext, texture, is_token, active, allowed, enabled) = s
+                .eval::<(
+                    String,
+                    Option<String>,
+                    String,
+                    Option<i64>,
+                    Option<i64>,
+                    Option<i64>,
+                    Option<i64>,
+                )>("return GetPetActionInfo(1)")
+                .unwrap();
+            assert_eq!(
+                (
+                    name.as_str(),
+                    subtext,
+                    texture.as_str(),
+                    is_token,
+                    active,
+                    allowed,
+                    enabled
+                ),
+                (
+                    "PET_ACTION_ATTACK",
+                    None,
+                    "PET_ATTACK_TEXTURE",
+                    Some(1),
+                    Some(1),
+                    None,
+                    None
+                )
+            );
 
-        assert!(s
-            .eval::<bool>(
-                "local n, sub, tex, tok, act, allow, on = GetPetActionInfo(2) \
+            assert!(s
+                .eval::<bool>(
+                    "local n, sub, tex, tok, act, allow, on = GetPetActionInfo(2) \
                  return n == 'Claw' and sub == 'Rank 3' and tok == nil and act == nil \
                  and allow == 1 and on == 1 and string.find(tex, 'Icons') ~= nil"
-            )
-            .unwrap());
+                )
+                .unwrap());
 
-        // The empty slot has returns, unlike the out-of-range single nil, but no name.
-        assert!(s
-            .eval::<bool>("local n, _, tex = GetPetActionInfo(3) return n == nil and tex == nil")
-            .unwrap());
-        assert!(s.eval::<bool>("return GetPetActionInfo(4) == nil").unwrap());
+            // The empty slot has returns, unlike the out-of-range single nil, but no name.
+            assert!(s
+                .eval::<bool>(
+                    "local n, _, tex = GetPetActionInfo(3) return n == nil and tex == nil"
+                )
+                .unwrap());
+            assert!(s.eval::<bool>("return GetPetActionInfo(4) == nil").unwrap());
+        });
     }
 
     #[test]
     fn cooldown_triple_stamps_to_the_vm_clock_and_goes_cold() {
         let mut s = UiScript::new().unwrap();
         s.tick(10.0); // GetTime == 10
-        let _pets = crate::script::live::lend_pets(true, true, true, slots());
+        let mut pets_v = crate::script::live::lend_pets(true, true, true, slots());
+        crate::script::live::lending(&mut pets_v, || {
+            assert_eq!(
+                s.eval::<(f64, f64, i32)>("return GetPetActionCooldown(1)")
+                    .unwrap(),
+                (0.0, 0.0, 1),
+                "no cooldown reads cold"
+            );
+            let (start, duration, enable) = s
+                .eval::<(f64, f64, i32)>("return GetPetActionCooldown(2)")
+                .unwrap();
+            assert!((start - 9.4).abs() < 1e-9, "start {start}");
+            assert!((duration - 1.5).abs() < 1e-9);
+            assert_eq!(enable, 1);
 
-        assert_eq!(
-            s.eval::<(f64, f64, i32)>("return GetPetActionCooldown(1)")
-                .unwrap(),
-            (0.0, 0.0, 1),
-            "no cooldown reads cold"
-        );
-        let (start, duration, enable) = s
-            .eval::<(f64, f64, i32)>("return GetPetActionCooldown(2)")
-            .unwrap();
-        assert!((start - 9.4).abs() < 1e-9, "start {start}");
-        assert!((duration - 1.5).abs() < 1e-9);
-        assert_eq!(enable, 1);
-
-        s.tick(2.0); // now == 12 > 9.4 + 1.5
-        assert_eq!(
-            s.eval::<(f64, f64, i32)>("return GetPetActionCooldown(2)")
-                .unwrap(),
-            (0.0, 0.0, 1)
-        );
+            s.tick(2.0); // now == 12 > 9.4 + 1.5
+            assert_eq!(
+                s.eval::<(f64, f64, i32)>("return GetPetActionCooldown(2)")
+                    .unwrap(),
+                (0.0, 0.0, 1)
+            );
+        });
     }
 
     #[test]
     fn intents_queue_and_the_meaningless_ones_are_dropped() {
         let mut s = UiScript::new().unwrap();
-        let pets = crate::script::live::lend_pets(true, true, true, slots());
+        let mut pets_v = crate::script::live::lend_pets(true, true, true, slots());
+        crate::script::live::lending(&mut pets_v, || {
+            s.run("CastPetAction(1) CastPetAction(3) CastPetAction(9)")
+                .unwrap();
+            assert_eq!(
+                s.take_pet_actions(),
+                vec![1],
+                "empty + out-of-range dropped"
+            );
+            assert!(s.take_pet_actions().is_empty(), "drain empties");
 
-        s.run("CastPetAction(1) CastPetAction(3) CastPetAction(9)")
-            .unwrap();
-        assert_eq!(
-            s.take_pet_actions(),
-            vec![1],
-            "empty + out-of-range dropped"
-        );
-        assert!(s.take_pet_actions().is_empty(), "drain empties");
-
-        s.run("PetStopAttack() PetStopAttack()").unwrap();
-        assert_eq!(
-            pets.view().pet_stops.get(),
-            2,
-            "each reaches the clear inside its call"
-        );
+            s.run("PetStopAttack() PetStopAttack()").unwrap();
+            assert_eq!(
+                crate::script::live::test_view(|v| v.pet_stops.get()),
+                2,
+                "each reaches the clear inside its call"
+            );
+        });
     }
 
     /// `TogglePetAutocast` toggles inside the call (`0x5d6794`): the bar's handler and next verb read the flipped slot, a token signals unflipped, and slot 11 passes the gate (`0x5d6745`).
     #[test]
     fn the_autocast_toggle_flips_and_signals_inside_the_call() {
         let s = UiScript::new().unwrap();
-        let pets = crate::script::live::lend_pets(true, true, true, slots());
-        s.run(
+        let mut pets_v = crate::script::live::lend_pets(true, true, true, slots());
+        crate::script::live::lending(&mut pets_v, || {
+            s.run(
             "SEEN = {} local f = CreateFrame('Frame') f:RegisterEvent('PET_BAR_UPDATE')              f:SetScript('OnEvent', function() SEEN[#SEEN + 1] = select(7, GetPetActionInfo(2)) or 0 end)",
         )
         .unwrap();
-        let after = s
-            .eval::<(i64, Option<i64>)>(
-                "TogglePetAutocast(2) return #SEEN, select(7, GetPetActionInfo(2))",
-            )
-            .unwrap();
-        assert_eq!(
-            after,
-            (1, None),
-            "one signal inside the call, the next verb reads it off"
-        );
-        assert_eq!(
-            s.eval::<i64>("return SEEN[1]").unwrap(),
-            0,
-            "the handler read it off"
-        );
-        s.run("TogglePetAutocast(1) TogglePetAutocast(11)").unwrap();
-        assert_eq!(
-            s.eval::<i64>("return #SEEN").unwrap(),
-            3,
-            "a token and slot 11 signal too"
-        );
-        assert_eq!(*pets.view().pet_toggles.borrow(), vec![1, 0, 10]);
-        for (call, err) in [
-            ("TogglePetAutocast(0)", "Invalid slot in TogglePetAutocast"),
-            ("TogglePetAutocast(12)", "Invalid slot in TogglePetAutocast"),
-            ("TogglePetAutocast('x')", "Usage: TogglePetAutocast(index)"),
-        ] {
-            let e = s.run(call).unwrap_err().to_string();
-            assert!(e.contains(err), "{call}: {e}");
-        }
-        drop(pets);
-        let _unusable = crate::script::live::lend_pets(true, false, true, slots());
-        s.run("TogglePetAutocast(2)").unwrap();
-        assert_eq!(
-            s.eval::<i64>("return #SEEN").unwrap(),
-            3,
-            "an unusable pet signals nothing"
-        );
+            let after = s
+                .eval::<(i64, Option<i64>)>(
+                    "TogglePetAutocast(2) return #SEEN, select(7, GetPetActionInfo(2))",
+                )
+                .unwrap();
+            assert_eq!(
+                after,
+                (1, None),
+                "one signal inside the call, the next verb reads it off"
+            );
+            assert_eq!(
+                s.eval::<i64>("return SEEN[1]").unwrap(),
+                0,
+                "the handler read it off"
+            );
+            s.run("TogglePetAutocast(1) TogglePetAutocast(11)").unwrap();
+            assert_eq!(
+                s.eval::<i64>("return #SEEN").unwrap(),
+                3,
+                "a token and slot 11 signal too"
+            );
+            assert_eq!(
+                crate::script::live::test_view(|v| v.pet_toggles.borrow().clone()),
+                vec![1, 0, 10]
+            );
+            for (call, err) in [
+                ("TogglePetAutocast(0)", "Invalid slot in TogglePetAutocast"),
+                ("TogglePetAutocast(12)", "Invalid slot in TogglePetAutocast"),
+                ("TogglePetAutocast('x')", "Usage: TogglePetAutocast(index)"),
+            ] {
+                let e = s.run(call).unwrap_err().to_string();
+                assert!(e.contains(err), "{call}: {e}");
+            }
+        });
+
+        let mut unusable_v = crate::script::live::lend_pets(true, false, true, slots());
+        crate::script::live::lending(&mut unusable_v, || {
+            s.run("TogglePetAutocast(2)").unwrap();
+            assert_eq!(
+                s.eval::<i64>("return #SEEN").unwrap(),
+                3,
+                "an unusable pet signals nothing"
+            );
+        });
     }
 
     /// `IsPetAttackActive` answers the pet-attacking global whatever its argument (`0x5d3160`).
@@ -965,18 +986,20 @@ mod tests {
         assert!(s
             .eval::<bool>("return IsPetAttackActive() == false")
             .unwrap());
-        let _pets = crate::script::live::lend_pets(true, true, true, slots());
-        for call in [
-            "IsPetAttackActive()",
-            "IsPetAttackActive(1)",
-            "IsPetAttackActive(2)",
-            "IsPetAttackActive(9)",
-        ] {
-            assert!(
-                s.eval::<bool>(&format!("return {call} == true")).unwrap(),
-                "{call}"
-            );
-        }
+        let mut pets_v = crate::script::live::lend_pets(true, true, true, slots());
+        crate::script::live::lending(&mut pets_v, || {
+            for call in [
+                "IsPetAttackActive()",
+                "IsPetAttackActive(1)",
+                "IsPetAttackActive(2)",
+                "IsPetAttackActive(9)",
+            ] {
+                assert!(
+                    s.eval::<bool>(&format!("return {call} == true")).unwrap(),
+                    "{call}"
+                );
+            }
+        });
     }
 
     /// `IsPetAttackAction` reads the slot word, a real boolean (`0x5d5a10`); the stock bar's
@@ -987,18 +1010,20 @@ mod tests {
         let mut bar = slots();
         bar[0].packed = 0x0700_0002;
         bar[1].packed = 0xC100_0BC2;
-        let _pets = crate::script::live::lend_pets(true, true, true, bar);
-        assert!(s
-            .eval::<bool>("return IsPetAttackAction(1) == true")
-            .unwrap());
-        assert!(s
-            .eval::<bool>("return IsPetAttackAction(2) == false")
-            .unwrap());
-        assert!(s
-            .eval::<bool>("return IsPetAttackAction(11) == false")
-            .unwrap());
-        let err = s.run("IsPetAttackAction()").unwrap_err().to_string();
-        assert!(err.contains("Usage: IsPetAttackAction(index)"), "{err}");
+        let mut pets_v = crate::script::live::lend_pets(true, true, true, bar);
+        crate::script::live::lending(&mut pets_v, || {
+            assert!(s
+                .eval::<bool>("return IsPetAttackAction(1) == true")
+                .unwrap());
+            assert!(s
+                .eval::<bool>("return IsPetAttackAction(2) == false")
+                .unwrap());
+            assert!(s
+                .eval::<bool>("return IsPetAttackAction(11) == false")
+                .unwrap());
+            let err = s.run("IsPetAttackAction()").unwrap_err().to_string();
+            assert!(err.contains("Usage: IsPetAttackAction(index)"), "{err}");
+        });
     }
 
     /// `GetPetActionSlotUsable` answers the lent slot's walk at the call, and 1 with no slot (`0x5d5400`).
@@ -1012,19 +1037,21 @@ mod tests {
         );
         let mut bar = slots();
         bar[0].slot_usable = true;
-        let _pets = crate::script::live::lend_pets(true, true, true, bar);
-        assert_eq!(
-            s.eval::<i64>("return GetPetActionSlotUsable(1)").unwrap(),
-            1
-        );
-        assert!(s
-            .eval::<bool>("return GetPetActionSlotUsable(2) == nil")
-            .unwrap());
-        let err = s.run("GetPetActionSlotUsable()").unwrap_err().to_string();
-        assert!(
-            err.contains("Usage: GetPetActionSlotsUsable(index)"),
-            "{err}"
-        );
+        let mut pets_v = crate::script::live::lend_pets(true, true, true, bar);
+        crate::script::live::lending(&mut pets_v, || {
+            assert_eq!(
+                s.eval::<i64>("return GetPetActionSlotUsable(1)").unwrap(),
+                1
+            );
+            assert!(s
+                .eval::<bool>("return GetPetActionSlotUsable(2) == nil")
+                .unwrap());
+            let err = s.run("GetPetActionSlotUsable()").unwrap_err().to_string();
+            assert!(
+                err.contains("Usage: GetPetActionSlotsUsable(index)"),
+                "{err}"
+            );
+        });
     }
 
     /// The predicates are checked the way `UnitPopup.lua`'s row conditions read them.
@@ -1039,55 +1066,65 @@ mod tests {
         assert_eq!(s.eval::<i64>("return PetCanBeDismissed()").unwrap(), 1);
 
         // A hunter's freshly tamed pet.
-        let _live = menu_loan(true, true, true);
-        assert_eq!(s.eval::<i64>("return PetCanBeAbandoned()").unwrap(), 1);
-        assert!(
-            s.eval::<bool>("return PetCanBeAbandoned() and PetCanBeRenamed()")
-                .unwrap(),
-            "the rename row wants BOTH"
-        );
-        assert!(!s.eval::<bool>("return not PetCanBeAbandoned()").unwrap());
+        let mut live_v = menu_loan(true, true, true);
+        crate::script::live::lending(&mut live_v, || {
+            assert_eq!(s.eval::<i64>("return PetCanBeAbandoned()").unwrap(), 1);
+            assert!(
+                s.eval::<bool>("return PetCanBeAbandoned() and PetCanBeRenamed()")
+                    .unwrap(),
+                "the rename row wants BOTH"
+            );
+            assert!(!s.eval::<bool>("return not PetCanBeAbandoned()").unwrap());
 
-        // The same pet after one rename.
-        let _live = menu_loan(true, false, true);
-        assert!(s.eval::<bool>("return PetCanBeAbandoned() ~= nil").unwrap());
-        assert!(s.eval::<bool>("return PetCanBeRenamed() == nil").unwrap());
+            // The same pet after one rename.
+            let mut live_v = menu_loan(true, false, true);
+            crate::script::live::lending(&mut live_v, || {
+                assert!(s.eval::<bool>("return PetCanBeAbandoned() ~= nil").unwrap());
+                assert!(s.eval::<bool>("return PetCanBeRenamed() == nil").unwrap());
 
-        // A warlock's demon: only Dismiss shows.
-        let _live = menu_loan(false, false, true);
-        assert!(s.eval::<bool>("return not PetCanBeAbandoned()").unwrap());
-        // A summon whose `SummonProperties` row bars it: no Dismiss either.
-        let _live = menu_loan(false, false, false);
-        assert!(s.eval::<bool>("return PetCanBeDismissed() == nil").unwrap());
+                // A warlock's demon: only Dismiss shows.
+                let mut live_v = menu_loan(false, false, true);
+                crate::script::live::lending(&mut live_v, || {
+                    assert!(s.eval::<bool>("return not PetCanBeAbandoned()").unwrap());
+                    // A summon whose `SummonProperties` row bars it: no Dismiss either.
+                    let mut live_v = menu_loan(false, false, false);
+                    crate::script::live::lending(&mut live_v, || {
+                        assert!(s.eval::<bool>("return PetCanBeDismissed() == nil").unwrap());
 
-        assert_eq!(s.take_pet_gives_up(), (0, 0));
-        s.run("PetAbandon() PetDismiss() PetDismiss()").unwrap();
-        assert_eq!(s.take_pet_gives_up(), (1, 2));
-        assert_eq!(s.take_pet_gives_up(), (0, 0), "drain empties");
+                        assert_eq!(s.take_pet_gives_up(), (0, 0));
+                        s.run("PetAbandon() PetDismiss() PetDismiss()").unwrap();
+                        assert_eq!(s.take_pet_gives_up(), (1, 2));
+                        assert_eq!(s.take_pet_gives_up(), (0, 0), "drain empties");
 
-        // An empty name is queued for the app's checks, a number coerces, no argument is empty.
-        s.run("PetRename(\"Bruce\") PetRename(\"\") PetRename(7) PetRename()")
-            .unwrap();
-        assert_eq!(
-            s.take_pet_renames(),
-            vec![
-                "Bruce".to_string(),
-                String::new(),
-                "7".to_string(),
-                String::new()
-            ]
-        );
-        assert!(s.take_pet_renames().is_empty(), "drain empties");
+                        // An empty name is queued for the app's checks, a number coerces, no argument is empty.
+                        s.run("PetRename(\"Bruce\") PetRename(\"\") PetRename(7) PetRename()")
+                            .unwrap();
+                        assert_eq!(
+                            s.take_pet_renames(),
+                            vec![
+                                "Bruce".to_string(),
+                                String::new(),
+                                "7".to_string(),
+                                String::new()
+                            ]
+                        );
+                        assert!(s.take_pet_renames().is_empty(), "drain empties");
+                    });
+                });
+            });
+        });
     }
 
     #[test]
     fn a_disabled_bar_is_still_a_bar() {
         let s = UiScript::new().unwrap();
-        let _pets = crate::script::live::lend_pets(true, false, true, slots());
-        assert_eq!(s.eval::<i64>("return PetHasActionBar()").unwrap(), 1);
-        assert!(s
-            .eval::<bool>("return GetPetActionsUsable() == nil")
-            .unwrap());
+        let mut pets_v = crate::script::live::lend_pets(true, false, true, slots());
+        crate::script::live::lending(&mut pets_v, || {
+            assert_eq!(s.eval::<i64>("return PetHasActionBar()").unwrap(), 1);
+            assert!(s
+                .eval::<bool>("return GetPetActionsUsable() == nil")
+                .unwrap());
+        });
     }
 
     /// Reactions are type 6 and commands type 7, each with its state in the low byte.
@@ -1097,24 +1134,26 @@ mod tests {
         s.run("PetAttack(); PetFollow(); PetWait(); PetPassiveMode()")
             .unwrap();
         assert!(s.take_pet_orders().is_empty(), "no bar, no order");
-        let _pets = crate::script::live::lend_pets(true, true, true, slots());
-        s.run(
+        let mut pets_v = crate::script::live::lend_pets(true, true, true, slots());
+        crate::script::live::lending(&mut pets_v, || {
+            s.run(
             "PetPassiveMode(); PetDefensiveMode(); PetAggressiveMode(); PetWait(); PetFollow(); \
              PetAttack()",
         )
         .unwrap();
-        assert_eq!(
-            s.take_pet_orders(),
-            vec![
-                0x0600_0000,
-                0x0600_0001,
-                0x0600_0002,
-                0x0700_0000,
-                0x0700_0001,
-                0x0700_0002
-            ]
-        );
-        assert!(s.take_pet_orders().is_empty(), "drained");
+            assert_eq!(
+                s.take_pet_orders(),
+                vec![
+                    0x0600_0000,
+                    0x0600_0001,
+                    0x0600_0002,
+                    0x0700_0000,
+                    0x0700_0001,
+                    0x0700_0002
+                ]
+            );
+            assert!(s.take_pet_orders().is_empty(), "drained");
+        });
     }
 
     #[test]
@@ -1122,13 +1161,15 @@ mod tests {
         let s = UiScript::new().unwrap();
         assert!(s.eval::<bool>("return GetPetIcon() == nil").unwrap());
 
-        let _live = stats_loan(true, hunter_stats());
-        assert_eq!(
-            s.eval::<String>("return GetPetIcon()").unwrap(),
-            "Interface\\Icons\\Ability_Hunter_Pet_Boar"
-        );
+        let mut live_v = stats_loan(true, hunter_stats());
+        crate::script::live::lending(&mut live_v, || {
+            assert_eq!(
+                s.eval::<String>("return GetPetIcon()").unwrap(),
+                "Interface\\Icons\\Ability_Hunter_Pet_Boar"
+            );
 
-        assert_eq!(s.arity("GetPetIcon()").unwrap(), 1);
+            assert_eq!(s.arity("GetPetIcon()").unwrap(), 1);
+        });
     }
 
     /// `GetPetTalentTree` is the live tree name, nil without one (`0x5d3d80`).
@@ -1136,36 +1177,31 @@ mod tests {
     fn the_talent_tree_is_the_pushed_name_or_nil() {
         let s = UiScript::new().unwrap();
         assert!(s.eval::<bool>("return GetPetTalentTree() == nil").unwrap());
-        let _live = stats_loan(true, hunter_stats());
-        assert_eq!(
-            s.eval::<String>("return GetPetTalentTree()").unwrap(),
-            "Tenacity"
-        );
+        let mut live_v = stats_loan(true, hunter_stats());
+        crate::script::live::lending(&mut live_v, || {
+            assert_eq!(
+                s.eval::<String>("return GetPetTalentTree()").unwrap(),
+                "Tenacity"
+            );
+        });
     }
 
     /// `stats` lent as the pet list's head (guid 2, ours 1), for the test's length.
-    fn stats_loan(
-        has_ui: bool,
-        stats: PetStats,
-    ) -> crate::script::LiveLoan<crate::script::live::TestView> {
-        crate::script::live::lend_test(crate::script::live::TestView {
+    fn stats_loan(has_ui: bool, stats: PetStats) -> crate::script::live::TestView {
+        crate::script::live::TestView {
             player: Some(1),
             units: [(1, (0, 1)), (2, (0, 1))].into(),
             pet_stats: (has_ui, stats),
             ..Default::default()
-        })
+        }
     }
 
     /// The three menu predicates lent, for the test's length.
-    fn menu_loan(
-        abandon: bool,
-        rename: bool,
-        dismiss: bool,
-    ) -> crate::script::LiveLoan<crate::script::live::TestView> {
-        crate::script::live::lend_test(crate::script::live::TestView {
+    fn menu_loan(abandon: bool, rename: bool, dismiss: bool) -> crate::script::live::TestView {
+        crate::script::live::TestView {
             pet_menu: Some((abandon, rename, dismiss)),
             ..Default::default()
-        })
+        }
     }
 
     /// Our guid 1 and the pet's 2 as the unit tokens name them.
@@ -1201,53 +1237,55 @@ mod tests {
     #[test]
     fn a_hunters_pet_answers_every_stat_binding() {
         let s = UiScript::new().unwrap();
-        let _live = stats_loan(true, hunter_stats());
-
-        assert!(s
-            .eval::<bool>(
-                "local h, dmg = GetPetHappiness() \
+        let mut live_v = stats_loan(true, hunter_stats());
+        crate::script::live::lending(&mut live_v, || {
+            assert!(s
+                .eval::<bool>(
+                    "local h, dmg = GetPetHappiness() \
                  return h == 3 and dmg == 125 and select('#', GetPetHappiness()) == 2"
-            )
-            .unwrap());
-        assert!(s
-            .eval::<bool>("local c, n = GetPetExperience() return c == 4200 and n == 8000")
-            .unwrap());
-        assert!(s
-            .eval::<bool>("local ui, hunter = HasPetUI() return ui == 1 and hunter == 1")
-            .unwrap());
+                )
+                .unwrap());
+            assert!(s
+                .eval::<bool>("local c, n = GetPetExperience() return c == 4200 and n == 8000")
+                .unwrap());
+            assert!(s
+                .eval::<bool>("local ui, hunter = HasPetUI() return ui == 1 and hunter == 1")
+                .unwrap());
+        });
     }
 
     #[test]
     fn a_non_hunter_pet_fails_three_different_ways() {
         let s = UiScript::new().unwrap();
-        let _live = stats_loan(
+        let mut live_v = stats_loan(
             true,
             PetStats {
                 hunter_pet: false,
                 ..hunter_stats()
             },
         );
-
-        assert!(
-            s.eval::<bool>(
-                "local h, dmg = GetPetHappiness() \
+        crate::script::live::lending(&mut live_v, || {
+            assert!(
+                s.eval::<bool>(
+                    "local h, dmg = GetPetHappiness() \
                  return h == nil and dmg == 100 and select('#', GetPetHappiness()) == 2"
-            )
-            .unwrap(),
-            "happiness is nil but its two numbers are still numbers"
-        );
-        assert!(s
-            .eval::<bool>("local c, n = GetPetExperience() return c == 0 and n == 0")
-            .unwrap());
-        assert!(s
-            .eval::<bool>("local ui, hunter = HasPetUI() return ui == 1 and hunter == nil")
-            .unwrap());
+                )
+                .unwrap(),
+                "happiness is nil but its two numbers are still numbers"
+            );
+            assert!(s
+                .eval::<bool>("local c, n = GetPetExperience() return c == 0 and n == 0")
+                .unwrap());
+            assert!(s
+                .eval::<bool>("local ui, hunter = HasPetUI() return ui == 1 and hunter == nil")
+                .unwrap());
+        });
     }
 
     #[test]
     fn happiness_bucket_zero_is_not_the_failure_case() {
         let s = UiScript::new().unwrap();
-        let _live = stats_loan(
+        let mut live_v = stats_loan(
             true,
             PetStats {
                 happiness: Some(0),
@@ -1255,14 +1293,16 @@ mod tests {
                 ..hunter_stats()
             },
         );
-        assert!(s
-            .eval::<bool>("local h = GetPetHappiness() return h == 0 and h ~= nil")
-            .unwrap());
-        assert!(
-            s.eval::<bool>("return not GetPetHappiness() == false")
-                .unwrap(),
-            "0 is truthy in Lua, so the reference's `not happiness` hide-test does NOT fire"
-        );
+        crate::script::live::lending(&mut live_v, || {
+            assert!(s
+                .eval::<bool>("local h = GetPetHappiness() return h == 0 and h ~= nil")
+                .unwrap());
+            assert!(
+                s.eval::<bool>("return not GetPetHappiness() == false")
+                    .unwrap(),
+                "0 is truthy in Lua, so the reference's `not happiness` hide-test does NOT fire"
+            );
+        });
     }
 
     #[test]
@@ -1286,42 +1326,46 @@ mod tests {
             .unwrap());
 
         // Family 0 and an unanswered creature query both arrive as `None`.
-        let _live = stats_loan(
+        let mut live_v = stats_loan(
             true,
             PetStats {
                 family: None,
                 ..hunter_stats()
             },
         );
-        assert!(s
-            .eval::<bool>(r#"return UnitCreatureFamily("pet") == nil"#)
-            .unwrap());
-        assert!(
+        crate::script::live::lending(&mut live_v, || {
+            assert!(s
+                .eval::<bool>(r#"return UnitCreatureFamily("pet") == nil"#)
+                .unwrap());
+            assert!(
             s.eval::<bool>(r#"return UnitCreatureFamily("pet") ~= ''"#)
                 .unwrap(),
             "nil, never an empty string — '' is TRUTHY in Lua, so it would pass the ref's guard \
              and print a bare 'Level 58 ' with a trailing space"
         );
 
-        // With a family: `"pet"` answers it; a token naming nobody, or a player, nil.
-        let _live = stats_loan(true, hunter_stats());
-        assert_eq!(
-            s.eval::<String>(r#"return UnitCreatureFamily("pet")"#)
-                .unwrap(),
-            "Boar"
-        );
-        for token in [r#""target""#, r#""player""#] {
-            assert!(
-                s.eval::<bool>(&format!("return UnitCreatureFamily({token}) == nil"))
-                    .unwrap(),
-                "{token} must answer nil"
-            );
-        }
-        let err = s.run("UnitCreatureFamily(nil)").unwrap_err().to_string();
-        assert!(
-            err.contains(r#"Usage: UnitCreatureFamily("unit")"#),
-            "{err}"
-        );
+            // With a family: `"pet"` answers it; a token naming nobody, or a player, nil.
+            let mut live_v = stats_loan(true, hunter_stats());
+            crate::script::live::lending(&mut live_v, || {
+                assert_eq!(
+                    s.eval::<String>(r#"return UnitCreatureFamily("pet")"#)
+                        .unwrap(),
+                    "Boar"
+                );
+                for token in [r#""target""#, r#""player""#] {
+                    assert!(
+                        s.eval::<bool>(&format!("return UnitCreatureFamily({token}) == nil"))
+                            .unwrap(),
+                        "{token} must answer nil"
+                    );
+                }
+                let err = s.run("UnitCreatureFamily(nil)").unwrap_err().to_string();
+                assert!(
+                    err.contains(r#"Usage: UnitCreatureFamily("unit")"#),
+                    "{err}"
+                );
+            });
+        });
     }
 
     #[test]
@@ -1329,27 +1373,31 @@ mod tests {
         let s = UiScript::new().unwrap();
         assert_eq!(s.arity("GetPetFoodTypes()").unwrap(), 0);
 
-        let _live = stats_loan(true, hunter_stats());
-        assert_eq!(
-            s.arity("GetPetFoodTypes()").unwrap(),
-            6,
-            "a boar's six diets are six returns, not one string"
-        );
-        assert!(s
-            .eval::<bool>(
-                "local a, b, c = GetPetFoodTypes() \
+        let mut live_v = stats_loan(true, hunter_stats());
+        crate::script::live::lending(&mut live_v, || {
+            assert_eq!(
+                s.arity("GetPetFoodTypes()").unwrap(),
+                6,
+                "a boar's six diets are six returns, not one string"
+            );
+            assert!(s
+                .eval::<bool>(
+                    "local a, b, c = GetPetFoodTypes() \
                  return a == 'Meat' and b == 'Fish' and c == 'Cheese'"
-            )
-            .unwrap());
+                )
+                .unwrap());
 
-        let _live = stats_loan(
-            true,
-            PetStats {
-                food_types: vec![],
-                ..hunter_stats()
-            },
-        );
-        assert_eq!(s.arity("GetPetFoodTypes()").unwrap(), 0);
+            let mut live_v = stats_loan(
+                true,
+                PetStats {
+                    food_types: vec![],
+                    ..hunter_stats()
+                },
+            );
+            crate::script::live::lending(&mut live_v, || {
+                assert_eq!(s.arity("GetPetFoodTypes()").unwrap(), 0);
+            });
+        });
     }
 
     /// The diet's hunter gate is the app's to apply, so here a non-hunter's diet is just empty.
@@ -1357,7 +1405,7 @@ mod tests {
     fn the_family_word_answers_for_a_non_hunter_pet() {
         let mut s = UiScript::new().unwrap();
         pet_tokens(&mut s);
-        let _live = stats_loan(
+        let mut live_v = stats_loan(
             true,
             PetStats {
                 hunter_pet: false,
@@ -1366,11 +1414,13 @@ mod tests {
                 ..PetStats::default()
             },
         );
-        assert_eq!(
-            s.eval::<String>(r#"return UnitCreatureFamily("pet")"#)
-                .unwrap(),
-            "Imp"
-        );
-        assert_eq!(s.arity("GetPetFoodTypes()").unwrap(), 0);
+        crate::script::live::lending(&mut live_v, || {
+            assert_eq!(
+                s.eval::<String>(r#"return UnitCreatureFamily("pet")"#)
+                    .unwrap(),
+                "Imp"
+            );
+            assert_eq!(s.arity("GetPetFoodTypes()").unwrap(), 0);
+        });
     }
 }

@@ -135,28 +135,36 @@ mod tests {
         };
         assert_eq!(counts(&s), "0,nil,0", "no view, no player");
         {
-            let _l = crate::script::live::lend_test(bank_view(None, None));
-            assert_eq!(counts(&s), "0,nil,0", "no active player");
+            let mut l_v = bank_view(None, None);
+            crate::script::live::lending(&mut l_v, || {
+                assert_eq!(counts(&s), "0,nil,0", "no active player");
+            });
         }
         {
-            let _l = crate::script::live::lend_test(bank_view(Some(2), None));
-            assert_eq!(
-                counts(&s),
-                "2,nil,100000",
-                "no banker: the count and the next row still answer"
-            );
+            let mut l_v = bank_view(Some(2), None);
+            crate::script::live::lending(&mut l_v, || {
+                assert_eq!(
+                    counts(&s),
+                    "2,nil,100000",
+                    "no banker: the count and the next row still answer"
+                );
+            });
         }
         {
-            let _l = crate::script::live::lend_test(bank_view(Some(6), Some(0x42)));
-            assert_eq!(counts(&s), "6,nil,250000", "six is not yet full");
+            let mut l_v = bank_view(Some(6), Some(0x42));
+            crate::script::live::lending(&mut l_v, || {
+                assert_eq!(counts(&s), "6,nil,250000", "six is not yet full");
+            });
         }
         {
-            let _l = crate::script::live::lend_test(bank_view(Some(7), Some(0x42)));
-            assert_eq!(
-                counts(&s),
-                "7,1,999999999",
-                "seven is full; the row past it is the sentinel"
-            );
+            let mut l_v = bank_view(Some(7), Some(0x42));
+            crate::script::live::lending(&mut l_v, || {
+                assert_eq!(
+                    counts(&s),
+                    "7,1,999999999",
+                    "seven is full; the row past it is the sentinel"
+                );
+            });
         }
     }
 
@@ -178,21 +186,24 @@ mod tests {
             s.eval::<String>("local t = table.concat(SEEN, ',') SEEN = {} return t")
                 .unwrap()
         };
-        let mut loan = crate::script::live::lend_test(bank_view(Some(1), Some(0x42)));
-        s.run("CloseBankFrame()").unwrap();
-        assert_eq!(seen(&s), "true,true");
-        assert!(!super::bank_open(), "the banker cleared in the call");
-        s.run("CloseBankFrame()").unwrap();
-        assert_eq!(seen(&s), "false", "with no bank, the lone fire");
-        drop(loan);
+        let mut loan_v = bank_view(Some(1), Some(0x42));
+        crate::script::live::lending(&mut loan_v, || {
+            s.run("CloseBankFrame()").unwrap();
+            assert_eq!(seen(&s), "true,true");
+            assert!(!super::bank_open(), "the banker cleared in the call");
+            s.run("CloseBankFrame()").unwrap();
+            assert_eq!(seen(&s), "false", "with no bank, the lone fire");
+        });
+
         // A banker whose interact target already went: one fire.
-        loan = crate::script::live::lend_test(crate::script::live::TestView {
+        let mut loan_v = crate::script::live::TestView {
             bank_interacting: false,
             ..bank_view(Some(1), Some(0x42))
+        };
+        crate::script::live::lending(&mut loan_v, || {
+            s.run("CloseBankFrame()").unwrap();
+            assert_eq!(seen(&s), "true");
         });
-        s.run("CloseBankFrame()").unwrap();
-        assert_eq!(seen(&s), "true");
-        drop(loan);
     }
 
     /// A window opened in the client takes the interact target: the bank's leg fires `BANKFRAME_CLOSED` once with the banker set, then clears it; with the interact target gone, or no banker, it does nothing (`0x51fd1c` -> `0x512fa7`).
@@ -213,21 +224,24 @@ mod tests {
             s.eval::<String>("local t = table.concat(SEEN, ',') SEEN = {} return t")
                 .unwrap()
         };
-        let loan = crate::script::live::lend_test(bank_view(Some(1), Some(0x42)));
-        s.close_bank_interaction();
-        assert_eq!(seen(&s), "true", "one fire, the banker still set");
-        assert!(!super::bank_open(), "then the banker clears");
-        s.close_bank_interaction();
-        assert_eq!(seen(&s), "", "nothing left to close");
-        drop(loan);
-        let loan = crate::script::live::lend_test(crate::script::live::TestView {
+        let mut loan_v = bank_view(Some(1), Some(0x42));
+        crate::script::live::lending(&mut loan_v, || {
+            s.close_bank_interaction();
+            assert_eq!(seen(&s), "true", "one fire, the banker still set");
+            assert!(!super::bank_open(), "then the banker clears");
+            s.close_bank_interaction();
+            assert_eq!(seen(&s), "", "nothing left to close");
+        });
+
+        let mut loan_v = crate::script::live::TestView {
             bank_interacting: false,
             ..bank_view(Some(1), Some(0x42))
+        };
+        crate::script::live::lending(&mut loan_v, || {
+            s.close_bank_interaction();
+            assert_eq!(seen(&s), "", "the interact target is no longer the banker");
+            assert!(super::bank_open(), "the banker stays");
         });
-        s.close_bank_interaction();
-        assert_eq!(seen(&s), "", "the interact target is no longer the banker");
-        assert!(super::bank_open(), "the banker stays");
-        drop(loan);
     }
 
     /// The bank bags are inventory slots 68..=74, as the reference's bank reads them

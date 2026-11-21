@@ -103,35 +103,37 @@ fn count(s: &UiScript, chunk: &str) -> i64 {
 
 #[test]
 fn each_predicate_reads_its_slots_row() {
-    let (s, _book) = script();
-    let cases: [(&str, usize); 5] = [
-        ("IsAttackSpell", 1),
-        ("IsAutoRepeatSpell", 2),
-        ("IsHarmfulSpell", 3),
-        ("IsHelpfulSpell", 4),
-        ("IsConsumableSpell", 5),
-    ];
-    for (verb, hit) in cases {
-        for slot in 1..=5 {
-            assert_eq!(
-                flag(&s, &format!("{verb}({slot}, 'spell')")),
-                slot == hit,
-                "{verb}({slot})"
-            );
+    crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+        let (s, _book) = script();
+        let cases: [(&str, usize); 5] = [
+            ("IsAttackSpell", 1),
+            ("IsAutoRepeatSpell", 2),
+            ("IsHarmfulSpell", 3),
+            ("IsHelpfulSpell", 4),
+            ("IsConsumableSpell", 5),
+        ];
+        for (verb, hit) in cases {
+            for slot in 1..=5 {
+                assert_eq!(
+                    flag(&s, &format!("{verb}({slot}, 'spell')")),
+                    slot == hit,
+                    "{verb}({slot})"
+                );
+            }
+            // By name, as the slot parser reads one.
+            let name = [
+                "Attack",
+                "Shoot",
+                "Frost Nova",
+                "Renew",
+                "Portal: Stormwind",
+            ][hit - 1];
+            assert!(flag(&s, &format!("{verb}('{name}')")), "{verb}('{name}')");
         }
-        // By name, as the slot parser reads one.
-        let name = [
-            "Attack",
-            "Shoot",
-            "Frost Nova",
-            "Renew",
-            "Portal: Stormwind",
-        ][hit - 1];
-        assert!(flag(&s, &format!("{verb}('{name}')")), "{verb}('{name}')");
-    }
-    // The pet's book is its own array.
-    assert!(flag(&s, "IsHarmfulSpell(1, 'pet')"));
-    assert!(!flag(&s, "IsHelpfulSpell(1, 'pet')"));
+        // The pet's book is its own array.
+        assert!(flag(&s, "IsHarmfulSpell(1, 'pet')"));
+        assert!(!flag(&s, "IsHelpfulSpell(1, 'pet')"));
+    });
 }
 
 /// A slot past the book's spells reads spell 0, one nil; a name the book lacks answers nothing;
@@ -219,27 +221,29 @@ fn spell_count_is_the_casts_the_reagents_pay_for() {
 /// The 0-based index of the last slot holding the id, the pet's array on a true flag.
 #[test]
 fn find_spell_book_slot_by_id_is_the_last_match_zero_based() {
-    let (s, _book) = script();
-    let find = |chunk: &str| {
-        s.eval::<Option<i64>>(&format!("return FindSpellBookSlotByID({chunk})"))
-            .unwrap()
-    };
-    assert_eq!(find(&ATTACK.to_string()), Some(0));
-    assert_eq!(find(&RENEW.to_string()), Some(5));
-    assert_eq!(find(&format!("'{FROST_NOVA}'")), Some(2));
-    assert_eq!(find(&BITE.to_string()), None);
-    assert_eq!(find(&format!("{BITE}, true")), Some(0));
-    assert_eq!(find(&format!("{ATTACK}, 1")), None);
-    assert_eq!(find("999999"), None);
-    for bad in ["", "0", "-5", "'Renew'", "{}"] {
-        assert!(
-            s.run(&format!("FindSpellBookSlotByID({bad})"))
-                .unwrap_err()
-                .to_string()
-                .contains("Usage: FindSpellBookSlotByID(spellID[, isPet])"),
-            "FindSpellBookSlotByID({bad})"
-        );
-    }
+    crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+        let (s, _book) = script();
+        let find = |chunk: &str| {
+            s.eval::<Option<i64>>(&format!("return FindSpellBookSlotByID({chunk})"))
+                .unwrap()
+        };
+        assert_eq!(find(&ATTACK.to_string()), Some(0));
+        assert_eq!(find(&RENEW.to_string()), Some(5));
+        assert_eq!(find(&format!("'{FROST_NOVA}'")), Some(2));
+        assert_eq!(find(&BITE.to_string()), None);
+        assert_eq!(find(&format!("{BITE}, true")), Some(0));
+        assert_eq!(find(&format!("{ATTACK}, 1")), None);
+        assert_eq!(find("999999"), None);
+        for bad in ["", "0", "-5", "'Renew'", "{}"] {
+            assert!(
+                s.run(&format!("FindSpellBookSlotByID({bad})"))
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Usage: FindSpellBookSlotByID(spellID[, isPet])"),
+                "FindSpellBookSlotByID({bad})"
+            );
+        }
+    });
 }
 
 #[test]

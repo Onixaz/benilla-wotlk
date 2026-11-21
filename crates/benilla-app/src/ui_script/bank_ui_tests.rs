@@ -71,11 +71,12 @@ fn the_stock_bank_shows_28_slots_and_seven_bags() {
         });
     }
     s.set_bank_bag_slots(bags);
-    let _bank = super::test_ui::lend_bank(7, 0);
-    s.fire_event("BANKFRAME_OPENED", vec![]);
-    let errors = bank_errors(s.take_errors());
-    assert!(errors.is_empty(), "bank errors: {errors:#?}");
-    s.run(
+    let mut bank_v = super::test_ui::lend_bank(7, 0);
+    crate::ui_script::test_live::lending(&mut bank_v, || {
+        s.fire_event("BANKFRAME_OPENED", vec![]);
+        let errors = bank_errors(s.take_errors());
+        assert!(errors.is_empty(), "bank errors: {errors:#?}");
+        s.run(
         r#"
         assert(BankFrame:IsShown(), "the bank opened")
         assert(BankFrameItem28:IsShown(), "the 28th item button")
@@ -103,22 +104,23 @@ fn the_stock_bank_shows_28_slots_and_seven_bags() {
         "#,
     )
     .unwrap();
-    // A bag placed while the bank is open repaints its button on `PLAYERBANKSLOTS_CHANGED(29)`,
-    // the first bag's bank slot.
-    let mut bags: BankBagSlots = Default::default();
-    bags[0] = Some(InvSlotView {
-        item_id: 4500,
-        icon: Some("Interface\\Icons\\INV_Misc_Bag_Placed".into()),
-        count: 1,
-        equip_slots: vec![20, 21, 22, 23],
-        ..Default::default()
+        // A bag placed while the bank is open repaints its button on `PLAYERBANKSLOTS_CHANGED(29)`,
+        // the first bag's bank slot.
+        let mut bags: BankBagSlots = Default::default();
+        bags[0] = Some(InvSlotView {
+            item_id: 4500,
+            icon: Some("Interface\\Icons\\INV_Misc_Bag_Placed".into()),
+            count: 1,
+            equip_slots: vec![20, 21, 22, 23],
+            ..Default::default()
+        });
+        s.set_bank_bag_slots(bags);
+        s.fire_event("PLAYERBANKSLOTS_CHANGED", vec![ScriptValue::Int(29)]);
+        assert!(s
+            .eval::<String>("return BankFrameBag1IconTexture:GetTexture()")
+            .unwrap()
+            .contains("INV_Misc_Bag_Placed"));
+        let errors = bank_errors(s.take_errors());
+        assert!(errors.is_empty(), "bank errors: {errors:#?}");
     });
-    s.set_bank_bag_slots(bags);
-    s.fire_event("PLAYERBANKSLOTS_CHANGED", vec![ScriptValue::Int(29)]);
-    assert!(s
-        .eval::<String>("return BankFrameBag1IconTexture:GetTexture()")
-        .unwrap()
-        .contains("INV_Misc_Bag_Placed"));
-    let errors = bank_errors(s.take_errors());
-    assert!(errors.is_empty(), "bank errors: {errors:#?}");
 }

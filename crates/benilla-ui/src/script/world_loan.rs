@@ -8,21 +8,15 @@
 //! cast entry from a `UNIT_SPELLCAST_SENT` listener (`0x80b556` before the GCD arm `0x80b583`).
 
 use std::cell::RefCell;
-use std::rc::Rc;
 
 use mlua::{AnyUserData, Lua};
 
 use super::LiveState;
 
-/// One loan live on this thread.
-enum Loan {
-    /// A host's state lent for one closure as a scoped userdata (once its scope ends mlua has
-    /// destructed it, so a handle left behind only ever fails to borrow), and the view builder
-    /// over it; `None` takes the host's own ([`set_live_access`]).
-    Lent(AnyUserData, Option<LiveAccess>),
-    /// A view a [`super::LiveLoan`] owns until it drops.
-    View(Rc<RefCell<dyn LiveState>>),
-}
+/// One loan live on this thread: a host's state lent for one closure as a scoped userdata (once
+/// its scope ends mlua has destructed it, so a handle left behind only ever fails to borrow), and
+/// the view builder over it; `None` takes the host's own ([`set_live_access`]).
+struct Loan(AnyUserData, Option<LiveAccess>);
 
 /// The loans live on this thread, innermost last, and the first borrow that failed under them.
 #[derive(Default)]
@@ -225,8 +219,8 @@ pub(crate) fn queue_in_turn(
 /// of the host's type is lent.
 pub type LiveAccess = fn(&mut dyn FnMut(&mut dyn LiveState)) -> bool;
 
-/// Name the host's view builder, read by [`super::read_live`] and [`super::write_live`] when no
-/// [`super::LiveLoan`] is lent.
+/// Name the host's view builder, read by [`super::read_live`] and [`super::write_live`] over a
+/// loan made by [`lend`].
 pub fn set_live_access(access: LiveAccess) {
     LIVE_ACCESS.with_borrow_mut(|a| *a = Some(access));
 }
@@ -257,21 +251,6 @@ fn view_access<V: LiveState + 'static>(f: &mut dyn FnMut(&mut dyn LiveState)) ->
     with_lent::<V, _>(|v| f(v)).is_some()
 }
 
-/// Lend `view`, owned by a [`super::LiveLoan`], until [`pop_view`] takes it back.
-pub(crate) fn push_view(view: Rc<RefCell<dyn LiveState>>) {
-    LOANS.with_borrow_mut(|l| l.live.push(Loan::View(view)));
-}
-
-/// End the view loan at `at`, the innermost one.
-pub(crate) fn pop_view(at: *const ()) {
-    LOANS.with_borrow_mut(|l| {
-        let innermost =
-            matches!(l.live.last(), Some(Loan::View(v)) if Rc::as_ptr(v).cast::<()>() == at);
-        assert!(innermost, "a view loan dropped out of order");
-        l.live.pop();
-    });
-}
-
 /// [`lend`], with `access` as the view builder over the loan.
 fn lend_with<W: 'static, R>(
     lua: &Lua,
@@ -283,7 +262,7 @@ fn lend_with<W: 'static, R>(
     let mut out = None;
     lua.scope(|scope| {
         let ud = scope.create_any_userdata_ref_mut(host)?;
-        LOANS.with_borrow_mut(|l| l.live.push(Loan::Lent(ud, access)));
+        LOANS.with_borrow_mut(|l| l.live.push(Loan(ud, access)));
         let _pop = Pop;
         out = f.take().map(|f| f());
         Ok(())
@@ -301,10 +280,7 @@ fn lend_with<W: 'static, R>(
 /// `f` over the innermost loan of a `W`, `None` with none lent (or the innermost lends another
 /// type). A borrow of a loan already borrowed panics: the caller holds it across a raise.
 pub fn with_lent<W: 'static, R>(f: impl FnOnce(&mut W) -> R) -> Option<R> {
-    let ud = LOANS.with_borrow(|l| match l.live.last() {
-        Some(Loan::Lent(ud, _)) => Some(ud.clone()),
-        _ => None,
-    })?;
+    let ud = LOANS.with_borrow(|l| l.live.last().map(|Loan(ud, _)| ud.clone()))?;
     match ud.borrow_mut_scoped::<W, R>(f) {
         Ok(r) => Some(r),
         Err(mlua::Error::UserDataBorrowMutError | mlua::Error::UserDataBorrowError) => {
@@ -334,49 +310,18 @@ pub fn depth() -> usize {
     LOANS.with_borrow(|l| l.live.len())
 }
 
-/// The innermost loan's way to its view.
-enum Top {
-    /// A host loan and its view builder.
-    Lent(Option<LiveAccess>),
-    /// A view owned by a [`super::LiveLoan`].
-    View(Rc<RefCell<dyn LiveState>>),
-}
-
-/// The innermost loan, `None` with none.
-fn top() -> Option<Top> {
-    LOANS.with_borrow(|l| {
-        l.live.last().map(|loan| match loan {
-            Loan::Lent(_, access) => Top::Lent(*access),
-            Loan::View(view) => Top::View(view.clone()),
-        })
-    })
-}
-
 /// [`super::write_live`]'s way to the view through the innermost loan.
 pub(crate) fn live<R>(f: impl FnOnce(&mut dyn LiveState) -> R) -> Option<R> {
-    let access = match top()? {
-        Top::View(view) => {
-            let Ok(mut view) = view.try_borrow_mut() else {
-                held_across("view")
-            };
-            return Some(f(&mut *view));
-        }
-        Top::Lent(access) => access.or_else(|| LIVE_ACCESS.with_borrow(|a| *a))?,
-    };
+    let access = LOANS.with_borrow(|l| l.live.last().map(|Loan(_, access)| *access))?;
+    let access = access.or_else(|| LIVE_ACCESS.with_borrow(|a| *a))?;
     let mut f = Some(f);
     let mut out = None;
     access(&mut |l| out = f.take().map(|f| f(l)));
     out
 }
 
-/// [`super::read_live`]'s way to the view: a view owned by a loan is read under a shared borrow.
+/// [`super::read_live`]'s way to the view.
 pub(crate) fn live_ref<R>(f: impl FnOnce(&dyn LiveState) -> R) -> Option<R> {
-    if let Some(Top::View(view)) = top() {
-        let Ok(view) = view.try_borrow() else {
-            held_across("view")
-        };
-        return Some(f(&*view));
-    }
     live(|l| f(l))
 }
 

@@ -1,8 +1,7 @@
 //! The client state the verbs read at call time. 12340's verbs read the live object when called
 //! (`UnitOnTaxi` `0x60f350` reads the flags word at `0x60f396`); here the app lends a [`LiveState`]
-//! over its own state for the length of every call into Lua, either around one call
-//! ([`UiScript::with_live`]) or for as long as a guard lives ([`LiveLoan`]), and a verb reads it
-//! through [`read_live`]. The loan is the calling thread's: the VM runs on one thread, and a test
+//! over its own state for the length of every call into Lua ([`UiScript::with_live`]), and a verb
+//! reads it through [`read_live`]. The loan is the calling thread's: the VM runs on one thread, and a test
 //! thread's loan never reaches another's.
 
 use super::UiScript;
@@ -1258,44 +1257,6 @@ pub trait LiveState {
     }
 }
 
-/// A view lent to every verb on this thread until the loan drops, which puts the previous one
-/// back: the guard a test keeps for the length of a stretch of calls into Lua. The view is owned
-/// here and borrowed at runtime, so a verb that reaches it while the holder borrows it panics.
-pub struct LiveLoan<V: LiveState + 'static> {
-    view: std::rc::Rc<std::cell::RefCell<V>>,
-}
-
-impl<V: LiveState + 'static> LiveLoan<V> {
-    /// Lend `view` until the loan drops.
-    pub fn new(view: V) -> Self {
-        let view = std::rc::Rc::new(std::cell::RefCell::new(view));
-        super::world_loan::push_view(view.clone());
-        Self { view }
-    }
-
-    /// The lent view, read between calls into Lua; a verb's write to it panics while this lives.
-    pub fn view(&self) -> std::cell::Ref<'_, V> {
-        self.view.borrow()
-    }
-
-    /// `f` over the lent view; a verb writing through the loan from inside `f` panics.
-    pub fn with_view<R>(&self, f: impl FnOnce(&V) -> R) -> R {
-        f(&self.view())
-    }
-
-    /// `f` over the lent view, to change it between calls into Lua; a verb reaching the loan from
-    /// inside `f` panics.
-    pub fn with_view_mut<R>(&mut self, f: impl FnOnce(&mut V) -> R) -> R {
-        f(&mut self.view.borrow_mut())
-    }
-}
-
-impl<V: LiveState + 'static> Drop for LiveLoan<V> {
-    fn drop(&mut self) {
-        super::world_loan::pop_view(std::rc::Rc::as_ptr(&self.view).cast());
-    }
-}
-
 impl UiScript {
     /// Run `f` with `live` lent to every verb it reaches; the loan ends before this returns, and a
     /// nested call lends its own and restores the outer one.
@@ -1345,19 +1306,25 @@ pub fn write_live<R>(f: impl FnOnce(&mut dyn LiveState) -> R) -> Option<R> {
     super::world_loan::live(f)
 }
 
-/// Lend `view` as the live view until the loan drops, for the VM's own tests.
+/// Run `f` with `view` lent as the live view, as a call into Lua lends it, for the VM's own tests.
 #[cfg(test)]
-pub(crate) fn lend_test(view: TestView) -> LiveLoan<TestView> {
-    LiveLoan::new(view)
+pub(crate) fn lending<V: LiveState + 'static, R>(view: &mut V, f: impl FnOnce() -> R) -> R {
+    super::world_loan::lend_live(&mlua::Lua::new(), view, f)
 }
 
-/// Lend `slots` as our arena-team slots, for the VM's own tests.
+/// `f` over the [`TestView`] lent right now, between calls into Lua, for the VM's own tests.
 #[cfg(test)]
-pub(crate) fn lend_arena_teams(slots: [super::ArenaTeamSlotView; 3]) -> LiveLoan<TestView> {
-    lend_test(TestView {
+pub(crate) fn test_view<R>(f: impl FnOnce(&mut TestView) -> R) -> R {
+    super::world_loan::with_lent::<TestView, R>(f).expect("a test view is lent")
+}
+
+/// A view answering `slots` as our arena-team slots, for the VM's own tests.
+#[cfg(test)]
+pub(crate) fn arena_teams(slots: [super::ArenaTeamSlotView; 3]) -> TestView {
+    TestView {
         arena_teams: slots,
         ..Default::default()
-    })
+    }
 }
 
 /// A view over fixed state, for the VM's own tests.
@@ -2242,11 +2209,9 @@ thread_local! {
     /// The known spells with the rank table, as every test view on this thread answers them.
     static TEST_KNOWN: std::cell::RefCell<(std::collections::HashSet<u32>, std::collections::HashMap<u32, u32>)> =
         std::cell::RefCell::default();
-    /// The view lent for the rest of the thread once a test moves the cursor with none up.
-    static TEST_TARGETING_LOAN: std::cell::RefCell<Option<LiveLoan<TestView>>> = const { std::cell::RefCell::new(None) };
 }
 
-/// Move the targeting cursor on a bare VM as the app's view answers it, lending a view for the rest of the thread when none is up.
+/// Move the targeting cursor on a bare VM as every test view on this thread answers it.
 #[cfg(test)]
 pub(crate) trait TestTargeting {
     /// The cursor up or down; going up counts an arm, as the cast's cursor arm does (`0x80d7f7`).
@@ -2260,29 +2225,18 @@ pub(crate) trait TestTargeting {
 /// Answer `known` as the player's known spells on this thread, as [`set_test_book`] does.
 #[cfg(test)]
 pub(crate) fn set_test_known(known: impl IntoIterator<Item = u32>) {
-    sticky_targeting();
     TEST_KNOWN.with(|k| k.borrow_mut().0 = known.into_iter().collect());
 }
 
 /// Answer `next` as the rank table the known test walks on this thread.
 #[cfg(test)]
 pub(crate) fn set_test_next_ranks(next: std::collections::HashMap<u32, u32>) {
-    sticky_targeting();
     TEST_KNOWN.with(|k| k.borrow_mut().1 = next);
-}
-
-#[cfg(test)]
-fn sticky_targeting() {
-    if read_live(|_| ()).is_none() {
-        let loan = LiveLoan::new(TestView::default());
-        TEST_TARGETING_LOAN.with(|l| *l.borrow_mut() = Some(loan));
-    }
 }
 
 #[cfg(test)]
 impl TestTargeting for UiScript {
     fn set_spell_targeting(&mut self, active: bool) {
-        sticky_targeting();
         TEST_TARGETING.with(|t| {
             let t = &mut t.borrow_mut().0;
             if active && !t.active {
@@ -2296,51 +2250,44 @@ impl TestTargeting for UiScript {
     }
 
     fn set_item_pick_armed(&mut self, armed: bool) {
-        sticky_targeting();
         TEST_TARGETING.with(|t| t.borrow_mut().0.wants_item = armed);
     }
 
     fn set_spell_targetable_units(&mut self, guids: impl IntoIterator<Item = u64>) {
-        sticky_targeting();
         TEST_TARGETING.with(|t| t.borrow_mut().1 = guids.into_iter().collect());
     }
 }
 
-/// A test's pet book: the book before it comes back, and the view it lent with none up drops, when it drops.
+/// A test's pet book: the book before it comes back when it drops.
 #[cfg(test)]
 #[must_use = "the pet book answers only while the guard lives"]
 pub(crate) struct TestPetBook {
     previous: Option<super::PetBookState>,
-    loan: Option<LiveLoan<TestView>>,
 }
 
 #[cfg(test)]
 impl Drop for TestPetBook {
     fn drop(&mut self) {
         TEST_PET_BOOK.with(|b| *b.borrow_mut() = self.previous.take());
-        drop(self.loan.take());
     }
 }
 
-/// Answer `state` as the pet book of every test view on this thread while the guard lives, lending one if none is up yet.
+/// Answer `state` as the pet book of every test view on this thread while the guard lives.
 #[cfg(test)]
 pub(crate) fn set_test_pet_book(state: super::PetBookState) -> TestPetBook {
     let previous = TEST_PET_BOOK.with(|b| b.borrow_mut().replace(state));
-    let loan = read_live(|_| ())
-        .is_none()
-        .then(|| LiveLoan::new(TestView::default()));
-    TestPetBook { previous, loan }
+    TestPetBook { previous }
 }
 
-/// Lend a pet bar with `slots`, for the VM's own tests: `has_bar`, `actions_usable` and `pickup_allowed` as given.
+/// A view with a pet bar of `slots`, for the VM's own tests: `has_bar`, `actions_usable` and `pickup_allowed` as given.
 #[cfg(test)]
 pub(crate) fn lend_pets(
     has_bar: bool,
     actions_usable: bool,
     pickup_allowed: bool,
     slots: Vec<super::PetActionView>,
-) -> LiveLoan<TestView> {
-    lend_test(TestView {
+) -> TestView {
+    TestView {
         pet_bar: Some(super::PetBarLive {
             has_bar,
             actions_usable,
@@ -2350,7 +2297,7 @@ pub(crate) fn lend_pets(
         }),
         pet_slots: std::cell::RefCell::new(slots),
         ..Default::default()
-    })
+    }
 }
 
 #[cfg(test)]
@@ -2497,73 +2444,17 @@ mod tests {
         assert_eq!(ask(&mut s, &mut unheld), "nil");
     }
 
-    /// A loan lends until it drops, a call's loan inside it restores it, and dropping it restores
-    /// what it replaced.
-    #[test]
-    fn a_loan_lends_until_it_drops() {
-        let mut s = UiScript::new().unwrap();
-        let mut outer = One { guid: 1, flags: 7 };
-        let loan = LiveLoan::new(One { guid: 1, flags: 5 });
-        assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(5)));
-        s.with_live(&mut outer, |_| {
-            assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(7)));
-            let inner = LiveLoan::new(One { guid: 1, flags: 9 });
-            assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(9)));
-            drop(inner);
-            assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(7)));
-        });
-        assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(5)));
-        assert_eq!(loan.view().flags, 5);
-        drop(loan);
-        assert!(!s.has_live());
-    }
-
     /// A loan is its thread's: another thread sees none.
     #[test]
     fn a_loan_is_the_lending_threads_alone() {
-        let _loan = LiveLoan::new(One { guid: 1, flags: 5 });
-        let elsewhere = std::thread::spawn(|| read_live(|l| l.unit_flags(1)))
-            .join()
-            .unwrap();
-        assert_eq!(elsewhere, None);
-        assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(5)));
-    }
-
-    /// A reference out of a loan shuts the verbs out of it, writes while the host reads and everything while it writes, until the reference is back.
-    #[test]
-    fn a_reference_out_of_a_loan_shuts_the_verbs_out() {
-        let s = UiScript::new().unwrap();
-        let lua = s.lua();
-        let write = lua
-            .create_function(|_, ()| Ok(write_live(|_| ()).is_some()))
-            .unwrap();
-        let read = lua
-            .create_function(|_, ()| Ok(read_live(|l| l.unit_flags(1)).flatten()))
-            .unwrap();
-        lua.globals().set("Write", write).unwrap();
-        lua.globals().set("Read", read).unwrap();
-        let reached = |s: &UiScript, chunk: &str| {
-            let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                s.eval::<mlua::Value>(chunk)
-                    .map(|v| !matches!(v, mlua::Value::Nil))
-            }));
-            matches!(run, Ok(Ok(true)))
-        };
-        let mut loan = LiveLoan::new(One { guid: 1, flags: 5 });
-        loan.with_view(|v| {
-            assert_eq!(v.flags, 5);
-            assert!(!reached(&s, "return Write() or nil"));
-            assert!(reached(&s, "return Read()"));
-            assert_eq!(v.flags, 5);
+        let mut s = UiScript::new().unwrap();
+        s.with_live(&mut One { guid: 1, flags: 5 }, |_| {
+            let elsewhere = std::thread::spawn(|| read_live(|l| l.unit_flags(1)))
+                .join()
+                .unwrap();
+            assert_eq!(elsewhere, None);
+            assert_eq!(read_live(|l| l.unit_flags(1)), Some(Some(5)));
         });
-        loan.with_view_mut(|v| {
-            v.flags = 6;
-            assert!(!reached(&s, "return Write() or nil"));
-            assert!(!reached(&s, "return Read()"));
-            v.flags = 7;
-        });
-        assert!(reached(&s, "return Write() or nil"));
-        assert_eq!(s.eval::<Option<u32>>("return Read()").unwrap(), Some(7));
     }
 
     #[test]
