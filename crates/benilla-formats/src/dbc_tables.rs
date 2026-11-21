@@ -153,6 +153,7 @@ tables! {
         "LiquidMaterial" => liquid_type::material_schema(),
         "LiquidType" => liquid_type::type_schema(),
         "LoadingScreens" => loading_screen::schema(&LAYOUTS.loading_screens),
+        "LoadingScreenTaxiSplines" => ship_route::taxi_splines_schema(),
         "Lock" => lock::schema(),
         "LockType" => lock_type::schema(),
         "Map" => maps::map_schema(&LAYOUTS.map),
