@@ -44,7 +44,7 @@ pub(crate) fn set_fixture_units(
     _script: &mut benilla_ui::script::UiScript,
     _guids: benilla_ui::script::UnitGuids,
 ) {
-    #[cfg(feature = "dev")]
+    #[cfg(any(feature = "dev", test))]
     _script.set_unit_guids(&_guids);
 }
 
