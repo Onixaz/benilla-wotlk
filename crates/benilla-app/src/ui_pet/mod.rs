@@ -65,9 +65,6 @@ pub(crate) struct PetBar {
     /// The charm or possess expiry, the packet's duration past its arrival; `None` when the
     /// duration is 0, as for a hunter's or warlock's own pet.
     pub(crate) expires: Option<Instant>,
-    /// The pet's pending cast, the spell a cast as the pet sent and its expiry: the per-caster
-    /// pending list the cast ladder asks (`0x80d34b`), released by the pet's go or failure.
-    pub(crate) pending_cast: Option<(u32, Instant)>,
 }
 
 /// The controlled-pet list (`[0xc23500]`), which the pet verbs read at call time (`0x5d3a24`).

@@ -274,14 +274,13 @@ impl crate::ui_spell_info::CallReads for LiveView<'_, '_> {
         let mut now = crate::ui_spell_info::CastNow::none();
         let me = self.me();
         let store = me.map(|(_, s)| s);
-        let clock = std::time::Instant::now();
         if let (Some(pending), Some(melee)) = (
             self.cast.pending.as_deref(),
             self.cast.queued_melee.as_deref(),
         ) {
             let casting = me.and_then(|(e, _)| self.casting.get(e).ok());
-            now.pending = crate::ui_spell_info::pending_spell(pending, melee, casting, clock);
-            now.item = pending.current_item(clock);
+            now.pending = crate::ui_spell_info::pending_spells(pending, melee, casting);
+            now.items = pending.records().iter().filter_map(|r| r.item).collect();
         }
         now.auto_repeat = self.cast.auto_repeat.as_deref().and_then(|a| a.0);
         now.attacking = !self.engaged.is_empty();
@@ -1371,7 +1370,7 @@ impl LiveState for LiveView<'_, '_> {
             .and_then(|g| self.index.as_ref()?.0.get(&g).copied())
             .and_then(|e| self.casting.get(e).ok())
             .map(|c| c.spell_id);
-        crate::spell::inflight(pending, melee, started, std::time::Instant::now()).is_some()
+        crate::spell::inflight(pending, melee, started).is_some()
     }
 
     /// The rune table and our `PLAYER_RUNE_REGEN` rates now, behind the player-mask lookup of the

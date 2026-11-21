@@ -89,7 +89,13 @@ pub(crate) enum CastBarEdge {
     /// The cast attempt's rungs below the targeting cursor's stop, run after the stop's selection
     /// update (`0x80d3ce`, `0x8054f0`).
     LadderRest(crate::spell::LadderRest),
+    /// The attempt's pending bail: the refusal kit, with `Sound_EnableErrorSpeech` on
+    /// (`0x80d385`-`0x80d3c1`).
+    PendingBail,
 }
+
+/// The kit the pending bail plays (`0x80d3b2`).
+const PENDING_BAIL_KIT: &str = "igPlayerInviteDecline";
 
 /// A press's signal joins its edges, in order with the send's and the cancel's.
 impl crate::ui_action::signals::SignalSink for PressSignals<'_, '_> {
@@ -225,6 +231,13 @@ impl PressSignals<'_, '_> {
         if let Some(edges) = self.edges.as_mut() {
             edges.0.push(CastBarEdge::Cancelled { caster });
             edges.0.push(CastBarEdge::Selection);
+        }
+    }
+
+    /// The attempt's pending bail (`0x80d385`): its sound at the step.
+    pub(crate) fn pending_bail(&mut self) {
+        if let Some(edges) = self.edges.as_mut() {
+            edges.0.push(CastBarEdge::PendingBail);
         }
     }
 
@@ -723,6 +736,18 @@ pub(crate) fn apply_edge(world: &mut World, edge: CastBarEdge) {
         }
         return;
     }
+    if let CastBarEdge::PendingBail = edge {
+        let speech = world
+            .get_resource::<crate::sound::SoundConfig>()
+            .is_none_or(|c| c.error_speech);
+        if let Some(mut script) = world
+            .get_non_send_resource_mut::<UiScript>()
+            .filter(|_| speech)
+        {
+            script.queue_sound_kit(PENDING_BAIL_KIT);
+        }
+        return;
+    }
     if let CastBarEdge::CooldownStart { on_hold } = edge {
         if let Some(mut ui) = world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
             crate::ui_action::signals::cooldown_site(
@@ -790,7 +815,8 @@ fn edge_system(
         | CastBarEdge::Refused(_)
         | CastBarEdge::Line(_)
         | CastBarEdge::SendTail(_)
-        | CastBarEdge::LadderRest(_) => {}
+        | CastBarEdge::LadderRest(_)
+        | CastBarEdge::PendingBail => {}
         CastBarEdge::Selection => crate::ui_action::signals::selection(&mut ui),
         CastBarEdge::Signal(event) => ui.fire(event, Vec::new()),
         CastBarEdge::Sent { spell_id, target } => {

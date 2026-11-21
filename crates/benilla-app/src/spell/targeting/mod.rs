@@ -876,9 +876,7 @@ mod tests {
             "rank 2 goes out at the ally: {sent:?}"
         );
         assert_eq!(
-            world
-                .resource::<crate::spell::PendingCast>()
-                .committed(std::time::Instant::now()),
+            world.resource::<crate::spell::PendingCast>().committed(),
             Some(RENEW_2)
         );
         assert!(errors(&mut world).is_empty());

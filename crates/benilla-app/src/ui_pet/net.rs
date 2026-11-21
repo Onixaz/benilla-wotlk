@@ -243,6 +243,7 @@ fn pet_refund_start(bar: &mut PetBar, spell: u32, ui: &mut crate::ui_script::liv
 fn on_cast_failed(
     In(ev): In<SessionEvent>,
     mut bar: ResMut<super::PetBar>,
+    mut pending: ResMut<crate::spell::PendingCast>,
     mut ends: PetCastEnd,
     mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
@@ -254,7 +255,8 @@ fn on_cast_failed(
         wire_reason,
     } = ev
     {
-        bar.pending_cast = None;
+        // The failure releases the record it names (`0x806d2e` -> `0x8051d0`).
+        pending.release(spell_id, cast_count);
         // The start cooldown the press armed refunds on the pet history, then the pet bar's flush (`0x806d41`, `0x806d46`).
         pet_refund_start(&mut bar, spell_id, &mut ui);
         pet_cast_failed(spell_id, reason, arg, &mut *ui);

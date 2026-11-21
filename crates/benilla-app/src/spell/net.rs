@@ -635,7 +635,6 @@ fn on_spell_start(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
             &mut sc.cast_events,
             &l.self_guid,
             &mut l.ui,
-            &mut l.pending,
             l.spells.as_deref(),
             l.play_seq.next(),
         );
@@ -844,7 +843,7 @@ fn on_spell_failed(
 
 fn on_spell_delayed(In(ev): In<SessionEvent>, mut l: Lifecycle) {
     if let SessionEvent::SpellDelayed { caster, delay_ms } = ev {
-        spell_delayed(caster, delay_ms, &l.self_guid, &mut l.ui, &mut l.pending);
+        spell_delayed(caster, delay_ms, &l.self_guid, &mut l.ui);
     }
 }
 
@@ -1493,7 +1492,7 @@ fn cast_result(
     debug!("net: cast result — spell {spell_id} success={success} reason={reason:?}");
     // Is this the reply to our outstanding cast? Read before either arm clears the guard: both
     // clears are the reference's one.
-    let in_flight = pending.committed(Instant::now()) == Some(spell_id);
+    let in_flight = pending.find(spell_id, cast_count).is_some();
     if !success {
         // The cast-failed handler clears the GCD armed at send, and the bit-25 revert below drops a
         // parked record; the spell's own recovery starts at SPELL_GO, which a failed cast never
@@ -1542,7 +1541,7 @@ fn cast_result(
         // The in-flight guard opens either way. A queued on-next-swing strike dies here too: the
         // server's melee-slot interrupt (vmangos `Spell::cancel` on the preparing slot) arrives as
         // a failure.
-        pending.clear_if(spell_id);
+        pending.release(spell_id, cast_count);
         queued_melee.clear_if(spell_id);
         // Our cast died (vmangos never sends `SMSG_SPELL_FAILURE`): end the self avatar's cast
         // state and precast hold, keyed by spell id.
@@ -1575,7 +1574,7 @@ fn cast_result(
     //   swing timer; with no record to refresh, we send nothing.
     // The chained spell is returned; `on_cast_result` hands it to the ladder in the same call.
     if in_flight {
-        pending.clear_if(spell_id);
+        pending.release(spell_id, cast_count);
         if let Some(next) = spells
             .and_then(|s| s.catalog.get(spell_id))
             .map(|d| d.modal_next_spell)
@@ -1604,7 +1603,6 @@ fn spell_start(
     cast_events: &mut MessageWriter<CastEvent>,
     self_guid: &SelfGuid,
     ui: &mut crate::ui_script::live::UiEvents,
-    pending: &mut PendingCast,
     spells: Option<&crate::ui_action::Spells>,
     seq: u64,
 ) {
@@ -1664,10 +1662,6 @@ fn spell_start(
     // Our cast's start visuals end in the selection update (`0x806961`, `0x805330`).
     if self_guid.0 == Some(caster) && cast_count != 0 && !hidden {
         crate::ui_action::signals::selection(ui);
-    }
-    if self_guid.0 == Some(caster) && cast_time_ms > 0 {
-        // The real cast time replaces the guard's send-time deadline, ranged casts included.
-        pending.refine(cast_time_ms, Instant::now());
     }
     if let Some(&e) = index.0.get(&caster).filter(|_| !hidden) {
         let fresh = Casting {
@@ -1827,11 +1821,11 @@ fn spell_go(
     let (cooldowns, spells, items, net_commands, pet_bar, spell_mods) = cooldown_ctx;
     if !transports_here {
         if self_guid.0 == Some(caster) {
-            pending.clear_if(spell_id);
+            pending.release(spell_id, cast_count);
             queued_melee.clear_if(spell_id);
         }
         if pet_bar.has_bar() && pet_bar.spells.pet_guid == caster {
-            pet_bar.pending_cast = None;
+            pending.release(spell_id, cast_count);
         }
         // The caster's cast state stays; the next start or end clears it (`0x805330`, `0x7fecc0`).
         if let Some(&e) = index.0.get(&caster) {
@@ -1902,7 +1896,7 @@ fn spell_go(
         if *crate::net::CAST_TRACE {
             info!("cast-trace: RECV SPELL_GO — spell {spell_id} (self); completes_bar={completes_our_cast}");
         }
-        pending.clear_if(spell_id);
+        pending.release(spell_id, cast_count);
         // The queued strike fired on this swing: the queue opens here, like the in-flight finish.
         queued_melee.clear_if(spell_id);
 
@@ -1991,7 +1985,7 @@ fn spell_go(
     }
     // The pet leg of the same insert: an independent `if`, not an else.
     if pet_bar.has_bar() && pet_bar.spells.pet_guid == caster {
-        pet_bar.pending_cast = None;
+        pending.release(spell_id, cast_count);
     }
     if let Some(d) = display.filter(|_| pet_go_cooldown(caster, self_guid, index, stores)) {
         // No ranged pad: the reference is called on the self leg only. Op 11 still applies to both
@@ -2136,7 +2130,7 @@ fn spell_failed_other(
         if *crate::net::CAST_TRACE {
             info!("cast-trace: RECV SPELL_FAILED_OTHER — spell {spell_id} (self); interrupts_bar={interrupts_our_cast}");
         }
-        pending.clear_if(spell_id);
+        pending.release(spell_id, cast_count);
         // The melee-slot interrupt's other half, beside the failing CAST_RESULT.
         queued_melee.clear_if(spell_id);
     }
@@ -2165,13 +2159,12 @@ fn spell_failed_other(
 }
 
 /// `SMSG_SPELL_DELAYED`: pushback. Any caster's reaches the unit-cast feed, which slides the
-/// cast's window (`UNIT_SPELLCAST_DELAYED`); our own also holds the in-flight guard longer.
+/// cast's window (`UNIT_SPELLCAST_DELAYED`).
 fn spell_delayed(
     caster: u64,
     delay_ms: u32,
     self_guid: &SelfGuid,
     ui: &mut crate::ui_script::live::UiEvents,
-    pending: &mut PendingCast,
 ) {
     debug!("net: spell delayed by {caster:#x} (+{delay_ms}ms pushback)");
     ui.cast_edge(CastBarEdge::Delayed { caster, delay_ms });
@@ -2179,8 +2172,6 @@ fn spell_delayed(
         if *crate::net::CAST_TRACE {
             info!("cast-trace: RECV SPELL_DELAYED — +{delay_ms}ms pushback (bar extends, does NOT vanish)");
         }
-        // The in-flight guard holds past the stretched end.
-        pending.delay(delay_ms, Instant::now());
     }
 }
 
@@ -3209,9 +3200,7 @@ mod tests {
             listed: true,
             hidden: false,
         });
-        app.world_mut()
-            .resource_mut::<PendingCast>()
-            .arm(10, 1, Instant::now(), true);
+        app.world_mut().resource_mut::<PendingCast>().arm(10, 0);
         fire_go(&mut app, 10, false);
         assert_eq!(
             app.world()
@@ -3220,12 +3209,7 @@ mod tests {
                 .len(),
             2
         );
-        assert_eq!(
-            app.world()
-                .resource::<PendingCast>()
-                .committed(Instant::now()),
-            None
-        );
+        assert_eq!(app.world().resource::<PendingCast>().committed(), None);
         // Held, but its pending cast is no longer listed (`0x805f30`).
         assert_eq!(
             app.world()
@@ -3243,8 +3227,7 @@ mod tests {
                           casting: Query<&Casting>,
                           mut cast_events: MessageWriter<CastEvent>,
                           self_guid: Res<SelfGuid>,
-                          mut cast_bar: ResMut<crate::ui_script::live::UiEvents>,
-                          mut pending: ResMut<PendingCast>| {
+                          mut cast_bar: ResMut<crate::ui_script::live::UiEvents>| {
                         spell_start(
                             10,
                             count,
@@ -3260,7 +3243,6 @@ mod tests {
                             &mut cast_events,
                             &self_guid,
                             &mut cast_bar,
-                            &mut pending,
                             None,
                             2,
                         );
@@ -3350,8 +3332,7 @@ mod tests {
                           casting: Query<&Casting>,
                           mut cast_events: MessageWriter<CastEvent>,
                           self_guid: Res<SelfGuid>,
-                          mut cast_bar: ResMut<crate::ui_script::live::UiEvents>,
-                          mut pending: ResMut<PendingCast>| {
+                          mut cast_bar: ResMut<crate::ui_script::live::UiEvents>| {
                         spell_start(
                             10,
                             count,
@@ -3367,7 +3348,6 @@ mod tests {
                             &mut cast_events,
                             &self_guid,
                             &mut cast_bar,
-                            &mut pending,
                             None,
                             2,
                         );
@@ -4360,8 +4340,8 @@ mod tests {
             if let Some(id) = in_flight {
                 app.world_mut()
                     .resource_mut::<PendingCast>()
-                    // `guards: false`: a ranged hunter shot is recorded but does not guard.
-                    .arm(id, 1, Instant::now(), false);
+                    // The answer names the record's spell and count 0.
+                    .arm(id, 0);
             }
             let (tx, _rx) = crossbeam_channel::unbounded();
             let cat = spells();
@@ -4399,10 +4379,7 @@ mod tests {
                     },
                 )
                 .unwrap();
-            let still_armed = app
-                .world()
-                .resource::<PendingCast>()
-                .in_flight(Instant::now());
+            let still_armed = app.world().resource::<PendingCast>().in_flight();
             (chained, still_armed)
         };
 

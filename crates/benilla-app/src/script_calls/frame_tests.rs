@@ -1502,6 +1502,36 @@ fn a_select_from_a_sent_listener_applies_inside_it() {
     assert_eq!(rig.casts(), [(BOLT, Some(OLD))]);
 }
 
+/// A cast a `UNIT_SPELLCAST_SENT` listener makes applies inside it (`0x80b556` re-enters the cast
+/// entry `0x80cce0`): the pending bail passes the same spell, pending but not yet cooling, as the
+/// GCD arms after `SENT` (`0x80d36d`, `0x80b583`), so the nested press sends and its own `SENT`
+/// fires before the listener returns.
+#[test]
+fn a_cast_from_a_sent_listener_applies_inside_it() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"SENTS = 0
+        local f = CreateFrame("Frame")
+        f:RegisterEvent("UNIT_SPELLCAST_SENT")
+        f:SetScript("OnEvent", function()
+            SENTS = SENTS + 1
+            if SENTS == 1 then
+                UseAction(1)
+                AFTER_NESTED = SENTS
+            end
+        end)
+        TICK_DO = function() UseAction(1) TICK_DO = nil end"#,
+    );
+    rig.frame();
+    let after: i64 = rig
+        .vm()
+        .eval("return AFTER_NESTED")
+        .expect("the listener ran");
+    assert_eq!(after, 2, "the nested SENT fired inside the listener");
+    assert_eq!(rig.casts(), [(BOLT, Some(OLD)), (BOLT, Some(OLD))]);
+}
+
 /// `UNIT_SPELLCAST_SENT` fires after the send and ahead of the start visuals and the GCD arm
 /// (`0x80b556`, `0x80b573`, `0x80b583`): its listener reads no cooldown yet, and the code after the
 /// call reads the GCD the rest of the press armed.
