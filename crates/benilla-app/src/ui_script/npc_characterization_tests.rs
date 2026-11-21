@@ -928,11 +928,11 @@ fn a_new_map_closes_the_barber_then_the_reader_in_its_turn() {
         2,
     );
     let error = "UI_ERROR_MESSAGE You must be sitting in a barber chair";
-    // The verify's own handler closes neither; its purge takes the plaque and us, so the interact target's watchdog clears the reader's hold (`0x51fe2e`, `0x51fe5c` -> `0x512ecf`).
+    // The verify's own handler closes neither; its purge takes the plaque, so the interact target's watchdog clears the reader's hold (`0x51fe2e` -> `0x512ecf`) in the update after the frame's packets (`0x47f10d`), our own create among them landed, so the open shop answers.
     assert_eq!(
         pin(&seen, events, verbs),
         [
-            "ITEM_TEXT_CLOSED | barberinfo=0 ittext=".to_string(),
+            "ITEM_TEXT_CLOSED | barberinfo=4 ittext=".to_string(),
             format!("{error} | barberinfo=4 ittext="),
         ],
         "a login verify leaves the barber open"
