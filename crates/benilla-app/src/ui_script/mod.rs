@@ -36,6 +36,8 @@ mod characterization_tests;
 #[cfg(test)]
 mod feed_census_tests;
 #[cfg(test)]
+mod raise_census_tests;
+#[cfg(test)]
 mod layer_tests;
 mod load_log;
 mod manifest;
