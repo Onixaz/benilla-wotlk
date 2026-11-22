@@ -1963,6 +1963,87 @@ fn a_casts_form_drop_listener_runs_before_the_send() {
     assert_eq!(wire, ["select", "cancel", "cast"]);
 }
 
+/// A refusal's line raises at its step inside the press (`0x808200`): the not-ready refusal over
+/// a running wand repeat sends `CMSG_CANCEL_CAST` (`0x8082cc`) and ends the repeat (`0x8082d3`)
+/// before it shows the line, so a `UI_ERROR_MESSAGE` listener reads the repeat over, ahead of the
+/// line after the call.
+#[test]
+fn a_ui_error_listener_mid_press_reads_the_state_at_its_step() {
+    const SHOOT: u32 = 5019;
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    {
+        let world = rig.app.world_mut();
+        let mut spells = world.resource_mut::<crate::ui_action::Spells>();
+        spells.catalog = SpellCatalog::from_displays(HashMap::from([
+            (
+                NOVA,
+                SpellDisplay {
+                    name: "Nova".into(),
+                    ..Default::default()
+                },
+            ),
+            (
+                SHOOT,
+                SpellDisplay {
+                    name: "Shoot".into(),
+                    attributes_ex2: 0x20,
+                    attributes_ex3: 0x0040_0000,
+                    ..Default::default()
+                },
+            ),
+        ]));
+        world
+            .resource_mut::<crate::ui_action::ActionSlots>()
+            .buttons
+            .insert(
+                0,
+                ActionButton {
+                    slot: 0,
+                    action: SHOOT,
+                    kind: ACTION_KIND_SPELL,
+                },
+            );
+        world
+            .resource_mut::<crate::ui_action::PlayerActions>()
+            .spells = [SHOOT, NOVA].into();
+        world.resource_mut::<crate::spell::AutoRepeatActive>().0 = Some(SHOOT);
+    }
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"SEEN = {} ERR_SPELL_COOLDOWN = "Spell is not ready yet."
+        local f = CreateFrame("Frame")
+        f:RegisterEvent("UI_ERROR_MESSAGE")
+        f:SetScript("OnEvent", function()
+            SEEN[#SEEN + 1] = "line repeat=" .. (IsAutoRepeatAction(1) and 1 or 0)
+        end)
+        TICK_DO = function()
+            SEEN[#SEEN + 1] = "before repeat=" .. (IsAutoRepeatAction(1) and 1 or 0)
+            UseAction(2)
+            SEEN[#SEEN + 1] = "after"
+            TICK_DO = nil
+        end"#,
+    );
+    rig.frame();
+    let seen: String = rig
+        .vm()
+        .eval("return table.concat(SEEN, ' ')")
+        .expect("the chunk ran");
+    assert_eq!(seen, "before repeat=1 line repeat=0 after");
+    let cancels: Vec<(u32, u8)> = rig
+        .sent()
+        .into_iter()
+        .filter_map(|c| match c {
+            ClientCommand::CancelCast { spell_id, count } => Some((spell_id, count)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        cancels,
+        [(SHOOT, 0)],
+        "the refusal's cancel, count 0 (`0x8082ad`)"
+    );
+}
+
 /// Bear Form's spell, holding form 5 on us with its aura up and cancelable.
 const BEAR: u32 = 5487;
 
