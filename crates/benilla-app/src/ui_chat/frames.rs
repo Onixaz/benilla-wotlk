@@ -67,15 +67,35 @@ pub(crate) fn add_chat_line(
     chat_type: u8,
     text: &str,
 ) -> Option<(&'static str, Vec<benilla_ui::script::ScriptValue>)> {
-    let kind = match chat_type {
-        26 => ChatEventKind::Skill,
-        _ => ChatEventKind::System,
-    };
     record(
         windows,
-        &ChatEvent::text_only(kind, text.to_string()),
+        &ChatEvent::text_only(kind_of_type(chat_type), text.to_string()),
         &|_| None,
     )
+}
+
+/// A chat line an app handler or step adds in its turn (`0x509dd0`): recorded on `chat_type` (`0x50a8a5`) and its event fired with the `World` lent (`0x4fdbc0` at `0x4fdd5c`); with no chat windows the chat feed's queue takes it.
+pub(crate) fn add_chat_line_now(world: &mut World, chat_type: u8, text: String) {
+    let fired = match world.get_resource_mut::<ChatWindows>() {
+        Some(mut windows) => add_chat_line(&mut windows, chat_type, &text),
+        None => {
+            if let Some(mut log) = world.get_resource_mut::<super::ChatLog>() {
+                log.push_event(ChatEvent::text_only(kind_of_type(chat_type), text));
+            }
+            return;
+        }
+    };
+    if let Some((event, args)) = fired {
+        crate::ui_script::live::with_live_world(world, |script| script.fire_event(event, args));
+    }
+}
+
+/// The catalog's chat type as the event kind: 26 a skill line, any other a system line.
+pub(crate) fn kind_of_type(chat_type: u8) -> ChatEventKind {
+    match chat_type {
+        26 => ChatEventKind::Skill,
+        _ => ChatEventKind::System,
+    }
 }
 
 /// `ChatFrame_MessageEventHandler`'s composition (`ChatFrame.lua:2753-2937`) for the line that

@@ -438,6 +438,7 @@ fn a_raid_debuff_read_follows_the_dispel_types_the_book_registered() {
             },
             &mut Default::default(),
             &mut Default::default(),
+            false,
         );
         app.insert_resource(book);
         app.world_mut()

@@ -1,6 +1,6 @@
 //! The chat window's packet handlers: the spoken line, and the notices and answers that print as
 //! chat. `SMSG_NOTIFICATION` and `SMSG_AREA_TRIGGER_MESSAGE` are mostly `UIErrorsFrame` toasts,
-//! queued on [`UiErrorTexts`].
+//! shown in the handler's turn through [`TextSink`].
 
 use benilla_protocol::messages::{ChatMessage, CHAT_MSG_WHISPER};
 use benilla_protocol::{SessionEvent, SessionEventKind};
@@ -8,7 +8,9 @@ use bevy::prelude::*;
 
 use super::{Broadcast, ChatEvent, ChatEventKind, ChatLog};
 use crate::net::{ClientCommand, NetCommands, NetHandlerApp, PlayedTimeAnswer, ServerSaidMessage};
-use crate::ui_action::{UiError, UiErrorKeys, UiErrorTexts};
+use crate::ui_action::signals::SignalSink;
+use crate::ui_action::{TextSink, UiError};
+use crate::ui_script::live::UiEvents;
 use crate::ui_social::SocialState;
 use benilla_ui::messages::MsgKind;
 
@@ -47,11 +49,7 @@ fn on_chat(
 
 /// `SMSG_CHANNEL_LIST` (`0x505dc0`): a display reply goes to the channel pane (`0x503990`) with
 /// the names the cache holds, the rest asked; any other prints the `/chatlist` roster.
-fn on_channel_list(
-    In(ev): In<SessionEvent>,
-    mut chat_log: ResMut<ChatLog>,
-    mut script: crate::ui_script::InTurn,
-) {
+fn on_channel_list(In(ev): In<SessionEvent>, world: &mut World) {
     let SessionEvent::ChannelList {
         display,
         channel,
@@ -62,70 +60,60 @@ fn on_channel_list(
         return;
     };
     if !display {
-        channel_list(channel, &members, &mut chat_log);
+        if let Some(mut chat_log) = world.get_resource_mut::<ChatLog>() {
+            channel_list(channel, &members, &mut chat_log);
+        }
         return;
     }
     debug!(
         "chat: display list {channel:?} ({} members, flags {flags:#04x})",
         members.len()
     );
-    let Some(mut script) = script.turn() else {
-        return;
-    };
     // With the `World` lent: our own row is the active player's at the packet (`0x503990`).
-    script.lent(move |s| {
-        s.display_channel_list(&channel, flags, &members, |guid| {
-            crate::ui_script::safe_world::with_world(|w| {
-                let (Some(names), Some(commands)) = (
-                    w.get_resource::<crate::names::NameCache>(),
-                    w.get_resource::<NetCommands>(),
-                ) else {
-                    return None;
-                };
-                names
-                    .answer(crate::names::NameKey::Player(guid), guid, commands)
-                    .map(|name| name.map(str::to_string))
-            })
-            .flatten()
-        });
+    crate::ui_script::live::with_live_world(world, move |s| {
+        s.display_channel_list(&channel, flags, &members, player_name);
     });
 }
 
-/// `SMSG_USERLIST_ADD`, `_REMOVE` and `_UPDATE`: the watched channel's roster follows its members.
-fn on_channel_user_list(
-    In(ev): In<SessionEvent>,
-    mut script: crate::ui_script::InTurn,
-    names: Option<Res<crate::names::NameCache>>,
-    commands: Option<Res<NetCommands>>,
-) {
+/// A member's name off the lent `World`'s name cache, asked for when not cached.
+fn player_name(guid: u64) -> Option<Option<String>> {
+    crate::ui_script::safe_world::with_world(|w| {
+        let (Some(names), Some(commands)) = (
+            w.get_resource::<crate::names::NameCache>(),
+            w.get_resource::<NetCommands>(),
+        ) else {
+            return None;
+        };
+        names
+            .answer(crate::names::NameKey::Player(guid), guid, commands)
+            .map(|name| name.map(str::to_string))
+    })
+    .flatten()
+}
+
+/// `SMSG_USERLIST_ADD`, `_REMOVE` and `_UPDATE`: the watched channel's roster follows its members, its events fired with the `World` lent.
+fn on_channel_user_list(In(ev): In<SessionEvent>, world: &mut World) {
     use benilla_protocol::messages::ChannelUserListKind as K;
-    let (SessionEvent::ChannelUserList(u), Some(mut script)) = (ev, script.turn()) else {
+    let SessionEvent::ChannelUserList(u) = ev else {
         return;
     };
     debug!(
         "chat: user list {:?} {:?} {:#x} flags {:#04x}",
         u.kind, u.channel, u.guid, u.member_flags
     );
-    match u.kind {
+    crate::ui_script::live::with_live_world(world, move |script| match u.kind {
         K::Add => script.channel_user_added(
             &u.channel,
             u.guid,
             u.member_flags,
             u.channel_flags,
-            |guid| {
-                let (Some(names), Some(commands)) = (names.as_deref(), commands.as_deref()) else {
-                    return None;
-                };
-                names
-                    .answer(crate::names::NameKey::Player(guid), guid, commands)
-                    .map(|name| name.map(str::to_string))
-            },
+            player_name,
         ),
         K::Remove => script.channel_user_removed(&u.channel, u.guid, u.channel_flags),
         K::Update => {
             script.channel_user_updated(&u.channel, u.guid, u.member_flags, u.channel_flags)
         }
-    }
+    });
 }
 
 /// The channel pane's roster waits on the name cache (`0x4ffe30`): each answer that has landed is
@@ -146,10 +134,10 @@ pub(super) fn feed_channel_roster_names(
     }
 }
 
-fn on_whisper_refusal(In(ev): In<SessionEvent>, mut errors: ResMut<UiErrorKeys>) {
+fn on_whisper_refusal(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
     match ev {
-        SessionEvent::ChatPlayerNotFound { name } => chat_player_not_found(&name, &mut errors),
-        SessionEvent::ChatWrongFaction => chat_wrong_faction(&mut errors),
+        SessionEvent::ChatPlayerNotFound { name } => chat_player_not_found(&name, &mut *ui),
+        SessionEvent::ChatWrongFaction => chat_wrong_faction(&mut *ui),
         _ => {}
     }
 }
@@ -164,11 +152,11 @@ fn not_in_party_key(chat_type: u32) -> Option<&'static str> {
     }
 }
 
-fn on_chat_not_in_party(In(ev): In<SessionEvent>, mut errors: ResMut<UiErrorKeys>) {
+fn on_chat_not_in_party(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
     if let SessionEvent::ChatNotInParty { chat_type } = ev {
-        errors
-            .0
-            .extend(not_in_party_key(chat_type).map(UiError::key));
+        if let Some(key) = not_in_party_key(chat_type) {
+            ui.line(UiError::key(key));
+        }
     }
 }
 
@@ -197,20 +185,18 @@ fn chat_restricted_key(kind: u8) -> Option<&'static str> {
     })
 }
 
-fn on_chat_restricted(In(ev): In<SessionEvent>, mut errors: ResMut<UiErrorKeys>) {
+fn on_chat_restricted(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
     if let SessionEvent::ChatRestricted { kind } = ev {
-        errors.0.extend(chat_restricted_key(kind).map(UiError::key));
+        if let Some(key) = chat_restricted_key(kind) {
+            ui.line(UiError::key(key));
+        }
     }
 }
 
-fn on_toast(
-    In(ev): In<SessionEvent>,
-    mut errors: ResMut<UiErrorTexts>,
-    mut chat_log: ResMut<ChatLog>,
-) {
+fn on_toast(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>, mut chat_log: ResMut<ChatLog>) {
     match ev {
-        SessionEvent::Notification { text } => notification(&text, &mut errors, &mut chat_log),
-        SessionEvent::AreaTriggerMessage { text } => area_trigger_message(text, &mut errors),
+        SessionEvent::Notification { text } => notification(&text, &mut *ui, &mut chat_log),
+        SessionEvent::AreaTriggerMessage { text } => area_trigger_message(text, &mut *ui),
         _ => {}
     }
 }
@@ -369,19 +355,14 @@ fn channel_list(channel: String, members: &[(u64, u8)], chat_log: &mut ChatLog) 
 }
 
 /// A whisper target is offline: message 241, `ERR_CHAT_PLAYER_NOT_FOUND_S`, with the server's
-/// name. The key travels, since there is no VM here; its row routes it to chat.
-fn chat_player_not_found(name: &str, errors: &mut crate::ui_action::UiErrorKeys) {
-    errors.0.push(crate::ui_action::UiError::s(
-        "ERR_CHAT_PLAYER_NOT_FOUND_S",
-        name,
-    ));
+/// name, shown in the handler's turn; its row routes it to chat.
+fn chat_player_not_found(name: &str, sink: &mut dyn SignalSink) {
+    sink.line(UiError::s("ERR_CHAT_PLAYER_NOT_FOUND_S", name));
 }
 
 /// A cross-faction whisper was refused: message 240, `ERR_CHAT_WRONG_FACTION`.
-fn chat_wrong_faction(errors: &mut crate::ui_action::UiErrorKeys) {
-    errors
-        .0
-        .push(crate::ui_action::UiError::key("ERR_CHAT_WRONG_FACTION"));
+fn chat_wrong_faction(sink: &mut dyn SignalSink) {
+    sink.line(UiError::key("ERR_CHAT_WRONG_FACTION"));
 }
 
 /// Where one `SMSG_NOTIFICATION` text shows, after `0x401280`'s control prefix.
@@ -435,12 +416,12 @@ fn notice_route(text: &str) -> NoticeRoute<'_> {
 /// `SMSG_NOTIFICATION` (`0x401280`): the error-display line, the console and a chat line as the
 /// text's prefix says ([`notice_route`]). vmangos sends `.gm on` as both a system line and a
 /// notification (`Objects/Player.cpp:2676-2677`).
-fn notification(text: &str, errors: &mut UiErrorTexts, chat_log: &mut ChatLog) {
+fn notification(text: &str, errors: &mut dyn TextSink, chat_log: &mut ChatLog) {
     let route = notice_route(text);
     info!("net: notification — {}", route.text);
     match route.toast {
-        Some(MsgKind::Error) => errors.error(route.text.to_string()),
-        Some(_) => errors.info(route.text.to_string()),
+        Some(MsgKind::Error) => errors.text_line(MsgKind::Error, route.text.to_string()),
+        Some(_) => errors.text_line(MsgKind::Info, route.text.to_string()),
         None => {}
     }
     let kind = route
@@ -455,9 +436,9 @@ fn notification(text: &str, errors: &mut UiErrorTexts, chat_log: &mut ChatLog) {
 
 /// An area trigger's refusal (`SMSG_AREA_TRIGGER_MESSAGE`, `0x2b8`): the yellow `UIErrorsFrame`
 /// line, `UI_INFO_MESSAGE` from `(text, 0)`.
-fn area_trigger_message(text: String, errors: &mut UiErrorTexts) {
+fn area_trigger_message(text: String, errors: &mut dyn TextSink) {
     info!("net: area-trigger message — {text}");
-    errors.info(text);
+    errors.text_line(MsgKind::Info, text);
 }
 
 /// Park a world broadcast for `ui_chat::broadcast`'s resolve pass, logged: a defense broadcast
@@ -608,11 +589,11 @@ mod tests {
             "the SendSysMessage half is the chat line, and it stays"
         );
 
-        let mut errors = UiErrorTexts::default();
+        let mut errors: Vec<(String, MsgKind)> = Vec::new();
         let mut log = ChatLog::default();
         notification("GM mode is ON", &mut errors, &mut log);
         assert_eq!(
-            errors.0,
+            errors,
             [(
                 "GM mode is ON".to_string(),
                 benilla_ui::messages::MsgKind::Error
@@ -644,12 +625,12 @@ mod tests {
     /// A `#` line lands in chat as its 3.3.5a type's lane, beside no toast.
     #[test]
     fn a_hash_notification_writes_a_chat_line_of_its_type() {
-        let mut errors = UiErrorTexts::default();
+        let mut errors: Vec<(String, MsgKind)> = Vec::new();
         let mut log = ChatLog::default();
         notification("~#^1hello", &mut errors, &mut log);
         notification("~#plain system", &mut errors, &mut log);
         notification("~#^/", &mut errors, &mut log);
-        assert!(errors.0.is_empty());
+        assert!(errors.is_empty());
         assert_eq!(
             log.pending_len(),
             2,
@@ -707,13 +688,13 @@ mod tests {
 
     #[test]
     fn an_area_trigger_refusal_takes_the_yellow_arm() {
-        let mut errors = UiErrorTexts::default();
+        let mut errors: Vec<(String, MsgKind)> = Vec::new();
         area_trigger_message(
             "You must be at least level 58 to enter.".to_string(),
             &mut errors,
         );
         assert_eq!(
-            errors.0,
+            errors,
             [(
                 "You must be at least level 58 to enter.".to_string(),
                 benilla_ui::messages::MsgKind::Info

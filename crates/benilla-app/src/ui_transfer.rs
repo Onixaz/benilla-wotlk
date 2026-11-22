@@ -11,7 +11,8 @@ use benilla_protocol::messages::DifficultyChangeResult;
 use benilla_protocol::{SessionEvent, SessionEventKind};
 
 use crate::net::NetHandlerApp;
-use crate::ui_action::{FillArg, UiError, UiErrorKeys};
+use crate::ui_action::signals::SignalSink;
+use crate::ui_action::{FillArg, UiError};
 use crate::ui_chat::{ChatEvent, ChatEventKind, ChatLog};
 
 /// The refusals waiting for the feed: `(map, reason, arg)`.
@@ -96,7 +97,7 @@ fn on_difficulty_change(
     In(ev): In<SessionEvent>,
     mut group: ResMut<crate::ui_party::GroupState>,
     mut lfg: ResMut<crate::ui_lfg::LfgFeed>,
-    mut errors: ResMut<UiErrorKeys>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
     mut notices: ResMut<DifficultyNotices>,
     mut screen: ResMut<crate::loading_screen::LoadingScreen>,
     map: Option<Res<benilla_world::world_map::CurrentMap>>,
@@ -132,7 +133,12 @@ fn on_difficulty_change(
                 notices.0.push(DifficultyNotice::Line(message));
             }
         }
-        other => errors.0.extend(difficulty_refusal(other)),
+        // The refusal's line in the handler's turn (`0x52c4e9`-`0x52c5e9`).
+        other => {
+            if let Some(line) = difficulty_refusal(other) {
+                ui.line(line);
+            }
+        }
     }
 }
 
@@ -161,7 +167,6 @@ fn difficulty_refusal(result: DifficultyChangeResult) -> Option<UiError> {
 fn feed_difficulty_notices(
     mut script: crate::ui_script::InTurn,
     mut notices: ResMut<DifficultyNotices>,
-    mut errors: ResMut<UiErrorKeys>,
     mut chat: ResMut<ChatLog>,
 ) {
     let Some(mut script) = script.turn() else {
@@ -174,10 +179,13 @@ fn feed_difficulty_notices(
             }
             DifficultyNotice::Changed(dynamic) => {
                 script.fire_event("PLAYER_DIFFICULTY_CHANGED", Vec::new());
-                errors.0.push(UiError::args(
-                    "ERR_PLAYER_DIFFICULTY_CHANGED_S",
-                    vec![FillArg::Global(format!("PLAYER_DIFFICULTY{}", dynamic + 1))],
-                ));
+                // The line in turn behind the event (`0x52c5d7`).
+                if let Some(queue) = script.queue() {
+                    queue.line(UiError::args(
+                        "ERR_PLAYER_DIFFICULTY_CHANGED_S",
+                        vec![FillArg::Global(format!("PLAYER_DIFFICULTY{}", dynamic + 1))],
+                    ));
+                }
             }
         }
     }

@@ -174,8 +174,7 @@ fn interaction_already_open_on(target: u64, interact: Option<u64>) -> bool {
 /// The refusals and openers the dispatchers raise.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct Feedback<'w, 's> {
-    errors: ResMut<'w, crate::ui_action::UiErrorKeys>,
-    /// A cast refusal's line, shown in the click's turn (`0x808200`).
+    /// A cast refusal's or a refusal's line, shown in the click's turn (`0x808200`, `0x5216f0`).
     ui: ResMut<'w, crate::ui_script::live::UiEvents>,
     /// The read call's queue, which runs it with the world once the click returns.
     queue: Commands<'w, 's>,
@@ -191,14 +190,19 @@ pub(crate) struct Feedback<'w, 's> {
 }
 
 impl Feedback<'_, '_> {
+    /// Show `line` at the display (`0x5216f0`) in the click's turn, once its commands apply.
+    fn line(&mut self, line: crate::ui_action::UiError) {
+        crate::ui_action::show_in_turn(&mut self.ui, "click", line);
+        self.queue
+            .queue(crate::ui_script::live::fire_handler_events);
+    }
+
     /// Whether a walk started; the leash's refusal says `ERR_AUTOFOLLOW_TOO_FAR`.
     fn walked(&mut self, started: Result<(), crate::player::Refused>) -> bool {
         match started {
             Ok(()) => true,
             Err(crate::player::Refused::TooFar) => {
-                self.errors
-                    .0
-                    .push(crate::ui_action::UiError::key("ERR_AUTOFOLLOW_TOO_FAR"));
+                self.line(crate::ui_action::UiError::key("ERR_AUTOFOLLOW_TOO_FAR"));
                 false
             }
             Err(crate::player::Refused::Silent) => false,
@@ -383,9 +387,7 @@ impl Dispatch<'_, '_> {
         if reach * reach < d2 {
             if !silent {
                 self.feedback
-                    .errors
-                    .0
-                    .push(crate::ui_action::UiError::key("ERR_OUT_OF_RANGE"));
+                    .line(crate::ui_action::UiError::key("ERR_OUT_OF_RANGE"));
             }
             return false;
         }
@@ -486,9 +488,7 @@ impl Dispatch<'_, '_> {
         if !self.checks.stand() {
             debug!("right-click loot: refused, not standing");
             self.feedback
-                .errors
-                .0
-                .push(crate::ui_action::UiError::key("ERR_LOOT_NOTSTANDING"));
+                .line(crate::ui_action::UiError::key("ERR_LOOT_NOTSTANDING"));
             return false;
         }
         self.auto.stand_up();
@@ -503,7 +503,7 @@ impl Dispatch<'_, '_> {
         }
         if !self.can_auto_unshift() {
             debug!("right-click interact: refused, shapeshifted");
-            self.feedback.errors.0.push(crate::ui_action::UiError::key(
+            self.feedback.line(crate::ui_action::UiError::key(
                 "ERR_CANT_INTERACT_SHAPESHIFTED",
             ));
             return None;
@@ -520,9 +520,7 @@ impl Dispatch<'_, '_> {
         if self.mounted_gate().refuses(own) {
             debug!("loot: refused, mounted");
             self.feedback
-                .errors
-                .0
-                .push(crate::ui_action::UiError::key("ERR_NOT_WHILE_MOUNTED"));
+                .line(crate::ui_action::UiError::key("ERR_NOT_WHILE_MOUNTED"));
             return false;
         }
         crate::creature_anim::dismount_first(own, &self.seam.net);
@@ -603,9 +601,7 @@ impl Dispatch<'_, '_> {
             );
         if !walked {
             self.feedback
-                .errors
-                .0
-                .push(crate::ui_action::UiError::key("ERR_USE_TOO_FAR"));
+                .line(crate::ui_action::UiError::key("ERR_USE_TOO_FAR"));
         }
         walked
     }
@@ -645,18 +641,14 @@ impl Dispatch<'_, '_> {
         {
             debug!("right-click gameobject {guid:#x}: refused, mounted (type {go_type})");
             self.feedback
-                .errors
-                .0
-                .push(crate::ui_action::UiError::key("ERR_NOT_WHILE_MOUNTED"));
+                .line(crate::ui_action::UiError::key("ERR_NOT_WHILE_MOUNTED"));
             return;
         }
         // The same gate's form leg (`0x711470`).
         if !has_lock_row && leaves_form && !self.can_auto_unshift() {
             debug!("right-click gameobject {guid:#x}: refused, shapeshifted");
             self.feedback
-                .errors
-                .0
-                .push(crate::ui_action::UiError::key("ERR_NOT_WHILE_SHAPESHIFTED"));
+                .line(crate::ui_action::UiError::key("ERR_NOT_WHILE_SHAPESHIFTED"));
             return;
         }
         // MAILBOX (type 19) opens locally: its use (`0x70c9d0`) is the mailbox opener, which sends
@@ -726,9 +718,7 @@ impl Dispatch<'_, '_> {
             if refused {
                 debug!("right-click barber chair {guid:#x}: refused, shapeshifted");
                 self.feedback
-                    .errors
-                    .0
-                    .push(crate::ui_action::UiError::key("ERR_NOT_WHILE_SHAPESHIFTED"));
+                    .line(crate::ui_action::UiError::key("ERR_NOT_WHILE_SHAPESHIFTED"));
                 return;
             }
         }
@@ -789,7 +779,7 @@ impl Dispatch<'_, '_> {
             GoAction::Refuse(err) => {
                 debug!("right-click gameobject {guid:#x}: locked, refused ({err:?})");
                 if let Some(err) = err {
-                    self.feedback.errors.0.push(err);
+                    self.feedback.line(err);
                 }
             }
         }
@@ -2594,7 +2584,6 @@ mod tests {
         world.init_resource::<crate::death::DeathNet>();
         world.init_non_send_resource::<crate::ui_dialog_verbs::AreaSpiritHealer>();
         world.init_resource::<crate::ui_session::InteractTarget>();
-        world.init_resource::<crate::ui_action::UiErrorKeys>();
         world.init_resource::<crate::ui_script::live::UiEvents>();
         world.init_resource::<crate::ui_loot::LootState>();
         world.init_resource::<crate::ui_loot::LootLatch>();
@@ -2714,10 +2703,7 @@ mod tests {
                 "{label}: {sent:?}"
             );
             assert!(
-                world
-                    .resource::<crate::ui_action::UiErrorKeys>()
-                    .0
-                    .is_empty(),
+                crate::ui_action::take_lines_in_turn().is_empty(),
                 "{label}: the arm says nothing"
             );
         }
@@ -2963,9 +2949,7 @@ mod tests {
             .resource_mut::<Messages<WorldRightClick>>()
             .write(WorldRightClick);
         world.run_system_once(act_on_right_click).unwrap();
-        world
-            .resource::<crate::ui_action::UiErrorKeys>()
-            .0
+        crate::ui_action::take_lines_in_turn()
             .iter()
             .map(|e| e.key)
             .collect()
@@ -3026,9 +3010,7 @@ mod tests {
                 used,
                 "{x} yd: {sent:?}"
             );
-            let keys: Vec<&str> = world
-                .resource::<crate::ui_action::UiErrorKeys>()
-                .0
+            let keys: Vec<&str> = crate::ui_action::take_lines_in_turn()
                 .iter()
                 .map(|e| e.key)
                 .collect();
@@ -3263,9 +3245,7 @@ mod tests {
         let (mut world, vendor, _rx) = walking_world(Vec3::new(80.0, 0.0, 0.0), true);
         click_vendor(&mut world, vendor);
         assert!(!world.resource::<crate::player::Approach>().active());
-        let keys: Vec<&str> = world
-            .resource::<crate::ui_action::UiErrorKeys>()
-            .0
+        let keys: Vec<&str> = crate::ui_action::take_lines_in_turn()
             .iter()
             .map(|e| e.key)
             .collect();
@@ -3305,9 +3285,7 @@ mod tests {
             .next()
             .is_none());
         assert!(rx.try_iter().next().is_none());
-        let keys: Vec<&str> = world
-            .resource::<crate::ui_action::UiErrorKeys>()
-            .0
+        let keys: Vec<&str> = crate::ui_action::take_lines_in_turn()
             .iter()
             .map(|e| e.key)
             .collect();
@@ -3636,18 +3614,15 @@ mod tests {
         let (world, sent, _) = mounted_click(12.0, true);
         assert!(dismounts_or_swings(&sent).is_empty());
         assert!(world.resource::<crate::player::Approach>().active());
-        assert!(world
-            .resource::<crate::ui_action::UiErrorKeys>()
-            .0
-            .is_empty());
+        assert!(crate::ui_action::take_lines_in_turn().is_empty());
     }
 
     /// With no walk to come, the combat enter says why it stopped (`0x6e4950`).
     #[test]
     fn a_grounded_mount_out_of_melee_with_no_walk_is_out_of_range() {
-        let (world, sent, _) = mounted_click(12.0, false);
+        let (_world, sent, _) = mounted_click(12.0, false);
         assert!(dismounts_or_swings(&sent).is_empty());
-        let errors = &world.resource::<crate::ui_action::UiErrorKeys>().0;
+        let errors = &crate::ui_action::take_lines_in_turn();
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].key, "ERR_OUT_OF_RANGE");
     }
@@ -3676,7 +3651,7 @@ mod tests {
         let (world, rx) = attack_wolf_at(Vec3::new(0.0, 0.0, -85.0), 1.5);
         assert!(!world.resource::<crate::player::Approach>().active());
         assert_eq!(
-            world.resource::<crate::ui_action::UiErrorKeys>().0,
+            crate::ui_action::take_lines_in_turn(),
             vec![crate::ui_action::UiError::key("ERR_AUTOFOLLOW_TOO_FAR")]
         );
         assert!(rx
@@ -4166,8 +4141,8 @@ mod tests {
         ]));
     }
 
-    fn error_keys(world: &World) -> Vec<&'static str> {
-        let errors = &world.resource::<crate::ui_action::UiErrorKeys>().0;
+    fn error_keys(_: &World) -> Vec<&'static str> {
+        let errors = &crate::ui_action::take_lines_in_turn();
         errors.iter().map(|e| e.key).collect()
     }
 

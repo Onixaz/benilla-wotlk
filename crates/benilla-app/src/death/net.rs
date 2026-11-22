@@ -122,15 +122,16 @@ fn on_death_refresh(
 }
 
 /// `SMSG_CORPSE_NOT_IN_INSTANCE`: the message display's `ERR_CORPSE_IS_NOT_IN_INSTANCE`
-/// (`0x526530`).
+/// (`0x526530`), in the handler's turn.
 fn on_corpse_not_in_instance(
     In(ev): In<SessionEvent>,
-    mut errors: ResMut<crate::ui_action::UiErrorKeys>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     if let SessionEvent::CorpseNotInInstance = ev {
-        errors.0.push(crate::ui_action::UiError::key(
-            "ERR_CORPSE_IS_NOT_IN_INSTANCE",
-        ));
+        crate::ui_action::signals::SignalSink::line(
+            &mut *ui,
+            crate::ui_action::UiError::key("ERR_CORPSE_IS_NOT_IN_INSTANCE"),
+        );
     }
 }
 

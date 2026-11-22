@@ -2555,12 +2555,6 @@ pub(crate) fn fire_handler_events(world: &mut World) {
         }
     }
     fire_batch(world, &mut batch, &mut lines);
-    // The chat log carries the line to the chat frame, as the chat feed's other system lines go.
-    if let Some(mut chat) = world.get_resource_mut::<crate::ui_chat::ChatLog>() {
-        for line in lines {
-            crate::ui_chat::away::push_system(&mut chat, line);
-        }
-    }
 }
 
 /// Fire `batch` into the VM, in order, with the `World` lent, collecting the system lines.
@@ -2593,6 +2587,12 @@ fn fire_batch(world: &mut World, batch: &mut Vec<UiEvent>, lines: &mut Vec<Strin
             }
         }
     });
+    // The chat log takes the batch's lines before the next step runs, so a nested step's lines follow them, as the chat feed's other system lines go.
+    if let Some(mut chat) = world.get_resource_mut::<crate::ui_chat::ChatLog>() {
+        for line in lines.drain(..) {
+            crate::ui_chat::away::push_system(&mut chat, line);
+        }
+    }
 }
 
 /// The unique signals queued this frame: each `(guid, event)` once, however often it is queued (`0x6143f0`), fired in queue order once per frame after the packets (`0x52b247` -> `0x614760`), a unit's to every token naming it then (`0x60bf10`). Main-thread state the handlers fill and a verb's call queues into ([`Lent`]).
