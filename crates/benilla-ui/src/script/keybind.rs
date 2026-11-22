@@ -465,6 +465,16 @@ pub(crate) fn run_command(lua: &Lua, command: &str, down: bool) -> mlua::Result<
     ran.map(|()| true)
 }
 
+/// The tail the command setters share (`0x5635e0` to `0x563940`): the protected-action check, the
+/// bind on the live set, and 1 for a bound key, else nil.
+fn set_command(lua: &Lua, key: &str, command: &str) -> mlua::Result<Option<i64>> {
+    if !super::taint::lockdown_allows(lua) {
+        return Ok(None);
+    }
+    let mut model = crate::script::model_mut_of(lua);
+    Ok(model.keybinds.set_binding(key, Some(command)).then_some(1))
+}
+
 /// A chord and its modifier reductions in the reference's reduced-binding order (`0x5622e0`): up to
 /// three `MOD-` prefixes, every subset tried from all of them down to the bare key.
 pub(super) fn reduced_keys(key: &str) -> Vec<String> {
@@ -527,12 +537,69 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(MultiValue::from_iter(out))
         })?,
     )?;
+    // The bind (`0x562ed0`) asks the protected-action check first, kind 13, which refuses tainted
+    // code while protected actions are barred: the setter then answers nil.
     lua.globals().set(
         "SetBinding",
         lua.create_function(|lua, (key, command): (String, Option<String>)| {
+            if !super::taint::lockdown_allows(lua) {
+                return Ok(None);
+            }
             let mut model = crate::script::model_mut_of(lua);
             let ok = model.keybinds.set_binding(&key, command.as_deref());
             Ok(if ok { Some(1) } else { None })
+        })?,
+    )?;
+    // `SetBindingSpell`, `Item` and `Macro(key, target[, mode])` (`0x5635e0`, `0x563700`,
+    // `0x563820`): `SetBinding` of `"<PREFIX> <target>"`, the command the runner reads back
+    // (`0x563150`). Both arguments must be strings or numbers. benilla keeps one binding mode, so
+    // `mode` is read by no one.
+    for (verb, usage, prefix) in [
+        (
+            "SetBindingSpell",
+            "Usage: SetBindingSpell(\"KEY\", \"spellname\"[, mode])",
+            "SPELL",
+        ),
+        (
+            "SetBindingItem",
+            "Usage: SetBindingItem(\"KEY\", \"itemname\"[, mode])",
+            "ITEM",
+        ),
+        (
+            "SetBindingMacro",
+            "Usage: SetBindingMacro(\"KEY\", \"macroname\"|macroid[, mode])",
+            "MACRO",
+        ),
+    ] {
+        lua.globals().set(
+            verb,
+            lua.create_function(move |lua, args: MultiValue| {
+                let arg = |i: usize| args.get(i).cloned().unwrap_or(Value::Nil);
+                let key = super::binding_abi::optional_string(lua, &arg(0));
+                let target = super::binding_abi::optional_string(lua, &arg(1));
+                let (Some(key), Some(target)) = (key, target) else {
+                    return Err(mlua::Error::runtime(usage));
+                };
+                set_command(lua, &key, &format!("{prefix} {target}"))
+            })?,
+        )?;
+    }
+    // `SetBindingClick(key, button[, mouseButton][, mode])` (`0x563940`): `"CLICK
+    // <button>:<mouseButton>"`, the mouse button `LeftButton` when absent.
+    lua.globals().set(
+        "SetBindingClick",
+        lua.create_function(|lua, args: MultiValue| {
+            const USAGE: &str =
+                "Usage: SetBindingClick(\"KEY\", \"buttonName\"[, \"mouseButton\"][, mode])";
+            let arg = |i: usize| args.get(i).cloned().unwrap_or(Value::Nil);
+            let key = super::binding_abi::optional_string(lua, &arg(0));
+            let button = super::binding_abi::optional_string(lua, &arg(1));
+            let (Some(key), Some(button)) = (key, button) else {
+                return Err(mlua::Error::runtime(USAGE));
+            };
+            let mouse = super::binding_abi::optional_string(lua, &arg(2))
+                .unwrap_or_else(|| "LeftButton".to_string());
+            set_command(lua, &key, &format!("CLICK {button}:{mouse}"))
         })?,
     )?;
     // `RunBinding(command[, "up"])`: the command's body through the command run, a release when the
@@ -626,19 +693,26 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             }
         })?,
     )?;
+    // `LoadBindings` and `SaveBindings` copy a set through `0x562b80`, which asks kind 13 first.
     lua.globals().set(
         "LoadBindings",
         lua.create_function(|lua, set: u32| {
-            let mut model = crate::script::model_mut_of(lua);
-            model.keybinds.load(set);
+            if super::taint::lockdown_allows(lua) {
+                crate::script::model_mut_of(lua).keybinds.load(set);
+            }
             Ok(())
         })?,
     )?;
+    // `0x5640c0`: the current set moves before the copy is asked, so a refused save still makes
+    // `which` current.
     lua.globals().set(
         "SaveBindings",
         lua.create_function(|lua, which: u32| {
-            let mut model = crate::script::model_mut_of(lua);
-            model.keybinds.save(which);
+            if super::taint::lockdown_allows(lua) {
+                crate::script::model_mut_of(lua).keybinds.save(which);
+            } else if which == 1 || which == 2 {
+                crate::script::model_mut_of(lua).keybinds.current_set = which;
+            }
             Ok(())
         })?,
     )?;
@@ -1142,5 +1216,95 @@ mod addon_persistence_tests {
         s.load_binding_set(2);
         s.register_addon_bindings("MyAddon", &[binding("MYADDONTOGGLE")]);
         assert_eq!(keys(&s, "MYADDONTOGGLE"), ["ALT-Z"]);
+    }
+
+    /// `0x5635e0` to `0x563940`: each setter binds its prefixed command on the live set, answers 1
+    /// or nil as `SetBinding` does, and raises its usage without a key and a target.
+    #[test]
+    fn the_command_setters_bind_their_prefixed_commands() {
+        let s = UiScript::new().unwrap();
+        let answers: String = s
+            .eval(
+                "return table.concat({ tostring(SetBindingSpell('SHIFT-1', 'Fireball')), \
+                 tostring(SetBindingItem('2', 'Hearthstone')), tostring(SetBindingMacro('3', 7)), \
+                 tostring(SetBindingClick('4', 'MyButton')), \
+                 tostring(SetBindingClick('5', 'MyButton', 'RightButton', 2)), \
+                 tostring(SetBindingSpell('SHIFT-LEFTBRACKET', 'Fireball')) }, ' ')",
+            )
+            .unwrap();
+        assert_eq!(
+            answers, "1 1 1 1 1 nil",
+            "a key the validator refuses answers nil"
+        );
+        for (key, command) in [
+            ("SHIFT-1", "SPELL Fireball"),
+            ("2", "ITEM Hearthstone"),
+            ("3", "MACRO 7"),
+            ("4", "CLICK MyButton:LeftButton"),
+            ("5", "CLICK MyButton:RightButton"),
+        ] {
+            let got: String = s
+                .eval(&format!("return GetBindingAction('{key}')"))
+                .unwrap();
+            assert_eq!(got, command, "{key}");
+        }
+        for call in [
+            "SetBindingSpell('1')",
+            "SetBindingItem(nil, 'x')",
+            "SetBindingMacro({}, 1)",
+            "SetBindingClick('1')",
+        ] {
+            assert!(s.run(call).is_err(), "{call}");
+        }
+    }
+
+    /// `0x562ed0`, `0x562b80`: tainted code in combat binds, loads and saves nothing, and the
+    /// blocked event names it; secure code still binds, and out of combat the addon does too.
+    #[test]
+    fn a_tainted_bind_in_combat_is_refused() {
+        let mut s = UiScript::new().unwrap();
+        s.run(
+            "Blocked = {} \
+             local f = CreateFrame('Frame') f:RegisterEvent('ADDON_ACTION_BLOCKED') \
+             f:SetScript('OnEvent', function(_, _, who, what) Blocked[#Blocked + 1] = who .. '|' .. what end)",
+        )
+        .unwrap();
+        s.set_regen_enabled(false);
+        s.with_addon_owner("TaintTest", || {
+            s.run(
+                "R1 = SetBinding('F', 'JUMP') R2 = SetBindingSpell('G', 'Fireball') \
+                 LoadBindings(0) SaveBindings(2)",
+            )
+        })
+        .unwrap();
+        assert_eq!(s.eval::<Option<i64>>("return R1").unwrap(), None);
+        assert_eq!(s.eval::<Option<i64>>("return R2").unwrap(), None);
+        assert_eq!(
+            s.eval::<String>("return GetBindingAction('F')").unwrap(),
+            ""
+        );
+        assert_eq!(
+            s.eval::<Vec<String>>("return Blocked").unwrap(),
+            [
+                "TaintTest|SetBinding()",
+                "TaintTest|SetBindingSpell()",
+                "TaintTest|LoadBindings()",
+                "TaintTest|SaveBindings()",
+            ]
+        );
+        assert!(s.take_keybind_requests().is_empty(), "no save was copied");
+        assert_eq!(
+            s.current_binding_set(),
+            2,
+            "the refused save still moved the set"
+        );
+        assert_eq!(s.eval::<i64>("return SetBinding('F', 'JUMP')").unwrap(), 1);
+        s.set_regen_enabled(true);
+        s.with_addon_owner("TaintTest", || s.run("SetBindingItem('H', 'Hearthstone')"))
+            .unwrap();
+        assert_eq!(
+            s.eval::<String>("return GetBindingAction('H')").unwrap(),
+            "ITEM Hearthstone"
+        );
     }
 }

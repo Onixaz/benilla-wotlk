@@ -302,7 +302,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // `MouselookStart`/`MouselookStop` pass no gate: each disarms the pending world click and sets
     // or clears the TurnOrAction channel (`(1, set, now, 0)`), the bit the held right button
     // drives. The bit moves at the call, so `IsMouselooking` answers it at once; the app's look
-    // session applies the call.
+    // session applies the call. A start then files the mouselook overrides, a stop clears them
+    // (`0x5fcc10`, `0x5fc890`); the held right button goes through neither.
     for (name, on) in [("MouselookStart", true), ("MouselookStop", false)] {
         g.set(
             name,
@@ -310,6 +311,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let mut model = crate::script::model_mut_of(lua);
                 model.input.turn_or_action = on;
                 model.input.mouselook.push(on);
+                if on {
+                    model.override_bindings.start_mouselook();
+                } else {
+                    model.override_bindings.stop_mouselook();
+                }
                 Ok(())
             })?,
         )?;

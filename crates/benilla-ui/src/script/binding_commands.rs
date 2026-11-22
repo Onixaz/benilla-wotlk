@@ -41,17 +41,72 @@ impl OverrideKey {
     }
 }
 
+/// The owner the mouselook overrides are filed under: the input control, which is no frame, so no
+/// minted frame id reaches it.
+const INPUT_CONTROL: u32 = u32::MAX;
+
 /// The override table; never saved, and no `UPDATE_BINDINGS` fires for it.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct OverrideBindings {
     keys: HashMap<String, OverrideKey>,
     generation: u64,
+    /// The input control's mouselook table (`SetMouselookOverrideBinding`), `(key, command)` in
+    /// insertion order, the key as first given and matched ignoring case.
+    mouselook: Vec<(String, String)>,
 }
 
 impl OverrideBindings {
     /// The command an override puts on `key`.
     pub(crate) fn active(&self, key: &str) -> Option<&str> {
         self.keys.get(key)?.active()
+    }
+
+    /// Write one override; the key folds as `SetBinding`'s does.
+    fn file(&mut self, owner: u32, priority: bool, key: &str, command: Option<&str>) {
+        self.keys
+            .entry(key.to_ascii_uppercase())
+            .or_default()
+            .set(owner, priority, command);
+        self.generation = self.generation.wrapping_add(1);
+    }
+
+    /// `0x5604f0`: every key drops the owner's entry.
+    fn clear(&mut self, owner: u32) {
+        for key in self.keys.values_mut() {
+            key.set(owner, false, None);
+        }
+        self.generation = self.generation.wrapping_add(1);
+    }
+
+    /// `0x5fd440`: a command adds the key or replaces its command; none deletes it.
+    fn set_mouselook(&mut self, key: &str, command: Option<&str>) {
+        let at = self
+            .mouselook
+            .iter()
+            .position(|(k, _)| k.eq_ignore_ascii_case(key));
+        match (at, command) {
+            (Some(at), Some(command)) => self.mouselook[at].1 = command.to_string(),
+            (None, Some(command)) => self.mouselook.push((key.to_string(), command.to_string())),
+            (Some(at), None) => {
+                self.mouselook.remove(at);
+            }
+            (None, None) => {}
+        }
+    }
+
+    /// `MouselookStart`'s install (`0x5fcb20`): each mouselook entry as a priority override of the
+    /// input control, past the protected-action check.
+    pub(crate) fn start_mouselook(&mut self) {
+        let entries = std::mem::take(&mut self.mouselook);
+        for (key, command) in &entries {
+            self.file(INPUT_CONTROL, true, key, Some(command));
+        }
+        self.mouselook = entries;
+    }
+
+    /// `MouselookStop`'s clear (`0x5fc890`): the input control's overrides go, past the check.
+    pub(crate) fn stop_mouselook(&mut self) {
+        self.clear(INPUT_CONTROL);
     }
 }
 
@@ -224,16 +279,14 @@ fn owner_id(lua: &Lua, owner: &Value, usage: &'static str) -> mlua::Result<u32> 
     Ok(crate::script::model_mut_of(lua).frame_id(handle))
 }
 
-/// Write one override; the key folds as `SetBinding`'s does.
+/// The override setter (`0x563480`) as the verbs call it: the protected-action check, kind 13,
+/// then the write. The check refuses tainted code while protected actions are barred.
 fn file_override(lua: &Lua, owner: u32, priority: bool, key: &str, command: Option<&str>) {
+    if !super::taint::lockdown_allows(lua) {
+        return;
+    }
     let mut model = crate::script::model_mut_of(lua);
-    let table = &mut model.override_bindings;
-    table
-        .keys
-        .entry(key.to_ascii_uppercase())
-        .or_default()
-        .set(owner, priority, command);
-    table.generation = table.generation.wrapping_add(1);
+    model.override_bindings.file(owner, priority, key, command);
 }
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
@@ -318,12 +371,34 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "ClearOverrideBindings",
         lua.create_function(|lua, owner: Value| {
             let owner = owner_id(lua, &owner, "Usage: ClearOverrideBindings(owner)")?;
-            let mut model = crate::script::model_mut_of(lua);
-            let table = &mut model.override_bindings;
-            for key in table.keys.values_mut() {
-                key.set(owner, false, None);
+            if super::taint::lockdown_allows(lua) {
+                crate::script::model_mut_of(lua)
+                    .override_bindings
+                    .clear(owner);
             }
-            table.generation = table.generation.wrapping_add(1);
+            Ok(())
+        })?,
+    )?;
+
+    // SetMouselookOverrideBinding(key, command or nil) (`0x5fd550`): the key must be a string or a
+    // number; past the protected-action check, kind 13, the mouselook table takes the entry, which
+    // reaches the override table at the next `MouselookStart`.
+    g.set(
+        "SetMouselookOverrideBinding",
+        lua.create_function(|lua, args: MultiValue| {
+            let arg = |i: usize| args.get(i).cloned().unwrap_or(Value::Nil);
+            let Some(key) = optional_string(lua, &arg(0)) else {
+                return Err(mlua::Error::runtime(
+                    "Usage: SetMouselookOverrideBinding(\"key\", \"binding\" or nil)",
+                ));
+            };
+            if super::taint::lockdown_allows(lua) {
+                let command = optional_string(lua, &arg(1));
+                let mut model = crate::script::model_mut_of(lua);
+                model
+                    .override_bindings
+                    .set_mouselook(&key, command.as_deref());
+            }
             Ok(())
         })?,
     )?;
@@ -469,6 +544,82 @@ mod tests {
         s.run("ClearOverrideBindings(Owner)").unwrap();
         assert!(s.override_bindings().is_empty());
         assert!(s.run("SetOverrideBinding({}, false, 'T')").is_err());
+    }
+
+    /// `0x5fd440`, `0x5fcc10`, `0x5fc890`: the mouselook table reaches the override table only at
+    /// `MouselookStart`, as priority entries over a frame's, and `MouselookStop` takes them back
+    /// off, leaving the frame's own.
+    #[test]
+    fn mouselook_overrides_ride_the_start_and_stop() {
+        let s = UiScript::new().unwrap();
+        s.run(
+            "Owner = CreateFrame('Frame') \
+             SetOverrideBinding(Owner, false, 'BUTTON1', 'JUMP') \
+             SetMouselookOverrideBinding('button1', 'MOVEFORWARD') \
+             SetMouselookOverrideBinding('BUTTON2', 'MOVEBACKWARD') \
+             SetMouselookOverrideBinding('BUTTON2', nil) \
+             SetMouselookOverrideBinding('BUTTON3', 'TURNLEFT') \
+             SetMouselookOverrideBinding('Button3', 'TURNRIGHT')",
+        )
+        .unwrap();
+        let action = |key: &str| -> String {
+            s.eval(&format!("return GetBindingAction('{key}', true)"))
+                .unwrap()
+        };
+        assert_eq!(
+            action("BUTTON1"),
+            "JUMP",
+            "nothing installed before the start"
+        );
+        assert_eq!(action("BUTTON3"), "");
+        s.run("MouselookStart()").unwrap();
+        assert_eq!(
+            action("BUTTON1"),
+            "MOVEFORWARD",
+            "priority over the frame's"
+        );
+        assert_eq!(action("BUTTON2"), "", "a nil command deleted the entry");
+        assert_eq!(
+            action("BUTTON3"),
+            "TURNRIGHT",
+            "a second set replaced the first"
+        );
+        s.run("MouselookStop()").unwrap();
+        assert_eq!(action("BUTTON1"), "JUMP", "the frame's override is back");
+        assert_eq!(action("BUTTON3"), "");
+        assert!(s.run("SetMouselookOverrideBinding()").is_err());
+    }
+
+    /// `0x563480`, `0x5604f0`, `0x5fd550`: tainted code in combat files and clears no override;
+    /// secure code, such as a secure handler's snippet, still does.
+    #[test]
+    fn a_tainted_override_in_combat_is_refused() {
+        let mut s = UiScript::new().unwrap();
+        s.run("Owner = CreateFrame('Frame') SetOverrideBinding(Owner, false, 'T', 'JUMP')")
+            .unwrap();
+        s.set_regen_enabled(false);
+        s.with_addon_owner("TaintTest", || {
+            s.run(
+                "SetOverrideBindingSpell(Owner, true, 'T', 'Fireball') \
+                 SetOverrideBinding(Owner, false, 'Y', 'JUMP') \
+                 SetMouselookOverrideBinding('BUTTON1', 'JUMP') \
+                 ClearOverrideBindings(Owner)",
+            )
+        })
+        .unwrap();
+        assert_eq!(
+            s.override_bindings(),
+            [("T".to_string(), "JUMP".to_string())]
+        );
+        s.run("MouselookStart()").unwrap();
+        assert_eq!(
+            s.override_bindings().len(),
+            1,
+            "no mouselook entry was taken"
+        );
+        s.run("MouselookStop() ClearOverrideBindings(Owner)")
+            .unwrap();
+        assert!(s.override_bindings().is_empty(), "secure code clears");
     }
 
     /// `0x564db0`: comment and `#` lines are skipped, a line keeps its spaces, and `StopMacro` ends

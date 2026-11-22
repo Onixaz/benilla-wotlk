@@ -53,6 +53,26 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
         "UPDATE_BINDINGS",
         "benilla-app/src/bindings.rs",
     ),
+    (
+        "SetBindingClick",
+        "UPDATE_BINDINGS",
+        "benilla-app/src/bindings.rs",
+    ),
+    (
+        "SetBindingItem",
+        "UPDATE_BINDINGS",
+        "benilla-app/src/bindings.rs",
+    ),
+    (
+        "SetBindingMacro",
+        "UPDATE_BINDINGS",
+        "benilla-app/src/bindings.rs",
+    ),
+    (
+        "SetBindingSpell",
+        "UPDATE_BINDINGS",
+        "benilla-app/src/bindings.rs",
+    ),
     // The trade drain applies the accept, the unaccept or the close to the session at once, and
     // the trade feed fires on the change it reads.
     (
