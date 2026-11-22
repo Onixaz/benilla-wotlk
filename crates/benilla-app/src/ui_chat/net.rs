@@ -47,11 +47,7 @@ fn on_chat(
 
 /// `SMSG_CHANNEL_LIST` (`0x505dc0`): a display reply goes to the channel pane (`0x503990`) with
 /// the names the cache holds, the rest asked; any other prints the `/chatlist` roster.
-fn on_channel_list(
-    In(ev): In<SessionEvent>,
-    mut chat_log: ResMut<ChatLog>,
-    mut script: crate::ui_script::InTurn,
-) {
+fn on_channel_list(In(ev): In<SessionEvent>, world: &mut World) {
     let SessionEvent::ChannelList {
         display,
         channel,
@@ -62,70 +58,60 @@ fn on_channel_list(
         return;
     };
     if !display {
-        channel_list(channel, &members, &mut chat_log);
+        if let Some(mut chat_log) = world.get_resource_mut::<ChatLog>() {
+            channel_list(channel, &members, &mut chat_log);
+        }
         return;
     }
     debug!(
         "chat: display list {channel:?} ({} members, flags {flags:#04x})",
         members.len()
     );
-    let Some(mut script) = script.turn() else {
-        return;
-    };
     // With the `World` lent: our own row is the active player's at the packet (`0x503990`).
-    script.lent(move |s| {
-        s.display_channel_list(&channel, flags, &members, |guid| {
-            crate::ui_script::safe_world::with_world(|w| {
-                let (Some(names), Some(commands)) = (
-                    w.get_resource::<crate::names::NameCache>(),
-                    w.get_resource::<NetCommands>(),
-                ) else {
-                    return None;
-                };
-                names
-                    .answer(crate::names::NameKey::Player(guid), guid, commands)
-                    .map(|name| name.map(str::to_string))
-            })
-            .flatten()
-        });
+    crate::ui_script::live::with_live_world(world, move |s| {
+        s.display_channel_list(&channel, flags, &members, player_name);
     });
 }
 
-/// `SMSG_USERLIST_ADD`, `_REMOVE` and `_UPDATE`: the watched channel's roster follows its members.
-fn on_channel_user_list(
-    In(ev): In<SessionEvent>,
-    mut script: crate::ui_script::InTurn,
-    names: Option<Res<crate::names::NameCache>>,
-    commands: Option<Res<NetCommands>>,
-) {
+/// A member's name off the lent `World`'s name cache, asked for when not cached.
+fn player_name(guid: u64) -> Option<Option<String>> {
+    crate::ui_script::safe_world::with_world(|w| {
+        let (Some(names), Some(commands)) = (
+            w.get_resource::<crate::names::NameCache>(),
+            w.get_resource::<NetCommands>(),
+        ) else {
+            return None;
+        };
+        names
+            .answer(crate::names::NameKey::Player(guid), guid, commands)
+            .map(|name| name.map(str::to_string))
+    })
+    .flatten()
+}
+
+/// `SMSG_USERLIST_ADD`, `_REMOVE` and `_UPDATE`: the watched channel's roster follows its members, its events fired with the `World` lent.
+fn on_channel_user_list(In(ev): In<SessionEvent>, world: &mut World) {
     use benilla_protocol::messages::ChannelUserListKind as K;
-    let (SessionEvent::ChannelUserList(u), Some(mut script)) = (ev, script.turn()) else {
+    let SessionEvent::ChannelUserList(u) = ev else {
         return;
     };
     debug!(
         "chat: user list {:?} {:?} {:#x} flags {:#04x}",
         u.kind, u.channel, u.guid, u.member_flags
     );
-    match u.kind {
+    crate::ui_script::live::with_live_world(world, move |script| match u.kind {
         K::Add => script.channel_user_added(
             &u.channel,
             u.guid,
             u.member_flags,
             u.channel_flags,
-            |guid| {
-                let (Some(names), Some(commands)) = (names.as_deref(), commands.as_deref()) else {
-                    return None;
-                };
-                names
-                    .answer(crate::names::NameKey::Player(guid), guid, commands)
-                    .map(|name| name.map(str::to_string))
-            },
+            player_name,
         ),
         K::Remove => script.channel_user_removed(&u.channel, u.guid, u.channel_flags),
         K::Update => {
             script.channel_user_updated(&u.channel, u.guid, u.member_flags, u.channel_flags)
         }
-    }
+    });
 }
 
 /// The channel pane's roster waits on the name cache (`0x4ffe30`): each answer that has landed is

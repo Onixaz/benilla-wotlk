@@ -25,12 +25,6 @@ const RAISES_BEFORE_A_WRITE: &[(&str, &str, u16)] = &[
     ("spell/net.rs", "on_spell_removed", 1281),
     ("spell/net.rs", "on_spell_start", 1281),
     ("spell/net.rs", "on_spell_superceded", 1281),
-    ("ui_action/equipment_sets.rs", "on_equipment_set_list", 1281),
-    (
-        "ui_action/equipment_sets.rs",
-        "on_equipment_set_saved",
-        1281,
-    ),
     ("ui_arena_team.rs", "on_packet", 1275),
     ("ui_barber.rs", "on_enable", 1279),
     ("ui_battlefield.rs", "on_mgr", 1275),

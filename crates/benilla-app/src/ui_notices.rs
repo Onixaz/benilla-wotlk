@@ -75,10 +75,6 @@ struct KbMotd {
 #[derive(Resource, Default)]
 struct ServerFirsts(Vec<ServerFirstAchievement>);
 
-/// The events a [`WorldNotice`] fires, in packet order.
-#[derive(Resource, Default)]
-struct NoticeEvents(Vec<(&'static str, Vec<ScriptValue>)>);
-
 pub(crate) struct NoticesPlugin;
 
 impl Plugin for NoticesPlugin {
@@ -89,7 +85,6 @@ impl Plugin for NoticesPlugin {
             .init_resource::<InebriationLines>()
             .init_resource::<KbMotd>()
             .init_resource::<ServerFirsts>()
-            .init_resource::<NoticeEvents>()
             .net_handler(K::OverrideLight, on_override_light)
             .net_handler(K::UiTime, on_ui_time)
             .net_handler(K::ArenaError, on_arena_error)
@@ -252,52 +247,54 @@ fn afk_report(result: u8, enabled: bool) -> Option<(&'static str, &'static str)>
     }
 }
 
-fn on_notice(
-    In(ev): In<SessionEvent>,
-    mut errors: ResMut<UiErrorKeys>,
-    names: Res<NameCache>,
-    cvars: Option<ResMut<crate::cvars::Cvars>>,
-    mut script: crate::ui_script::InTurn,
-    mut chat: ResMut<ChatLog>,
-    mut events: ResMut<NoticeEvents>,
-) {
+/// The notices' handlers (`0x526642`, `0x526eca`, `0x6e3fe5`, ...): each event, chat line and
+/// refusal line at its step in the handler, with the `World` lent.
+fn on_notice(In(ev): In<SessionEvent>, world: &mut World) {
     let SessionEvent::Notice(notice) = ev else {
         return;
     };
     debug!("net: {notice:?}");
+    let fire = |world: &mut World, event: &'static str, args: Vec<ScriptValue>| {
+        crate::ui_script::live::with_live_world(world, |s| s.fire_event(event, args));
+    };
     match notice {
         // `0x526642`: no refer-a-friend link is kept to clear, so only the event remains.
         WorldNotice::ReferAFriendExpired { .. } => {
-            events.0.push(("FRIENDLIST_UPDATE", Vec::new()));
-            return;
+            return fire(world, "FRIENDLIST_UPDATE", Vec::new());
         }
         // `0x526eca`: the byte as `%b`.
         WorldNotice::TalentsInvoluntarilyReset { flag } => {
-            events
-                .0
-                .push(("TALENTS_INVOLUNTARILY_RESET", vec![ScriptValue::Bool(flag)]));
-            return;
+            return fire(
+                world,
+                "TALENTS_INVOLUNTARILY_RESET",
+                vec![ScriptValue::Bool(flag)],
+            );
+        }
+        WorldNotice::ReportPvpAfkResult { result } => {
+            let Some(mut cvars) = world.get_resource_mut::<crate::cvars::Cvars>() else {
+                return;
+            };
+            let enabled = cvars.flag("enablePVPNotifyAFK") == Some(true);
+            let Some((value, key)) = afk_report(result, enabled) else {
+                return;
+            };
+            cvars.set("enablePVPNotifyAFK", value);
+            // The VM's text lookup shows a missing key as itself (`0x819d40`).
+            let text = crate::ui_script::live::with_live_world(world, |s| {
+                crate::ui_chat::combat::global_string(s, key)
+            })
+            .flatten()
+            .unwrap_or_else(|| key.to_string());
+            return crate::ui_chat::add_chat_line_now(world, 0, text);
         }
         _ => {}
     }
-    if let WorldNotice::ReportPvpAfkResult { result } = notice {
-        let Some(mut cvars) = cvars else {
-            return;
-        };
-        let enabled = cvars.flag("enablePVPNotifyAFK") == Some(true);
-        if let Some((value, key)) = afk_report(result, enabled) {
-            cvars.set("enablePVPNotifyAFK", value);
-            // The VM's text lookup shows a missing key as itself (`0x819d40`).
-            let text = script
-                .turn()
-                .as_deref()
-                .and_then(|s| crate::ui_chat::combat::global_string(s, key))
-                .unwrap_or_else(|| key.to_string());
-            crate::ui_chat::away::push_system(&mut chat, text);
-        }
-        return;
+    let line = world
+        .get_resource::<NameCache>()
+        .and_then(|names| notice_line(notice, names));
+    if let Some(line) = line {
+        crate::ui_action::show_line_in_world(world, "ui_notices", line);
     }
-    errors.0.extend(notice_line(notice, &names));
 }
 
 /// `SMSG_PROPOSE_LEVEL_GRANT` (`0x513fd0`): an offer while one is pending is ignored.
@@ -455,13 +452,11 @@ fn on_session_end(
     mut grant: ResMut<LevelGrant>,
     mut lines: ResMut<InebriationLines>,
     mut firsts: ResMut<ServerFirsts>,
-    mut events: ResMut<NoticeEvents>,
 ) {
     *clock = UiClock::default();
     *grant = LevelGrant::default();
     lines.0.clear();
     firsts.0.clear();
-    events.0.clear();
 }
 
 /// `CMSG_WORLD_STATE_UI_TIMER_UPDATE` every 20 s in world, the first at once (`0x5488f0`).
@@ -514,11 +509,7 @@ fn feed_notices(
     clock: Res<UiClock>,
     mut grant: ResMut<LevelGrant>,
     mut lines: ResMut<InebriationLines>,
-    (mut motd, mut firsts, mut events): (
-        ResMut<KbMotd>,
-        ResMut<ServerFirsts>,
-        ResMut<NoticeEvents>,
-    ),
+    (mut motd, mut firsts): (ResMut<KbMotd>, ResMut<ServerFirsts>),
     names: Res<NameCache>,
     items: Res<Items>,
     net: Res<NetCommands>,
@@ -541,9 +532,6 @@ fn feed_notices(
     }
     for _ in 0..std::mem::take(&mut motd.owed) {
         script.fire_event("KNOWLEDGE_BASE_SYSTEM_MOTD_UPDATED", Vec::new());
-    }
-    for (event, args) in std::mem::take(&mut events.0) {
-        script.fire_event(event, args);
     }
     if !firsts.0.is_empty() {
         let lua = script.lua();
@@ -701,6 +689,75 @@ fn drain_level_grant(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A client with the notice handler, the chat windows and a VM logging `events`.
+    fn notice_client(events: &[&str]) -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<NameCache>()
+            .init_resource::<crate::cvars::Cvars>()
+            .init_resource::<crate::ui_chat::ChatWindows>()
+            .init_resource::<ChatLog>();
+        // A fixture's registration, out of the built client's census.
+        let register = <App as NetHandlerApp>::net_handler;
+        register(&mut app, SessionEventKind::Notice, on_notice);
+        let script = UiScript::new().unwrap();
+        let registers: String = events
+            .iter()
+            .map(|e| {
+                format!(
+                    "f:RegisterEvent(\"{e}\")
+"
+                )
+            })
+            .collect();
+        script
+            .run(&format!(
+                "SEEN = {{}} PVP_REPORT_AFK_SYSTEM_DISABLED = \"Reporting off\"
+                local f = CreateFrame(\"Frame\")
+                {registers}
+                f:SetScript(\"OnEvent\", function(_, e, a) SEEN[#SEEN + 1] = e .. \" \" .. tostring(a) end)"
+            ))
+            .unwrap();
+        app.insert_non_send_resource(script);
+        app
+    }
+
+    fn seen(app: &App) -> String {
+        app.world()
+            .non_send_resource::<UiScript>()
+            .eval("return table.concat(SEEN, ',')")
+            .unwrap()
+    }
+
+    /// The handlers' events fire inside the handler (`0x526642`, `0x526eca`), and the AFK report's
+    /// switch adds its chat line there too (`0x6e3fe5`, `0x509dd0`), not from a later feed.
+    #[test]
+    fn a_notices_event_and_chat_line_fire_in_the_handlers_turn() {
+        let mut app = notice_client(&[
+            "FRIENDLIST_UPDATE",
+            "TALENTS_INVOLUNTARILY_RESET",
+            "CHAT_MSG_SYSTEM",
+        ]);
+        crate::net::handlers::dispatch(
+            app.world_mut(),
+            vec![
+                SessionEvent::Notice(WorldNotice::ReferAFriendExpired { friend: 0 }),
+                SessionEvent::Notice(WorldNotice::TalentsInvoluntarilyReset { flag: true }),
+                SessionEvent::Notice(WorldNotice::ReportPvpAfkResult { result: 6 }),
+            ],
+        );
+        assert_eq!(
+            seen(&app),
+            "FRIENDLIST_UPDATE nil,TALENTS_INVOLUNTARILY_RESET true,CHAT_MSG_SYSTEM Reporting off"
+        );
+        assert_eq!(
+            app.world()
+                .resource::<crate::cvars::Cvars>()
+                .flag("enablePVPNotifyAFK"),
+            Some(false)
+        );
+    }
 
     #[test]
     fn rwhois_prints_its_arms_and_marks_the_highlighted_line() {

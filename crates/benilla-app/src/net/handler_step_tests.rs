@@ -62,12 +62,13 @@ fn on_split(In(ev): In<SessionEvent>, world: &mut World) {
 
 /// Raise, then write, in one system: its raise fires once it returns.
 fn on_whole(
-    In(_): In<SessionEvent>,
+    In(ev): In<SessionEvent>,
     mut flag: ResMut<ControlFlag>,
     mut ui: ResMut<UiEvents>,
     bank: NonSend<crate::ui_bank::BankOpen>,
     mut read: ResMut<Read>,
 ) {
+    assert!(matches!(ev, SessionEvent::LoggedOut));
     flag.0 = false;
     ui.fire("PLAYER_CONTROL_LOST", Vec::new());
     flag.0 = true;
@@ -138,7 +139,8 @@ fn a_listeners_write_reaches_the_rest_of_the_handler() {
 /// What a handler queued before a step, through `in_turn`, fires ahead of that step's own raise.
 #[test]
 fn a_step_fires_what_the_handler_queued_before_it_first() {
-    fn on_queued_then_step(In(_): In<SessionEvent>, world: &mut World) {
+    fn on_queued_then_step(In(ev): In<SessionEvent>, world: &mut World) {
+        assert!(matches!(ev, SessionEvent::LoggedOut));
         world
             .resource_mut::<UiEvents>()
             .fire("PLAYER_CONTROL_GAINED", Vec::new());

@@ -23,7 +23,7 @@ const HOLDERS: &[(&str, usize)] = &[
     ("ui_lfg.rs", 2),
     ("ui_loot/mod.rs", 3),
     ("ui_loot/net.rs", 6),
-    ("ui_notices.rs", 5),
+    ("ui_notices.rs", 4),
     ("ui_party/feed.rs", 1),
     ("ui_party/net.rs", 18),
     ("ui_socket.rs", 2),

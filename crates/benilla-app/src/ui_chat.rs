@@ -59,7 +59,7 @@ pub(crate) use event::event_name;
 pub(crate) use event::{default_color, ChatEvent, ChatEventKind};
 pub(crate) use feed::{ChatLog, XpLine, REST_STATE_KEYS};
 /// The chat windows and the message display's in-call add, for the verbs' live view.
-pub(crate) use frames::{add_chat_line, ChatWindows};
+pub(crate) use frames::{add_chat_line, add_chat_line_now, kind_of_type, ChatWindows};
 /// The per-character chat cache's restore, called from the world-entry UI load: its two events
 /// must precede the session's first chat line and `PLAYER_LOGIN`.
 pub(crate) use settings::restore_chat_looks;
