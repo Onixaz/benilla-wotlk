@@ -74,17 +74,13 @@ pub(crate) enum OfferUpdate {
     OtherTrade,
 }
 
-/// A line owed whose `%s` names a player.
+/// `ERR_INITIATE_TRADE_S` owed on a name not yet cached, shown by the name's callback (`0x703c60`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct NamedLine {
     /// The `GlobalStrings` key; the catalog names its surface.
     pub(crate) key: &'static str,
     /// Whose name fills the `%s`.
     pub(crate) who: u64,
-    /// Print only while the player is streamed: the status arms read the live unit after an object
-    /// lookup of `(guid, TYPEMASK_PLAYER)`, while `ERR_INITIATE_TRADE_S` goes through the name
-    /// cache with no object test.
-    pub(crate) needs_live_object: bool,
 }
 
 impl TradeSession {
@@ -264,8 +260,8 @@ impl TradeSession {
     /// The name a `%s` status line carries, or `None` when the reference prints nothing: cases 0, 5
     /// and 14 read the guid cell under the latch, both of which `InitiateTrade` sets, while the
     /// `BEGIN_TRADE` arm fills only the cell. So a refuser stays silent when vmangos echoes
-    /// `IGNORE_YOU` to both sides (`TradeHandler.cpp:46`). The live-object guard rides
-    /// [`NamedLine::needs_live_object`].
+    /// `IGNORE_YOU` to both sides (`TradeHandler.cpp:46`). The live-object guard is
+    /// [`unit_name_line`]'s caller's.
     pub(crate) fn line_names(&self) -> Option<u64> {
         self.initiated.then_some(self.partner).flatten()
     }
@@ -399,26 +395,34 @@ pub(crate) fn enter_world(world: &mut World) {
     }
 }
 
-/// A line owed whose `%s` names a player, shown through `sink` now when the name is cached; a
-/// status arm's line names a player still an object (`0x58762a`), and a miss asks the name and
-/// waits for its answer ([`net`]'s name handler).
-pub(crate) fn show_named_line(
-    line: NamedLine,
-    trade: &mut TradeSession,
+/// A line whose `%s` is a unit's name as its live object reads it (`0x72a000`): the name cache's
+/// entry, asked on a miss, and `UNKNOWNOBJECT` meanwhile (`0x72a271`), so the line shows at its step.
+pub(crate) fn unit_name_line(
+    key: &'static str,
+    who: u64,
     names: Option<&NameCache>,
     commands: &NetCommands,
-    streamed: impl Fn(u64) -> bool,
+) -> crate::ui_action::UiError {
+    use crate::ui_action::{FillArg, UiError};
+    match names.and_then(|n| n.resolve(who, commands)) {
+        Some(name) => UiError::s(key, name.to_string()),
+        None => UiError::args(key, vec![FillArg::Global("UNKNOWNOBJECT".into())]),
+    }
+}
+
+/// `ERR_INITIATE_TRADE_S` off the name cache at the initiate (`0x703db6`, `0x703dc5`), or, on a
+/// miss, owed to the name's callback (`0x703c60`, [`net`]'s name handler).
+pub(crate) fn initiate_line(
+    who: u64,
+    trade: &mut TradeSession,
+    names: &NameCache,
+    commands: &NetCommands,
     sink: &mut dyn SignalSink,
 ) {
-    if line.needs_live_object && !streamed(line.who) {
-        return;
-    }
-    match names
-        .and_then(|n| n.resolve(line.who, commands))
-        .map(str::to_string)
-    {
-        Some(name) => sink.line(crate::ui_action::UiError::s(line.key, name)),
-        None => trade.owe_named_line(line),
+    const KEY: &str = "ERR_INITIATE_TRADE_S";
+    match names.resolve(who, commands).map(str::to_string) {
+        Some(name) => sink.line(crate::ui_action::UiError::s(KEY, name)),
+        None => trade.owe_named_line(NamedLine { key: KEY, who }),
     }
 }
 
@@ -603,18 +607,19 @@ fn answer_trade_request(
         return;
     }
 
-    // Leg 8, Block Trades, the one leg that names the initiator. The reference reads the live
-    // unit; this may wait on a name query, with no timer, since vmangos cancels the trade to us
-    // when the initiator leaves (`Player.cpp:11747`), which clears the request.
+    // Leg 8, Block Trades, the one leg that names the initiator: the busy goes out (`0x58748b`),
+    // then the line with the live unit's name, `UNKNOWNOBJECT` while uncached (`0x587496`).
     if block_trades.0 {
-        let Some(name) = names.resolve(initiator, &commands).map(str::to_string) else {
-            return;
-        };
-        info!(target: "trade", "BEGIN_TRADE from {name} refused by BlockTrades; sending CMSG_BUSY_TRADE");
+        info!(target: "trade", "BEGIN_TRADE from {initiator:#x} refused by BlockTrades; sending CMSG_BUSY_TRADE");
         let _ = commands.0.send(ClientCommand::BusyTrade);
         trade.refuse_request();
         // One error raise of `(0xbb, name)` (`0x5874a1`); catalog row `0xbb` makes it a chat line.
-        signals.line(crate::ui_action::UiError::s("ERR_TRADE_BLOCKED_S", name));
+        signals.line(unit_name_line(
+            "ERR_TRADE_BLOCKED_S",
+            initiator,
+            Some(&names),
+            &commands,
+        ));
         signals.flush(&mut ecs);
         return;
     }
@@ -648,20 +653,7 @@ fn drain_trade(
                 let _ = commands
                     .0
                     .send(ClientCommand::InitiateTrade { target: guid });
-                // The initiate's line off the name cache, or from the name's answer (`0x703db6`, `0x703dc5`, `0x703c60`).
-                let line = NamedLine {
-                    key: "ERR_INITIATE_TRADE_S",
-                    who: guid,
-                    needs_live_object: false,
-                };
-                show_named_line(
-                    line,
-                    &mut trade,
-                    Some(&names),
-                    &commands,
-                    |_| true,
-                    &mut *script,
-                );
+                initiate_line(guid, &mut trade, &names, &commands, &mut *script);
             }
             None => {
                 info!(target: "trade", "initiate: {token:?} did not resolve to a player guid — nothing sent");
@@ -1219,6 +1211,24 @@ mod tests {
         );
     }
 
+    /// An initiator whose name is not cached is refused at once, its line naming `UNKNOWNOBJECT` (`0x587496` -> `0x72a271`), with the name asked.
+    #[test]
+    fn block_trades_names_an_uncached_initiator_unknown() {
+        let (mut app, rx) = request_app(true, false, true);
+        let e = app.world_mut().spawn(ObjectStore::default()).id();
+        app.world_mut().resource_mut::<GuidIndex>().0.insert(0x9, e);
+        app.world_mut().resource_mut::<TradeSession>().request(0x9);
+        app.update();
+        let sent: Vec<_> = rx.try_iter().collect();
+        assert!(sent.iter().any(|c| matches!(c, ClientCommand::BusyTrade)));
+        assert!(
+            sent.iter()
+                .any(|c| matches!(c, ClientCommand::NameQuery { guid: 0x9 })),
+            "{sent:?}"
+        );
+        assert_eq!(chat(&app), ["Unknown is blocking trades."]);
+    }
+
     #[test]
     fn the_silent_legs_refuse_without_a_word() {
         for (cinematic, controlled) in [(true, true), (false, false)] {
@@ -1375,7 +1385,7 @@ mod tests {
                 .insert(guid, e);
         }
         let vm = UiScript::new().unwrap();
-        vm.run("ERR_TRADE_BLOCKED_S = '%s is blocking trades.'")
+        vm.run("ERR_TRADE_BLOCKED_S = '%s is blocking trades.' UNKNOWNOBJECT = 'Unknown'")
             .unwrap();
         app.insert_non_send_resource(vm);
         app.add_systems(Update, answer_trade_request);

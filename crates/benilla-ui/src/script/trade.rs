@@ -1,7 +1,7 @@
 //! The trade bindings: the window's own state (`0xbfa400`-`0xbfa684`), written by the app's trade
 //! handlers at their step and by the verbs in their call, and the trade verbs, which read it and
-//! the network cells at the call; the verbs' sends queue as intents the app drains, and
-//! the trade verbs queue intents it drains. Slots are 1-based, 1..=7, the seventh the non-traded
+//! the network cells at the call; the verbs' sends queue as intents the app drains. Slots are
+//! 1-based, 1..=7, the seventh the non-traded
 //! enchant slot; an empty or out-of-range slot answers nil. The partner rides the `"npc"` unit,
 //! which the app points at them.
 
@@ -920,21 +920,20 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetTradeTargetItemLink(index) (`0x5865f0`): the partner's slot in the window's copy built into a link off its record, with its enchant, gems, property and seed; nothing for an empty slot or a record not cached.
+    // GetTradeTargetItemLink(index) (`0x5865f0`): the partner's slot in the window's copy built into a link off its record, with its enchant, gems, property and seed; nothing for an empty slot or a record not cached, which the read leaves unasked, passing no callback (`0x586662`).
     g.set(
         "GetTradeTargetItemLink",
         lua.create_function(|lua, index: Value| {
             let i = verb_slot(lua, index, "Usage: GetTradeTargetItemLink(index)")?;
             let read = {
-                let mut model = crate::script::model_mut_of(lua);
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
                 i.map(|i| model.trade_target[i])
                     .filter(|slot| slot.item_id != 0)
                     .and_then(|slot| {
-                        let rec = super::item_stats::item_record(&model, slot.item_id);
-                        if rec.is_none() {
-                            super::item_stats::ask_item_record(&mut model, slot.item_id);
-                        }
-                        Some((slot, rec?, super::item_stats::player_level()))
+                        let rec = super::item_stats::item_record(&model, slot.item_id)?;
+                        Some((slot, rec, super::item_stats::player_level()))
                     })
             };
             let Some((slot, rec, level)) = read else {
@@ -1197,6 +1196,10 @@ mod tests {
             s.run("GetTradeTargetItemLink()").is_err(),
             "a non-number raises"
         );
+        // The link's read passes no callback, so a miss asks nothing (`0x586662`).
+        s.take_item_stat_asks();
+        s.run("GetTradeTargetItemLink(2)").unwrap();
+        assert!(s.take_item_stat_asks().is_empty());
     }
 
     /// The item verbs' tuples (`0x587eb0`, `0x587c60`): ours is name, icon, count, quality and enchant, quality -1 for a record with no inventory type; the partner's adds usable after quality; no item answers `nil, nil, 0, 0, nil`, the partner's one more nil.

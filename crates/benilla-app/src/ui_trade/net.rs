@@ -8,7 +8,7 @@ use benilla_protocol::{SessionEvent, SessionEventKind};
 use benilla_ui::script::UiScript;
 use bevy::prelude::*;
 
-use super::{NamedLine, OfferUpdate, TradeSession};
+use super::{OfferUpdate, TradeSession};
 use crate::items::Items;
 use crate::names::NameCache;
 use crate::net::{ClientCommand, GuidIndex, NetCommands, NetHandlerApp, ObjectStore};
@@ -143,27 +143,20 @@ fn on_trade_status(
         }
         _ => match status_message(status) {
             Some(Line::Plain(key)) => ui.line(UiError::key(key)),
-            // Our own initiate's partner, by name while still an object (`0x58760a`-`0x58764b`).
+            // Our own initiate's partner while still an object, named by its unit (`0x58760a`-`0x58764b`).
             Some(Line::Naming(key)) => {
                 if let Some(who) = naming {
-                    let line = NamedLine {
-                        key,
-                        who,
-                        needs_live_object: true,
-                    };
-                    let streamed = |g: u64| {
-                        reads.index.as_deref().is_some_and(|index| {
-                            super::streamed_player(index, &reads.stores, g).is_some()
-                        })
-                    };
-                    super::show_named_line(
-                        line,
-                        &mut trade,
-                        reads.names.as_deref(),
-                        &reads.commands,
-                        streamed,
-                        &mut *ui,
-                    );
+                    let streamed = reads.index.as_deref().is_some_and(|index| {
+                        super::streamed_player(index, &reads.stores, who).is_some()
+                    });
+                    if streamed {
+                        ui.line(super::unit_name_line(
+                            key,
+                            who,
+                            reads.names.as_deref(),
+                            &reads.commands,
+                        ));
+                    }
                 }
             }
             None => {}
@@ -1048,13 +1041,15 @@ mod lock_tests {
         assert_eq!(log(&mut app), "", "nothing of the partner's moved");
     }
 
-    /// A naming status shows its line by name while our initiate's partner is an object (`0x58760a`-`0x58764b`); a partner gone from view says nothing, and so does the side that did not initiate (`0x58760a`, `0x587657`).
+    /// A naming status shows its line at its step while our initiate's partner is an object, named by its unit or `UNKNOWNOBJECT` (`0x58760a`-`0x58764b`, `0x72a000`); a partner gone from view says nothing, and so does the side that did not initiate (`0x58760a`, `0x587657`).
     #[test]
     fn the_naming_lines_show_by_name_while_the_partner_is_an_object() {
-        let named = |streamed: bool, initiated: bool| {
+        let named = |streamed: bool, initiated: bool, cached: bool| {
             let (mut app, _rx) = rig();
             let mut names = crate::names::NameCache::default();
-            names.insert_player(0x7, "Grubbis".to_string(), None);
+            if cached {
+                names.insert_player(0x7, "Grubbis".to_string(), None);
+            }
             let mut index = crate::net::GuidIndex::default();
             if streamed {
                 let e = app
@@ -1071,7 +1066,8 @@ mod lock_tests {
             }
             run(
                 &mut app,
-                "ERR_PLAYER_BUSY_S = '%s is busy.' ERR_IGNORING_YOU_S = '%s is ignoring you.'",
+                "ERR_PLAYER_BUSY_S = '%s is busy.' ERR_IGNORING_YOU_S = '%s is ignoring you.' \
+                 UNKNOWNOBJECT = 'Unknown'",
             );
             status(&mut app, TradeStatus::Busy);
             status(&mut app, TradeStatus::IgnoreYou);
@@ -1080,12 +1076,14 @@ mod lock_tests {
                 .pending_lines()
         };
         assert_eq!(
-            named(true, true),
+            named(true, true, true),
             ["Grubbis is busy."],
             "the tail clears the latch"
         );
-        assert!(named(false, true).is_empty());
-        assert!(named(true, false).is_empty());
+        // An uncached name shows at the step as `UNKNOWNOBJECT` (`0x72a271`), nothing held back.
+        assert_eq!(named(true, true, false), ["Unknown is busy."]);
+        assert!(named(false, true, true).is_empty());
+        assert!(named(true, false, true).is_empty());
     }
 
     /// Each closing status shows its line at its step: the cancel's and the completion's after the close's `TRADE_CLOSED` (`0x587513` before `0x58751d`, `0x587534` before `0x58753e`), the close window's ahead of it (`0x5875bd` before `0x5875cb`).
