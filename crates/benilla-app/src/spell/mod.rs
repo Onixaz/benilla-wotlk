@@ -155,6 +155,7 @@ impl Plugin for SpellPlugin {
             )
             .add_systems(OnEnter(ClientState::InWorld), mods::clear_on_world_enter)
             .add_systems(OnEnter(ClientState::InWorld), combo::clear_combo_points)
+            .add_systems(OnExit(ClientState::InWorld), inflight::clear_on_world_leave)
             .init_resource::<SummonSlots>()
             .init_resource::<multicast::MultiCastLists>()
             .add_systems(

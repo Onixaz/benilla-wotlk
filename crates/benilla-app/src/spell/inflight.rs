@@ -13,8 +13,9 @@ use crate::ui_action::Spells;
 /// The pending-spell list (`[0xaf5254]`): one record per cast attempt that sent, keyed by its
 /// `castCount`, spell and caster. A record leaves on the server's answer to it alone: the go
 /// (`0x80fee0` -> `0x805180`), the cast failure (`0x809af0`), the spell failure (`0x809c70`), or
-/// our own cancel (`0x806200`). There is no deadline: a record no answer names stays, and blocks
-/// only its own spell's re-press while that spell cools down or is on-next-swing (`0x80d34b`).
+/// our own cancel (`0x806200`). There is no deadline: a record no answer names stays until the
+/// world's teardown (`0x807526`), and blocks only its own spell's re-press while that spell cools
+/// down or is on-next-swing (`0x80d34b`).
 #[derive(Resource, Default)]
 pub(crate) struct PendingCast {
     records: Vec<PendingRecord>,
@@ -148,6 +149,18 @@ impl PendingCast {
             self.records.remove(at);
         }
     }
+
+    /// Drop every record, answered or not; the `castCount` counter runs on (`0x807526`).
+    fn clear(&mut self) {
+        self.records.clear();
+    }
+}
+
+/// The world's teardown (logout, disconnect, a failed login: `0x406510` -> `0x742bb0` ->
+/// `0x8073a0`) empties the pending-spell list (`0x807526`), so a record no answer named outlives
+/// neither the world nor the character.
+pub(crate) fn clear_on_world_leave(mut pending: ResMut<PendingCast>) {
+    pending.clear();
 }
 
 /// The cast cancel (`0x806200`) of each released record, with its send set: `CMSG_CANCEL_CAST`
@@ -677,6 +690,32 @@ mod tests {
     }
 
     /// The pet setter's modal cancel (`0x5d6afb`-`0x5d6b24`), on a world with the pet streamed.
+    #[test]
+    fn the_world_leave_drops_a_record_no_answer_named() {
+        use crate::char_select::ClientState;
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin))
+            .insert_state(ClientState::InWorld)
+            .init_resource::<PendingCast>()
+            .add_systems(OnExit(ClientState::InWorld), clear_on_world_leave);
+        app.update();
+        let count = {
+            let mut pending = app.world_mut().resource_mut::<PendingCast>();
+            let count = pending.take_count();
+            pending.file(PendingRecord::player(133, count, 7));
+            assert!(pending.in_flight());
+            count
+        };
+        app.world_mut()
+            .resource_mut::<NextState<ClientState>>()
+            .set(ClientState::CharSelect);
+        app.update();
+        let mut pending = app.world_mut().resource_mut::<PendingCast>();
+        assert!(pending.records().is_empty(), "the leave empties the list");
+        assert!(pending.current().is_none(), "nothing reads as current");
+        assert_ne!(pending.take_count(), count, "the counter runs on");
+    }
+
     mod pet_setter {
         use super::*;
         use crossbeam_channel::Receiver;
