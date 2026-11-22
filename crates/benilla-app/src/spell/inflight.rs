@@ -993,10 +993,16 @@ mod tests {
             let (edges, log) = cancelled(SCROLL);
             assert_eq!(edges[0], CastBarEdge::CastItemCancelled(SCROLL));
             assert_eq!(edges[1..], end, "the release is ahead of the cast's end");
-            assert_eq!(log, "ITEM_UNLOCKED");
+            assert_eq!(
+                log, "ITEM_UNLOCKED UNIT_SPELLCAST_INTERRUPTED",
+                "the unlock fires ahead of the cast's end"
+            );
             let (edges, log) = cancelled(SCROLL + 1);
             assert_eq!(edges[0], CastBarEdge::CastItemCancelled(SCROLL + 1));
-            assert_eq!(log, "", "another item's cast leaves it locked");
+            assert_eq!(
+                log, "UNIT_SPELLCAST_INTERRUPTED",
+                "another item's cast leaves it locked"
+            );
         }
 
         /// The client-controls clear cancels the cast whatever its `InterruptFlags`, and leaves a
