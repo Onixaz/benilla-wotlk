@@ -2168,6 +2168,93 @@ fn a_form_leave_then_use_sends_after_the_drops_listeners() {
     assert_eq!(form_leave_wire(&rig), ["select", "cancel", "use"]);
 }
 
+/// The selects, our Bear cancels, item uses and vendor lists sent since, in order.
+fn form_leave_press_wire(rig: &Rig) -> Vec<&'static str> {
+    rig.sent()
+        .into_iter()
+        .filter_map(|c| match c {
+            ClientCommand::SetSelection { guid: NEW } => Some("select"),
+            ClientCommand::CancelAura { spell_id: BEAR } => Some("cancel"),
+            ClientCommand::UseItem { .. } => Some("use"),
+            ClientCommand::ListInventory { .. } => Some("list"),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The item use leaves the form (`0x709338` -> `0x726ce0` -> `0x802f80`) before its cast (`0x70933d`): the drop's listener sends ahead of the cancel (`0x80324d` before `0x803458`) and of `CMSG_USE_ITEM`.
+#[test]
+fn an_item_uses_form_drop_listener_sends_before_the_cancel_and_the_use() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.water_in_the_backpack();
+    in_bear_form(&mut rig);
+    let world = rig.app.world_mut();
+    let me = world.resource::<GuidIndex>().0[&ME];
+    world
+        .entity_mut(me)
+        .insert(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+            (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+            (benilla_protocol::field::FIELD_UNIT_FLAGS, 0x8),
+            (benilla_protocol::field::FIELD_UNIT_BYTES_2, 5 << 24),
+            (
+                benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1,
+                WATER_GUID as u32,
+            ),
+            (
+                benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1 + 1,
+                (WATER_GUID >> 32) as u32,
+            ),
+        ])));
+    let mut spells = world.resource_mut::<crate::ui_action::Spells>();
+    let bear = SpellDisplay {
+        name: "Bear Form".into(),
+        shapeshift_form: Some(5),
+        effect_apply_aura: [36, 0, 0],
+        ..Default::default()
+    };
+    let drink = SpellDisplay {
+        name: "Drink".into(),
+        ..Default::default()
+    };
+    spells.catalog = SpellCatalog::from_displays(HashMap::from([(BEAR, bear), (DRINK, drink)]));
+    rig.lua(TICK_DO);
+    rig.lua(r#"TICK_DO = function() UseContainerItem(0, 1) TICK_DO = nil end"#);
+    rig.frame();
+    assert_eq!(form_leave_press_wire(&rig), ["select", "cancel", "use"]);
+}
+
+/// The NPC-service ladder leaves the form (`0x6ddc01` -> `0x726ce0` -> `0x802f80`) before the service (`0x6ddc06`): the drop's listener sends ahead of the cancel (`0x80324d` before `0x803458`) and of the vendor's list.
+#[test]
+fn an_npc_talks_form_drop_listener_sends_before_the_cancel_and_the_service() {
+    const VENDOR: u64 = 0xF130_0000_0000_0077;
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    in_bear_form(&mut rig);
+    let world = rig.app.world_mut();
+    let vendor = world
+        .spawn((
+            Guid(VENDOR),
+            Transform::from_xyz(1.0, 0.0, 0.0),
+            GlobalTransform::from_translation(Vec3::new(1.0, 0.0, 0.0)),
+            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_NPC_FLAGS, 0x80),
+            ])),
+            crate::net::NetEntity {
+                kind: benilla_protocol::EntityKind::Unit,
+                display_id: None,
+                scale: 1.0,
+            },
+        ))
+        .id();
+    world.resource_mut::<GuidIndex>().0.insert(VENDOR, vendor);
+    world.init_resource::<crate::player::Player>();
+    crate::target::click::interact_now(world, vendor);
+    assert_eq!(form_leave_press_wire(&rig), ["select", "cancel", "list"]);
+}
+
 /// A lootable item's lock edge (`0x6dcded` -> `0x706feb`) raises as `UseContainerItem` returns:
 /// its listener's `TargetUnit` applies inside it.
 #[test]

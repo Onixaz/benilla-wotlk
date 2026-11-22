@@ -240,12 +240,6 @@ impl CastLadder<'_, '_> {
         }
     }
 
-    /// The item use's form leave: the drop raised as an edge, `CMSG_CANCEL_AURA` sent at once, ahead of the drop's listeners (#1396).
-    pub(crate) fn cancel_aura_now(&mut self, spell_id: u32) {
-        self.press.form_cancel(spell_id);
-        let _ = self.commands.0.send(ClientCommand::CancelAura { spell_id });
-    }
-
     /// Sends the aura cancel (`0x802f80`) for an active spell on our own player.
     pub(crate) fn cancel_active_spell(
         &mut self,

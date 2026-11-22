@@ -98,6 +98,8 @@ pub(crate) enum CastBarEdge {
     FormCancel(u32),
     /// Our aura cancel whole: its form drop, then `CMSG_CANCEL_AURA` after the drop's listeners (`0x80324d`, `0x803458`).
     AuraCancel(u32),
+    /// The item use's rest after its form leave (`0x709338` -> `0x726ce0`): the bind deferral and the cast (`0x70933d`), after the drop's listeners.
+    ItemUseRest(crate::ui_items::ItemUseRest),
 }
 
 impl CastBarEdge {
@@ -111,6 +113,7 @@ impl CastBarEdge {
                 | Self::SendCommit(_)
                 | Self::FormCancel(_)
                 | Self::AuraCancel(_)
+                | Self::ItemUseRest(_)
                 | Self::PendingBail
         )
     }
@@ -120,7 +123,11 @@ impl CastBarEdge {
     pub(crate) fn is_step(&self) -> bool {
         matches!(
             self,
-            Self::SendTail(_) | Self::LadderRest(_) | Self::AttackPick(_) | Self::SendCommit(_)
+            Self::SendTail(_)
+                | Self::LadderRest(_)
+                | Self::AttackPick(_)
+                | Self::SendCommit(_)
+                | Self::ItemUseRest(_)
         )
     }
 }
@@ -281,6 +288,13 @@ impl PressSignals<'_, '_> {
     pub(crate) fn aura_cancel(&mut self, spell_id: u32) {
         if let Some(edges) = self.edges.as_mut() {
             edges.0.push(CastBarEdge::AuraCancel(spell_id));
+        }
+    }
+
+    /// The item use's rest after its form leave (`0x709338`), run after the drop's listeners.
+    pub(crate) fn item_use_rest(&mut self, rest: crate::ui_items::ItemUseRest) {
+        if let Some(edges) = self.edges.as_mut() {
+            edges.0.push(CastBarEdge::ItemUseRest(rest));
         }
     }
 
@@ -459,6 +473,7 @@ impl PressSignals<'_, '_> {
                 | CastBarEdge::SendCommit(_)
                 | CastBarEdge::FormCancel(_)
                 | CastBarEdge::AuraCancel(_)
+                | CastBarEdge::ItemUseRest(_)
                 | CastBarEdge::PendingBail => {}
                 // Shown in place by `fire`.
                 CastBarEdge::Refused(_) | CastBarEdge::Line(_) => {}
@@ -836,6 +851,11 @@ pub(crate) fn apply_edge(world: &mut World, edge: CastBarEdge) {
         crate::ui_shapeshift::cancel_aura_step(world, spell_id);
         return;
     }
+    if let CastBarEdge::ItemUseRest(rest) = edge {
+        let ran = world.run_system_cached_with(crate::ui_items::run_item_use_rest, rest);
+        step_ran(ran, "an item use's rest");
+        return;
+    }
     if let CastBarEdge::PendingBail = edge {
         let speech = world
             .get_resource::<crate::sound::SoundConfig>()
@@ -930,6 +950,7 @@ fn edge_system(
         | CastBarEdge::SendCommit(_)
         | CastBarEdge::FormCancel(_)
         | CastBarEdge::AuraCancel(_)
+        | CastBarEdge::ItemUseRest(_)
         | CastBarEdge::PendingBail => {}
         CastBarEdge::Selection => crate::ui_action::signals::selection(&mut ui),
         CastBarEdge::Signal(event) => ui.fire(event, Vec::new()),
