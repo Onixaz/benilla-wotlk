@@ -38,6 +38,9 @@ pub(crate) struct VehicleAim {
     pub(crate) turning: i8,
     /// `VehicleAimGetNormPower`, the launch power a trajectory cast reads.
     pub(crate) power: f32,
+    /// A pitch was set since the aim preview last looked: the pitch setter's closing mark
+    /// (`0x6fbf80`), which the preview reads and clears.
+    pub(crate) pitched: bool,
 }
 
 /// The pitch limits a record sets: its own under `flags & 0x40`, else ±π/2.
@@ -101,6 +104,8 @@ pub(super) fn set_pitch(
         Some((_, max)) if max <= pitch => max,
         _ => pitch,
     };
+    // Marked on both arms: the reference's mark closes the function.
+    aim.pitched = true;
     if mover.flags2 & FLAG2_FULL_SPEED_PITCHING != 0 {
         if aim.held != Some(pitch) {
             aim.target = Some(pitch);

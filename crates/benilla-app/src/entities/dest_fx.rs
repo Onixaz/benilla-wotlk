@@ -34,7 +34,7 @@ fn shard_rate_scale(spell_effect_level: Option<i32>) -> f32 {
 
 /// A dest-anchored effect model: visual A, a shard or a GO burst.
 #[derive(Component)]
-pub(super) struct GroundFx {
+pub(crate) struct GroundFx {
     /// The [`SpellFx`] model-cache key.
     path: String,
     /// Loop for life (visual A), or one pass of sequence 0 then despawn (a shard, a burst).
@@ -52,6 +52,12 @@ pub(super) struct GroundFx {
 }
 
 impl GroundFx {
+    /// A looping model its spawner places, fades and despawns: the trajectory aim's impact
+    /// models (`0x6fe9b0`), which no unit's effect list holds.
+    pub(crate) fn marker(path: String) -> Self {
+        Self::new(path, true)
+    }
+
     fn new(path: String, looping: bool) -> Self {
         Self {
             path,

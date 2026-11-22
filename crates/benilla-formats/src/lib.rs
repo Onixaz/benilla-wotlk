@@ -71,8 +71,8 @@ pub use summon_properties::{
     load_summon_properties, SummonPropertiesCatalog, SUMMON_CONTROL_POSSESSED,
 };
 pub use vehicle::{
-    load_vehicles, IndicatorSeat, OverrideSpellsRec, VehicleCatalog, VehicleRec, VehicleSeatRec,
-    VehicleUiIndicator, OVERRIDE_SPELLS, VEHICLE_SEATS,
+    load_vehicles, IndicatorSeat, MissileTargeting, OverrideSpellsRec, VehicleCatalog, VehicleRec,
+    VehicleSeatRec, VehicleUiIndicator, OVERRIDE_SPELLS, VEHICLE_SEATS,
 };
 mod glyphs;
 pub use glyphs::{load_glyph_catalog, GlyphCatalog, GlyphProperty, GlyphSlot};

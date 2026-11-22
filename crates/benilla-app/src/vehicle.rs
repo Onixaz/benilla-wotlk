@@ -20,6 +20,7 @@ mod passenger;
 mod ride;
 mod seats;
 mod shot;
+mod targeting;
 mod transit;
 
 pub(crate) use shot::{TrajectoryCast, TrajectoryCasts};
@@ -153,6 +154,7 @@ impl Plugin for VehiclePlugin {
             .init_resource::<aim::VehicleAim>()
             .init_resource::<SeatStop>()
             .init_resource::<shot::TrajectoryCasts>()
+            .init_resource::<targeting::TrajectoryTargeting>()
             .init_resource::<VehicleSignals>()
             .add_message::<EnteredWorldMessage>()
             // After the object handlers, whose commands spawn the unit this reads.
@@ -199,6 +201,10 @@ impl Plugin for VehiclePlugin {
                         .after(drive_vehicle_aim)
                         .after(benilla_world::schedule::WorldStage::Present)
                         .after(crate::entities::EntityVisualsSet),
+                    // After the frame's sends, which name the spell it draws, and its pose.
+                    targeting::update_trajectory_targeting
+                        .after(shot::send_trajectory_casts)
+                        .run_if(targeting::preview_may_run),
                     // Before the camera reads its subject and zoom.
                     camera::feed_vehicle_camera
                         .after(passenger::advance_transits)
@@ -222,6 +228,13 @@ impl Plugin for VehiclePlugin {
                         .after(crate::entities::MountReseatSet)
                         .after(passenger::advance_transits),
                 ),
+            )
+            // The aim preview's strip and decal, after the frame's stream clear.
+            .add_systems(
+                PostUpdate,
+                targeting::push_trajectory_targeting
+                    .after(benilla_world::particles::buffer::begin_effect_frame)
+                    .run_if(targeting::preview_shown),
             );
     }
 }

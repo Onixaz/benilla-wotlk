@@ -655,6 +655,12 @@ pub(crate) struct CameraControl {
 }
 
 impl CameraControl {
+    /// The TurnOrAction channel, `[input+4] & 1`, for readers outside the player: the vehicle aim
+    /// preview's turn and free-look terms.
+    pub(crate) fn turn_or_action(&self) -> bool {
+        self.world_mouse.turn()
+    }
+
     /// A vehicle seat's zoom (`0x74c0e0`): on the enter the preferred distance, raised or lowered
     /// as the seat allows, held within `(min, max)`, the distance before kept; on the exit that
     /// distance back. Each request is applied once.
