@@ -48,9 +48,7 @@ impl WorldWriter {
         )
     }
 
-    /// `CMSG_USE_ITEM`: use the item at a bag position, casting `spell_id`; a GameObject `target`
-    /// is how a key opens a locked door. `count` is the cast attempt's record `castCount`, so the
-    /// server's `SMSG_SPELL_START` or `SMSG_CAST_FAILED` keys to it.
+    /// `CMSG_USE_ITEM`: use the item at a bag position casting `spell_id` (a GameObject `target` opens a lock); `count` is the attempt's record `castCount`.
     pub fn use_item(
         &mut self,
         count: u8,

@@ -140,8 +140,7 @@ struct Shadow {
     /// The mount a dismount kept while passengers ride (`[unit+0xa30]` bit `0x10000000` set, its
     /// display left in `[unit+0x9c0]`), 0 when the bit is clear.
     mount_kept: u32,
-    /// The form our own cancel dropped ahead of the server (`[unit+0x9f4]`, `0x721d82`), until the
-    /// form byte next moves (`0x6da174`).
+    /// The form our own cancel dropped ahead of the server (`[unit+0x9f4]`, `0x721d82`), until the form byte next moves (`0x6da174`).
     form_suppressed: bool,
 }
 

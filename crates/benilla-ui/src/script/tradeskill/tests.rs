@@ -395,8 +395,7 @@ fn selection_rides_the_spell() {
     );
 }
 
-/// `DoTradeSkill` casts once and latches the count once the cast went; a cast start commits it,
-/// each go casts again until the count is spent, and a failure stops it.
+/// `DoTradeSkill` casts once and latches the count once the cast went; a cast start commits it, each go casts again until the count is spent, and a failure stops it.
 #[test]
 fn the_repeat_runs_on_the_cast_edges() {
     let mut s = open();

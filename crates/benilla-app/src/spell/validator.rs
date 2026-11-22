@@ -153,8 +153,7 @@ pub(super) fn cast_aura_refusal(
 /// `SpellMechanic.dbc` name.
 const REASON_PREVENTED_BY_MECHANIC: u8 = 0x8d;
 
-/// `SPELL_FAILED_NOT_HERE`, `_NO_MOUNTS_ALLOWED`, `_ONLY_INDOORS` and `_ONLY_OUTDOORS` in 3.3.5a's
-/// numbering, as the place legs pass them to the spell-failure display (`0x73a42c`).
+/// `SPELL_FAILED_NOT_HERE`, `_NO_MOUNTS_ALLOWED`, `_ONLY_INDOORS` and `_ONLY_OUTDOORS` in 3.3.5a's numbering, as the place legs pass them to the spell-failure display (`0x73a42c`).
 const REASON_NOT_HERE: u8 = 60;
 const REASON_NO_MOUNTS_ALLOWED: u8 = 83;
 const REASON_ONLY_INDOORS: u8 = 90;
@@ -394,8 +393,7 @@ mod tests {
     #[test]
     fn cast_place_refusal_names_the_mount_and_the_flyable_zone() {
         use crate::spell::usable::UsablePlace;
-        // The shared reason the failure display keys each line on: a flying mount in a no-fly zone
-        // reads "You can't do that here", not a cooldown line (`0x73a42c` passes 3.3.5a's `0x3c`).
+        // The shared reason the failure display keys each line on: a flying mount in a no-fly zone reads "You can't do that here", not a cooldown line (`0x73a42c` passes 3.3.5a's `0x3c`).
         let key = |name: &str| {
             crate::ui_action::cast_fail::CAST_FAIL_KEYS
                 .iter()

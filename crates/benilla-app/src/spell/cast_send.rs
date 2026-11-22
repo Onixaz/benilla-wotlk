@@ -83,8 +83,7 @@ fn bound_target(bound: TargetedBind) -> UseItemTarget {
 /// The class byte the finisher rung tests (`0x80d57d`).
 const CLASS_WARRIOR: u8 = 1;
 
-/// A player's spell press held at the cast attempt's attack pick in a harness without the press's
-/// step queue; with it, the pick is a step of its own ([`attack_pick_step`]).
+/// A player's spell press held at the cast attempt's attack pick in a harness without the press's step queue; with it, the pick is a step of its own ([`attack_pick_step`]).
 #[derive(Resource, Default)]
 pub(crate) struct HeldForPick(Option<HeldCast>);
 
@@ -98,8 +97,7 @@ pub(crate) struct HeldCast {
     pub(crate) count: u8,
 }
 
-/// Where a cast attempt enters its ladder: its top, below the targeting cursor's stop
-/// (`0x80d3ce`), or below the attack pick (`0x80d661`).
+/// Where a cast attempt enters its ladder: its top, below the targeting cursor's stop (`0x80d3ce`), or below the attack pick (`0x80d661`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Rung {
     Top,
@@ -420,8 +418,7 @@ impl CastLadder<'_, '_> {
         self.send_pet_from(spell_id, ctx, pet, None);
     }
 
-    /// [`Self::send_pet`], or with `rest` (the record's count) its rungs below the targeting
-    /// cursor's stop alone.
+    /// [`Self::send_pet`], or with `rest` (the record's count) its rungs below the targeting cursor's stop alone.
     fn send_pet_from(
         &mut self,
         spell_id: u32,
@@ -442,8 +439,7 @@ impl CastLadder<'_, '_> {
         if !rest && caster_dead_refusal(spell_id, Some(d), ctx.rel.self_store, &mut self.press) {
             return;
         }
-        // The same spell pending for this caster bails on cooldown or `0x404` (`0x80d34b`,
-        // `0x80d36d`): the pet's history for the pet.
+        // The same spell pending for this caster bails on cooldown or `0x404` (`0x80d34b`, `0x80d36d`): the pet's history for the pet.
         if !rest && self.pending.listed_for(spell_id, pet) {
             let cooling = self
                 .pet_bar
@@ -671,8 +667,7 @@ impl CastLadder<'_, '_> {
         self.send_bound(spell_id, ctx, commit, None, None, None);
     }
 
-    /// A player's spell press (`UseAction`, `CastSpell`, `CastSpellByName`): the ladder with the
-    /// cast attempt's attack pick, a step of its own ([`attack_pick_step`]).
+    /// A player's spell press (`UseAction`, `CastSpell`, `CastSpellByName`): the ladder with the cast attempt's attack pick, a step of its own ([`attack_pick_step`]).
     pub(crate) fn send_spell(
         &mut self,
         spell_id: u32,
@@ -693,8 +688,7 @@ impl CastLadder<'_, '_> {
         self.held_for_pick.0.take()
     }
 
-    /// A held press after its pick, at the unit the pick left selected: the rungs below the pick,
-    /// with the attempt's own count (`0x80d661`, `0x80d6ad`).
+    /// A held press after its pick, at the unit the pick left selected: the rungs below the pick, with the attempt's own count (`0x80d661`, `0x80d6ad`).
     pub(crate) fn resume_after_pick(&mut self, held: HeldCast, ctx: &cast_target::CastContext) {
         let from = Some((Rung::AttackPick, held.count));
         self.send_bound(held.spell_id, ctx, CastCommit::Spell, None, None, from);
@@ -810,8 +804,7 @@ fn send_spell_cast(
     bound_object: Option<u64>,
     // Set for a player's spell press, which parks in `held_for_pick` at the attack pick.
     hold: Option<HeldCast>,
-    // The rung the attempt enters at (below the cursor's stop or the attack pick, each run after
-    // its listeners), and the attempt's record count.
+    // The rung the attempt enters at (below the cursor's stop or the attack pick, each run after its listeners), and the attempt's record count.
     (from, count): (Rung, u8),
     // The pressed spell's ranks in the player's book ([`rank_pick::Book::ranks`]), when the send's
     // rank pick reads it.
@@ -867,9 +860,7 @@ fn send_spell_cast(
     if top && caster_dead_refusal(spell_id, def, ctx.rel.self_store, &mut *press) {
         return;
     }
-    // The pending bail, above the cursor's stop (`0x80d34b`, `0x80d3ce`): this caster's same
-    // spell pending, a queued strike included, ends the press silently while it cools down or
-    // is on-next-swing; any other press goes on.
+    // The pending bail above the cursor's stop (`0x80d34b`, `0x80d3ce`): this caster's same spell pending ends the press silently while it cools or is on-next-swing.
     if top {
         let caster = ctx.self_guid.unwrap_or(0);
         let listed =
@@ -907,8 +898,7 @@ fn send_spell_cast(
     }
     // The rungs above the attack pick ran before it, in the attempt this resumes.
     let above_pick = from < Rung::AttackPick;
-    // An on-next-swing spell (`Attributes & 0x404`) also queues on the melee slot
-    // ([`crate::spell::QueuedMeleeSpell`]).
+    // An on-next-swing spell (`Attributes & 0x404`) also queues on the melee slot ([`crate::spell::QueuedMeleeSpell`]).
     let on_next_swing = def.is_some_and(|d| d.on_next_swing());
     // The reagent check (`0x8091d0`), before the validator: a missing totem, tool category or
     // reagent refuses with 0x78, 0x9c or 0x5c.
@@ -968,8 +958,7 @@ fn send_spell_cast(
         if def.is_some_and(|d| d.initiates_combat()) && !engaged {
             debug!("ui_action: cast {spell_id} holds for the attack pick");
             let held = HeldCast { count, ..held };
-            // The pick runs the target setter, whose signals its listeners hear before the rungs
-            // below it run (`0x80d661` -> `0x72bdb0` -> `0x524bf0`, then `0x80d6ad`).
+            // The pick runs the target setter, whose signals its listeners hear before the rungs below it run (`0x80d661` -> `0x72bdb0` -> `0x524bf0`, then `0x80d6ad`).
             if press.raises_at_step() {
                 press.attack_pick(LadderRest {
                     spell_id,
@@ -1300,8 +1289,7 @@ fn send_spell_cast(
         ground.prelude_at_commit(prelude);
         ground.count_at_commit(count);
         pending.mark_went(count);
-        // The cursor's arm runs the selection update (`0x80d806`), then the attempt's repeat tail
-        // (`0x80d8f6` -> `0x80d983`).
+        // The cursor's arm runs the selection update (`0x80d806`), then the attempt's repeat tail (`0x80d8f6` -> `0x80d983`).
         press.selection();
         let tail = SendTail {
             spell_id,
@@ -1369,8 +1357,7 @@ fn send_spell_cast(
     }
     // The pending send's stand, dismount and unshift go out ahead of the cast.
     let cancel_auras = prelude.send(commands, ecs, press);
-    // Every commit files its record (`0x80cda8`), so a `UNIT_SPELLCAST_SENT` listener reads it:
-    // the pet's caster is the pet, an item use's the item (`0x805fc0`), else the player.
+    // Every commit files its record (`0x80cda8`), so a `UNIT_SPELLCAST_SENT` listener reads it: the pet's caster is the pet, an item use's the item (`0x805fc0`), else the player.
     let record = match commit {
         CastCommit::Item {
             entry, item_guid, ..
@@ -1509,8 +1496,7 @@ impl SendPacket {
                 },
             },
             Self::Cursor { commit, bound } => match commit {
-                // The same targets block under either opcode; one builder per bind. The pet's
-                // commit takes `commit_pet`.
+                // The same targets block under either opcode; one builder per bind. The pet's commit takes `commit_pet`.
                 CastCommit::Spell | CastCommit::Pet { .. } => match bound {
                     TargetedBind::Dest(dest) => ClientCommand::CastSpellAtDest {
                         count,
@@ -1567,13 +1553,10 @@ impl SendPacket {
     }
 }
 
-/// The pending send from its form drop on (`0x80af88` -> `0x80324d`): the drop's aura cancels
-/// (`0x803458`), `UNIT_SPELLCAST_SENT` and the packet (`0x80b4ee`, `0x80b556`), the record and the
-/// tail. When the drop raised at a step, all of it runs at its own step after the drop's listeners.
+/// The pending send from its form drop on (`0x80324d`): the aura cancels (`0x803458`), `SENT` and the packet (`0x80b556`, `0x80b4ee`), the record and the tail, at a step after the drop's listeners.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SendCommit {
-    /// The form's auras the drop cancels, sent after its listeners; empty when the drop did not
-    /// raise at a step (the prelude sent them).
+    /// The form's auras the drop cancels, sent after its listeners; empty when the drop did not raise at a step (the prelude sent them).
     cancel_auras: Vec<u32>,
     packet: SendPacket,
     /// `UNIT_SPELLCAST_SENT`'s unit, for a send that raises it.
@@ -1615,8 +1598,7 @@ fn commit_send(
     if send.on_next_swing {
         queued_melee.arm(spell_id, count);
     }
-    // After `UNIT_SPELLCAST_SENT` (`0x80b556`) the rest runs at the raise's step, once its
-    // listeners have run: the start visuals (`0x80b573`) and the GCD arm (`0x80b583`).
+    // After `UNIT_SPELLCAST_SENT` (`0x80b556`) the rest runs at the raise's step, once its listeners have run: the start visuals (`0x80b573`) and the GCD arm (`0x80b583`).
     if send.tail_at_step && press.raises_at_step() {
         press.tail(send.tail);
         return None;
@@ -1624,8 +1606,7 @@ fn commit_send(
     Some(send.tail)
 }
 
-/// The send's commit at its step, after its form drop's listeners, with the `World` lent: its
-/// edges queue behind it on `ui`.
+/// The send's commit at its step, after its form drop's listeners, with the `World` lent: its edges queue behind it on `ui`.
 pub(crate) fn run_send_commit(
     In(send): In<SendCommit>,
     mut ladder: CastLadder,
@@ -1644,9 +1625,7 @@ pub(crate) fn run_send_commit(
     ladder.press.defer(&mut ui);
 }
 
-/// What the cast send owes after its `UNIT_SPELLCAST_SENT` (`0x80b556`): the start visuals
-/// (`0x80b573`) and the GCD arm (`0x80b583`), then, back in the cast attempt, its attack and
-/// repeat tail (`0x80d8ef`-`0x80d9fa`), each part run once the listeners before it have.
+/// What the cast send owes after `SENT` (`0x80b556`): the start visuals and the GCD arm (`0x80b573`, `0x80b583`), then the attempt's attack and repeat tail (`0x80d8ef`-`0x80d9fa`), each after the listeners before it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct SendTail {
     spell_id: u32,
@@ -1663,8 +1642,7 @@ pub(crate) struct SendTail {
     count: u8,
 }
 
-/// The send's tail at its step, with the `World` lent: the press's edges it raises queue behind
-/// it on `ui`.
+/// The send's tail at its step, with the `World` lent: the press's edges it raises queue behind it on `ui`.
 pub(crate) fn run_send_tail(
     In(tail): In<SendTail>,
     mut ladder: CastLadder,
@@ -1674,9 +1652,7 @@ pub(crate) fn run_send_tail(
     ladder.press.defer(&mut ui);
 }
 
-/// A cast attempt's rungs below a step that raised, against the unit candidate it holds: the
-/// targeting cursor's stop (`0x80d3ce`), run after its selection update's listeners (`0x8054f0`),
-/// or the attack pick (`0x80d661`), run after its target setter's listeners.
+/// A cast attempt's rungs below a raising step, the cursor's stop (`0x80d3ce`, `0x8054f0`) or the attack pick (`0x80d661`), run after its listeners against the unit it holds.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct LadderRest {
     spell_id: u32,
@@ -1719,10 +1695,7 @@ pub(crate) fn run_ladder_rest(
     ladder.press.defer(&mut ui);
 }
 
-/// The cast attempt's attack pick at its own step (`0x80d661` -> `0x72bdb0`): the validator's
-/// target setter fires its tail inside it (`0x524bf0`, `0x524fc0`), and the attempt's rungs below
-/// the pick run after those listeners as one more step; a failed pick ends the attempt
-/// (`0x80d67c` -> `0x80d24b`).
+/// The attack pick at its own step (`0x80d661` -> `0x72bdb0`): the setter's tail fires inside it (`0x524bf0`), the rungs below follow as a step; a failed pick ends the attempt (`0x80d67c`).
 pub(crate) fn attack_pick_step(world: &mut World, rest: LadderRest) {
     let Some(held) = rest.hold else {
         return;
@@ -1737,8 +1710,7 @@ pub(crate) fn attack_pick_step(world: &mut World, rest: LadderRest) {
     };
     crate::ui_unit::target_set_tail(world);
     if let Some(unit) = picked {
-        // The rest goes on at the unit the pick bound into the attempt's guid argument
-        // (`0x80d65e`), whatever the setter's listeners select.
+        // The rest goes on at the unit the pick bound into the attempt's guid argument (`0x80d65e`), whatever the setter's listeners select.
         world
             .get_resource_or_init::<crate::ui_script::live::UiEvents>()
             .cast_edge(crate::ui_cast::CastBarEdge::LadderRest(LadderRest {
@@ -1758,9 +1730,7 @@ fn run_attack_pick(
     attack.pick_for_cast(held, &mut crate::script_calls::InTurn(&mut ui))
 }
 
-/// The send's tail: the start visuals (`0x80b573`) and the GCD arm with its signals (`0x805d70`,
-/// `0x805ec3`); then the attempt's own tail ([`attempt_tail`]), after those signals' listeners when
-/// the press raises at its step.
+/// The send's tail: the start visuals and the GCD arm with its signals (`0x80b573`, `0x805d70`, `0x805ec3`), then [`attempt_tail`] after those listeners when the press raises at its step.
 #[allow(clippy::too_many_arguments)]
 fn finish_send(
     tail: SendTail,
@@ -1826,9 +1796,7 @@ fn finish_send(
     );
 }
 
-/// The cast attempt's tail after its send returns: the auto-attack start (`0x80d8ef`-`0x80d97e`),
-/// then an auto-repeat spell becomes the repeating one (`0x80d99b`), or a running wand repeat
-/// ends (`0x80d9b7`-`0x80d9fa`).
+/// The attempt's tail after its send: the auto-attack start (`0x80d8ef`), then the repeat arm (`0x80d99b`) or a running wand repeat's end (`0x80d9b7`-`0x80d9fa`).
 #[allow(clippy::too_many_arguments)]
 fn attempt_tail(
     tail: SendTail,
@@ -1848,9 +1816,7 @@ fn attempt_tail(
         attack_at,
         ..
     } = tail;
-    // A spell that initiates auto-attack (on-next-swing `0x404` or `AttributesEx & 0x200`, not the
-    // GO-deferred Ex2 bit 20) starts the swing at its unit target (sheath snap and
-    // `CMSG_ATTACKSWING`).
+    // A spell that initiates auto-attack (`0x404` or `AttributesEx & 0x200`) starts the swing at its unit target (`0x80d8ef`-`0x80d97e`).
     if let (Some(d), Some(guid), None) = (def, attack_at, caster) {
         if d.initiates_auto_attack() {
             if let Ok((e, engaged)) = self_player.single() {
@@ -1875,8 +1841,7 @@ fn attempt_tail(
             }
         }
     }
-    // `AttributesEx2 & 0x20` (`0x80d983`): the caster, when it is us, repeats this spell:
-    // `START_AUTOREPEAT_SPELL`, then the melee swing ends (`0x800a2e`, `0x800a5d`).
+    // `AttributesEx2 & 0x20` (`0x80d983`): the caster, when it is us, repeats this spell: `START_AUTOREPEAT_SPELL`, then the melee swing ends (`0x800a2e`, `0x800a5d`).
     if def.is_some_and(|d| d.auto_repeat()) {
         if caster.is_none() {
             if let Ok((e, engaged)) = self_player.single() {
@@ -1887,8 +1852,7 @@ fn attempt_tail(
         }
         return;
     }
-    // Any other cast ends a running repeat whose spell needs a wand (`0x80d9e3`, `0x80d9ec`):
-    // the repeat cancel with its send (`0x807560`), so Auto Shot survives.
+    // Any other cast ends a running repeat whose spell needs a wand (`0x80d9e3`, `0x80d9ec`): the repeat cancel with its send (`0x807560`), so Auto Shot survives.
     if let Some(cached) = auto_repeat.0 {
         if spells
             .and_then(|s| s.catalog.get(cached))
@@ -1903,8 +1867,7 @@ fn attempt_tail(
                 commands,
                 &mut *press,
             );
-            // Then every pending record of it ends (`0x8075e2` -> `0x806440` -> `0x806200`), each
-            // naming its own count (`0x8062de`).
+            // Then every pending record of it ends (`0x8075e2` -> `0x806440` -> `0x806200`), each naming its own count (`0x8062de`).
             ecs.queue(move |world: &mut World| {
                 let me = world
                     .get_resource::<crate::net::SelfGuid>()
@@ -1943,9 +1906,7 @@ pub(crate) struct CastPrelude {
 }
 
 impl CastPrelude {
-    /// Stand, dismount, then leave the form: its drop at a step, whose aura cancels are returned
-    /// to go out at the send's own step after the drop's listeners (`0x80324d` before `0x803458`);
-    /// a harness without the step queue sends them here.
+    /// Stand, dismount, then the form drop at a step, its aura cancels returned for the send's own step after the drop's listeners (`0x80324d` before `0x803458`); with no step queue they go out here.
     #[must_use]
     pub(crate) fn send(
         &self,
@@ -2610,9 +2571,7 @@ mod tests {
         assert!(!other, "another spell's cast does not guard this one");
     }
 
-    /// A mashed chest opener with nothing cooling sends again (`0x80d36d` reads 0, `0x80d379`
-    /// clear): the pending bail needs the same spell pending *and* cooling or on-next-swing, and
-    /// a different spell mid-opener goes out too, with no local `0x61`.
+    /// A mashed opener with nothing cooling sends again (`0x80d36d` reads 0, `0x80d379` clear), and a different spell mid-opener too, with no local `0x61`.
     #[test]
     fn a_mashed_opener_with_nothing_cooling_sends_again() {
         const OPENING: u32 = 6478;
@@ -2646,8 +2605,7 @@ mod tests {
         );
     }
 
-    /// The same spell pending while it cools down ends the press silently (`0x80d34b`,
-    /// `0x80d36d`): no packet, no line, the bail's sound edge alone (`0x80d385`).
+    /// The same spell pending while it cools down ends the press silently (`0x80d34b`, `0x80d36d`): no packet, no line, the bail's sound edge alone (`0x80d385`).
     #[test]
     fn the_same_spell_pending_and_cooling_bails_silently() {
         let (mut world, rx) = world();
@@ -2685,8 +2643,7 @@ mod tests {
         );
     }
 
-    /// An answer naming another id releases nothing (`0x805180` keys on spell and count): the old
-    /// record stays, and blocks no other spell.
+    /// An answer naming another id releases nothing (`0x805180` keys on spell and count): the old record stays, and blocks no other spell.
     #[test]
     fn an_answer_naming_another_id_leaves_the_record_and_blocks_nothing() {
         const SENT_RANK: u32 = 1461;
@@ -2899,8 +2856,7 @@ mod tests {
         assert!(start(&mut world, true), "no missile, no trajectory mark");
     }
 
-    /// Every commit files its record on the pending list (`0x80cda8`), a ranged shot and an
-    /// on-next-swing strike included, so the cast result's `modalNextSpell` test finds it.
+    /// Every commit files its record on the pending list (`0x80cda8`), a ranged shot and an on-next-swing strike included, so the cast result's `modalNextSpell` test finds it.
     #[test]
     fn every_commit_files_its_record() {
         let (mut world, _rx) = combat_world(false);
@@ -2936,8 +2892,7 @@ mod tests {
         );
     }
 
-    /// A different spell pending sends (`0x80d34b` tests the pressed spell alone): no local
-    /// `0x61`, and the pending cast keeps its record.
+    /// A different spell pending sends (`0x80d34b` tests the pressed spell alone): no local `0x61`, and the pending cast keeps its record.
     #[test]
     fn a_shot_pressed_while_another_spell_is_pending_goes_out() {
         const FROSTBOLT: u32 = 116;
@@ -2960,8 +2915,6 @@ mod tests {
             .listed_for(FROSTBOLT, 0));
     }
 
-    /// [`world`] plus the catalog and the self player; `engaged` mirrors the attack lock
-    /// `[+0xc48]`.
     /// The press the attempt holds at its attack pick: its pick step waiting, or the harness's hold.
     fn held_at_pick(world: &mut World) -> Option<HeldCast> {
         let step = world
@@ -2975,6 +2928,8 @@ mod tests {
         step.or_else(|| world.resource_mut::<HeldForPick>().0.take())
     }
 
+    /// [`world`] plus the catalog and the self player; `engaged` mirrors the attack lock
+    /// `[+0xc48]`.
     fn combat_world(engaged: bool) -> (World, Receiver<ClientCommand>) {
         let (mut world, rx) = world();
         world.insert_resource(combat_catalog());
@@ -3090,9 +3045,7 @@ mod tests {
         }
     }
 
-    /// The shot goes out first (`0x80d727`); then the attempt's repeat arm ends the swing
-    /// (`0x80d99b` -> `0x800a5d`): `CMSG_ATTACKSTOP`, then the queued strike's cancel with the
-    /// strike record's own count (`0x8062de`).
+    /// The shot goes out first (`0x80d727`), then the repeat arm ends the swing (`0x80d99b` -> `0x800a5d`): `CMSG_ATTACKSTOP`, then the strike's cancel with its own count (`0x8062de`).
     #[test]
     fn an_auto_repeat_press_stops_the_attack_and_takes_the_queued_strike_with_it() {
         let (mut world, rx) = combat_world(true);
@@ -3121,9 +3074,7 @@ mod tests {
         );
     }
 
-    /// The repeat arm is the attempt's tail after the send (`0x80d727`, `0x80d99b`): with the press
-    /// raising at its step, the ladder leaves the repeat unset and `START_AUTOREPEAT_SPELL` unraised
-    /// until the send's tail runs after `UNIT_SPELLCAST_SENT`'s listeners.
+    /// The repeat arm waits for the send's tail after `SENT`'s listeners (`0x80d727`, `0x80d99b`): the ladder leaves the repeat unset and `START_AUTOREPEAT_SPELL` unraised.
     #[test]
     fn the_repeat_arm_waits_for_the_sends_tail() {
         let (mut world, rx) = combat_world(false);
@@ -3176,9 +3127,7 @@ mod tests {
         );
     }
 
-    /// A cast over a running wand repeat sends first, then the repeat cancel (`0x80d9fa` ->
-    /// `0x807560`): `CMSG_CANCEL_AUTO_REPEAT_SPELL`, and no `CMSG_CANCEL_CAST` when no record of
-    /// the repeat is pending. Auto Shot, which needs no wand, survives.
+    /// A cast over a wand repeat sends, then cancels the repeat (`0x80d9fa` -> `0x807560`), with no `CMSG_CANCEL_CAST` when no record of it is pending; Auto Shot survives.
     #[test]
     fn a_cast_over_a_wand_repeat_cancels_it_after_the_send() {
         let (mut world, rx) = combat_world(false);
@@ -3210,8 +3159,7 @@ mod tests {
         assert_eq!(world.resource::<AutoRepeatActive>().0, Some(AUTO_SHOT));
     }
 
-    /// The cast attempt's records take counts 1, 2, ... (`0x80cda8`, `0x8050dc`); a local cancel
-    /// names the cancelled record's own count (`0x8062de`), not the spell's latest.
+    /// The cast attempt's records take counts 1, 2, ... (`0x80cda8`, `0x8050dc`); a local cancel names the cancelled record's own count (`0x8062de`), not the spell's latest.
     #[test]
     fn a_cancel_names_its_records_own_count() {
         let (mut world, rx) = combat_world(false);
@@ -3315,9 +3263,7 @@ mod tests {
         );
     }
 
-    /// An item use without an answer leaves its record and no deadline (`0x805180`); the item's
-    /// re-click with nothing cooling goes out again, and so does a different spell, with no local
-    /// `0x61`.
+    /// An unanswered item use keeps its record with no deadline (`0x805180`); its re-click with nothing cooling and a different spell go out, with no local `0x61`.
     #[test]
     fn an_unanswered_item_use_blocks_no_press() {
         let (mut world, rx) = world();

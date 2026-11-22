@@ -10,12 +10,7 @@ use crate::creature_anim::{CastEvent, CastEventKind, Casting, PlaySeq};
 use crate::net::{ClientCommand, GuidIndex, NetCommands, SelfGuid};
 use crate::ui_action::Spells;
 
-/// The pending-spell list (`[0xaf5254]`): one record per cast attempt that sent, keyed by its
-/// `castCount`, spell and caster. A record leaves on the server's answer to it alone: the go
-/// (`0x80fee0` -> `0x805180`), the cast failure (`0x809af0`), the spell failure (`0x809c70`), or
-/// our own cancel (`0x806200`). There is no deadline: a record no answer names stays until the
-/// world's teardown (`0x807526`), and blocks only its own spell's re-press while that spell cools
-/// down or is on-next-swing (`0x80d34b`).
+/// The pending-spell list (`[0xaf5254]`): a record per sent attempt keyed by count, spell and caster, released by its answer alone (`0x805180`, `0x809af0`, `0x809c70`, `0x806200`) or the teardown (`0x807526`).
 #[derive(Resource, Default)]
 pub(crate) struct PendingCast {
     records: Vec<PendingRecord>,
@@ -44,8 +39,7 @@ pub(crate) struct PendingRecord {
     pub(crate) spell_id: u32,
     /// The record's `castCount`, which its answer and its cancel name (`0x805180`, `0x8062de`).
     pub(crate) count: u8,
-    /// The casting object (`[record+0x8]`): the player, the pet, or for an item use the item; 0
-    /// where the guid is not known.
+    /// The casting object (`[record+0x8]`): the player, the pet, or for an item use the item; 0 where the guid is not known.
     pub(crate) caster: u64,
     /// Sent by the pet's ladder: the player's own tests skip it.
     pub(crate) pet: bool,
@@ -67,8 +61,7 @@ impl PendingRecord {
 }
 
 impl PendingCast {
-    /// The `castCount` a new cast attempt's record takes: 1 to 255, never 0 (`0x80cda8`,
-    /// `0x8050dc`).
+    /// The `castCount` a new cast attempt's record takes: 1 to 255, never 0 (`0x80cda8`, `0x8050dc`).
     pub(crate) fn take_count(&mut self) -> u8 {
         let count = self.counts.take();
         self.went[usize::from(count / 64)] &= !(1 << (count % 64));
@@ -100,16 +93,14 @@ impl PendingCast {
         &self.records
     }
 
-    /// A record of `spell_id` cast by `caster`, any caster for 0 (`0x805f60`): the attempt's
-    /// pending bail. A record filed without its caster's guid matches any.
+    /// A record of `spell_id` cast by `caster`, any caster for 0 (`0x805f60`): the attempt's pending bail. A record filed without its caster's guid matches any.
     pub(crate) fn listed_for(&self, spell_id: u32, caster: u64) -> bool {
         self.records
             .iter()
             .any(|r| r.spell_id == spell_id && (caster == 0 || r.caster == 0 || r.caster == caster))
     }
 
-    /// Any record cast by `caster` (`0x805ef0`): the pet setter's modal test. A record filed
-    /// without its caster's guid is the player's and never a pet's.
+    /// Any record cast by `caster` (`0x805ef0`): the pet setter's modal test. A record filed without its caster's guid is the player's and never a pet's.
     pub(crate) fn caster_has(&self, caster: u64) -> bool {
         caster != 0 && self.records.iter().any(|r| r.caster == caster)
     }
@@ -131,8 +122,7 @@ impl PendingCast {
             .find(|r| r.spell_id == spell_id && r.count == count)
     }
 
-    /// The answer's release of the record it names (`0x805180`); a record of another spell or
-    /// count stays.
+    /// The answer's release of the record it names (`0x805180`); a record of another spell or count stays.
     pub(crate) fn release(&mut self, spell_id: u32, count: u8) -> Option<PendingRecord> {
         let at = self
             .records
@@ -175,18 +165,12 @@ impl PendingCast {
     }
 }
 
-/// The world's teardown (logout, disconnect, a failed login: `0x406510` -> `0x742bb0` ->
-/// `0x8073a0`) empties the pending-spell list (`0x807526`), so a record no answer named outlives
-/// neither the world nor the character.
+/// The world's teardown empties the pending-spell list (`0x406510` -> `0x742bb0` -> `0x8073a0`, `0x807526`).
 pub(crate) fn clear_on_world_leave(mut pending: ResMut<PendingCast>) {
     pending.clear();
 }
 
-/// The cast cancel (`0x806200`) of each released record, with its send set: `CMSG_CANCEL_CAST`
-/// with the record's count and spell when its unit runs that cast or the spell is on-next-swing
-/// (`0x8062a6`-`0x8062fe`), then the unit's cast end (`0x806358`) and the record's finish, whose
-/// selection update follows (`0x806366` -> `0x8054f0`). `unit` is the casting unit; an item use's
-/// is the player.
+/// The cast cancel (`0x806200`) of each released record: `CMSG_CANCEL_CAST` with its count when its unit runs it or it is on-next-swing (`0x8062a6`-`0x8062fe`), the cast end (`0x806358`), the finish's selection update (`0x8054f0`).
 pub(crate) fn cancel_records(world: &mut World, records: &[(PendingRecord, u64)], wire_reason: u8) {
     for &(record, unit) in records {
         let entity = world.resource::<GuidIndex>().0.get(&unit).copied();
@@ -232,9 +216,7 @@ pub(crate) fn cancel_records(world: &mut World, records: &[(PendingRecord, u64)]
     }
 }
 
-/// The pet setter's modal test and cancel (`0x5d6afb`-`0x5d6b24`): with a record cast by the
-/// list's head (`0x805ef0`), a changed guid, an empty list or a zero head cancels every record
-/// cast by the guid the setter was handed (`0x806390`), reason `0x1b` (`0x8063c1`).
+/// The pet setter's modal test and cancel (`0x5d6afb`-`0x5d6b24`): a record of the new head, a changed guid or an empty head cancels the handed guid's records (`0x806390`, reason `0x1b` at `0x8063c1`).
 pub(crate) fn pet_setter_cancel(world: &mut World, changed: bool, handed: u64) {
     let head = world
         .get_resource::<crate::ui_pet::PetList>()
@@ -645,8 +627,7 @@ mod tests {
         assert!(!g.in_flight(), "nothing sent yet");
     }
 
-    /// An answer releases the record it names by spell and count (`0x805180`); a proc's answer,
-    /// with count 0 or another spell, leaves ours.
+    /// An answer releases the record it names by spell and count (`0x805180`); a proc's answer, with count 0 or another spell, leaves ours.
     #[test]
     fn an_answer_releases_only_the_record_it_names() {
         let mut g = PendingCast::default();
@@ -658,8 +639,7 @@ mod tests {
         assert!(!g.in_flight());
     }
 
-    /// The current-item test reads every pending item use's entry (`0x805fc0`); a spell cast has
-    /// none, and an item record's caster is the item.
+    /// The current-item test reads every pending item use's entry (`0x805fc0`); a spell cast has none, and an item record's caster is the item.
     #[test]
     fn an_item_records_entry_and_caster_are_the_items() {
         const HEARTH_SPELL: u32 = 8690;
@@ -677,8 +657,7 @@ mod tests {
         assert!(g.listed_for(HEARTH_SPELL, ITEM));
     }
 
-    /// No deadline: a record no answer names stays (`0x80fee0`, `0x809af0`, `0x809c70` alone
-    /// release), however long, and other spells' records come and go beside it.
+    /// No deadline: a record no answer names stays (`0x80fee0`, `0x809af0`, `0x809c70` alone release), however long, and other spells' records come and go beside it.
     #[test]
     fn an_unanswered_record_stays_beside_others() {
         let mut g = PendingCast::default();
@@ -689,8 +668,7 @@ mod tests {
         assert_eq!(g.records().len(), 1);
     }
 
-    /// The by-caster walk (`0x805ef0`, `0x806390`) finds and releases one caster's records; a
-    /// record filed without its caster never matches a caster, and 0 releases nothing.
+    /// The by-caster walk (`0x805ef0`, `0x806390`) finds and releases one caster's records; a record filed without its caster never matches a caster, and 0 releases nothing.
     #[test]
     fn the_by_caster_walk_keeps_other_casters_records() {
         const PET: u64 = 0x2A;
@@ -770,9 +748,7 @@ mod tests {
             });
         }
 
-        /// A new head with a record of its own cancels it: `CMSG_CANCEL_CAST` with the record's
-        /// count and spell, as the pet runs that cast (`0x8062a6`, `0x8062de`), its cast ends
-        /// (`0x806358`) and its end edges queue.
+        /// A new head with a record of its own cancels it: `CMSG_CANCEL_CAST` with its count (`0x8062a6`, `0x8062de`), its cast end (`0x806358`) and its end edges.
         #[test]
         fn a_new_head_with_a_pending_cast_cancels_it() {
             let (mut world, rx, pet) = world(&[PET]);
@@ -808,8 +784,7 @@ mod tests {
             assert_eq!(world.resource::<PendingCast>().records().len(), 1);
         }
 
-        /// Another caster's record survives the change: the walk ends the handed guid's alone
-        /// (`0x8063af`).
+        /// Another caster's record survives the change: the walk ends the handed guid's alone (`0x8063af`).
         #[test]
         fn another_casters_record_survives_the_change() {
             let (mut world, rx, _) = world(&[PET]);
@@ -829,8 +804,7 @@ mod tests {
             assert_eq!(left, [OTHER, 0x10]);
         }
 
-        /// The teardown cancels nothing: the list is empty and no record's caster is the zero
-        /// guid (`0x5d6afb` with head 0).
+        /// The teardown cancels nothing: the list is empty and no record's caster is the zero guid (`0x5d6afb` with head 0).
         #[test]
         fn the_teardown_cancels_nothing() {
             let (mut world, rx, _) = world(&[]);

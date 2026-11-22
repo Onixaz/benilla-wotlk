@@ -86,16 +86,13 @@ pub(crate) enum CastBarEdge {
     Line(crate::ui_action::UiError),
     /// The cast send's rest after its `SENT` (`0x80b573`, `0x80b583`), run at its step.
     SendTail(crate::spell::SendTail),
-    /// The cast attempt's rungs below the targeting cursor's stop, run after the stop's selection
-    /// update (`0x80d3ce`, `0x8054f0`).
+    /// The cast attempt's rungs below the targeting cursor's stop, run after the stop's selection update (`0x80d3ce`, `0x8054f0`).
     LadderRest(crate::spell::LadderRest),
     /// The cast attempt's attack pick (`0x80d661`), its rest queued behind its setter's signals.
     AttackPick(crate::spell::LadderRest),
-    /// The pending send from its form drop on: the drop's aura cancels, the packet and what
-    /// follows it, after the drop's listeners (`0x80324d`, `0x803458`, `0x80b4ee`).
+    /// The pending send from its form drop on: the drop's aura cancels, the packet and what follows it, after the drop's listeners (`0x80324d`, `0x803458`, `0x80b4ee`).
     SendCommit(crate::spell::SendCommit),
-    /// The attempt's pending bail: the refusal kit, with `Sound_EnableErrorSpeech` on
-    /// (`0x80d385`-`0x80d3c1`).
+    /// The attempt's pending bail: the refusal kit, with `Sound_EnableErrorSpeech` on (`0x80d385`-`0x80d3c1`).
     PendingBail,
     /// Our aura cancel's early form drop for this spell (`0x80324d` -> `0x721cf0`).
     FormCancel(u32),
@@ -160,8 +157,7 @@ impl crate::ui_action::CastRefusals for PressSignals<'_, '_> {
 pub(crate) struct PressEdges(Vec<CastBarEdge>);
 
 impl PressEdges {
-    /// Run every waiting send's rest and ladder rest in order, as their steps would after the
-    /// listeners before them: a harness that runs the ladder as a one-shot system and fires nothing.
+    /// Run every waiting send's rest and ladder rest in order, as their steps would after the listeners before them: a harness that runs the ladder as a one-shot system and fires nothing.
     #[cfg(test)]
     pub(crate) fn run_tails(world: &mut World) {
         loop {
@@ -225,13 +221,7 @@ impl PressEdges {
     }
 }
 
-/// The edges a press makes: our cast send's `UNIT_SPELLCAST_SENT` (`0x80b556`), our local
-/// cancel's end (`0x806200`) and a local refusal's line (`0x808200`), in the press's order. They
-/// fire with the `World` lent at the press's raise step ([`apply_edge`]), and the send's rest
-/// after `SENT` ([`CastBarEdge::SendTail`]: the start visuals `0x80b573`, the GCD arm `0x80b583`)
-/// runs there after `SENT`'s listeners, so a listener reads no GCD yet and its own call applies
-/// inside it. A packet handler hands them to its turn's queue ([`Self::defer`]), and a system
-/// without the VM fires them once its commands apply ([`Self::flush`]).
+/// The edges a press makes (`SENT` `0x80b556`, the cancel's end `0x806200`, a refusal's line `0x808200`), fired in order at its raise step with the `World` lent ([`apply_edge`]); a handler defers them ([`Self::defer`]).
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct PressSignals<'w, 's> {
     // `Option`: a ladder runs in harnesses without the cast plugin, which signal nothing.
@@ -280,8 +270,7 @@ impl PressSignals<'_, '_> {
         }
     }
 
-    /// Our aura cancel of `spell_id` (`0x802f80`): its early form drop at the step, in order with
-    /// the press's other edges (`0x80324d`).
+    /// Our aura cancel of `spell_id` (`0x802f80`): its early form drop at the step, in order with the press's other edges (`0x80324d`).
     pub(crate) fn form_cancel(&mut self, spell_id: u32) {
         if let Some(edges) = self.edges.as_mut() {
             edges.0.push(CastBarEdge::FormCancel(spell_id));
@@ -302,8 +291,7 @@ impl PressSignals<'_, '_> {
         }
     }
 
-    /// Whether the edges fire at a step with the `World` lent, so the send's rest can wait for its
-    /// `SENT` listeners; a harness without the cast plugin runs it in place.
+    /// Whether the edges fire at a step with the `World` lent, so the send's rest can wait for its `SENT` listeners; a harness without the cast plugin runs it in place.
     pub(crate) fn raises_at_step(&self) -> bool {
         self.edges.is_some()
     }

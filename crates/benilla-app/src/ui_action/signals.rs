@@ -19,16 +19,7 @@ use crate::ui_script::live::UiEvents;
 use super::usable_cache::{self, Pass, UsableCaches};
 use super::UiError;
 
-/// The caller's ordered stream: where a signal fires, and a line shows, in turn with the write or
-/// the refusal that raised it. A packet handler's queue fires in its turn, a VM the caller holds
-/// directly, and a system without the VM once its commands apply ([`QueuedSignals`]). A press's
-/// edges fire at their step with the `World` lent, its later rungs after their listeners (the
-/// send's rest, the cursor stop's rest, the glyph's use, the pet latch's send), so a listener
-/// sees the state of that step, as in the reference.
-///
-/// A refusal line goes here, never onto a frame-late queue: the reference's message display
-/// (`0x5216f0`) runs inside the code that refuses, so its `UI_ERROR_MESSAGE` or `UI_INFO_MESSAGE`
-/// fires before that code goes on. A Lua verb in the VM calls `ui_errors::show_now` instead.
+/// The caller's ordered stream: a signal or line fires in turn with the write or refusal that raised it, as the display (`0x5216f0`) runs inside the refusing code; a press's edges fire at their step with the `World` lent.
 pub(crate) trait SignalSink {
     fn signal(&mut self, event: &'static str);
 

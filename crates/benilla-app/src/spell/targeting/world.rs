@@ -26,10 +26,7 @@ use super::TargetingWants;
 /// keeps the mode. [`crate::target::click::select_on_click`] holds off while targeting, so the
 /// click neither selects nor deselects.
 ///
-/// Runs in the press pass after `select_on_click`, which reads the mode this clears, as a press
-/// of its own: its raises fire at its step, so the GCD it arms reaches the frame's tick
-/// (`0x480410` before `0x495320`). A click claimed for a held item's drop is a terrain click too:
-/// the pending location cast takes it first (`0x52737a` -> `0x80c340`).
+/// Runs as its own press after `select_on_click`, which reads the mode this clears, its GCD reaching the frame's tick (`0x480410` before `0x495320`); a drop's terrain click goes to it first (`0x52737a` -> `0x80c340`).
 pub(crate) fn commit_ground_cast_on_click(world: &mut World) {
     crate::script_calls::press_step(world, ground_commit, ());
 }
@@ -71,9 +68,7 @@ fn ground_commit(
     ladder.press.defer(&mut ui);
 }
 
-/// Whether a pending location cast takes this terrain click (`0x80c340`): a cast whose word still
-/// wants a source or a destination (`0x80c356`, `0x80c387`) and a ground point under the click.
-/// Else the held item's drop runs (`0x52738e`).
+/// Whether a pending location cast takes this terrain click (`0x80c340`): its word wants a source or destination (`0x80c356`, `0x80c387`) under a ground point; else the item's drop runs (`0x52738e`).
 pub(crate) fn location_cast_takes(
     ground: &super::SpellTargeting,
     occlusion: &crate::target::PickOcclusion,
@@ -278,8 +273,7 @@ mod tests {
         ));
     }
 
-    /// A click claimed for a held item's drop is a terrain click: the pending location cast takes
-    /// it first and sends (`0x52737a` -> `0x80c340` -> `0x80ac90`).
+    /// A click claimed for a held item's drop is a terrain click: the pending location cast takes it first and sends (`0x52737a` -> `0x80c340` -> `0x80ac90`).
     #[test]
     fn a_drop_claimed_click_commits_the_pending_location_cast() {
         const BLIZZARD: u32 = 10;

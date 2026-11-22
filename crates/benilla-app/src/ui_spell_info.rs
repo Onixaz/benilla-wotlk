@@ -75,8 +75,7 @@ impl CastNow<'_> {
     }
 }
 
-/// The spells the current-spell test finds (`0x805f30`): the pending list alone, not the unit's
-/// cast state, so a held cast whose pending cast was released is not current.
+/// The spells the current-spell test finds (`0x805f30`): the pending list alone, not the unit's cast state, so a held cast whose pending cast was released is not current.
 pub(crate) fn pending_spells(
     pending: &crate::spell::PendingCast,
     queued_melee: &crate::spell::QueuedMeleeSpell,

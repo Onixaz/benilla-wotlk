@@ -35,11 +35,7 @@ pub(crate) fn form_auras(
         .collect()
 }
 
-/// The aura cancel's early form drop (`0x8031d0`-`0x80324d` -> `0x721cf0`): a spell whose
-/// shapeshift aura names a row without flag `0x2` and our form drops the form at once and signals
-/// `UPDATE_SHAPESHIFT_FORM` (`0x721d89`); the server's form byte ends it. Its display override
-/// (`0x721d6b`) is not kept: every reader takes it only while the display field is the native
-/// one (`0x717a37`, `0x616b27`, `0x72a49a`), which the display handler clears it on (`0x7168b1`).
+/// The aura cancel's early form drop (`0x80324d` -> `0x721cf0`): a form row without flag `0x2` drops at once and signals `UPDATE_SHAPESHIFT_FORM` (`0x721d89`); its display override (`0x721d6b`) is never read (`0x717a37`, `0x7168b1`).
 pub(crate) fn preempt_form_cancel(world: &mut World, spell_id: u32) {
     let form = world
         .get_resource::<crate::ui_action::Spells>()

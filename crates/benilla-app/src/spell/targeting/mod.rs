@@ -329,8 +329,7 @@ impl SpellTargeting {
         });
     }
 
-    /// Hold the standing cast's record `castCount` for its commit: the click re-enters the cast
-    /// attempt with the record, which keeps its count (`0x80cda4`).
+    /// Hold the standing cast's record `castCount` for its commit: the click re-enters the cast attempt with the record, which keeps its count (`0x80cda4`).
     pub(crate) fn count_at_commit(&mut self, count: u8) {
         if let Some(t) = &mut self.0 {
             t.count = count;

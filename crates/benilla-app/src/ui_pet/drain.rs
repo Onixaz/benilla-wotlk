@@ -57,8 +57,7 @@ fn pet_cannot_cast(unit_flags: u32, spell: &benilla_formats::SpellDisplay) -> bo
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PetCast {
     Done,
-    /// `CMSG_PET_ACTION` with this word at this target, sent after the press's signals'
-    /// listeners (`0x5d4530`, `0x5d4427` before `0x5d4556`).
+    /// `CMSG_PET_ACTION` with this word at this target, sent after the press's signals' listeners (`0x5d4530`, `0x5d4427` before `0x5d4556`).
     Send {
         packed: u32,
         target_guid: u64,

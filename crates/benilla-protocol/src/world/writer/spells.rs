@@ -113,8 +113,7 @@ impl WorldWriter {
         )
     }
 
-    /// `CMSG_CANCEL_CAST`: the cancelled cast's `u8` count, then its `u32` spell id (`0x8062e6`,
-    /// `0x8062f2`).
+    /// `CMSG_CANCEL_CAST`: the cancelled cast's `u8` count, then its `u32` spell id (`0x8062e6`, `0x8062f2`).
     pub fn cancel_cast(&mut self, count: u8, spell_id: u32) -> Result<()> {
         self.send(
             opcode::CMSG_CANCEL_CAST,

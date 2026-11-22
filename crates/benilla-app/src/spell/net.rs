@@ -2158,8 +2158,7 @@ fn spell_failed_other(
     }
 }
 
-/// `SMSG_SPELL_DELAYED`: pushback. Any caster's reaches the unit-cast feed, which slides the
-/// cast's window (`UNIT_SPELLCAST_DELAYED`).
+/// `SMSG_SPELL_DELAYED`: pushback. Any caster's reaches the unit-cast feed, which slides the cast's window (`UNIT_SPELLCAST_DELAYED`).
 fn spell_delayed(
     caster: u64,
     delay_ms: u32,

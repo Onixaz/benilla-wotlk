@@ -132,10 +132,7 @@ impl Plugin for UiTradeSkillPlugin {
             .add_systems(
                 Update,
                 (
-                    // Opens after the press that cast the opener and before the feeds, which read
-                    // the open book through the lent view, so the window shows in the press's
-                    // frame; the drain in the press pass after the clicks, so a Create click's
-                    // cast and GCD reach the frame's feed and tick (`0x480410` before `0x495320`).
+                    // Opens after the opener's press and before the feeds; the drain in the press pass after the clicks, so a Create click's GCD reaches the frame's tick (`0x480410` before `0x495320`).
                     open_trade_skill
                         .after(crate::ui_script::UiPress)
                         .before(crate::ui_script::UiFeed),
@@ -789,9 +786,7 @@ fn feed_trade_skill(
     *last = fresh;
 }
 
-/// Drain the Lua intents and run the engine's repeat on our own cast edges: a start commits a
-/// pending repeat, a go may cast again, a failure stops it. Each cast is its own press with the
-/// `World` lent at its raises, so the next reads the GCD it armed (`0x80b583`).
+/// Drain the Lua intents and run the repeat on our cast edges (start, go, failure), each cast its own press so the next reads the GCD it armed (`0x80b583`).
 pub(crate) fn drain_trade_skill(world: &mut World) {
     use crate::ui_script::safe_world::lend;
     press_trade_skill_casts(world);
@@ -834,8 +829,7 @@ fn own_cast_edges(
         .collect()
 }
 
-/// `DoTradeSkill`'s queued casts, each a press; one that went sets its repeat and signals it
-/// (`0x5dacbb`, `0x5dacc1` -> `0x5d9fa0`), one refused sets nothing.
+/// `DoTradeSkill`'s queued casts, each a press; one that went sets its repeat and signals it (`0x5dacbb`, `0x5dacc1` -> `0x5d9fa0`), one refused sets nothing.
 pub(crate) fn press_trade_skill_casts(world: &mut World) {
     use crate::ui_script::safe_world::lend;
     for (spell_id, times) in lend(world, |s| s.take_trade_skill_casts()).unwrap_or_default() {
@@ -1110,8 +1104,7 @@ mod tests {
                        end
                    end"#;
 
-    /// `DoTradeSkill` casts inside the call (`0x5dacb1` -> `0x80da40`): the caller's next line reads
-    /// the GCD the press armed and the repeat it set once the cast went (`0x5dacc1`).
+    /// `DoTradeSkill` casts inside the call (`0x5dacb1` -> `0x80da40`): the caller's next line reads the GCD the press armed and the repeat it set once the cast went (`0x5dacc1`).
     #[test]
     fn do_trade_skill_casts_inside_its_call() {
         let (mut app, rx, _me) = craft_world_with_gcd();
@@ -1131,8 +1124,7 @@ mod tests {
         assert_eq!(repeat, 3, "the cast went, so the repeat took the count");
     }
 
-    /// The repeat takes the attempt's own verdict (`0x80d9b0`), not what a later `SENT` listener
-    /// leaves: one that stops the cast still finds the repeat set (`0x5dacbb`).
+    /// The repeat takes the attempt's own verdict (`0x80d9b0`), not what a later `SENT` listener leaves: one that stops the cast still finds the repeat set (`0x5dacbb`).
     #[test]
     fn a_sent_listener_that_stops_the_cast_leaves_the_repeat_set() {
         let (mut app, _rx, _me) = craft_world_with_gcd();
@@ -1158,8 +1150,7 @@ mod tests {
         );
     }
 
-    /// A refused cast returns false and `DoTradeSkill` sets no repeat (`0x5dacbb`): dead, the
-    /// attempt refuses with 0x13 and the count stays the default 1.
+    /// A refused cast returns false and `DoTradeSkill` sets no repeat (`0x5dacbb`): dead, the attempt refuses with 0x13 and the count stays the default 1.
     #[test]
     fn a_refused_do_trade_skill_sets_no_repeat() {
         use benilla_protocol::field::{FIELD_UNIT_HEALTH, FIELD_UNIT_MAXHEALTH};
@@ -1186,9 +1177,7 @@ mod tests {
         assert_eq!(repeat, 1, "no repeat for a refused cast");
     }
 
-    /// Two casts in one drain are two presses: the second reads the GCD the first armed at its
-    /// step (`0x80b583`), so the pending bail ends it (`0x80d34b`, `0x80d36d`) and one cast goes
-    /// out.
+    /// Two casts in one drain are two presses: the second reads the first's GCD (`0x80b583`) and the bail ends it (`0x80d34b`, `0x80d36d`).
     #[test]
     fn the_second_cast_in_one_drain_reads_the_firsts_gcd() {
         use bevy::ecs::system::RunSystemOnce;
@@ -1233,8 +1222,7 @@ mod tests {
         assert_eq!(sent, 1, "the second press bailed on the first's GCD");
     }
 
-    /// A start and a go of one craft read in one drain commit the repeat, then spend one of it:
-    /// the go reads the start's commit (`0x5da0f0` then `0x5da070`).
+    /// A start and a go of one craft read in one drain commit the repeat, then spend one of it: the go reads the start's commit (`0x5da0f0` then `0x5da070`).
     #[test]
     fn a_start_and_a_go_in_one_drain_run_the_repeat_in_order() {
         use bevy::ecs::system::RunSystemOnce;

@@ -681,9 +681,7 @@ fn what_follows_the_script_calls_still_follows_them() {
     }
 }
 
-/// Feed Pet through `DropItemOnUnit("pet")` clears the cursor after the send's events, inside the
-/// drop's own press step (`0x80b556` signals inside the send), so the world click's payload leg
-/// that follows reads an empty cursor and raises no destroy confirm for the food just fed.
+/// Feed Pet through `DropItemOnUnit("pet")` clears the cursor inside its press step (`0x80b556`), so the world click's payload leg after it raises no destroy confirm.
 #[test]
 fn a_fed_items_clear_lands_before_the_world_clicks_payload_leg() {
     use bevy::ecs::system::RunSystemOnce;
@@ -812,8 +810,7 @@ fn the_world_clicks_resolve_against_this_frames_pick() {
             assert!(g.before(pick, leg), "{leg} follows {pick}");
         }
     }
-    // The cursor commits read the press latch alone, after the gated select and before the tick,
-    // as 12340's input pass commits (`0x480410`) before the paint (`0x495320`).
+    // The cursor commits read the press latch alone, after the gated select and before the tick, as 12340's input pass commits (`0x480410`) before the paint (`0x495320`).
     for leg in [
         "::commit_ground_cast_on_click",
         "::commit_object_cast_on_click",
@@ -1127,12 +1124,7 @@ fn the_rune_regen_runs_before_the_tick() {
     assert!(g.before("::tick_runes", Step::Tick.suffix()));
 }
 
-/// The presses that cast outside the script calls run in the press pass after the clicks that
-/// made them and before the frame's feed and tick, as 12340's input pass (`0x480410`, at
-/// `0x47f12d`) precedes the paint (`0x47f163` -> `0x495320`), and their raise step fires the GCD
-/// arm's signals (`0x805d70` -> `0x805ec3`) there: a Create click, a bag click under the item
-/// cursor, the soulstone's item leg and a ground- or object-targeted world click each show their
-/// sweep in the frame of the press.
+/// The presses outside the script calls run in the press pass before the feed and tick (`0x480410` before `0x495320`), their GCD signals at their step (`0x805d70` -> `0x805ec3`): each shows its sweep in its press's frame.
 #[test]
 fn the_presses_outside_the_script_calls_cast_before_the_feed_and_tick() {
     let g = graph_or_skip!();
@@ -1507,10 +1499,7 @@ fn a_select_from_a_sent_listener_applies_inside_it() {
     assert_eq!(rig.casts(), [(BOLT, Some(OLD))]);
 }
 
-/// A cast a `UNIT_SPELLCAST_SENT` listener makes applies inside it (`0x80b556` re-enters the cast
-/// entry `0x80cce0`): the pending bail passes the same spell, pending but not yet cooling, as the
-/// GCD arms after `SENT` (`0x80d36d`, `0x80b583`), so the nested press sends and its own `SENT`
-/// fires before the listener returns.
+/// A cast a `UNIT_SPELLCAST_SENT` listener makes applies inside it (`0x80b556` re-enters `0x80cce0`): the bail passes as the GCD arms after `SENT` (`0x80d36d`, `0x80b583`), so the nested press sends first.
 #[test]
 fn a_cast_from_a_sent_listener_applies_inside_it() {
     let mut rig = rig_or_skip!(&[Step::Tick]);
@@ -1537,8 +1526,7 @@ fn a_cast_from_a_sent_listener_applies_inside_it() {
     assert_eq!(rig.casts(), [(BOLT, Some(OLD)), (BOLT, Some(OLD))]);
 }
 
-/// `RepopMe` sends inside the call (`0x51aab3`): the frame runs only the tick, so no press pass
-/// could have sent it.
+/// `RepopMe` sends inside the call (`0x51aab3`): the frame runs only the tick, so no press pass could have sent it.
 #[test]
 fn a_death_verb_sends_inside_its_call() {
     let mut rig = rig_or_skip!(&[Step::Tick]);
@@ -1553,8 +1541,7 @@ fn a_death_verb_sends_inside_its_call() {
     );
 }
 
-/// `DropItemOnUnit("pet")` feeds the pet inside the call (`0x51bf26` -> `0x80dcf0`): the caller's
-/// next line reads the cursor the feed cleared, and the cast is out.
+/// `DropItemOnUnit("pet")` feeds the pet inside the call (`0x51bf26` -> `0x80dcf0`): the caller's next line reads the cursor the feed cleared, and the cast is out.
 #[test]
 fn a_drop_on_the_pet_feeds_inside_its_call() {
     const FEED_PET: u32 = 6991;
@@ -1628,8 +1615,7 @@ fn a_drop_on_the_pet_feeds_inside_its_call() {
     );
 }
 
-/// `SpellTargetItem` casts the cursor's spell at the item inside the call (`0x8008a5` ->
-/// `0x5210d0`): the caller's next line reads the cursor down and the GCD the press armed.
+/// `SpellTargetItem` casts the cursor's spell at the item inside the call (`0x8008a5` -> `0x5210d0`): the caller's next line reads the cursor down and the GCD the press armed.
 #[test]
 fn an_item_pick_casts_inside_its_call() {
     let mut rig = rig_or_skip!(&[Step::Tick]);
@@ -1679,9 +1665,7 @@ fn an_item_pick_casts_inside_its_call() {
     assert_eq!(gcd, 1.5, "the next line reads the press's GCD");
 }
 
-/// `UNIT_SPELLCAST_SENT` fires after the send and ahead of the start visuals and the GCD arm
-/// (`0x80b556`, `0x80b573`, `0x80b583`): its listener reads no cooldown yet, and the code after the
-/// call reads the GCD the rest of the press armed.
+/// `UNIT_SPELLCAST_SENT` fires before the start visuals and the GCD arm (`0x80b556`, `0x80b573`, `0x80b583`): its listener reads no cooldown, the code after the call reads the GCD.
 #[test]
 fn a_sent_listener_reads_no_gcd_yet() {
     let mut rig = rig_or_skip!(&[Step::Tick]);
@@ -1700,9 +1684,7 @@ fn a_sent_listener_reads_no_gcd_yet() {
     assert!(after > 0.0, "the press armed the GCD after SENT: {after}");
 }
 
-/// A press that stops the targeting cursor runs the selection update at the stop (`0x80d3ce`,
-/// `0x8054f0`) and its rungs below after that update's listeners: a listener reads the new press
-/// neither filed nor sent, and its `UNIT_SPELLCAST_SENT` fires after it.
+/// A press that stops the targeting cursor runs its rungs below after the stop's selection update (`0x80d3ce`, `0x8054f0`): that listener reads the press neither filed nor sent.
 #[test]
 fn a_stopped_cursors_selection_listener_reads_the_press_unsent() {
     let mut rig = rig_or_skip!(&[Step::Tick]);
@@ -1787,9 +1769,7 @@ fn a_select_from_a_use_glyph_listener_applies_inside_it() {
     assert_eq!(selected, Some(NEW));
 }
 
-/// The item-use fork runs the direct use after `USE_GLYPH`'s listeners (`0x5d8ad3` before
-/// `0x5d8ae3` -> `0x708c20`): a cast the listener makes goes out first, and the use then meets its
-/// GCD and sends nothing (as the listener ran after the use, the use went alone).
+/// The direct use runs after `USE_GLYPH`'s listeners (`0x5d8ad3` before `0x5d8ae3` -> `0x708c20`): the listener's cast goes out first and the use meets its GCD.
 #[test]
 fn a_use_glyph_listeners_cast_sends_before_the_glyphs_use() {
     let mut rig = rig_or_skip!(&[Step::Tick]);
@@ -1815,9 +1795,7 @@ fn a_use_glyph_listeners_cast_sends_before_the_glyphs_use() {
     assert_eq!(sends, ["cast"]);
 }
 
-/// Our aura cancel drops the form ahead of the server (`0x80324d` -> `0x721cf0`): after
-/// `CancelShapeshiftForm` the same chunk reads no form, and `UPDATE_SHAPESHIFT_FORM` fires inside
-/// the call (`0x721d89`), its listener reading no form; the cancel still goes out.
+/// Our aura cancel drops the form ahead of the server (`0x80324d` -> `0x721cf0`, `0x721d89`): the listener and the chunk after `CancelShapeshiftForm` read no form, and the cancel goes out.
 #[test]
 fn a_form_cancel_drops_the_form_before_the_server_answers() {
     const BEAR: u32 = 5487;
@@ -1883,9 +1861,7 @@ fn a_form_cancel_drops_the_form_before_the_server_answers() {
     assert_eq!(cancels, [BEAR]);
 }
 
-/// A cast's form drop raises before its send (`0x80af88` -> `0x80324d` -> `0x721d89`, then the
-/// aura cancel `0x803458` and the packet `0x80b4ee`): an `UPDATE_SHAPESHIFT_FORM` listener reads
-/// the cast not yet current, and a select it makes goes out ahead of the cancel and the cast.
+/// A cast's form drop raises before its send (`0x80af88` -> `0x80324d`, then `0x803458`, `0x80b4ee`): the listener reads the cast not current and its select goes out first.
 #[test]
 fn a_casts_form_drop_listener_runs_before_the_send() {
     const BEAR: u32 = 5487;
@@ -1963,10 +1939,7 @@ fn a_casts_form_drop_listener_runs_before_the_send() {
     assert_eq!(wire, ["select", "cancel", "cast"]);
 }
 
-/// A refusal's line raises at its step inside the press (`0x808200`): the not-ready refusal over
-/// a running wand repeat sends `CMSG_CANCEL_CAST` (`0x8082cc`) and ends the repeat (`0x8082d3`)
-/// before it shows the line, so a `UI_ERROR_MESSAGE` listener reads the repeat over, ahead of the
-/// line after the call.
+/// The not-ready refusal over a wand repeat cancels it (`0x8082cc`, `0x8082d3`) before its line (`0x808200`): a `UI_ERROR_MESSAGE` listener reads the repeat over, ahead of the code after the call.
 #[test]
 fn a_ui_error_listener_mid_press_reads_the_state_at_its_step() {
     const SHOOT: u32 = 5019;
@@ -2047,8 +2020,7 @@ fn a_ui_error_listener_mid_press_reads_the_state_at_its_step() {
 /// Bear Form's spell, holding form 5 on us with its aura up and cancelable.
 const BEAR: u32 = 5487;
 
-/// Us in Bear Form (form 5, its aura up and cancelable), Bear on the first action slot, and an
-/// `UPDATE_SHAPESHIFT_FORM` listener that selects `party1` once.
+/// Us in Bear Form (form 5, its aura up and cancelable), Bear on the first action slot, and an `UPDATE_SHAPESHIFT_FORM` listener that selects `party1` once.
 fn in_bear_form(rig: &mut Rig) {
     const FORM: u32 = 5;
     let world = rig.app.world_mut();
@@ -2133,8 +2105,7 @@ fn form_leave_wire(rig: &Rig) -> Vec<&'static str> {
         .collect()
 }
 
-/// `CancelShapeshiftForm` (`0x726ce0` -> `0x802f80`): the drop's listeners run before
-/// `CMSG_CANCEL_AURA` (`0x80324d` before `0x803458`), so a select a listener makes goes out first.
+/// `CancelShapeshiftForm` (`0x726ce0` -> `0x802f80`): the drop's listeners run before `CMSG_CANCEL_AURA` (`0x80324d` before `0x803458`), so a select a listener makes goes out first.
 #[test]
 fn a_form_cancels_drop_listener_sends_before_the_cancel() {
     let mut rig = rig_or_skip!(&[Step::Tick]);
@@ -2145,8 +2116,7 @@ fn a_form_cancels_drop_listener_sends_before_the_cancel() {
     assert_eq!(form_leave_wire(&rig), ["select", "cancel"]);
 }
 
-/// The spellbook's press of the active form cancels it (`0x802f80`): the drop's listeners run
-/// before the cancel's send (`0x80324d` before `0x803458`).
+/// The spellbook's press of the active form cancels it (`0x802f80`): the drop's listeners run before the cancel's send (`0x80324d` before `0x803458`).
 #[test]
 fn a_book_forms_drop_listener_sends_before_the_cancel() {
     let mut rig = rig_or_skip!(&[Step::Tick]);
@@ -2157,8 +2127,7 @@ fn a_book_forms_drop_listener_sends_before_the_cancel() {
     assert_eq!(form_leave_wire(&rig), ["select", "cancel"]);
 }
 
-/// `CancelUnitBuff` on our form's aura (`0x802f80`): its drain sends after the drop's listeners
-/// (`0x80324d` before `0x803458`).
+/// `CancelUnitBuff` on our form's aura (`0x802f80`): its drain sends after the drop's listeners (`0x80324d` before `0x803458`).
 #[test]
 fn a_buff_cancels_drop_listener_sends_before_the_cancel() {
     let mut rig = rig_or_skip!(&[Step::Tick]);
@@ -2183,8 +2152,7 @@ fn a_buff_cancels_drop_listener_sends_before_the_cancel() {
     assert_eq!(form_leave_wire(&rig), ["select", "cancel"]);
 }
 
-/// The world click's and the meeting stone's use leave the form first: each aura cancel's drop
-/// and its listeners, its send, then the use (`0x80324d`, `0x803458`, then `CMSG_GAMEOBJ_USE`).
+/// The world click's and the meeting stone's use leave the form first: each aura cancel's drop and its listeners, its send, then the use (`0x80324d`, `0x803458`, then `CMSG_GAMEOBJ_USE`).
 #[test]
 fn a_form_leave_then_use_sends_after_the_drops_listeners() {
     let mut rig = rig_or_skip!(&[Step::Tick]);

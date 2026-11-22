@@ -1484,8 +1484,7 @@ pub(crate) enum ClientCommand {
     /// `CMSG_CANCEL_AUTO_REPEAT_SPELL`, sent by every local cancel; harmless when the server
     /// cancelled first.
     CancelAutoRepeat,
-    /// `CMSG_CANCEL_CAST`: the cancelled record's `castCount` (`0x8062de`), or 0 from a refusal's
-    /// wand repeat cancel (`0x8082ad`), then the spell.
+    /// `CMSG_CANCEL_CAST`: the cancelled record's `castCount` (`0x8062de`), or 0 from a refusal's wand repeat cancel (`0x8082ad`), then the spell.
     CancelCast {
         spell_id: u32,
         count: u8,

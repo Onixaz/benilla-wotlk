@@ -32,10 +32,7 @@ fn feedable_pet(
         && feed_pet_known
 }
 
-/// Runs the pet leg for both of the reference's entries into the feed validator:
-/// `PetFrame_OnClick`'s `DropItemOnUnit("pet")`, and a left click on the pet's model with an item
-/// held (in the world click's object leg, where the click still selects). Each token is its own
-/// press, its raises fired before the next.
+/// Runs the pet leg for both entries into the feed validator (`DropItemOnUnit("pet")` and a held item's left click on the pet's model), each token its own press.
 pub(crate) fn drop_item_on_unit(world: &mut World) {
     let clicked_pet = world.run_system_cached(clicked_pet).unwrap_or(false);
     press_dropped_tokens(world);
@@ -44,8 +41,7 @@ pub(crate) fn drop_item_on_unit(world: &mut World) {
     }
 }
 
-/// The tokens `DropItemOnUnit` queued, each its own press: inside the verb's call where the
-/// `World` is lent (`0x51bf26`), else in the press pass.
+/// The tokens `DropItemOnUnit` queued, each its own press: inside the verb's call where the `World` is lent (`0x51bf26`), else in the press pass.
 pub(crate) fn press_dropped_tokens(world: &mut World) {
     let tokens = crate::ui_script::safe_world::lend(world, |s| s.take_drop_item_on_unit());
     for token in tokens.unwrap_or_default() {
@@ -53,8 +49,7 @@ pub(crate) fn press_dropped_tokens(world: &mut World) {
     }
 }
 
-/// The world entry: a click whose press-time pick is the pet. That is the pick the click selects
-/// from; the live hover can differ after a drag.
+/// The world entry: a click whose press-time pick is the pet. That is the pick the click selects from; the live hover can differ after a drag.
 fn clicked_pet(
     press: Res<crate::target::PressPick>,
     pet_bar: Option<Res<crate::ui_pet::PetBar>>,
@@ -128,9 +123,7 @@ pub(crate) fn drop_on_world_click(world: &mut World) {
     }
 }
 
-/// The press pick of a click this frame settled, plain or a drop, unless a pending location cast
-/// takes the terrain click first (`0x52737a` -> `0x80c340`, the item's leg only on false at
-/// `0x52738e`).
+/// The press pick of a settled click, unless a pending location cast takes the terrain click first (`0x52737a` -> `0x80c340`, the item's leg at `0x52738e`).
 fn settled_click(
     press: Res<crate::target::PressPick>,
     ground: Option<Res<crate::spell::SpellTargeting>>,

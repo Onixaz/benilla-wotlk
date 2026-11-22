@@ -892,8 +892,7 @@ pub(crate) fn ghost_probe() -> Option<bool> {
     })
 }
 
-/// Map the queued Lua death intents onto the wire: inside the verb's call where the `World` is lent,
-/// else in the press pass after `UiInput`; each is its own press, its raises fired before the next.
+/// Map the queued Lua death intents onto the wire: inside the verb's call where the `World` is lent, else in the press pass after `UiInput`; each is its own press, its raises fired before the next.
 pub(crate) fn drain_death(world: &mut World) {
     let actions = crate::ui_script::safe_world::lend(world, |s| s.take_death_actions());
     for action in actions.unwrap_or_default() {
@@ -1023,8 +1022,7 @@ impl Plugin for DeathPlugin {
             .add_systems(
                 Update,
                 (
-                    // In the press pass after the clicks: the soulstone's cast and GCD reach the
-                    // frame's tick (`0x480410` before `0x495320`).
+                    // In the press pass after the clicks: the soulstone's cast and GCD reach the frame's tick (`0x480410` before `0x495320`).
                     drain_death
                         .in_set(crate::ui_script::UiPress)
                         .after(crate::script_calls::apply_script_calls),

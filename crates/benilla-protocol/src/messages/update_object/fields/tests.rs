@@ -962,8 +962,7 @@ fn a_dropped_mount_reads_zero_until_its_field_moves() {
     assert_eq!(f.unit_mount_display_id(), 2_410, "a new mount reads");
 }
 
-/// An early form cancel reads no form (`0x71af70`) until the form byte moves (`0x6e538a`, `0x6da174`):
-/// a move of another byte of `UNIT_FIELD_BYTES_2` keeps it.
+/// An early form cancel reads no form (`0x71af70`) until the form byte moves (`0x6e538a`, `0x6da174`): a move of another byte of `UNIT_FIELD_BYTES_2` keeps it.
 #[test]
 fn an_early_form_cancel_reads_no_form_until_the_form_byte_moves() {
     let bytes2 = |v: u32| ObjectFields::from_pairs(&[(FIELD_UNIT_BYTES_2, v)]);

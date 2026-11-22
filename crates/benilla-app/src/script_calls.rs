@@ -56,10 +56,7 @@ pub(crate) fn apply_in_call(lua: &mlua::Lua, call: ScriptCall) -> bool {
         if applied.is_some() {
             crate::ui_unit::target_set_tail(world);
         }
-        // The applier's raises with the `World` lent again: the ones it made through the VM, each
-        // last on its path or followed by its rest as a step of its own (`USE_GLYPH` `0x5d8ad3`
-        // then the use; a lock edge `0x706feb` then its send; the selection's line `0x5216f0`),
-        // then its queued ones (`0x80b556`, `0x806200`, the pet latch `0x5d4530` then its send).
+        // The applier's raises with the `World` lent again, each last on its path or followed by its rest as a step (`0x5d8ad3`, `0x706feb`, `0x5216f0`, `0x80b556`, `0x806200`, `0x5d4530`).
         if !raised.is_empty() {
             crate::ui_script::safe_world::lend(world, |script| {
                 for raise in raised {
@@ -86,8 +83,7 @@ pub(crate) fn apply_in_call(lua: &mlua::Lua, call: ScriptCall) -> bool {
     }
 }
 
-/// A verb's press inside its call: the drain of the intents it queued, each press at its own step
-/// ([`press_step`]), so the line after the call reads what it armed.
+/// A verb's press inside its call: the drain of the intents it queued, each press at its own step ([`press_step`]), so the line after the call reads what it armed.
 fn press_verb(world: &mut World, verb: benilla_ui::script::VerbPress) {
     use benilla_ui::script::VerbPress;
     match verb {
@@ -98,10 +94,7 @@ fn press_verb(world: &mut World, verb: benilla_ui::script::VerbPress) {
     }
 }
 
-/// One press of an exclusive holder at its own step: `system` runs the ladder with what it raises
-/// through the VM queued in turn, then those raises and its queued edges fire with the `World`
-/// lent, before the holder's next press, so that press reads what this one armed (`0x80b556`,
-/// `0x80b583`). What earlier systems queued stays queued for their own step.
+/// One press of an exclusive holder at its own step: its raises and edges fire with the `World` lent before the holder's next press, which reads what it armed (`0x80b556`, `0x80b583`); earlier queues stay set aside.
 pub(crate) fn press_step<I, O, M, S>(world: &mut World, system: S, input: I::Inner<'_>) -> Option<O>
 where
     I: bevy::ecs::system::SystemInput + 'static,
@@ -154,11 +147,7 @@ pub(crate) fn apply_script_calls(world: &mut World) {
     });
 }
 
-/// Apply one call in its owner's applier; its signals, lines and the press's edges queue on `ui`,
-/// and what it raises through the VM queues in turn ([`raises_in_turn`]), for the caller to fire
-/// once the applier's borrows end, each last on its path or followed by its rest as a step.
-///
-/// [`raises_in_turn`]: benilla_ui::script::world_loan::raises_in_turn
+/// Apply one call in its owner's applier; its edges queue on `ui` and its VM raises queue in turn ([`benilla_ui::script::world_loan::raises_in_turn`]) for the caller to fire once its borrows end.
 #[allow(clippy::type_complexity)] // the appliers, one per owner of the state a call touches
 fn apply_one(
     In(call): In<ScriptCall>,
@@ -295,8 +284,7 @@ fn apply_one(
                 cast_as_pet(&mut appliers.p3(), out);
             }
         }
-        // A harness without the press's step queue holds the attack pick here; with it, the pick
-        // and the rungs below it are steps of their own ([`crate::spell::attack_pick_step`]).
+        // A harness without the press's step queue holds the attack pick here; with it, the pick and the rungs below it are steps of their own ([`crate::spell::attack_pick_step`]).
         if let Some(held) = appliers.p3().ladder.take_held() {
             if let Some(unit) = appliers.p7().pick_for_cast(held, ui) {
                 let mut cast = appliers.p3();
@@ -1292,10 +1280,7 @@ mod tests {
         assert!(crate::ui_action::take_refusals(f.app.world_mut()).is_empty());
     }
 
-    /// The pick's target setter fires inside the attempt, before the rungs below the pick run
-    /// (`0x80d661` -> `0x72bdb0` -> `0x524bf0`, then `0x80d6ad` and the send `0x80b4ee`): a
-    /// `PLAYER_TARGET_CHANGED` listener reads the strike not yet current, and a select it makes
-    /// goes out before the strike.
+    /// The pick's target setter fires inside the attempt before the rungs below it (`0x80d661` -> `0x72bdb0` -> `0x524bf0`, then `0x80d6ad`): a `PLAYER_TARGET_CHANGED` listener reads the strike not current and its select goes out first.
     #[test]
     fn a_strikes_pick_listener_runs_before_the_rest_of_the_attempt() {
         let mut f = frame(false);
@@ -1331,8 +1316,7 @@ mod tests {
         );
     }
 
-    /// A strike held at its pick takes one `castCount`, at its attempt's top (`0x80cda8` ->
-    /// `0x8050dc`); its rest below the pick keeps it.
+    /// A strike held at its pick takes one `castCount`, at its attempt's top (`0x80cda8` -> `0x8050dc`); its rest below the pick keeps it.
     #[test]
     fn a_picked_strike_takes_one_count() {
         let mut f = frame(false);

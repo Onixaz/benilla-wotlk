@@ -635,9 +635,7 @@ fn a_press_over_a_unit_and_a_release_over_nothing_raises_no_prompt() {
     assert_eq!(prompts(&mut world), 0);
 }
 
-/// A terrain click is offered to a pending location cast first (`0x52737a` -> `0x80c340`): with
-/// one waiting, the held item's drop leg declines and raises no prompt; with none, or with a cast
-/// that wants an object (`0x80c3cd` answers false), the prompt runs (`0x52738e`-`0x5273b2`).
+/// A terrain click goes to a pending location cast first (`0x52737a` -> `0x80c340`): the held item's prompt runs only with none waiting or one that wants an object (`0x80c3cd`, `0x52738e`).
 #[test]
 fn a_pending_location_cast_takes_the_terrain_click_before_the_held_item() {
     const BLIZZARD: u32 = 10;

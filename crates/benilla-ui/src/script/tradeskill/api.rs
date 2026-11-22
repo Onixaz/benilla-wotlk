@@ -715,8 +715,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, ()| Ok(with(lua, |t| i64::from(t.repeat_count()))))?,
     )?;
 
-    // DoTradeSkill(index [, repeat]) (`0x5dac00`): casts the recipe inside the call, the count capped
-    // by what the reagents cover; a running repeat of it only takes the new count.
+    // DoTradeSkill(index [, repeat]) (`0x5dac00`): casts the recipe inside the call, the count capped by what the reagents cover; a running repeat of it only takes the new count.
     g.set(
         "DoTradeSkill",
         lua.create_function(|lua, (index, times): (Value, Value)| {

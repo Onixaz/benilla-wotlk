@@ -15,8 +15,7 @@ use crate::unit_auras::UnitAuras;
 /// `SPELL_EFFECT_SUMMON` (`0x802d20`).
 const SPELL_EFFECT_SUMMON: u32 = 0x1c;
 
-/// The active-action predicate: a nonzero raw `ActiveIconID` and the spell's own aura live with the
-/// cancelable bit, so the press cancels instead of casting. A unit with no aura table holds none.
+/// The active-action predicate: a nonzero raw `ActiveIconID` and the spell's own aura live with the cancelable bit, so the press cancels instead of casting. A unit with no aura table holds none.
 pub(crate) fn active_action_toggle(
     spell_id: u32,
     d: &SpellDisplay,
@@ -29,8 +28,7 @@ pub(crate) fn active_action_toggle(
         })
 }
 
-/// The click-spell active test (`0x802cb0`). `own_vehicle` is the entry of the vehicle the unit
-/// is seated in (`[unit+0xf60]` -> `0x747ff0`) when the active player created it.
+/// The click-spell active test (`0x802cb0`). `own_vehicle` is the entry of the vehicle the unit is seated in (`[unit+0xf60]` -> `0x747ff0`) when the active player created it.
 pub(crate) fn is_active_spell(
     spell_id: u32,
     d: &SpellDisplay,
@@ -44,8 +42,7 @@ pub(crate) fn is_active_spell(
     if d.active_icon_id == 0 && kind.is_none() {
         return false;
     }
-    // A summon of our own vehicle's creature, ahead of the effect's slot-5 arm (`0x802d20`-
-    // `0x802d4e`, active at `0x802dc3`).
+    // A summon of our own vehicle's creature, ahead of the effect's slot-5 arm (`0x802d20`-`0x802d4e`, active at `0x802dc3`).
     if let Some(entry) = own_vehicle {
         let summons_it = (0..3).any(|i| {
             d.effects[i] == SPELL_EFFECT_SUMMON
@@ -212,9 +209,7 @@ mod tests {
         assert!(!active(None), "nothing is out");
     }
 
-    /// A summon of the vehicle we sit in and created is active (`0x802d29`-`0x802d4e`): a second
-    /// press cancels, not casts. Another creature's vehicle, one created by someone else (the
-    /// caller passes none) and no vehicle are not.
+    /// A summon of the vehicle we sit in and created is active (`0x802d29`-`0x802d4e`), so a second press cancels; any other vehicle is not.
     #[test]
     fn a_summon_of_our_own_vehicle_is_active() {
         const SUIT: u32 = 54903;

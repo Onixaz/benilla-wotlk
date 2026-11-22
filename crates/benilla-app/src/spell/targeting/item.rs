@@ -139,8 +139,7 @@ pub(crate) fn commit_item_cast_on_pick(world: &mut World) {
     for accepted in lend(world, |s| s.take_trade_enchant_targets()).unwrap_or_default() {
         press_step(world, item_leg, PickLeg::TradeSlot(accepted));
     }
-    // Fresh clicks, then the bind popup's Yes, go through the gate; the replace popup's Yes does
-    // not.
+    // Fresh clicks, then the bind popup's Yes, go through the gate; the replace popup's Yes does not.
     let picks = lend(world, |s| s.take_item_picks()).unwrap_or_default();
     let mut asks: Vec<(u64, bool)> = world
         .run_system_cached_with(pick_guids, picks)
@@ -273,8 +272,7 @@ fn item_leg(
                 }
             }
             PickLeg::SpellEnchant => {
-                // `0x52345b`: the parked imbue cast at the parked item, confirmed; nothing parked,
-                // nothing cast.
+                // `0x52345b`: the parked imbue cast at the parked item, confirmed; nothing parked, nothing cast.
                 let parked = ladder
                     .spell_enchant
                     .as_deref_mut()

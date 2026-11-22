@@ -516,9 +516,7 @@ impl SpellDisplay {
         self.attributes_ex3 & 0x0040_0000 != 0
     }
 
-    /// A spell whose equipped-item requirement is a wand: `EquippedItemClass` 2 (weapon) with
-    /// subclass bit 19 in `EquippedItemSubClassMask`, the test a new cast's repeat tail makes
-    /// (`0x80d9e3`, `0x80d9ec`).
+    /// A wand requirement: `EquippedItemClass` 2 with subclass bit 19, the repeat tail's test (`0x80d9e3`, `0x80d9ec`).
     pub fn requires_wand(&self) -> bool {
         self.equipped_item_class == 2 && self.equipped_item_subclass_mask & (1 << 19) != 0
     }

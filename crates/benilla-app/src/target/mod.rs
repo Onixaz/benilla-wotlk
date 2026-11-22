@@ -479,9 +479,7 @@ impl Plugin for TargetPlugin {
                     latch_press_pick,
                     click::select_on_plate_click,
                     click::select_on_click,
-                    // After the gated select, which reads the targeting mode before a commit
-                    // clears it; each commit a press of its own, so its GCD reaches the frame's
-                    // tick. The pending spell feeds only one of the two legs.
+                    // After the gated select, which reads the mode a commit clears; each commit its own press, so its GCD reaches the frame's tick (`0x480410` before `0x495320`).
                     crate::spell::targeting::commit_ground_cast_on_click,
                     crate::spell::targeting::commit_object_cast_on_click,
                 )

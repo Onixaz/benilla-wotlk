@@ -177,8 +177,7 @@ pub(crate) fn set_pet_tail(
             vec![benilla_ui::script::ScriptValue::Str("player".into())],
         );
     }
-    // The temporary bar, then the modal test and cancel on the guid the setter was handed
-    // (`0x5d6ad2`, `0x5d6afb`-`0x5d6b24`).
+    // The temporary bar, then the modal test and cancel on the guid the setter was handed (`0x5d6ad2`, `0x5d6afb`-`0x5d6b24`).
     let handed = bar.spells.pet_guid;
     ui.world(move |world| {
         super::temp_bar::update_pet_temp_bar_step(world);

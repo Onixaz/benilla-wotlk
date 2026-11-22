@@ -470,9 +470,7 @@ impl ScriptItemUse<'_, '_> {
             }
             return;
         }
-        // A Glyph-class template (16) fires `USE_GLYPH` (`0x5d8ad3`), which opens the glyph frame
-        // (`UIParent.lua:1053`), then runs the direct item use (`0x5d8ae3` -> `0x708c20`) after its
-        // listeners, at its own step.
+        // A Glyph-class template (16) fires `USE_GLYPH` (`0x5d8ad3`), then the direct use runs after its listeners at its own step (`0x5d8ae3` -> `0x708c20`).
         if !direct && clicked.is_some_and(|c| c.class == ITEM_CLASS_GLYPH) {
             script.fire_event("USE_GLYPH", Vec::new());
             let aim = **aim;
@@ -624,8 +622,7 @@ impl ScriptItemUse<'_, '_> {
     }
 }
 
-/// The direct item use (`0x708c20`) on a bag item, at `aim` or the selection: the glyph arm's use
-/// after `USE_GLYPH`'s listeners.
+/// The direct item use (`0x708c20`) on a bag item, at `aim` or the selection: the glyph arm's use after `USE_GLYPH`'s listeners.
 fn direct_use_step(
     In((bag, slot, aim)): In<(i64, u32, Option<crate::spell::cast_target::Aim>)>,
     mut script: NonSendMut<UiScript>,
