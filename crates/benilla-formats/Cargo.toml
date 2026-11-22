@@ -3,7 +3,7 @@ name = "benilla-formats"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "WoW 1.12.1 asset-format adapters (MPQ/BLP/DBC/ADT/WDT) and the benilla-extract CLI"
+description = "WoW 3.3.5a (build 12340) asset-format adapters (MPQ/BLP/DBC/ADT/WDT) and the benilla-extract and mpqx CLIs"
 
 [lints]
 workspace = true

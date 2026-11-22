@@ -3,7 +3,7 @@ name = "benilla-protocol"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "WoW 1.12.1 auth (SRP6) + world wire protocol and the benilla-auth CLI"
+description = "WoW 3.3.5a (build 12340) auth (SRP6) + world wire protocol and the benilla-auth and benilla-world CLIs"
 
 [lints]
 workspace = true
