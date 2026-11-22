@@ -7560,6 +7560,71 @@ fn a_learns_bar_placement_signals_after_the_book_update() {
     );
 }
 
+/// The rank replace re-points a bar macro bound to the old rank (`0x5ab0e8`, `0x5ab0f3`): a
+/// supersede by its old id, run first (`0x6e7e46`), and a live learn by name and rank
+/// (`0x6e7b46`). A macro on no slot keeps its spell, and the slot signals nothing.
+#[test]
+fn the_rank_replace_repoints_a_bar_macro() {
+    use crate::ui_macro::{BoundSpell, MacroBoundSpells};
+    use benilla_protocol::messages::{ActionButton, ACTION_KIND_MACRO};
+    const FIREBALL_3: u32 = 145;
+    let Some(mut rig) = Rig::login_after(
+        vec![book(&[FIREBALL_1])],
+        &[OBJECT_TYPE_PLAYER, (FIELD_UNIT_LEVEL, 20)],
+    ) else {
+        return;
+    };
+    lua(
+        &mut rig,
+        "CreateMacro('a', 1, '/cast Fireball') CreateMacro('b', 1, '/cast Fireball')",
+    );
+    rig.run(1);
+    rig.packets(
+        vec![SessionEvent::ActionButtons {
+            state: benilla_protocol::messages::ACTION_BUTTONS_SET,
+            buttons: vec![ActionButton {
+                slot: 0,
+                action: 1,
+                kind: ACTION_KIND_MACRO,
+            }],
+        }],
+        2,
+    );
+    let bound = |rig: &Rig, index: u32| {
+        rig.app
+            .world()
+            .resource::<MacroBoundSpells>()
+            .0
+            .get(&index)
+            .copied()
+    };
+    assert_eq!(bound(&rig, 1), Some(BoundSpell::Spell(FIREBALL_1)));
+    let seen = rig.packets(
+        vec![SessionEvent::SpellSuperceded {
+            old_spell_id: FIREBALL_1,
+            new_spell_id: FIREBALL_2,
+        }],
+        3,
+    );
+    assert_eq!(bound(&rig, 1), Some(BoundSpell::Spell(FIREBALL_2)));
+    assert_eq!(
+        bound(&rig, 2),
+        Some(BoundSpell::Spell(FIREBALL_1)),
+        "a macro on no slot is not walked"
+    );
+    assert!(
+        !seen.iter().any(|s| s.event == "ACTIONBAR_SLOT_CHANGED"),
+        "the macro write signals no slot"
+    );
+    rig.packets(
+        vec![SessionEvent::SpellLearned {
+            spell_id: FIREBALL_3,
+        }],
+        3,
+    );
+    assert_eq!(bound(&rig, 1), Some(BoundSpell::Spell(FIREBALL_3)));
+}
+
 // ── The cast bar (#1281) ─────────────────────────────────────────────────────────────────────────
 
 /// `SMSG_SPELL_START` for our own cast of `spell_id` lasting `ms`.

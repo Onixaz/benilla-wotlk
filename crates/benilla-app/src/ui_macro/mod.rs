@@ -296,6 +296,44 @@ pub(crate) fn vm_bindings(
         .collect()
 }
 
+/// The rank replace's macro leg (`0x5aafd0`): each bar slot holding a macro bound to a spell
+/// `replaces` names has the macro re-pointed at `new` (`0x5ab0e2`-`0x5ab0f3`), with no slot
+/// signal; a macro on no slot keeps its spell. Returns whether a binding moved.
+pub(crate) fn replace_rank(
+    bound: &mut std::collections::HashMap<u32, BoundSpell>,
+    bar: &crate::ui_action::ActionSlots,
+    new: u32,
+    replaces: impl Fn(u32) -> bool,
+) -> bool {
+    let mut moved = false;
+    for b in bar
+        .buttons
+        .values()
+        .filter(|b| b.kind == benilla_protocol::messages::ACTION_KIND_MACRO)
+    {
+        if let Some(spell) = bound.get_mut(&b.action) {
+            if let BoundSpell::Spell(old) = *spell {
+                if old != 0 && replaces(old) {
+                    *spell = BoundSpell::Spell(new);
+                    moved = true;
+                }
+            }
+        }
+    }
+    moved
+}
+
+/// The VM's copy of [`MacroBoundSpells`] written from it, in turn with the handler's events.
+pub(crate) fn sync_vm_bindings(world: &mut World) {
+    let Some(bound) = world.get_resource::<MacroBoundSpells>() else {
+        return;
+    };
+    let vm = vm_bindings(&bound.0);
+    if let Some(mut script) = world.get_non_send_resource_mut::<UiScript>() {
+        script.set_macro_bindings(vm);
+    }
+}
+
 /// The book update's macro pass (`0x53cea3` -> `0x566160`), ahead of its `SPELLS_CHANGED`: each
 /// macro whose `/cast` did not resolve is looked up again (`0x56617b`), and one that resolves now
 /// signals its bar slots (`0x566193` -> `0x5aa920`) before the walk looks up the next; a bound
@@ -342,10 +380,7 @@ fn rebind_from(world: &mut World, start: u32) {
         .resource_mut::<MacroBoundSpells>()
         .0
         .insert(index, now);
-    let vm = vm_bindings(&world.resource::<MacroBoundSpells>().0);
-    if let Some(mut script) = world.get_non_send_resource_mut::<UiScript>() {
-        script.set_macro_bindings(vm);
-    }
+    sync_vm_bindings(world);
     let slots: Vec<u8> = world
         .get_resource::<crate::ui_action::ActionSlots>()
         .map(|bar| {

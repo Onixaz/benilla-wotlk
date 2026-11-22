@@ -70,6 +70,8 @@ pub(crate) struct Lifecycle<'w> {
     net: Res<'w, NetCommands>,
     actions: ResMut<'w, PlayerActions>,
     slots: ResMut<'w, crate::ui_action::ActionSlots>,
+    /// The macros' bound spells, which the rank replace re-points (`0x5ab0f3`).
+    bound: Option<ResMut<'w, crate::ui_macro::MacroBoundSpells>>,
     /// The book the update rebuilds (`0x53ca70`).
     book: ResMut<'w, crate::ui_spellbook::SpellBook>,
     summons: Res<'w, super::SummonSlots>,
@@ -98,6 +100,25 @@ pub(crate) struct Lifecycle<'w> {
 }
 
 impl Lifecycle<'_> {
+    /// The rank replace's macro leg, `0x5aafd0(old, new)`: a bar macro bound to `old`, or with no
+    /// `old` to the rank below `new`'s record, re-points at `new`; a moved binding reaches the VM's
+    /// copy in turn, ahead of the events the handler queues after it.
+    fn replace_macro_rank(&mut self, old: Option<u32>, new: u32) {
+        let Some(bound) = self.bound.as_deref_mut() else {
+            return;
+        };
+        let catalog = self.spells.as_deref().map(|s| &s.catalog);
+        let record = catalog.and_then(|c| Some((c, c.get(new)?)));
+        let replaces = |spell: u32| match old {
+            Some(old) => spell == old,
+            None => record.is_some_and(|(c, r)| learn_place::is_rank_below(c, r, spell)),
+        };
+        if crate::ui_macro::replace_rank(&mut bound.0, &self.slots, new, replaces) {
+            debug!("net: a bar macro re-pointed at spell {new}");
+            self.ui.world(crate::ui_macro::sync_vm_bindings);
+        }
+    }
+
     /// The book update with its re-sort and masks (`0x53ca70`): the book, the school masks, the
     /// macro pass when `macros`, then `SPELLS_CHANGED`; then `LEARNED_SPELL_IN_TAB` for each spell
     /// `learned` names (`0x542d16`).
@@ -223,6 +244,10 @@ fn on_spell_learned(
             form: store.0.unit_shapeshift_form(),
         });
         let mut flash = LearnedInTab::default();
+        // A live learn's rank replace (`0x6e7b46`): a bar macro bound to the rank below follows.
+        if learner.is_some() {
+            l.replace_macro_rank(None, spell_id);
+        }
         // Each slot the rank replace writes signals at its write (`0x5aae80`), ahead of the
         // announcement as the registrar orders them; the first-rank placement waits for the book.
         let place = learned_spell(
@@ -436,6 +461,9 @@ fn on_spell_superceded(
         new_spell_id,
     } = ev
     {
+        // The rank replace runs first, streamed or not (`0x6e7e46`): a bar macro bound to the old
+        // rank follows; the spell slots follow the book in `ui_action::ranks`.
+        l.replace_macro_rank(Some(old_spell_id), new_spell_id);
         // Before our object exists the pair edits the buffer: the old entry renamed, else the new one appended (`0x6e7ef4`); after, the removal then the registrar with notify set run their companion arms (`0x542eba`, `0x542ec6`), each ending in a book update (`0x5401b8`, `0x542cd4`).
         let me = our_store(&l, &stores).map(|me| race_class_of(&me.0));
         match me {
