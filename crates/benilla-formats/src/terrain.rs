@@ -771,8 +771,6 @@ fn shadow_texels(shadowed: impl Fn(usize, usize) -> bool, fix: bool) -> Vec<u8> 
 mod tests {
     use super::*;
 
-    /// An unfixed chunk's shadow repeats texel 62 into row and column 63; a `0x8000` chunk keeps
-    /// its own 63.
     /// A destroyable MODF placement (flag `0x1`, the Isle of Conquest gates and the Wintergrasp
     /// walls) builds no static WMO; every other placement does, at the MDDF transform.
     #[test]
@@ -807,6 +805,8 @@ mod tests {
         assert_eq!(wmos[0].position, [centre - 200.0, centre - 100.0, 50.0]);
     }
 
+    /// An unfixed chunk's shadow repeats texel 62 into row and column 63; a `0x8000` chunk keeps
+    /// its own 63.
     #[test]
     fn an_unfixed_shadow_repeats_its_last_row_and_column() {
         let n = SHADOW_MAP_SIZE as usize;
