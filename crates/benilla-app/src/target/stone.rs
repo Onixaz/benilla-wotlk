@@ -66,7 +66,7 @@ pub(crate) fn drain_meeting_stone_uses(
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     stores: Query<&ObjectStore>,
     commands: Res<NetCommands>,
-    mut errors: ResMut<crate::ui_action::UiErrorKeys>,
+    mut signals: crate::ui_action::signals::QueuedSignals,
     spells: Option<Res<crate::ui_action::Spells>>,
     auras: Query<&crate::unit_auras::UnitAuras, With<SelfPlayer>>,
     mut ecs: Commands,
@@ -87,7 +87,10 @@ pub(crate) fn drain_meeting_stone_uses(
         match meeting_stone_refusal(group.as_deref(), target, level, stone) {
             Some(key) => {
                 trace_use(&format!("meeting stone {go_guid:#x} refused: {key}"));
-                errors.0.push(crate::ui_action::UiError::key(key));
+                crate::ui_action::signals::SignalSink::line(
+                    &mut signals,
+                    crate::ui_action::UiError::key(key),
+                );
             }
             None => {
                 // Past its own gates the stone's use is the shared one, dismount first (`0x71190c`).
@@ -120,6 +123,8 @@ pub(crate) fn drain_meeting_stone_uses(
             }
         }
     }
+    // The refusals' lines in the drain's turn, once its commands apply.
+    signals.flush(&mut ecs);
 }
 
 /// A line on the click's own `use` trace tag.

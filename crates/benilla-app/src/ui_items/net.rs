@@ -31,9 +31,6 @@ fn on_open_container(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
 
 fn on_inventory_failure(
     In(ev): In<SessionEvent>,
-    mut latch: ResMut<LootLatch>,
-    mut loot: ResMut<crate::ui_loot::LootState>,
-    net: Res<crate::net::NetCommands>,
     limits: Option<Res<crate::ui_trade::ItemLimitCategories>>,
     mut ui: ResMut<UiEvents>,
 ) {
@@ -49,14 +46,13 @@ fn on_inventory_failure(
             crate::ui_action::signals::SignalSink::line(&mut *ui, line);
         }
         inventory_failure(f, &mut ui);
-        loot.inventory_failed(f.item, &mut latch, &net);
     }
 }
 
-/// A refused inventory operation (reason 0 never arrives: `benilla_protocol::events` drops it): its line (`0x6e3204`), then both items' unlocks (`0x6e3259`, `0x6e326f`), each in the handler's turn.
+/// A refused inventory operation (reason 0 never arrives: `benilla_protocol::events` drops it): its line (`0x6e3204`), the loot close on the looted item (`0x6e3232`), then both items' unlocks (`0x6e3259`, `0x6e326f`), each a step after the listeners of the one before.
 ///
 /// Not built: the item's client-side spell cancel (`0x6e3249`), as no spell is kept by its casting
-/// item, and reason `0x51`'s bind confirm, which needs the named item held (`0x6e1a70`); AzerothCore
+/// item, and reason `0x51`'s bind confirm, which needs the named item held (`0x6e3192`); AzerothCore
 /// sends that item as 0.
 fn inventory_failure(f: InventoryFailure, ui: &mut UiEvents) {
     debug!(
@@ -80,7 +76,26 @@ fn inventory_failure(f: InventoryFailure, ui: &mut UiEvents) {
         };
         ui.world(move |world| show_equip_error(world, e));
     }
+    ui.world(move |world| close_loot(world, f.item));
     ui.world(move |world| unlock(world, f));
+}
+
+/// The failure on the item we loot closes its loot (`0x6e321c`-`0x6e3232`).
+fn close_loot(world: &mut World, item: u64) {
+    let closed = world.run_system_cached_with(
+        |In(item): In<u64>,
+         loot: Option<ResMut<crate::ui_loot::LootState>>,
+         latch: Option<ResMut<LootLatch>>,
+         net: Res<crate::net::NetCommands>,
+         mut ui: ResMut<UiEvents>| {
+            if let (Some(mut loot), Some(mut latch)) = (loot, latch) {
+                let closed = loot.inventory_failed(item, &mut latch, &net, &mut *ui);
+                crate::ui_loot::deselect_dead_in_turn(&mut ui, closed);
+            }
+        },
+        item,
+    );
+    crate::ui_cast::step_ran(closed, "an inventory failure's loot close");
 }
 
 /// An equip refusal's line, in turn with the events around it: reason 16 names the target bag's family when it resolves, reasons 1 and `0x57` fill the level; an empty or missing string shows nothing.
@@ -181,8 +196,8 @@ mod tests {
         );
         assert_eq!(
             ui.names(),
-            ["<world>", "<world>"],
-            "the line, then the unlock"
+            ["<world>", "<world>", "<world>"],
+            "the line (`0x6e3204`), the loot close (`0x6e3232`), then the unlock (`0x6e3259`)"
         );
         let mut world = World::new();
         world.init_resource::<UiEvents>();
@@ -227,7 +242,11 @@ mod tests {
         assert!(limit_line(f, |_| None).is_none(), "no row, no line");
         let mut ui = UiEvents::default();
         inventory_failure(f, &mut ui);
-        assert_eq!(ui.names(), ["<world>"], "the unlock alone");
+        assert_eq!(
+            ui.names(),
+            ["<world>", "<world>"],
+            "the loot close (`0x6e3232`) and the unlock alone"
+        );
     }
 
     /// `0x6e321c`-`0x6e3232`: a failure on the latched item takes `CloseLoot(1, 0, 0)`.
@@ -237,23 +256,28 @@ mod tests {
         let (tx, rx) = crossbeam_channel::unbounded();
         let net = crate::net::NetCommands(tx);
         let mut loot = crate::ui_loot::LootState::default();
-        loot.open(LOCKBOX, 1, 5, Vec::new());
+        loot.open_for_test(LOCKBOX, 1, 5, Vec::new());
         let mut latch = LootLatch(Some(LOCKBOX));
 
         // An unrelated item's failure must not end the session.
-        loot.inventory_failed(0x1234, &mut latch, &net);
+        loot.inventory_failed(0x1234, &mut latch, &net, &mut Vec::new());
         assert_eq!(latch.0, Some(LOCKBOX));
         assert_eq!(loot.source(), Some(LOCKBOX));
         assert!(rx.try_recv().is_err());
 
-        loot.inventory_failed(LOCKBOX, &mut latch, &net);
+        let mut raised: Vec<&'static str> = Vec::new();
+        loot.inventory_failed(LOCKBOX, &mut latch, &net, &mut raised);
         assert_eq!(latch.0, None);
         assert_eq!(loot.source(), None);
         assert!(matches!(
             rx.try_recv(),
             Ok(crate::net::ClientCommand::LootRelease { guid }) if guid == LOCKBOX
         ));
-        assert_eq!(loot.take_unlocks(), [LOCKBOX], "the close unlocks its item");
+        assert_eq!(
+            raised,
+            ["<unlock>", "LOOT_CLOSED"],
+            "the close unlocks its item, then lets the window go"
+        );
     }
     /// Driven through the real registration.
     #[test]

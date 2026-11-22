@@ -101,7 +101,7 @@ crate of its own or a fork, and benilla opens a piece of itself to such a crate 
   without opening with `wow_data_or_skip!` fails here and not on a clone. `CHECK_SCOPED=1`
   narrows it to the changed crates and their dependents. A test that reads data skips where it
   is absent and the check prints the count; where the data is, a skip is a failure
-  (`BENILLA_REQUIRE_DATA=1`). Run it once per round; `tee` the output to a file and grep the
+  (`BENILLA_REQUIRE_DATA=1` for the install, `BENILLA_REQUIRE_CORPUS=1` for the corpus). Run it once per round; `tee` the output to a file and grep the
   file.
 - **The land gates**: `scripts/gates.sh`, the check's chain without the data and the player
   build, for a pull request from an external contributor; CI runs it on every pull request. It

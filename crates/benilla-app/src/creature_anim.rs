@@ -345,7 +345,11 @@ impl AttackSeam<'_, '_> {
     /// `CloseLoot` does, its release ahead of anything the new selection sends. The close's
     /// dead-unit deselect targets the selection already being torn down, so none is asked; the
     /// reference's nested teardown there also sends a `CMSG_SET_SELECTION` 0, which this does not.
-    pub(crate) fn close_loot_on(&mut self, outgoing: u64) {
+    pub(crate) fn close_loot_on(
+        &mut self,
+        outgoing: u64,
+        sink: &mut dyn crate::ui_action::signals::SignalSink,
+    ) {
         if self.loot.source() == Some(outgoing) {
             debug!("target: the selection teardown closes the loot on {outgoing:#x}");
             crate::ui_loot::close_interaction(
@@ -353,6 +357,7 @@ impl AttackSeam<'_, '_> {
                 &mut self.loot_latch,
                 &self.net,
                 true,
+                sink,
             );
         }
     }

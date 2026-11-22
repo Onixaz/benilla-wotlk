@@ -1,9 +1,9 @@
-//! The 1.12.1 WDT (map tile table) reader, and the tile and world coordinate helpers.
+//! The 3.3.5a WDT (map tile table) reader, and the tile and world coordinate helpers.
 //!
 //! A `.wdt` holds `MVER`, `MPHD`, `MAIN` and, on a WMO-only map, `MWMO` and one `MODF`. `MAIN` is a
 //! 64×64 table of 8-byte entries whose flag bit 0 marks a tile with an `.adt`. `MPHD` dword 0 bit 0
-//! marks a map with no terrain, whose whole world is the one building the `MODF` places: 20 of the
-//! 43 shipped maps, every WMO dungeon, each with an empty `MAIN`.
+//! marks a map with no terrain, whose whole world is the one building the `MODF` places: 39 of the
+//! 106 shipped WDTs, every WMO dungeon, each with an empty `MAIN`.
 
 use std::io::{Read, Seek, SeekFrom};
 

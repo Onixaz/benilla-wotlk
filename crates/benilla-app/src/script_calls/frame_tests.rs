@@ -2507,3 +2507,229 @@ fn cast_pet_action_then_get_pet_action_cooldown_in_one_chunk() {
     let start: f64 = rig.vm().eval("return READ").expect("a start");
     assert!(start > 0.0, "the pet's GCD reads in the same call: {start}");
 }
+
+/// `SMSG_SPELL_FAILURE` for our sent cast: the end's listeners read the cast still pending, and the finish releases it after them (`0x809db3` -> `0x7fecc0`, then `0x809dc1` -> `0x8054f0`, `0x8055a2`).
+#[test]
+fn a_spell_failures_end_listener_reads_the_cast_still_pending() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"SEEN = {}
+        local f = CreateFrame("Frame")
+        f:RegisterEvent("UNIT_SPELLCAST_FAILED")
+        f:SetScript("OnEvent", function(_, e, unit)
+            SEEN[#SEEN + 1] = e .. " " .. unit .. " current=" .. (IsCurrentAction(1) and 1 or 0)
+        end)
+        TICK_DO = function() UseAction(1) TICK_DO = nil end"#,
+    );
+    rig.frame();
+    let count = rig
+        .sent()
+        .into_iter()
+        .find_map(|c| match c {
+            ClientCommand::CastSpell {
+                spell_id: BOLT,
+                count,
+                ..
+            } => Some(count),
+            _ => None,
+        })
+        .expect("the press sent the cast");
+    let before: String = crate::ui_script::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval("return tostring(IsCurrentAction(1) and 1 or 0)")
+    })
+    .unwrap()
+    .unwrap();
+    assert_eq!(before, "1", "the sent cast is pending");
+    crate::net::handlers::dispatch(
+        rig.app.world_mut(),
+        vec![benilla_protocol::SessionEvent::SpellFailed {
+            other: false,
+            caster: ME,
+            cast_count: count,
+            spell_id: BOLT,
+            reason: 0x28,
+            wire_reason: 0x28,
+        }],
+    );
+    let seen: String = crate::ui_script::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval("return table.concat(SEEN, ',') .. ' after=' .. (IsCurrentAction(1) and 1 or 0)")
+    })
+    .unwrap()
+    .unwrap();
+    assert_eq!(seen, "UNIT_SPELLCAST_FAILED player current=1 after=0");
+}
+
+/// Bolt chained to Nova (column 38), Nova ready, Bolt sent from action slot 1; returns the cast's count.
+fn chained_bolt_rig(rig: &mut Rig) -> u8 {
+    {
+        let world = rig.app.world_mut();
+        let mut spells = world.resource_mut::<crate::ui_action::Spells>();
+        spells.catalog = SpellCatalog::from_displays(HashMap::from([
+            (
+                BOLT,
+                SpellDisplay {
+                    name: "Bolt".into(),
+                    implicit_target_a1: 6,
+                    start_recovery_category: 133,
+                    start_recovery_ms: 1500,
+                    modal_next_spell: NOVA,
+                    ..Default::default()
+                },
+            ),
+            (
+                NOVA,
+                SpellDisplay {
+                    name: "Nova".into(),
+                    ..Default::default()
+                },
+            ),
+        ]));
+        world.resource_mut::<crate::spell::Cooldowns>().wipe();
+    }
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"SEEN = {}
+        local f = CreateFrame("Frame")
+        f:RegisterEvent("UNIT_SPELLCAST_SENT")
+        f:RegisterEvent("CURRENT_SPELL_CAST_CHANGED")
+        f:SetScript("OnEvent", function(_, e, unit, spell)
+            if not ARMED then return end
+            SEEN[#SEEN + 1] = e .. " " .. (spell or "") .. " bolt=" .. (IsCurrentAction(1) and 1 or 0)
+        end)
+        TICK_DO = function() UseAction(1) TICK_DO = nil end"#,
+    );
+    rig.frame();
+    rig.lua("ARMED = true");
+    rig.sent()
+        .into_iter()
+        .find_map(|c| match c {
+            ClientCommand::CastSpell {
+                spell_id: BOLT,
+                count,
+                ..
+            } => Some(count),
+            _ => None,
+        })
+        .expect("the press sent the cast")
+}
+
+/// The finish's order on our `SMSG_SPELL_GO` (`0x80fe9d` -> `0x8054f0`): the chained cast's `UNIT_SPELLCAST_SENT` listener reads the record still held (`0x80559a`), the selection update's after the release (`0x8055a2`, `0x8055b5`).
+#[test]
+fn a_go_chains_before_it_releases_then_updates_the_selection() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    let count = chained_bolt_rig(&mut rig);
+    crate::net::handlers::dispatch(
+        rig.app.world_mut(),
+        vec![benilla_protocol::SessionEvent::SpellGo {
+            caster: ME,
+            cast_count: count,
+            spell_id: BOLT,
+            cast_flags: 0,
+            server_time: 0,
+            hits: vec![],
+            misses: vec![],
+            reflects: vec![],
+            target: None,
+            go_target: None,
+            target_mask: 0,
+            src: None,
+            dest: None,
+            ammo: None,
+            item_caster: None,
+            trajectory: None,
+            dest_counter: 0,
+            points: vec![],
+        }],
+    );
+    let seen: String = crate::ui_script::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval("return table.concat(SEEN, ',')")
+    })
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        seen,
+        "UNIT_SPELLCAST_SENT Nova bolt=1,CURRENT_SPELL_CAST_CHANGED  bolt=1,CURRENT_SPELL_CAST_CHANGED  bolt=0"
+    );
+    assert!(
+        rig.sent()
+            .iter()
+            .any(|c| matches!(c, ClientCommand::CastSpell { spell_id: NOVA, .. })),
+        "the chain went out"
+    );
+}
+
+/// The same finish on `SMSG_CAST_FAILED` (`0x808b7f` -> `0x8054f0`): chain, release, then the selection update.
+#[test]
+fn a_cast_failure_chains_before_it_releases_then_updates_the_selection() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    let count = chained_bolt_rig(&mut rig);
+    crate::net::handlers::dispatch(
+        rig.app.world_mut(),
+        vec![benilla_protocol::SessionEvent::CastResult {
+            cast_count: count,
+            spell_id: BOLT,
+            success: false,
+            reason: Some(0x28),
+            arg: None,
+            arg2: None,
+            wire_reason: Some(0x28),
+        }],
+    );
+    let seen: String = crate::ui_script::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval("return table.concat(SEEN, ',')")
+    })
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        seen,
+        "UNIT_SPELLCAST_SENT Nova bolt=1,CURRENT_SPELL_CAST_CHANGED  bolt=1,CURRENT_SPELL_CAST_CHANGED  bolt=0"
+    );
+}
+
+/// `SMSG_CAST_FAILED` for our sent cast: the line's listener reads the cast still pending; the finish releases it after the line and the end (`0x808aa5`, `0x808b75`, then `0x808b7f` -> `0x8054f0`, `0x8055a2`).
+#[test]
+fn a_cast_failures_line_listener_reads_the_cast_still_pending() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"SEEN = {} ERR_ITEM_COOLDOWN = "Item is not ready yet."
+        local f = CreateFrame("Frame")
+        f:RegisterEvent("UI_ERROR_MESSAGE")
+        f:SetScript("OnEvent", function(_, e)
+            SEEN[#SEEN + 1] = e .. " current=" .. (IsCurrentAction(1) and 1 or 0)
+        end)
+        TICK_DO = function() UseAction(1) TICK_DO = nil end"#,
+    );
+    rig.frame();
+    let count = rig
+        .sent()
+        .into_iter()
+        .find_map(|c| match c {
+            ClientCommand::CastSpell {
+                spell_id: BOLT,
+                count,
+                ..
+            } => Some(count),
+            _ => None,
+        })
+        .expect("the press sent the cast");
+    crate::net::handlers::dispatch(
+        rig.app.world_mut(),
+        vec![benilla_protocol::SessionEvent::CastResult {
+            cast_count: count,
+            spell_id: BOLT,
+            success: false,
+            reason: Some(0x28),
+            arg: None,
+            arg2: None,
+            wire_reason: Some(0x28),
+        }],
+    );
+    let seen: String = crate::ui_script::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval("return table.concat(SEEN, ',') .. ' after=' .. (IsCurrentAction(1) and 1 or 0)")
+    })
+    .unwrap()
+    .unwrap();
+    assert_eq!(seen, "UI_ERROR_MESSAGE current=1 after=0");
+}

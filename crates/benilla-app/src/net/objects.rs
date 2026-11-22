@@ -586,6 +586,12 @@ fn record_callback(sc: &mut Scene, entry: u32, landed: bool, wait: crate::items:
             .ui
             .world(move |world| crate::ui_item_text::item_record_callback(world, item, landed)),
         RecordWait::Merchant => sc.ui.world(crate::ui_merchant::record_callback),
+        RecordWait::Loot(generation) => sc
+            .ui
+            .world(move |world| crate::ui_loot::record_callback(world, entry, generation)),
+        RecordWait::ItemPush => sc
+            .ui
+            .world(move |world| crate::ui_loot::push_callback(world, entry, landed)),
         RecordWait::DressUp(pane) => sc
             .ui
             .world(move |world| crate::ui_dressup::record_callback(world, entry, landed, pane)),
@@ -613,9 +619,9 @@ fn record_callback(sc: &mut Scene, entry: u32, landed: bool, wait: crate::items:
             }
         }
         // An unknown item names "UNKNOWN".
-        RecordWait::CastFailure(fail) => sc
-            .ui
-            .world(move |world| crate::ui_action::show_refusal(world, fail)),
+        RecordWait::CastFailure(fail) => sc.ui.world(move |world| {
+            crate::ui_action::show_refusal(world, fail);
+        }),
     }
 }
 
@@ -1842,9 +1848,7 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     let target = sc.selection.as_deref().and_then(|s| s.guid);
     if sc.self_guid.0 != Some(guid) {
         if merged.aura_state_moved && target == Some(guid) {
-            sc.ui.world(crate::ui_action::usable_cache::step(
-                crate::ui_action::usable_cache::Pass::Full,
-            ));
+            aura_state_watch(sc);
         }
         let our_pet = sc
             .self_guid
@@ -1928,11 +1932,14 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
         sc.ui.world(crate::ui_action::bonus::form_changed);
         sc.ui.fire("UPDATE_SHAPESHIFT_FORM", Vec::new());
     }
-    // Our own fields' usable updates, the aura state's among them (`0x716810`).
-    for _ in 0..merged.usable_updates + u8::from(merged.aura_state_moved) {
+    // Our own fields' usable updates, then the aura state's (`0x716810`).
+    for _ in 0..merged.usable_updates {
         sc.ui.world(crate::ui_action::usable_cache::step(
             crate::ui_action::usable_cache::Pass::Full,
         ));
+    }
+    if merged.aura_state_moved {
+        aura_state_watch(sc);
     }
     // The override-spell watch's selection update after its usable update (`0x6d1c58`), then the
     // override bar and the bonus update (`0x6d1c5d`, `0x6d1c62`).
@@ -1944,6 +1951,12 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
         sc.ui.world(crate::ui_action::usable_cache::step(
             crate::ui_action::usable_cache::Pass::Power,
         ));
+    }
+    // The aura vision watch walks every visible unit with the moved bits (`0x6da7ba`).
+    let vision = merged.aura_vision;
+    if vision != 0 {
+        sc.ui
+            .world(move |world| crate::ui_aura::aura_vision_moved(world, vision));
     }
     for _ in 0..merged.bar_updates {
         sc.ui.world(crate::ui_action::usable_cache::step(
@@ -1981,6 +1994,14 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     }
     own_death_fields(sc, guid, past_farsight);
     own_player_watches(sc, guid, &merged.watched);
+}
+
+/// The aura state's watch for us or the target (`0x716810`): the full usable update, then `PET_BAR_UPDATE_USABLE` (`0x716836`, `0x716842`).
+fn aura_state_watch(sc: &mut Scene) {
+    sc.ui.world(crate::ui_action::usable_cache::step(
+        crate::ui_action::usable_cache::Pass::Full,
+    ));
+    sc.ui.fire("PET_BAR_UPDATE_USABLE", Vec::new());
 }
 
 /// The guild timestamp's watch (`0x6e1c60`): a stamp new for the player's guild drops its record and asks it again with the walk as its callback (`0x6e1d5f` -> `0x6e1b90`).
@@ -2190,10 +2211,11 @@ fn own_player_watches(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
     let mut teams_done = false;
     let mut buyback_done = false;
     for (at, &(index, old, new)) in edges.iter().enumerate() {
-        // The coinage watch (`0x6da070`): the trainer's re-evaluation (`0x6da085`), then `PLAYER_MONEY` (`0x6da091`); its coin sound plays from [`crate::sound`].
+        // The coinage watch (`0x6da070`): the trainer's re-evaluation (`0x6da085`), then `PLAYER_MONEY` (`0x6da091`), then an offer past the new purse trimmed to it (`0x6da104`); its coin sound plays from [`crate::sound`].
         if index == benilla_protocol::field::FIELD_PLAYER_FIELD_COINAGE {
             sc.ui.world(crate::ui_trainer::refresh);
             sc.ui.fire("PLAYER_MONEY", Vec::new());
+            sc.ui.write(move |script| script.trim_trade_offer(new));
             continue;
         }
         // The skill slots' value, max and permanent-bonus halves, each its own watch re-evaluating the trainer (`0x6da5f3`, `0x6cddb0`).
@@ -2381,6 +2403,9 @@ fn merge_fields(
             merged.override_moved |= own
                 && e.unit_field(benilla_protocol::field::FIELD_PLAYER_FIELD_BYTES2)
                 && (e.old ^ e.new) & 0xffff != 0;
+            if own && e.unit_field(benilla_protocol::field::FIELD_PLAYER_FIELD_BYTES2) {
+                merged.aura_vision |= ((e.old ^ e.new) >> 24) as u8;
+            }
             // Our visible items' entries (`0x6e1ec2`) and our ammo (`0x5e8413`) refresh the bar.
             merged.bar_updates += u8::from(
                 own && ((0..19u8).any(|slot| {
@@ -2558,6 +2583,8 @@ struct Merged {
     aura_state_moved: bool,
     /// A unit's `UNIT_FIELD_POWER1..7` moved.
     power_moved: bool,
+    /// The bits of our own aura vision byte (`PLAYER_FIELD_BYTES2` byte 3) that moved.
+    aura_vision: u8,
 }
 
 /// The form watch's tracking leg (`0x6da130`): with nothing tracked, the first known tracking spell

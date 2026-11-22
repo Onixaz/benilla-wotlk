@@ -219,12 +219,26 @@ macro_rules! wow_data_or_skip {
     };
 }
 
-/// A data-gated test's skip, printed; a panic under `BENILLA_REQUIRE_DATA=1`, which the gate sets
-/// where the data is, since libtest hides a passing test's stderr and a lost install reads green.
+/// An install-gated test's skip, printed; a panic under `BENILLA_REQUIRE_DATA=1`, which the gate
+/// sets where the install resolves, since libtest hides a passing test's stderr and a lost install
+/// reads green.
 #[doc(hidden)]
 pub fn skipped(what: &str, looked_in: &[PathBuf]) {
+    skipped_by("BENILLA_REQUIRE_DATA", what, looked_in);
+}
+
+/// A corpus-gated test's skip, as [`skipped`], refused under `BENILLA_REQUIRE_CORPUS=1`, which the
+/// gate sets where the addon corpus resolves: a machine with the install and no corpus still
+/// requires every install-gated test.
+#[doc(hidden)]
+pub fn skipped_corpus(what: &str, looked_in: &[PathBuf]) {
+    skipped_by("BENILLA_REQUIRE_CORPUS", what, looked_in);
+}
+
+fn skipped_by(switch: &str, what: &str, looked_in: &[PathBuf]) {
     skipped_under(
-        std::env::var_os("BENILLA_REQUIRE_DATA").is_some_and(|v| !v.is_empty() && v != "0"),
+        std::env::var_os(switch).is_some_and(|v| !v.is_empty() && v != "0"),
+        switch,
         what,
         looked_in,
     );
@@ -243,12 +257,12 @@ pub fn skipped(what: &str, looked_in: &[PathBuf]) {
 }
 
 /// [`skipped`] with the switch passed in, testable without the process environment.
-fn skipped_under(required: bool, what: &str, looked_in: &[PathBuf]) {
+fn skipped_under(required: bool, switch: &str, what: &str, looked_in: &[PathBuf]) {
     let msg = format!("skipping: {what} — looked in {looked_in:?}");
     assert!(
         !required,
-        "{msg} — and BENILLA_REQUIRE_DATA is set: the gate resolved this data on this machine, \
-         so a skip here is a broken resolver or a missing link, not a missing install"
+        "{msg} — and {switch} is set: the gate resolved this data on this machine, so a skip \
+         here is a broken resolver or a missing link, not missing data"
     );
     eprintln!("{msg}");
 }
@@ -294,7 +308,7 @@ macro_rules! addon_corpus_or_skip {
         match $crate::addon_corpus() {
             Some(root) => root,
             None => {
-                $crate::skipped(
+                $crate::skipped_corpus(
                     "no vanilla addon corpus (set $BENILLA_ADDON_CORPUS)",
                     &$crate::addon_corpus_candidates(),
                 );
@@ -538,12 +552,33 @@ mod tests {
 
     #[test]
     fn a_skip_is_a_skip_where_nothing_requires_the_data() {
-        skipped_under(false, "no WoW install found", &[PathBuf::from("/nowhere")]);
+        skipped_under(
+            false,
+            "BENILLA_REQUIRE_DATA",
+            "no WoW install found",
+            &[PathBuf::from("/nowhere")],
+        );
     }
 
     #[test]
     #[should_panic(expected = "BENILLA_REQUIRE_DATA is set")]
     fn a_skip_is_refused_where_the_gate_says_the_data_is_present() {
-        skipped_under(true, "no WoW install found", &[PathBuf::from("/nowhere")]);
+        skipped_under(
+            true,
+            "BENILLA_REQUIRE_DATA",
+            "no WoW install found",
+            &[PathBuf::from("/nowhere")],
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "BENILLA_REQUIRE_CORPUS is set")]
+    fn a_corpus_skip_is_refused_by_its_own_switch() {
+        skipped_under(
+            true,
+            "BENILLA_REQUIRE_CORPUS",
+            "no vanilla addon corpus",
+            &[PathBuf::from("/nowhere")],
+        );
     }
 }

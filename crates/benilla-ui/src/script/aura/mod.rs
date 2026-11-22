@@ -1,21 +1,19 @@
-//! The aura bindings, over the lists the app pushes in display order: the player's, kept by
-//! `benilla::ui_aura`, and every other unit's by guid. A token resolves to its guid as 12340's
-//! resolver `0x60abf0` does, so `"mouseover"`, `"party1target"` and
-//! `"PLAYER"` read the list of the unit they name, and a token naming the player reads the
-//! player's list.
+//! The aura bindings, over the unit's aura slots as the app's live view reads them at the call
+//! (`0x6147c0`): a held unit's display order through the display filter, or a roster record's
+//! block for a unit the object manager does not hold. A token resolves to its guid as 12340's
+//! resolver `0x60abf0` does, so `"mouseover"`, `"party1target"` and `"PLAYER"` read the auras of
+//! the unit they name.
 //!
 //! `UnitAura`, `UnitBuff`, `UnitDebuff`, `CancelUnitBuff` and `GameTooltip:SetUnitAura` and its two
 //! siblings share one argument reader (`0x608390`): a unit, then a 1-based index or a spell name
 //! and rank, then a filter string ([`AuraQuery`]). One finder (`0x72c9b0`) walks the unit's list
-//! under that filter ([`find`]). The 1.12 `GetPlayerBuff` family ([`player_buff`]) is still
-//! installed beside them, though 3.3.5a's stock UI no longer calls it (#52).
+//! under that filter ([`find`]).
 
 use mlua::{Lua, MultiValue, Value};
 
 use super::Model;
 
-/// One aura on one unit, as the app's feed pushes it ([`crate::script::UiScript::set_unit_auras`],
-/// [`crate::script::UiScript::set_player_auras`]).
+/// One aura `UnitAura` answers with, as the live view builds it for the aura the finder takes.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AuraState {
     /// `Spell.dbc` id, what `CMSG_CANCEL_AURA` names and the app's icon lookup keys on.
@@ -50,7 +48,7 @@ pub struct AuraState {
     /// The caster's guid, 0 when unknown: `UnitAura`'s eighth return names it as a token
     /// ([`caster_token`]), and the `PLAYER` filter keeps the player's own (`0x53bd70`).
     pub caster: u64,
-    /// `UnitAura`'s ninth return, which the feed decides as `0x53d680` does: the player can
+    /// `UnitAura`'s ninth return, which the view decides as `0x53d680` does: the player can
     /// steal it (Spellsteal's dispel mask `[0xbe5d68]`) from a hostile unit's helpful aura.
     pub stealable: bool,
     /// `AttributesEx7 & 0x10000000`, the stock buff frame's consolidation flag, `UnitAura`'s
@@ -59,6 +57,62 @@ pub struct AuraState {
     /// In the finder's second list (`0x72c510`), the one `RAID` reads: a buff the player or its
     /// pet can cast, or a debuff whose dispel type the player can dispel.
     pub raid: bool,
+}
+
+/// What the finder's filter and name match read off one listed aura (`0x72ca9e`-`0x72cae3`),
+/// before the aura is built: the view hands each in list order to the walk.
+#[derive(Clone, Copy, Debug)]
+pub struct AuraFacts<'a> {
+    pub spell_id: u32,
+    /// The aura record's flag `0x80` clear.
+    pub helpful: bool,
+    /// The aura record's flag `0x10`.
+    pub cancelable: bool,
+    /// In the finder's second list ([`AuraState::raid`]); false unless the walk asked for it.
+    pub raid: bool,
+    /// The caster's guid, 0 when unknown.
+    pub caster: u64,
+    /// The spell's name and rank text, `None` when the catalog lacks the id.
+    pub name: Option<&'a str>,
+    pub rank: Option<&'a str>,
+}
+
+impl<'a> AuraFacts<'a> {
+    /// A built aura's facts, for a fixture's list.
+    fn of(a: &'a AuraState) -> Self {
+        Self {
+            spell_id: a.spell_id,
+            helpful: a.helpful,
+            cancelable: a.cancelable,
+            raid: a.raid,
+            caster: a.caster,
+            name: a.name.as_deref(),
+            rank: a.rank.as_deref(),
+        }
+    }
+}
+
+/// A unit's raw aura slots, as the spell-id checks read them, unfiltered.
+#[derive(Clone, Debug, PartialEq)]
+pub enum UnitAuraSlots {
+    /// A held unit's slots in slot order, an effect applied or not (`0x7282a0`, `0x7289c0`): each
+    /// spell with its expiry on the `GetTime()` clock, 0 untimed.
+    Held(Vec<(u32, f64)>),
+    /// A member's roster record (`+0x20`): its online bit and its occupied `(slot, spell)`s,
+    /// ascending.
+    Member { online: bool, slots: Vec<(u8, u32)> },
+    /// The pet record naming the unit (`+0x1c8`).
+    Pet(Vec<(u8, u32)>),
+}
+
+/// A record block as the record walks read it (`0x614a80`, `0x612ec6`): slots from 0 up to the
+/// first empty one (`0x614a83`).
+pub(crate) fn leading_slots(slots: &[(u8, u32)]) -> impl Iterator<Item = u32> + '_ {
+    slots
+        .iter()
+        .enumerate()
+        .take_while(|(i, (slot, spell))| usize::from(*slot) == *i && *spell != 0)
+        .map(|(_, (_, spell))| *spell)
 }
 
 /// The filter byte `0x608390` builds at `+0x14`: `HELPFUL` alone until a filter string names
@@ -112,11 +166,16 @@ impl AuraFilter {
         }
     }
 
+    /// Whether the walk must decide each aura's [`AuraFacts::raid`].
+    fn raid(self) -> bool {
+        self.0 & Self::RAID != 0
+    }
+
     /// The finder's per-aura test (`0x72ca9e`-`0x72cae3`): the sign against `HELPFUL` alone, the
     /// caster under `PLAYER`, then the cancelable flag. `RAID` walks the finder's second list
     /// (`+0xdd4 + 0x84`, `0x72c9b0`), whose auras keep the main list's order, so here it keeps the
-    /// auras that list holds ([`AuraState::raid`]).
-    fn admits(self, a: &AuraState, player: u64) -> bool {
+    /// auras that list holds ([`AuraFacts::raid`]).
+    fn admits(self, a: &AuraFacts, player: u64) -> bool {
         let helpful = self.0 & Self::HELPFUL != 0;
         if a.helpful != helpful {
             return false;
@@ -225,32 +284,75 @@ pub(crate) fn find(model: &Model, q: &AuraQuery) -> Option<AuraState> {
     if q.index < 0 && q.name.is_none() {
         return None;
     }
+    let guid = q.guid(model)?;
     let player = model.player_guid();
-    let list = auras_of(model, &q.token)?;
-    let mut admitted = list.iter().filter(|a| q.filter.admits(a, player));
-    if q.index >= 0 {
-        return admitted.nth(usize::try_from(q.index).ok()?).cloned();
-    }
-    let name = q.name.as_deref()?;
-    admitted
-        .find(|a| {
-            a.name.as_deref().is_some_and(|n| same_text(n, name))
+    let mut found = 0i64;
+    let mut pick = |a: &AuraFacts| {
+        if !q.filter.admits(a, player) {
+            return false;
+        }
+        if q.index >= 0 {
+            found += 1;
+            return found - 1 == q.index;
+        }
+        q.name.as_deref().is_some_and(|name| {
+            a.name.is_some_and(|n| same_text(n, name))
                 && q.rank
                     .as_deref()
-                    .is_none_or(|r| same_text(a.rank.as_deref().unwrap_or(""), r))
+                    .is_none_or(|r| same_text(a.rank.unwrap_or(""), r))
         })
+    };
+    walk(model, guid, q.filter.raid(), &mut pick)
+}
+
+/// Walk `guid`'s listed auras in order through the lent view, building the first `pick` takes;
+/// where no view lends the game's, a fixture's list.
+fn walk(
+    model: &Model,
+    guid: u64,
+    raid: bool,
+    pick: &mut dyn FnMut(&AuraFacts) -> bool,
+) -> Option<AuraState> {
+    let now = model.now;
+    if let Some(found) =
+        super::live::read_live(|l| l.find_unit_aura(guid, now, raid, pick)).flatten()
+    {
+        return found;
+    }
+    fixture_list(model, guid)?
+        .iter()
+        .find(|a| pick(&AuraFacts::of(a)))
         .cloned()
 }
 
-/// The list of the unit `token` names: the player's for the player, else that guid's; `None` for
-/// nobody or a unit with no list.
-pub(crate) fn auras_of<'m>(model: &'m Model, token: &str) -> Option<&'m [AuraState]> {
-    model.token_guid(token).and_then(|g| {
-        if g == model.player_guid() {
-            Some(model.player_auras.as_slice())
-        } else {
-            model.unit_auras.get(&g).map(Vec::as_slice)
-        }
+/// A fixture's list for `guid`: the player's for the player, else that guid's.
+#[cfg(any(test, feature = "fixtures"))]
+fn fixture_list(model: &Model, guid: u64) -> Option<&[AuraState]> {
+    if guid == model.player_guid() {
+        Some(model.player_auras.as_slice())
+    } else {
+        model.unit_auras.get(&guid).map(Vec::as_slice)
+    }
+}
+
+#[cfg(not(any(test, feature = "fixtures")))]
+fn fixture_list(_model: &Model, _guid: u64) -> Option<&[AuraState]> {
+    None
+}
+
+/// `guid`'s raw aura slots at the call; `None` for nobody. Where no view lends the game's, a
+/// fixture's list stands in as a held unit's.
+pub(crate) fn slots_of(model: &Model, guid: u64) -> Option<UnitAuraSlots> {
+    let now = model.now;
+    if let Some(slots) = super::live::read_live(|l| l.unit_aura_slots(guid, now)).flatten() {
+        return slots;
+    }
+    fixture_list(model, guid).map(|list| {
+        UnitAuraSlots::Held(
+            list.iter()
+                .map(|a| (a.spell_id, a.expiration_time))
+                .collect(),
+        )
     })
 }
 
@@ -324,13 +426,15 @@ fn unit_aura(
 }
 
 impl super::UiScript {
-    /// Push the player's aura list in display order, durations joined.
+    /// A fixture's stand-in player aura list, in display order, which a call reads while no view
+    /// lends the game's.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_player_auras(&mut self, auras: Vec<AuraState>) {
         set_field!(self, player_auras, auras);
     }
 
-    /// Push or clear a unit's aura list by guid, in display order; any token naming the unit
-    /// reads it. The player's is [`Self::set_player_auras`].
+    /// A fixture's stand-in aura list for a unit by guid ([`Self::set_player_auras`]).
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_unit_auras(&mut self, guid: u64, auras: Option<Vec<AuraState>>) {
         let mut model = self.model_mut();
         match auras {
@@ -341,13 +445,6 @@ impl super::UiScript {
                 model.unit_auras.remove(&guid);
             }
         }
-    }
-
-    /// Drop every aura list, the player's with the rest: the session's end.
-    pub fn clear_auras(&mut self) {
-        let mut model = self.model_mut();
-        model.player_auras.clear();
-        model.unit_auras.clear();
     }
 
     /// The resolver's tables a call reads while no view lends the game's: a test's or a capture
@@ -398,14 +495,16 @@ impl super::UiScript {
     /// `UnitBuff`/`UnitDebuff` enumerate them with no filter string; empty for nobody.
     pub fn aura_spell_ids(&self, token: &str, helpful: bool) -> Vec<u32> {
         let model = self.model_ref();
-        auras_of(&model, token)
-            .map(|list| {
-                list.iter()
-                    .filter(|a| a.helpful == helpful)
-                    .map(|a| a.spell_id)
-                    .collect()
-            })
-            .unwrap_or_default()
+        let mut ids = Vec::new();
+        if let Some(guid) = model.token_guid(token) {
+            walk(&model, guid, false, &mut |a| {
+                if a.helpful == helpful {
+                    ids.push(a.spell_id);
+                }
+                false
+            });
+        }
+        ids
     }
 
     /// Drain the queued cancels, one `CMSG_CANCEL_AURA` per spell id: the server cancels by spell,

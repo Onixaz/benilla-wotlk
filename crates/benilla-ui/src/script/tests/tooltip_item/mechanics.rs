@@ -684,6 +684,7 @@ fn a_looted_roll_shows_its_lines_and_never_the_placeholder() {
         },
     );
     s.set_loot(Some(LootState {
+        coin_slot: false,
         source_unit: false,
         source_level: 0,
         master_candidates: Vec::new(),
@@ -783,6 +784,7 @@ fn a_token_binds_only_for_the_loot_source_and_a_non_token_always() {
         ..Default::default()
     };
     s.set_loot(Some(LootState {
+        coin_slot: false,
         source_unit: true,
         source_level: 80,
         master_candidates: Vec::new(),
@@ -877,6 +879,7 @@ fn a_looted_item_with_no_roll_shows_neither_line_nor_placeholder() {
         },
     );
     s.set_loot(Some(LootState {
+        coin_slot: false,
         source_unit: false,
         source_level: 0,
         master_candidates: Vec::new(),

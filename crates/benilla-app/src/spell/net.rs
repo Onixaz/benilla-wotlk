@@ -39,8 +39,6 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::SpellSuperceded, on_spell_superceded)
         .net_handler(K::CastResult, on_cast_result)
         .net_handler(K::SpellStart, on_spell_start)
-        // Before `on_spell_go`, which clears the in-flight guard the chain tests.
-        .net_handler(K::SpellGo, on_own_spell_go)
         .net_handler(K::SpellGo, on_spell_go)
         .net_handler(K::SpellChainTargets, on_spell_chain_targets)
         .net_handler(K::SpellFailed, on_spell_failed)
@@ -70,6 +68,8 @@ pub(crate) struct Lifecycle<'w> {
     net: Res<'w, NetCommands>,
     actions: ResMut<'w, PlayerActions>,
     slots: ResMut<'w, crate::ui_action::ActionSlots>,
+    /// The macros' bound spells, which the rank replace re-points (`0x5ab0f3`).
+    bound: Option<ResMut<'w, crate::ui_macro::MacroBoundSpells>>,
     /// The book the update rebuilds (`0x53ca70`).
     book: ResMut<'w, crate::ui_spellbook::SpellBook>,
     summons: Res<'w, super::SummonSlots>,
@@ -98,16 +98,33 @@ pub(crate) struct Lifecycle<'w> {
 }
 
 impl Lifecycle<'_> {
-    /// The book update with its re-sort and masks (`0x53ca70`): the book, the school masks, then
-    /// `SPELLS_CHANGED`; then `LEARNED_SPELL_IN_TAB` for each spell `learned` names (`0x542d16`).
-    fn update_book(&mut self, learned: &LearnedInTab) {
+    /// The rank replace's macro leg, `0x5aafd0(old, new)`: a bar macro bound to `old` (or the rank below `new`) re-points at `new`, synced in turn.
+    fn replace_macro_rank(&mut self, old: Option<u32>, new: u32) {
+        let Some(bound) = self.bound.as_deref_mut() else {
+            return;
+        };
+        let catalog = self.spells.as_deref().map(|s| &s.catalog);
+        let record = catalog.and_then(|c| Some((c, c.get(new)?)));
+        let replaces = |spell: u32| match old {
+            Some(old) => spell == old,
+            None => record.is_some_and(|(c, r)| learn_place::is_rank_below(c, r, spell)),
+        };
+        if crate::ui_macro::replace_rank(&mut bound.0, &self.slots, new, replaces) {
+            debug!("net: a bar macro re-pointed at spell {new}");
+            self.ui.world(crate::ui_macro::sync_vm_bindings);
+        }
+    }
+
+    /// The book update (`0x53ca70`): book, school masks, macro pass when `macros`, `SPELLS_CHANGED`, then `LEARNED_SPELL_IN_TAB` (`0x542d16`).
+    fn update_book(&mut self, learned: &LearnedInTab, macros: bool) {
         let inputs = crate::ui_spellbook::BookInputs {
             known: &self.actions.spells,
             spells: self.spells.as_deref(),
             summons: &self.summons.0,
             skill_lines: self.skill_lines.as_deref().map(|s| &*s.catalog),
         };
-        self.book.update(&inputs, &mut self.schools, &mut self.ui);
+        self.book
+            .update(&inputs, &mut self.schools, &mut self.ui, macros);
         self.book.flash(learned, &inputs, &mut self.ui);
     }
 }
@@ -160,7 +177,7 @@ fn on_spell_book(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
                 ranged_ms,
             },
         );
-        // The book load files the totems without a refill (`0x6e7f73`).
+        // The book load files the totems without a refill (`0x6e7fc5`).
         l.multicast.lists = Default::default();
         if let Some(spells) = l.spells.as_deref() {
             for d in l
@@ -221,9 +238,12 @@ fn on_spell_learned(
             form: store.0.unit_shapeshift_form(),
         });
         let mut flash = LearnedInTab::default();
-        // Each slot the rank replace or the first-rank placement writes signals at its write
-        // (`0x5aae80`), around the announcement as the registrar orders them.
-        learned_spell(
+        // A live learn's rank replace (`0x6e7b46`): a bar macro bound to the rank below follows.
+        if learner.is_some() {
+            l.replace_macro_rank(None, spell_id);
+        }
+        // The rank replace signals each slot at its write (`0x5aae80`); the first-rank placement waits for the book.
+        let place = learned_spell(
             spell_id,
             (&mut l.actions, &mut l.slots),
             l.spells.as_deref(),
@@ -258,12 +278,49 @@ fn on_spell_learned(
             Some(me) => companion_add(&mut l, me, spell_id),
             None => l.known_buffer.0.push(spell_id),
         }
-        // The registrar's book update and tab flash, reached by a live learn past its exits, the
-        // same ones the flash is gated on (`0x542cbf`-`0x542d16`).
+        // A live learn's book update, tab flash and tutorial at its step, then the placement (`0x542cbf`-`0x542d1d`, `0x542de3`).
         if !flash.0.is_empty() {
-            l.update_book(&flash);
+            l.update_book(&flash, true);
+            l.ui.world(|w| crate::tutorial::trigger_at_step(w, LEARN_TUTORIAL));
+        }
+        if let Some(page) = place {
+            l.ui.world(move |world| learn_place_step(world, spell_id, page));
         }
     }
+}
+
+/// The tutorial a live learn into a tab raises after its flash (`0x542d1b`).
+const LEARN_TUTORIAL: u32 = 0x27;
+
+/// A live learn's first-rank placement on `page`'s first empty button, after the book's listeners (`0x542dc1`-`0x542de3`, `0x5aae80`).
+fn learn_place_step(world: &mut World, spell_id: u32, page: u8) {
+    let Some(net) = world
+        .get_resource::<NetCommands>()
+        .map(|n| NetCommands(n.0.clone()))
+    else {
+        return;
+    };
+    let Some(mut bar) = world.get_resource_mut::<crate::ui_action::ActionSlots>() else {
+        return;
+    };
+    if let Some(slot) = place_first_rank(&mut bar, spell_id, page, &net) {
+        crate::ui_script::live::in_turn(world, move |world| {
+            crate::ui_action::slots::slot_changed(world, slot)
+        });
+    }
+}
+
+/// The placement's write on `page`'s first empty button (`0x542dc0`-`0x542de3`): the slot written.
+fn place_first_rank(
+    bar: &mut crate::ui_action::ActionSlots,
+    spell_id: u32,
+    page: u8,
+    net: &NetCommands,
+) -> Option<u8> {
+    let slot = learn_place::first_empty_slot(bar, page)?;
+    info!("net: learned spell {spell_id} placed on bar slot {slot} (page {page})");
+    let packed = spell_id | (u32::from(ACTION_KIND_SPELL) << 24);
+    bar.write_slot(slot, packed, net).then_some(slot)
 }
 
 fn on_spell_removed(In(ev): In<SessionEvent>, mut l: Lifecycle, mut commands: Commands) {
@@ -276,6 +333,8 @@ fn on_spell_removed(In(ev): In<SessionEvent>, mut l: Lifecycle, mut commands: Co
         } else {
             companion_remove(&mut l, spell_id);
         }
+        // The removal's first argument: whether the spell was in the known list (`0x53fbe2`).
+        let held = l.actions.spells.contains(&spell_id);
         removed_spell(spell_id, &mut l.actions, l.spells.as_deref(), &mut *l.ui);
         unlearn_totem(&mut l.multicast, spell_id);
         // The plain unlearn drops its stance entry (`0x53fe44`, notify clear, `0x6e7361`).
@@ -285,7 +344,7 @@ fn on_spell_removed(In(ev): In<SessionEvent>, mut l: Lifecycle, mut commands: Co
         }
         // The removal ends in the book update, a spell it held or not (`0x5401b8`).
         if exists {
-            l.update_book(&LearnedInTab::default());
+            l.update_book(&LearnedInTab::default(), held);
         }
     }
 }
@@ -389,13 +448,15 @@ fn on_spell_superceded(
         new_spell_id,
     } = ev
     {
+        // The rank replace runs first, streamed or not (`0x6e7e46`): a bar macro on the old rank follows.
+        l.replace_macro_rank(Some(old_spell_id), new_spell_id);
         // Before our object exists the pair edits the buffer: the old entry renamed, else the new one appended (`0x6e7ef4`); after, the removal then the registrar with notify set run their companion arms (`0x542eba`, `0x542ec6`), each ending in a book update (`0x5401b8`, `0x542cd4`).
         let me = our_store(&l, &stores).map(|me| race_class_of(&me.0));
         match me {
             Some(me) => {
                 companion_remove(&mut l, old_spell_id);
-                l.actions.spells.remove(&old_spell_id);
-                l.update_book(&LearnedInTab::default());
+                let held = l.actions.spells.remove(&old_spell_id);
+                l.update_book(&LearnedInTab::default(), held);
                 companion_add(&mut l, me, new_spell_id);
             }
             None => {
@@ -434,7 +495,7 @@ fn on_spell_superceded(
                 spell: new_spell_id,
                 replaces: Some(old_spell_id),
             }));
-            l.update_book(&flash);
+            l.update_book(&flash, true);
         }
     }
 }
@@ -450,18 +511,8 @@ pub(crate) struct Reply<'w, 's> {
     play_seq: ResMut<'w, crate::creature_anim::PlaySeq>,
 }
 
-/// The cast-result handler, the one handler that casts: a reply whose spell names a
-/// `modalNextSpell` (column 38) chains it through the ladder in the same call (the cast attempt),
-/// so it arms the in-flight slot before the next packet.
-///
-/// The chained cast goes out at the null target guid (`ebx = 0`), so it binds through the target
-/// resolve's ordinary walk ([`CastTargeting::context`]) and takes every rung a press takes.
-fn on_cast_result(
-    In(ev): In<SessionEvent>,
-    mut ladder: CastLadder,
-    targeting: CastTargeting,
-    mut r: Reply,
-) {
+/// The cast-failed handler (`0x808200`): its line, its cast's end, then its finish ([`finish_ours`]), whose `modalNextSpell` chain goes out before the next packet.
+fn on_cast_result(In(ev): In<SessionEvent>, mut ladder: CastLadder, mut r: Reply) {
     if let SessionEvent::CastResult {
         cast_count,
         spell_id,
@@ -472,7 +523,7 @@ fn on_cast_result(
         wire_reason,
     } = ev
     {
-        use crate::ui_action::signals::{cooldown_site, selection, spellbook, Tail};
+        use crate::ui_action::signals::{cooldown_site, spellbook, Tail};
         let row = ladder
             .spells
             .as_deref()
@@ -497,7 +548,13 @@ fn on_cast_result(
             !success && reason != Some(0x17) && ladder.cooldowns.has_spell(spell_id);
         // The routine's auto-repeat cancel (`0x8082d3`, `0x8083c6`), signalled in its place below.
         let mut cancels: Vec<&'static str> = Vec::new();
-        let chained = cast_result(
+        // The pending record's caster, an item use's item (`0x809bb1` -> `0x8051d0`, `0x80624d`).
+        let item = ladder
+            .pending
+            .find(spell_id, cast_count)
+            .map(|rec| rec.caster)
+            .filter(|&c| c != 0 && Some(c) != r.self_guid.0);
+        cast_result(
             (spell_id, cast_count, wire_reason.unwrap_or(0)),
             success,
             reason,
@@ -514,6 +571,7 @@ fn on_cast_result(
             &ladder.commands,
             r.play_seq.next(),
             &mut cancels,
+            false,
         );
         // The routine's signals in its order: the hold's release, the auto-repeat cancel, the
         // start cooldown's clear, then the cast's end through `0x7fecc0` and its finish's
@@ -531,81 +589,106 @@ fn on_cast_result(
         // routine's cancel and before the cast's end (`0x808aa5`, `0x808b00`, then `0x808b75`).
         // `0x17` DONT_REPORT shows nothing. `SMSG_CAST_FAILED` is addressed to the caster, and this
         // handler is ours.
-        if let (false, Some(reason)) = (success, reason.filter(|&r| r != 0x17)) {
-            r.ui.refuse(crate::ui_action::CastFail {
+        let failed_ours = !success && reason.is_some() && r.self_guid.0.is_some();
+        if let (false, Some(reason)) = (success, reason) {
+            let fail = crate::ui_action::CastFail {
                 arg,
                 arg2,
+                item,
                 ..crate::ui_action::CastFail::local(spell_id, reason)
-            });
-        }
-        if let (false, Some(reason), Some(caster)) = (success, reason, r.self_guid.0) {
-            r.ui.cast_edge(CastBarEdge::Failed {
-                caster,
-                spell_id,
-                cast_count,
-                reason,
-            });
-            if cast_count != 0 {
-                selection(&mut r.ui);
+            };
+            match (reason, r.self_guid.0) {
+                (0x17, Some(caster)) => r.ui.cast_edge(CastBarEdge::Failed {
+                    caster,
+                    spell_id,
+                    cast_count,
+                    reason,
+                }),
+                (0x17, None) => {}
+                // The line, then the end, on `DONT_REPORT` after a silent exit (`0x8086ff`).
+                (_, Some(caster)) => r.ui.world(move |world| {
+                    crate::ui_action::refuse_then_end(world, fail, caster, cast_count);
+                }),
+                (_, None) => r.ui.refuse(fail),
             }
         }
-        // A failure other than not-ready of a cooldown-on-event spell drops its on-hold record,
-        // then signals (`0x809bd5`-`0x809c05`).
+        // The failure routine's finish after the line's and the end's listeners (`0x808b7f` -> `0x8054f0`).
+        finish_ours(
+            &mut r.ui,
+            spell_id,
+            cast_count,
+            failed_ours && cast_count != 0,
+        );
+        // Past the routine, a failure other than not-ready of a cooldown-on-event spell drops its on-hold record, then signals (`0x809bd5`-`0x809c05`).
         if !success && reason != Some(0x3c) && on_event {
             cooldown_site(&mut r.ui, true, Tail::Bags);
-        }
-        if let Some(next) = chained {
-            let ctx = targeting.context();
-            ladder.send(next, &ctx, CastCommit::Spell);
-            // The chained send's `UNIT_SPELLCAST_SENT`, in this handler's turn (`0x80b556`).
-            ladder.press.defer(&mut r.ui);
         }
     }
 }
 
-/// Our own `SMSG_SPELL_GO` as the cast's success. 12340 sends no success verdict
-/// (`SMSG_CAST_FAILED` carries refusals only); its GO handler runs the `modalNextSpell` chain
-/// (`0x80e666 call 0x8054f0`) that 1.12.1 ran from the verdict, so the success arm of
-/// [`cast_result`] runs here, ahead of [`on_spell_go`].
-fn on_own_spell_go(
-    In(ev): In<SessionEvent>,
+/// Our cast's finish (`0x8054f0`), each call a step: the `modalNextSpell` chain (`0x80559a`), then the record's release (`0x8055a2`), then the selection update when `select` (`0x8055b5`).
+fn finish_ours(
+    ui: &mut crate::ui_script::live::UiEvents,
+    spell_id: u32,
+    cast_count: u8,
+    select: bool,
+) {
+    use crate::net::handlers::step;
+    ui.world(move |world| {
+        if let Some(next) = step(world, modal_chain, (spell_id, cast_count)).flatten() {
+            step(world, send_chained, next);
+        }
+        step(world, release_ours, (spell_id, cast_count));
+        if select {
+            step(world, select_now, ());
+        }
+    });
+}
+
+/// The finish's chain test (`0x80551e`-`0x805536`): our record still held names a spell whose column 38 is non-zero and not the running repeat (equal re-arms, never re-casts).
+fn modal_chain(
+    In((spell_id, cast_count)): In<(u32, u8)>,
+    pending: Res<PendingCast>,
+    spells: Option<Res<Spells>>,
+    auto_repeat: Res<AutoRepeatActive>,
+) -> Option<u32> {
+    chain_of(
+        &pending,
+        spells.as_deref(),
+        &auto_repeat,
+        spell_id,
+        cast_count,
+    )
+}
+
+/// [`modal_chain`]'s read: the chained spell of `spell_id`'s held record, if any.
+fn chain_of(
+    pending: &PendingCast,
+    spells: Option<&Spells>,
+    auto_repeat: &AutoRepeatActive,
+    spell_id: u32,
+    cast_count: u8,
+) -> Option<u32> {
+    pending.find(spell_id, cast_count)?;
+    let next = spells?.catalog.get(spell_id)?.modal_next_spell;
+    (next != 0 && Some(next) != auto_repeat.0).then_some(next)
+}
+
+/// The finish's selection update (`0x8055b5`).
+fn select_now(mut ui: ResMut<crate::ui_script::live::UiEvents>) {
+    crate::ui_action::signals::selection(&mut ui);
+}
+
+/// The `modalNextSpell` chain's send at the null target guid, through every rung a press takes; its `UNIT_SPELLCAST_SENT` in the handler's turn (`0x80b556`).
+fn send_chained(
+    In(next): In<u32>,
     mut ladder: CastLadder,
     targeting: CastTargeting,
-    mut r: Reply,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
-    let SessionEvent::SpellGo {
-        caster, spell_id, ..
-    } = ev
-    else {
-        return;
-    };
-    if r.self_guid.0 != Some(caster) {
-        return;
-    }
-    let chained = cast_result(
-        (spell_id, 0, 0),
-        true,
-        None,
-        &mut ladder.ecs,
-        &r.self_guid,
-        &r.index,
-        &r.casting,
-        &mut r.cast_events,
-        ladder.pending.as_mut(),
-        ladder.queued_melee.as_mut(),
-        ladder.cooldowns.as_mut(),
-        ladder.auto_repeat.as_mut(),
-        ladder.spells.as_deref(),
-        &ladder.commands,
-        r.play_seq.next(),
-        &mut *r.ui,
-    );
-    if let Some(next) = chained {
-        let ctx = targeting.context();
-        ladder.send(next, &ctx, CastCommit::Spell);
-        // The chained send's `UNIT_SPELLCAST_SENT`, in this handler's turn (`0x80b556`).
-        ladder.press.defer(&mut r.ui);
-    }
+    let ctx = targeting.context();
+    ladder.send(next, &ctx, CastCommit::Spell);
+    ladder.press.defer(&mut ui);
 }
 
 fn on_spell_start(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
@@ -761,14 +844,16 @@ fn on_spell_go_inner(ev: SessionEvent, l: &mut Lifecycle, sc: &mut Scene, arm: &
         // After the chest arm, the effect loop arms the auto-loot flag (`0x80f780`).
         let display = l.spells.as_deref().and_then(|s| s.catalog.get(spell_id));
         if let (true, Some(d)) = (l.self_guid.0 == Some(caster), display) {
-            crate::ui_loot::arm_on_spell_go(
+            let closed = crate::ui_loot::arm_on_spell_go(
                 &d.effects,
                 &mut arm.loot,
                 &arm.cfg,
                 arm.script.as_deref(),
-                &sc.loot_latch,
+                &mut sc.loot_latch,
                 &l.net,
+                &mut *l.ui,
             );
+            crate::ui_loot::deselect_dead_in_turn(&mut l.ui, closed);
         }
     }
 }
@@ -816,15 +901,6 @@ fn on_spell_failed(
         }
         // Both handlers end the cast through `0x7fecc0` with the packet's reason (`0x809db3`,
         // `0x806bb0`), and finish ours with the selection update (`0x809dc1`, `0x806bbe`).
-        l.ui.cast_edge(CastBarEdge::Failed {
-            caster,
-            spell_id,
-            cast_count,
-            reason,
-        });
-        if l.self_guid.0 == Some(caster) && cast_count != 0 {
-            crate::ui_action::signals::selection(&mut l.ui);
-        }
         spell_failed_other(
             other,
             caster,
@@ -834,11 +910,30 @@ fn on_spell_failed(
             &sc.casting,
             &mut sc.cast_events,
             &l.self_guid,
-            &mut l.pending,
-            &mut l.queued_melee,
             l.play_seq.next(),
         );
+        l.ui.cast_edge(CastBarEdge::Failed {
+            caster,
+            spell_id,
+            cast_count,
+            reason,
+        });
+        // Ours: the finish after the end's listeners (`0x809dc1` -> `0x8054f0`).
+        if l.self_guid.0 == Some(caster) {
+            finish_ours(&mut l.ui, spell_id, cast_count, cast_count != 0);
+        }
     }
+}
+
+/// Our cast's pending record and the queued strike it was, released (`0x8055a2`).
+fn release_ours(
+    In((spell_id, cast_count)): In<(u32, u8)>,
+    mut pending: ResMut<PendingCast>,
+    mut queued_melee: ResMut<QueuedMeleeSpell>,
+) {
+    pending.release(spell_id, cast_count);
+    // The strike's record is the one unlinked (`0x805100`), never a listener's re-queue.
+    queued_melee.clear_record(spell_id, cast_count);
 }
 
 fn on_spell_delayed(In(ev): In<SessionEvent>, mut l: Lifecycle) {
@@ -1294,14 +1389,7 @@ fn put_table(book: &PlayerActions, table: Option<&[ActionButton]>) -> Vec<Action
     set
 }
 
-/// `SMSG_LEARNED_SPELL` (`0x6e7d60`): with our player streamed, `0x6e7b00(spell, slot, 1, 1)`:
-/// the rank below leaves the bar for the new one (`0x5aafd0`), then the registrar `0x542030`
-/// with its live flag set adds the spell to the book (the spellbook feed diffs it; learning
-/// never bars a spell), announces it in chat, flashes its tab, and places a first rank on the
-/// first empty button of its page while the character is under level 11
-/// ([`super::learn_place`]). Before the player streams, the pair is buffered (`0x6dec70`) and
-/// the player's own init replays it as `0x6e7b00(spell, slot, 0, 1)` (`0x6e7f73`): the book
-/// alone, no line, no flash, no button.
+/// `SMSG_LEARNED_SPELL` (`0x6e7d60`): the rank replace (`0x5aafd0`), then the live registrar (`0x542030`); before our player streams, book-only (`0x6dec70`, `0x6e7fc5`).
 ///
 /// Hidden, recipe, companion (#263) and unbooked learns skip tab and bar (`0x54265c`-`0x542856`).
 fn learned_spell(
@@ -1313,14 +1401,14 @@ fn learned_spell(
     learner: Option<Learner>,
     net: &NetCommands,
     summons: &benilla_formats::SummonPropertiesCatalog,
-) {
+) -> Option<u8> {
     debug!("net: learned spell {spell_id}");
     if actions.spells.insert(spell_id) {
         actions.dirty = true;
     }
     let Some(learner) = learner else {
         debug!("net: learned spell {spell_id} before the player: book only");
-        return;
+        return None;
     };
     let packed = spell_id | (u32::from(ACTION_KIND_SPELL) << 24);
     let display = spells.and_then(|s| s.catalog.get(spell_id));
@@ -1334,32 +1422,24 @@ fn learned_spell(
     }
     if let Some(d) = display {
         if d.attributes & ATTR_DO_NOT_DISPLAY != 0 {
-            return;
+            return None;
         }
         if d.attributes & benilla_formats::SPELL_ATTR_IS_TRADESKILL != 0 {
             announce_learn(spell_id, spells, errors);
-            return;
+            return None;
         }
         if d.is_companion(summons) {
-            return;
+            return None;
         }
     }
     announce_learn(spell_id, spells, errors);
     if display.is_some_and(|d| d.attributes_ex4 & ATTR_EX4_NOT_IN_SPELLBOOK != 0) {
-        return;
+        return None;
     }
     tab_flash.0.push(spell_id);
-    if let (Some(spells), Some(display)) = (spells, display) {
-        if learn_place::auto_place_allowed(display, learner.level) {
-            let page = learn_place::auto_place_page(display, learner, &spells.forms);
-            if let Some(slot) = learn_place::first_empty_slot(bar, page) {
-                info!("net: learned spell {spell_id} placed on bar slot {slot} (page {page})");
-                if bar.write_slot(slot, packed, net) {
-                    errors.slot_changed(slot);
-                }
-            }
-        }
-    }
+    let (spells, display) = (spells?, display?);
+    learn_place::auto_place_allowed(display, learner.level)
+        .then(|| learn_place::auto_place_page(display, learner, &spells.forms))
 }
 
 /// Where a learn's writes signal, in its order: a bar slot it wrote (`0x5aae80`) and its line.
@@ -1469,8 +1549,7 @@ fn superceded_spell(
     tab_flash.0.push(new_spell_id);
 }
 
-/// The verdict on our cast: a refusal (`SMSG_CAST_FAILED`, benilla's `SMSG_CAST_RESULT`), or
-/// with `success` our own `SMSG_SPELL_GO` ([`on_own_spell_go`]).
+/// The verdict on our cast: a refusal (`SMSG_CAST_FAILED`, benilla's `SMSG_CAST_RESULT`); the finish, with its `modalNextSpell` chain, is [`finish_ours`].
 fn cast_result(
     (spell_id, cast_count, wire_reason): (u32, u8, u8),
     success: bool,
@@ -1488,11 +1567,9 @@ fn cast_result(
     net: &crate::net::NetCommands,
     seq: u64,
     sink: &mut dyn crate::ui_action::signals::SignalSink,
-) -> Option<u32> {
+    release: bool,
+) {
     debug!("net: cast result — spell {spell_id} success={success} reason={reason:?}");
-    // Is this the reply to our outstanding cast? Read before either arm clears the guard: both
-    // clears are the reference's one.
-    let in_flight = pending.find(spell_id, cast_count).is_some();
     if !success {
         // The cast-failed handler clears the GCD armed at send, and the bit-25 revert below drops a
         // parked record; the spell's own recovery starts at SPELL_GO, which a failed cast never
@@ -1538,11 +1615,11 @@ fn cast_result(
         if *crate::net::CAST_TRACE {
             info!("cast-trace: RECV CAST_RESULT failure — spell {spell_id} reason={reason:?}; fails_bar={fails_our_cast}");
         }
-        // The in-flight guard opens either way. A queued on-next-swing strike dies here too: the
-        // server's melee-slot interrupt (vmangos `Spell::cancel` on the preparing slot) arrives as
-        // a failure.
-        pending.release(spell_id, cast_count);
-        queued_melee.clear_if(spell_id);
+        // A caller without the finish's step releases here; a queued on-next-swing strike dies with the record (the melee-slot interrupt arrives as a failure).
+        if release {
+            pending.release(spell_id, cast_count);
+            queued_melee.clear_if(spell_id);
+        }
         // Our cast died (vmangos never sends `SMSG_SPELL_FAILURE`): end the self avatar's cast
         // state and precast hold, keyed by spell id.
         if let Some(e) = self_e {
@@ -1562,29 +1639,6 @@ fn cast_result(
             });
         }
     }
-    // The `modalNextSpell` chain (the cast-result handler): the reply to our in-flight cast
-    // finishes its slot, then reads column 38 of its spell; non-zero and not the running repeat,
-    // the client casts it at the null target guid. Every hunter shot names 75, Auto Shot.
-    // - It fires on success as well as failure: the reference sends a non-failure straight to the
-    //   block the failure path reaches.
-    // - The slot clears first, or the in-flight rung (our `0x61`) would refuse the chain. vmangos
-    //   sends `SMSG_CAST_RESULT` before `SMSG_SPELL_GO` (`Spell.cpp:3681`, `Spell.cpp:3715`), so
-    //   the guard is still armed here.
-    // - Equal to the running repeat means re-arm, not re-cast, so a second sting never resets the
-    //   swing timer; with no record to refresh, we send nothing.
-    // The chained spell is returned; `on_cast_result` hands it to the ladder in the same call.
-    if in_flight {
-        pending.release(spell_id, cast_count);
-        if let Some(next) = spells
-            .and_then(|s| s.catalog.get(spell_id))
-            .map(|d| d.modal_next_spell)
-            .filter(|&next| next != 0 && Some(next) != auto_repeat.0)
-        {
-            debug!("net: cast result {spell_id} chains modalNextSpell {next}");
-            return Some(next);
-        }
-    }
-    None
 }
 
 /// `SMSG_SPELL_START`: a unit began a non-triggered cast, instants included (`cast_time_ms == 0`).
@@ -1819,11 +1873,21 @@ fn spell_go(
     // A source or dest on a transport not here ends the GO at the pending cast's release: no
     // feed edge, cooldown, swing, latch or visual (`0x80e647`-`0x80e686`).
     let (cooldowns, spells, items, net_commands, pet_bar, spell_mods) = cooldown_ctx;
-    if !transports_here {
-        if self_guid.0 == Some(caster) {
+    // Ours ends in the finish (chain, release, selection), a hidden go in the release alone (`0x80e650`-`0x80e686`, `0x80fe86`-`0x80fea9`).
+    let ours = self_guid.0 == Some(caster);
+    let finish = |ui: &mut crate::ui_script::live::UiEvents,
+                  pending: &mut PendingCast,
+                  queued_melee: &mut QueuedMeleeSpell| {
+        if !ours {
+        } else if cast_flags & 1 != 0 {
             pending.release(spell_id, cast_count);
             queued_melee.clear_if(spell_id);
+        } else {
+            finish_ours(ui, spell_id, cast_count, cast_count != 0);
         }
+    };
+    if !transports_here {
+        finish(ui, pending, queued_melee);
         if pet_bar.has_bar() && pet_bar.spells.pet_guid == caster {
             pending.release(spell_id, cast_count);
         }
@@ -1896,9 +1960,6 @@ fn spell_go(
         if *crate::net::CAST_TRACE {
             info!("cast-trace: RECV SPELL_GO — spell {spell_id} (self); completes_bar={completes_our_cast}");
         }
-        pending.release(spell_id, cast_count);
-        // The queued strike fired on this swing: the queue opens here, like the in-flight finish.
-        queued_melee.clear_if(spell_id);
 
         // The GO-deferred auto-attack start, the complement of [`crate::spell::cast_send`]'s
         // send-time tail: an `AttributesEx2 & 0x100000` spell (the stealth openers and Judgement,
@@ -2019,11 +2080,8 @@ fn spell_go(
         cooldowns.collect(now);
         pet_bar.cooldowns.collect(now);
     }
-    // Our cast's finish runs the selection update last, a hidden go aside (`0x80fe86`-`0x80fe9d`,
-    // `0x8054f0`).
-    if self_guid.0 == Some(caster) && cast_count != 0 && cast_flags & 1 == 0 {
-        crate::ui_action::signals::selection(ui);
-    }
+    // Our cast's finish is the go's last call, after the inserts and the collect (`0x80fe9d`).
+    finish(ui, pending, queued_melee);
     // The end clears the held state of this spell and count alone (`0x7fed81`).
     if let Some(&e) = index.0.get(&caster) {
         let ends_cast = casting
@@ -2114,25 +2172,17 @@ fn spell_failed_other(
     casting: &Query<&Casting>,
     cast_events: &mut MessageWriter<CastEvent>,
     self_guid: &SelfGuid,
-    pending: &mut PendingCast,
-    queued_melee: &mut QueuedMeleeSpell,
     seq: u64,
 ) {
     debug!("net: spell failed (other={other}) {spell_id} by {caster:#x}");
-    // Only the cast the bar shows turns it red "Interrupted" (keyed to `Casting`); the guard opens
-    // either way.
-    if self_guid.0 == Some(caster) {
+    // Only the cast the bar shows turns it red "Interrupted" (keyed to `Casting`).
+    if self_guid.0 == Some(caster) && *crate::net::CAST_TRACE {
         let interrupts_our_cast = index.0.get(&caster).is_some_and(|&e| {
             casting
                 .get(e)
                 .is_ok_and(|c| c.ended_by(spell_id, cast_count))
         });
-        if *crate::net::CAST_TRACE {
-            info!("cast-trace: RECV SPELL_FAILED_OTHER — spell {spell_id} (self); interrupts_bar={interrupts_our_cast}");
-        }
-        pending.release(spell_id, cast_count);
-        // The melee-slot interrupt's other half, beside the failing CAST_RESULT.
-        queued_melee.clear_if(spell_id);
+        info!("cast-trace: RECV SPELL_FAILED_OTHER — spell {spell_id} (self); interrupts_bar={interrupts_our_cast}");
     }
     // The end clears the held state of this spell and count alone (`0x7fed81`).
     if let Some(&e) = index.0.get(&caster) {
@@ -2375,6 +2425,109 @@ mod tests {
     use super::*;
     use crate::spell::learn_place::Learner;
 
+    /// Both of our finishes reach the `modalNextSpell` chain's send through the client's own handlers, with no client data: `SMSG_CAST_FAILED` (`0x808b7f` -> `0x80559a`) and our `SMSG_SPELL_GO` (`0x80fe9d` -> `0x80559a`).
+    #[test]
+    fn the_cast_failure_and_our_go_send_the_chained_spell() {
+        const ME: u64 = 0x10;
+        const BOLT: u32 = 133;
+        const NOVA: u32 = 122;
+        let chained = |ev: fn(u8) -> SessionEvent| {
+            let mut app = crate::game_plugins::schedule_tests::headless_client();
+            let world = app.world_mut();
+            let (tx, rx) = crossbeam_channel::unbounded();
+            world.insert_resource(NetCommands(tx));
+            world.insert_resource(SelfGuid(Some(ME)));
+            let mut spells = Spells::empty_for_tests();
+            spells.catalog = benilla_formats::SpellCatalog::from_displays(
+                [
+                    (
+                        BOLT,
+                        benilla_formats::SpellDisplay {
+                            modal_next_spell: NOVA,
+                            ..Default::default()
+                        },
+                    ),
+                    (NOVA, benilla_formats::SpellDisplay::default()),
+                ]
+                .into_iter()
+                .collect(),
+            );
+            world.insert_resource(spells);
+            world
+                .resource_mut::<PendingCast>()
+                .file(crate::spell::PendingRecord::player(BOLT, 5, ME));
+            crate::net::handlers::dispatch(world, vec![ev(5)]);
+            rx.try_iter().any(|c| {
+                matches!(
+                    c,
+                    crate::net::ClientCommand::CastSpell { spell_id: NOVA, .. }
+                )
+            })
+        };
+        assert!(
+            chained(|count| SessionEvent::CastResult {
+                cast_count: count,
+                spell_id: BOLT,
+                success: false,
+                reason: Some(0x28),
+                arg: None,
+                arg2: None,
+                wire_reason: Some(0x28),
+            }),
+            "the failure's finish chains"
+        );
+        assert!(
+            chained(|count| SessionEvent::SpellGo {
+                caster: ME,
+                cast_count: count,
+                spell_id: BOLT,
+                cast_flags: 0,
+                server_time: 0,
+                hits: vec![],
+                misses: vec![],
+                reflects: vec![],
+                target: None,
+                go_target: None,
+                target_mask: 0,
+                src: None,
+                dest: None,
+                ammo: None,
+                item_caster: None,
+                trajectory: None,
+                dest_counter: 0,
+                points: vec![],
+            }),
+            "our go's finish chains"
+        );
+    }
+
+    /// The finish's release unlinks the failed record alone (`0x8055a2` -> `0x805100`): a strike a failure listener queued again, under a new count, stays queued.
+    #[test]
+    fn the_release_keeps_a_strike_a_listener_queued_again() {
+        use bevy::ecs::system::RunSystemOnce;
+        const HEROIC_STRIKE: u32 = 78;
+        let mut world = World::new();
+        let mut pending = PendingCast::default();
+        pending.file(crate::spell::PendingRecord::player(HEROIC_STRIKE, 1, 0));
+        pending.file(crate::spell::PendingRecord::player(HEROIC_STRIKE, 2, 0));
+        world.insert_resource(pending);
+        let mut queued = QueuedMeleeSpell::default();
+        queued.arm(HEROIC_STRIKE, 2);
+        world.insert_resource(queued);
+        world
+            .run_system_once_with(release_ours, (HEROIC_STRIKE, 1))
+            .unwrap();
+        assert_eq!(world.resource::<QueuedMeleeSpell>().count(), Some(2));
+        assert!(world
+            .resource::<PendingCast>()
+            .find(HEROIC_STRIKE, 2)
+            .is_some());
+        world
+            .run_system_once_with(release_ours, (HEROIC_STRIKE, 2))
+            .unwrap();
+        assert_eq!(world.resource::<QueuedMeleeSpell>().current(), None);
+    }
+
     /// A point with no transport is its own world place; one on a transport here is placed
     /// through it and keeps its local point; one on a transport not here resolves to nothing
     /// (`0x9ab810`, `0x7fd830`).
@@ -2483,6 +2636,10 @@ mod tests {
 
     impl crate::ui_action::signals::SignalSink for LearnOrder {
         fn signal(&mut self, _: &'static str) {}
+
+        fn fire(&mut self, _: &'static str, _: Vec<benilla_ui::script::ScriptValue>) {}
+
+        fn unlock_item(&mut self, _: u64) {}
 
         fn line(&mut self, line: UiError) {
             self.0.push(line.key.to_string());
@@ -2766,6 +2923,33 @@ mod tests {
         );
     }
 
+    /// [`learned_spell`] then its first-rank placement, as the handler runs it after the book update.
+    #[allow(clippy::too_many_arguments)]
+    fn learn_and_place(
+        spell_id: u32,
+        (actions, bar): (&mut PlayerActions, &mut crate::ui_action::ActionSlots),
+        spells: Option<&Spells>,
+        errors: &mut crate::ui_action::signals::LinesSeen,
+        tab_flash: &mut LearnedInTab,
+        learner: Option<Learner>,
+        net: &NetCommands,
+        summons: &benilla_formats::SummonPropertiesCatalog,
+    ) {
+        let page = learned_spell(
+            spell_id,
+            (actions, &mut *bar),
+            spells,
+            errors,
+            tab_flash,
+            learner,
+            net,
+            summons,
+        );
+        if let Some(page) = page {
+            place_first_rank(bar, spell_id, page, net);
+        }
+    }
+
     /// What the sender saw, as `(wire slot, packed)`.
     fn sent(rx: &crossbeam_channel::Receiver<crate::net::ClientCommand>) -> Vec<(u8, u32)> {
         rx.try_iter()
@@ -2819,7 +3003,7 @@ mod tests {
         let mut errors = crate::ui_action::signals::LinesSeen::default();
         let mut flash = LearnedInTab::default();
 
-        learned_spell(
+        learn_and_place(
             133,
             (&mut actions, &mut bar),
             Some(&spells),
@@ -2840,7 +3024,7 @@ mod tests {
 
         // The passive gate: nothing placed, nothing sent.
         actions.dirty = false;
-        learned_spell(
+        learn_and_place(
             168,
             (&mut actions, &mut bar),
             Some(&spells),
@@ -2855,7 +3039,7 @@ mod tests {
 
         // Rank 2: the rank-1 button becomes rank 2 (`0x5aafd0` runs before the registrar), and
         // the rank gate (`< 2`) places nothing more.
-        learned_spell(
+        learn_and_place(
             143,
             (&mut actions, &mut bar),
             Some(&spells),
@@ -2872,7 +3056,7 @@ mod tests {
         // At level 11 the level gate closes: the book grows, the bar does not.
         actions.spells.clear();
         bar.buttons.remove(&1);
-        learned_spell(
+        learn_and_place(
             133,
             (&mut actions, &mut bar),
             Some(&spells),
@@ -2964,7 +3148,7 @@ mod tests {
             let mut bar = crate::ui_action::ActionSlots::default();
             let mut errors = crate::ui_action::signals::LinesSeen::default();
             let mut flash = LearnedInTab::default();
-            learned_spell(
+            learn_and_place(
                 id,
                 (&mut actions, &mut bar),
                 Some(&spells),
@@ -2981,8 +3165,7 @@ mod tests {
         }
     }
 
-    /// Before our player streams, the pair is buffered and replayed with the live flag clear
-    /// (`0x6e7f73`): the book only.
+    /// Before our player streams, the pair is buffered and replayed with the live flag clear (`0x6e7fc5`): the book only.
     #[test]
     fn a_learn_before_the_player_is_book_only() {
         let spells = catalog_with(
@@ -3079,6 +3262,7 @@ mod tests {
             .init_resource::<Cooldowns>()
             .init_resource::<crate::spell::SpellModifiers>()
             .init_resource::<crate::ui_pet::PetBar>()
+            .init_resource::<AutoRepeatActive>()
             .init_resource::<crate::items::Items>();
 
         // The self player mid-cast on Fireball (133): the bar is up, `Casting{133}` marks it.
@@ -3188,8 +3372,7 @@ mod tests {
             vec![go(6136), go(133)]
         );
 
-        // A dest on a transport not here (`0x80e647`): the pending cast is released, the cast
-        // state stays, and no feed edge.
+        // A dest on a transport not here (`0x80e647`): the finish releases the pending cast (`0x80e666`), the cast state stays, and no feed edge.
         app.world_mut().entity_mut(self_e).insert(Casting {
             spell_id: 10,
             cast_count: 0,
@@ -3206,6 +3389,8 @@ mod tests {
                 .len(),
             2
         );
+        assert_eq!(app.world().resource::<PendingCast>().committed(), Some(10));
+        crate::ui_script::live::fire_handler_events(app.world_mut());
         assert_eq!(app.world().resource::<PendingCast>().committed(), None);
         // Held, but its pending cast is no longer listed (`0x805f30`).
         assert_eq!(
@@ -3383,6 +3568,7 @@ mod tests {
                             &crate::net::NetCommands(tx.clone()),
                             1,
                             &mut Vec::new(),
+                            true,
                         );
                     },
                 )
@@ -3868,7 +4054,6 @@ mod tests {
             .init_resource::<GuidIndex>()
             .init_resource::<SelfGuid>()
             .init_resource::<crate::ui_action::RefusalsSeen>()
-            .init_resource::<crate::ui_action::UiErrorKeys>()
             .init_resource::<crate::ui_script::live::UiEvents>()
             .init_resource::<PendingCast>()
             .init_resource::<QueuedMeleeSpell>()
@@ -3924,6 +4109,7 @@ mod tests {
                             &net,
                             1,
                             &mut Vec::new(),
+                            true,
                         );
                     },
                 )
@@ -4258,17 +4444,9 @@ mod tests {
             "somebody else's Backstab is not our attack-start"
         );
     }
-    /// The `modalNextSpell` chain (the cast-result handler):
-    /// - a successful sting chains Auto Shot;
-    /// - a failed one does too;
-    /// - the in-flight guard clears first, or the in-flight rung would refuse the chain;
-    /// - Auto Shot already running sends nothing;
-    /// - a reply for a spell not in flight chains nothing.
+    /// The finish's `modalNextSpell` chain (`0x80551e`-`0x80559a`), the same for a go and a failure: a sting chains Auto Shot with its record still held, a running Auto Shot sends nothing, a reply for a spell not in flight chains nothing.
     #[test]
     fn a_hunter_shots_cast_result_chains_auto_shot_exactly_once() {
-        use crate::net::{Guid, SelfPlayer};
-        use bevy::ecs::system::RunSystemOnce;
-
         const SERPENT_STING: u32 = 1978;
         const AUTO_SHOT: u32 = 75;
 
@@ -4311,102 +4489,45 @@ mod tests {
             radii: Default::default(),
         };
 
-        // One CAST_RESULT for `spell_id`, with `in_flight` outstanding and `running` the live
-        // repeat. Returns (what the reply chains, whether the guard is still armed).
-        let fire = |spell_id: u32, success: bool, in_flight: Option<u32>, running: Option<u32>| {
-            let mut app = App::new();
-            app.add_message::<CastEvent>()
-                .init_resource::<GuidIndex>()
-                .init_resource::<SelfGuid>()
-                .init_resource::<crate::ui_action::RefusalsSeen>()
-                .init_resource::<crate::ui_action::UiErrorKeys>()
-                .init_resource::<crate::ui_action::UiErrorKeys>()
-                .init_resource::<crate::ui_script::live::UiEvents>()
-                .init_resource::<PendingCast>()
-                .init_resource::<QueuedMeleeSpell>()
-                .init_resource::<Cooldowns>()
-                .init_resource::<crate::spell::SpellModifiers>()
-                .init_resource::<AutoRepeatActive>();
-            let self_e = app.world_mut().spawn((Guid(10), SelfPlayer)).id();
-            app.world_mut()
-                .resource_mut::<GuidIndex>()
-                .0
-                .insert(10, self_e);
-            app.world_mut().resource_mut::<SelfGuid>().0 = Some(10);
-            app.world_mut().resource_mut::<AutoRepeatActive>().0 = running;
+        // The finish's test for `spell_id`'s record, with `in_flight` held and `running` the live repeat: what it chains.
+        let fire = |spell_id: u32, in_flight: Option<u32>, running: Option<u32>| {
+            let mut pending = PendingCast::default();
             if let Some(id) = in_flight {
-                app.world_mut()
-                    .resource_mut::<PendingCast>()
-                    // The answer names the record's spell and count 0.
-                    .arm(id, 0);
+                // The answer names the record's spell and count 0.
+                pending.arm(id, 0);
             }
-            let (tx, _rx) = crossbeam_channel::unbounded();
-            let cat = spells();
-            let chained = app
-                .world_mut()
-                .run_system_once(
-                    move |mut commands: Commands,
-                          self_guid: Res<SelfGuid>,
-                          index: Res<GuidIndex>,
-                          casting: Query<&Casting>,
-                          mut cast_events: MessageWriter<CastEvent>,
-                          mut pending: ResMut<PendingCast>,
-                          mut queued_melee: ResMut<QueuedMeleeSpell>,
-                          mut cooldowns: ResMut<Cooldowns>,
-                          mut auto_repeat: ResMut<AutoRepeatActive>| {
-                        let net = crate::net::NetCommands(tx.clone());
-                        cast_result(
-                            (spell_id, 0, 0),
-                            success,
-                            if success { None } else { Some(0x1b) },
-                            &mut commands,
-                            &self_guid,
-                            &index,
-                            &casting,
-                            &mut cast_events,
-                            &mut pending,
-                            &mut queued_melee,
-                            &mut cooldowns,
-                            &mut auto_repeat,
-                            Some(&cat),
-                            &net,
-                            1,
-                            &mut Vec::new(),
-                        )
-                    },
-                )
-                .unwrap();
-            let still_armed = app.world().resource::<PendingCast>().in_flight();
-            (chained, still_armed)
+            let chained = chain_of(
+                &pending,
+                Some(&spells()),
+                &AutoRepeatActive(running),
+                spell_id,
+                0,
+            );
+            // The chain reads the record still held: its release follows (`0x80559a`, `0x8055a2`).
+            (chained, pending.in_flight())
         };
 
         // The ordinary case: the sting lands, and Auto Shot follows by itself.
         assert_eq!(
-            fire(SERPENT_STING, true, Some(SERPENT_STING), None),
-            (Some(AUTO_SHOT), false),
-            "a successful sting chains Auto Shot, and clears the in-flight guard first"
-        );
-        // A failed one does too: both results converge on the same block.
-        assert_eq!(
-            fire(SERPENT_STING, false, Some(SERPENT_STING), None).0,
-            Some(AUTO_SHOT),
-            "a FAILED sting chains it as well"
+            fire(SERPENT_STING, Some(SERPENT_STING), None),
+            (Some(AUTO_SHOT), true),
+            "a sting chains Auto Shot while its record is still held"
         );
         // Already shooting: re-arm, never re-cast.
         assert_eq!(
-            fire(SERPENT_STING, true, Some(SERPENT_STING), Some(AUTO_SHOT)).0,
+            fire(SERPENT_STING, Some(SERPENT_STING), Some(AUTO_SHOT)).0,
             None,
             "Auto Shot already running: the equal branch sends nothing"
         );
         // Auto Shot's own replies terminate the chain.
         assert_eq!(
-            fire(AUTO_SHOT, true, Some(AUTO_SHOT), Some(AUTO_SHOT)).0,
+            fire(AUTO_SHOT, Some(AUTO_SHOT), Some(AUTO_SHOT)).0,
             None,
             "Auto Shot's own column 38 is 0 — no second hop"
         );
         // Not our in-flight cast (a proc's result, a stale reply): not ours to chain from.
         assert_eq!(
-            fire(SERPENT_STING, true, Some(133), None).0,
+            fire(SERPENT_STING, Some(133), None).0,
             None,
             "a reply for a spell we do not have in flight chains nothing"
         );
@@ -4744,6 +4865,7 @@ mod tests {
                             &crate::net::NetCommands(tx.clone()),
                             1,
                             &mut Vec::new(),
+                            true,
                         );
                     },
                 )

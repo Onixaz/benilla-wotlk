@@ -371,6 +371,18 @@ impl ChatLog {
             .count()
     }
 
+    /// The kind and text of every event line waiting to render, in order.
+    #[cfg(test)]
+    pub(crate) fn pending_events(&self) -> Vec<(Option<super::ChatEventKind>, String)> {
+        self.pending
+            .iter()
+            .filter_map(|p| match p {
+                Pending::Event(e) => Some((e.kind, e.text.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// The text of every composed line waiting to render, in order.
     #[cfg(test)]
     pub(crate) fn pending_lines(&self) -> Vec<String> {

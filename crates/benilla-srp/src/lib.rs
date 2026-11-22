@@ -1,10 +1,12 @@
-//! SRP6 client and world-header crypto for 1.12.1 (build 5875): the client side of the realmd
-//! handshake and the world server's header obfuscation, with 3.3.5a's header cipher in
-//! [`wotlk_header`]. Every byte array is little endian, as on the wire.
+//! SRP6 client and world-header crypto: the client side of the realmd handshake, and 3.3.5a's
+//! world header cipher in [`wotlk_header`]. [`vanilla_header`] holds the session proof seed 3.3.5a
+//! sends and 1.12.1's header cipher, which no 3.3.5a session uses. Every byte array is little
+//! endian, as on the wire.
 //!
 //! # Encoding-unambiguous handshakes
 //!
-//! The 1.12.1 client hashes `A`, `B`, `K`, the salt and `M1` at their declared widths, zero-padded;
+//! The 3.3.5a client hashes `A`, `B`, `K`, the salt and `M1` at their declared widths, zero-padded
+//! (0x9a83e0 writes `A` and `S` to 32 bytes before hashing them and hashes `K` as 40);
 //! vmangos (`SHA1::Generator::UpdateData(BigNumber const&)`) and cmangos
 //! (`Sha1Hash::UpdateBigNumbers`) drop high-order zero bytes, so a value with one hashes
 //! differently and realmd answers `WOW_FAIL_UNKNOWN_ACCOUNT` (0x04) to a correct password. The low

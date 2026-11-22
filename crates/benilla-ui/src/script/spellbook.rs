@@ -91,11 +91,7 @@ impl SpellBookState {
     }
 }
 
-/// The player's book as the last book update built it (`0x53ca70`): the sorted slots and tabs
-/// (`s_spellList`), the highest-rank fold beside them (`0xbe5d88`) and the tracking spells it
-/// sorts (`0x53cab5`). Each slot's record fields are the record's; its texture, selected state and
-/// cooldown are read at the call ([`super::LiveState::book_spell_texture`],
-/// [`super::LiveState::spell_selected`], [`super::LiveState::spell_cooldown`]).
+/// The player's book as the last update built it (`0x53ca70`): slots, tabs, the rank fold (`0xbe5d88`), tracking spells (`0x53cab2`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PlayerBook {
     pub book: SpellBookState,

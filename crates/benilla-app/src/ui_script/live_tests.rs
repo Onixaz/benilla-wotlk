@@ -337,11 +337,6 @@ const CALLS_NO_LUA: &[(&str, &str, &str)] = &[
         "reads the money line's global strings off the VM",
     ),
     (
-        "ui_macro/mod.rs",
-        "rebind_macro_spells",
-        "reads the macro bodies and writes their bound spells into the model",
-    ),
-    (
         "combat_log/mod.rs",
         "log_deaths",
         "reads the combat-text unit and the focus off the model through `LogCtx`",

@@ -1,0 +1,46 @@
+# docs/MAP.md after every land: main regenerates it with scripts/genmap.sh, and a changed map opens
+# or updates one pull request from the `ci/map` branch, rebuilt from main each run, so it never
+# conflicts. Feature pull requests leave the map alone. A run on a current map closes a stale one.
+name: Regenerate MAP.md
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: map
+  cancel-in-progress: true
+
+jobs:
+  map:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: genmap
+        run: scripts/genmap.sh
+      - name: Open, update or close the map pull request
+        run: |
+          open=$(gh pr list -R "$REPO" --head ci/map --state open --json number -q '.[].number')
+          if git diff --quiet -- docs/MAP.md; then
+            echo "docs/MAP.md is current"
+            if [ -n "$open" ]; then gh pr close "$open" -R "$REPO" --delete-branch; fi
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C ci/map
+          git commit -q -m "Regenerate docs/MAP.md" -m "scripts/genmap.sh at ${GITHUB_SHA}." -- docs/MAP.md
+          git push --force origin ci/map
+          if [ -z "$open" ]; then
+            gh pr create -R "$REPO" --base main --head ci/map --title "Regenerate docs/MAP.md" \
+              --body "\`scripts/genmap.sh\` on main after a land. Generated; merge as is. The branch is rebuilt from main on every land until this merges."
+          fi

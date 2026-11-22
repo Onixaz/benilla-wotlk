@@ -158,7 +158,7 @@ fn a_pending_record_holds_the_sort_until_its_answer() {
     assert_eq!(ui.names(), ["COMPANION_UPDATE"]);
 }
 
-/// A live learn with its record cached shows the learn line, then the update's `COMPANION_UPDATE`, then `COMPANION_LEARNED` (`0x5427be`); with the record asked it waits for the answer, which runs the same three (`0x53ebc0`). An unlearn updates and fires `COMPANION_UNLEARNED` (`0x53fad0`).
+/// A live learn with its record cached shows the learn line, then the update's `COMPANION_UPDATE`, then `COMPANION_LEARNED` (`0x5427be`); with the record asked it waits for the answer, which runs the same three, the last two after the line's listeners (`0x53ebc0`). An unlearn updates and fires `COMPANION_UNLEARNED` (`0x53fad0`).
 #[test]
 fn a_live_learn_and_unlearn_fire_from_their_handlers() {
     let (catalog, summons, commands) = (catalog(), summons(), commands());
@@ -185,10 +185,8 @@ fn a_live_learn_and_unlearn_fire_from_their_handlers() {
     let _ = add_known(&mut lists, 10, true, None, &mut cx);
     assert!(cx.ui.is_empty(), "the record is asked first");
     record_answered(&mut lists, 700, Some("Zebra Cat"), &mut cx);
-    assert_eq!(
-        cx.ui.names(),
-        ["<world>", "COMPANION_UPDATE", "COMPANION_LEARNED"]
-    );
+    // The answer's line, then its update and `COMPANION_LEARNED` as a step after the line's listeners (`0x5427be`).
+    assert_eq!(cx.ui.names(), ["<world>", "<world>"]);
     assert_eq!(lists.list(CompanionType::Critter), [11, 10]);
     let mut ui = UiEvents::default();
     cx.ui = &mut ui;
@@ -196,6 +194,36 @@ fn a_live_learn_and_unlearn_fire_from_their_handlers() {
     remove_known(&mut lists, 133, &mut cx);
     assert_eq!(cx.ui.names(), ["COMPANION_UPDATE", "COMPANION_UNLEARNED"]);
     assert_eq!(lists.list(CompanionType::Critter), [10]);
+}
+
+/// Each record callback ends with its `COMPANION_LEARNED` (`0x53ec20`) before the next one on the same entry runs: the later callback is a step after that signal's listeners.
+#[test]
+fn a_learns_later_callbacks_wait_for_its_signal() {
+    let mut world = World::new();
+    let mut spells = Spells::empty_for_tests();
+    spells.catalog = catalog();
+    world.insert_resource(spells);
+    world.insert_resource(SummonSlots(summons()));
+    world.insert_resource(names_with(None));
+    world.insert_resource(commands());
+    world.init_resource::<UiEvents>();
+    world.insert_resource(CompanionLists {
+        lists: [vec![10], Vec::new()],
+        pending: vec![(700, false)],
+        ..CompanionLists::default()
+    });
+    learned_after_line(&mut world, 700, "Zebra Cat".into());
+    assert_eq!(
+        world.resource::<UiEvents>().names(),
+        ["COMPANION_LEARNED", "<world>"]
+    );
+    assert_eq!(
+        world.resource::<CompanionLists>().pending,
+        [(700, false)],
+        "the later callback waits for the signal's listeners"
+    );
+    crate::ui_script::live::fire_handler_events(&mut world);
+    assert!(world.resource::<CompanionLists>().pending.is_empty());
 }
 
 fn critter_guid(entry: u32) -> u64 {

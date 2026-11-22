@@ -49,6 +49,14 @@ pub(crate) struct LearnedInTab(pub(crate) Vec<u32>);
 #[derive(Resource, Default)]
 pub(crate) struct SpellBook {
     pub(crate) live: Arc<PlayerBook>,
+    /// The dispel types the learns registered (`0xbe8e34`, appended at `0x542170`), which a `RAID`
+    /// aura walk reads: an unlearn keeps its type until the clear at our object's init
+    /// (`0x6e7f9d` -> `0x53ec40`).
+    pub(crate) dispel_types: Vec<i32>,
+    /// The dispel mask a learned steal spell registered (`0xbe5d68`), 0 for none: a spell whose
+    /// first effect steals a buff (126) from an enemy (implicit target 6) sets its misc value's
+    /// class mask (`0x542222`-`0x542270`), kept until the same clear (`0x53ee50`).
+    pub(crate) steal_mask: u32,
     /// The skill line behind each tab, in order, which `LEARNED_SPELL_IN_TAB` indexes.
     tab_lines: Vec<u32>,
     /// Our race and class, from our object's init on, which the General collapse reads.
@@ -64,14 +72,13 @@ pub(crate) struct BookInputs<'a> {
 }
 
 impl SpellBook {
-    /// The book update (`0x53ca70`) with its re-sort and its school-mask rebuild, as the learn,
-    /// the removal and our object's init run it: the book rebuilt, the masks (`0x53cd48`), then
-    /// `SPELLS_CHANGED` (`0x53ceae`).
+    /// The book update (`0x53ca70`): the book, the masks (`0x53cd48`), the macro pass when `macros` (`0x53cea3`), then `SPELLS_CHANGED` (`0x53ceae`).
     pub(crate) fn update(
         &mut self,
         inputs: &BookInputs,
         schools: &mut crate::ui_cast::InterruptSchools,
         ui: &mut UiEvents,
+        macros: bool,
     ) {
         if let Some(spells) = inputs.spells {
             let (race, class) = self.race_class;
@@ -91,8 +98,20 @@ impl SpellBook {
             );
             self.live = Arc::new(PlayerBook::new(book, tracking));
             self.tab_lines = tab_lines;
+            // Each known spell passed the registrar, which appends a type it lacks (`0x5421a0`).
+            for t in crate::ui_aura::dispel_types(inputs.known, &spells.catalog) {
+                if !self.dispel_types.contains(&t) {
+                    self.dispel_types.push(t);
+                }
+            }
+            if let Some(mask) = crate::ui_aura::steal_mask(inputs.known, &spells.catalog) {
+                self.steal_mask = mask;
+            }
         }
         crate::ui_cast::book_updated(schools, inputs.known, inputs.spells);
+        if macros {
+            ui.world(crate::ui_macro::book_rebind);
+        }
         ui.fire("SPELLS_CHANGED", Vec::new());
     }
 
@@ -129,13 +148,29 @@ impl SpellBook {
         }
     }
 
+    /// The book's clear at our object's init empties the dispel types and the steal mask
+    /// (`0x6e7f9d` -> `0x53ec40`).
+    pub(crate) fn clear_registered(&mut self) {
+        self.dispel_types.clear();
+        self.steal_mask = 0;
+    }
+
+    /// An empty book knowing `tracking`, for a test.
+    #[cfg(test)]
+    pub(crate) fn with_tracking(tracking: Vec<benilla_ui::script::TrackingSpell>) -> Self {
+        Self {
+            live: Arc::new(PlayerBook::new(SpellBookState::default(), tracking)),
+            ..Default::default()
+        }
+    }
+
     /// Our object's race and class, set by its init before its book update (`0x6e7f50`).
     pub(crate) fn set_race_class(&mut self, race: u8, class: u8) {
         self.race_class = (race, class);
     }
 }
 
-/// The book's known tracking spells in display order (`0x53cab5`, filled by `0x7fdf60`).
+/// The book's known tracking spells in display order (`0x53cab2`, filled by `0x7fdf60`).
 fn tracking_of(
     book: &SpellBookState,
     catalog: &SpellCatalog,

@@ -259,7 +259,22 @@ pub(super) struct FailArgs<'a> {
     pub(super) totems: Option<&'a TotemCategoryCatalog>,
     /// `PowerDisplay.dbc`, for `0x4d`.
     pub(super) power_displays: Option<&'a benilla_formats::PowerDisplayCatalog>,
+    /// Our own power type (`UNIT_FIELD_BYTES_0` byte 3, `0x808990`), for `0x02`; `None` with no player.
+    pub(super) own_power: Option<u8>,
+    /// The casting item's name, else the spell's (`0x808a0a`-`0x808a66`), for `0xb6`.
+    pub(super) item_name: Option<&'a str>,
 }
+
+/// The power tokens by power type (`0x7fe4b0`); a type past 6 has none.
+const POWER_TOKENS: [&str; 7] = [
+    "MANA",
+    "RAGE",
+    "FOCUS",
+    "ENERGY",
+    "HAPPINESS",
+    "RUNES",
+    "RUNIC_POWER",
+];
 
 /// What an argument arm produced, and when nothing, which exit the reference takes: every arm but
 /// `0x56` declines to the shared default, which still displays the template, while `0x56` spends
@@ -461,8 +476,8 @@ pub(super) fn cast_fail_text(
             // Health takes `0x123`, the rest a per-power table entry, the same five ids as the
             // player's, so [`power_keys`] serves both.
             0x4D => return no_power(),
-            // `0x8059f5`.
-            CUSTOM_ERROR => return custom_error(args.arg, &get_text),
+            // The pet's custom error fills its buffer and shows nothing (`0x8059f5` -> `0x80581c`).
+            CUSTOM_ERROR => return None,
             // The pet sends `0x01`, `0x02`, `0x09`, `0x18`, `0x28`, `0x41` and `0x8e` to its
             // generic arm, so it never says those lines. `0x17` goes there too and shows nothing
             // only because 1.12 ships no `SPELL_FAILED_DONT_REPORT`. `0x56`'s pet arm (errorId
@@ -472,10 +487,10 @@ pub(super) fn cast_fail_text(
         // The player's overrides.
         Caster::Player => match reason {
             0x01 => return get_display("ERR_SPELL_FAILED_ALREADY_AT_FULL_HEALTH"),
+            // 12340's 4 (`0x808982`): our own power type's token; no player, a type past 6 or an empty token fails the cast with no line (`0x808984`, `0x808997`, `0x8089b5` -> `0x8086ff`).
             0x02 => {
+                let name = full_power_noun(args.own_power, get)?;
                 let t = get_display("ERR_SPELL_FAILED_ALREADY_AT_FULL_POWER_S")?;
-                let power = spell.map_or(0, |d| d.power_type);
-                let name = get_text(power_keys(power).1).unwrap_or_default();
                 // The reference puts only the power noun in the argText buffer: the log reads the
                 // bare word.
                 return Some(CastFailLine {
@@ -522,6 +537,26 @@ pub(super) fn cast_fail_text(
     }
     let text = raw?;
     let line = CastFailLine::passthrough;
+    // 12340's 176 and 181, the player's arms (`0x8089f3`, `0x808acd`): the template printed with the casting item's name, and with the first word as a number.
+    if caster == Caster::Player {
+        match reason {
+            UNIQUE_GLYPH => {
+                let name = args
+                    .item_name
+                    .or(spell.map(|d| d.name.as_str()))
+                    .unwrap_or_default();
+                return Some(line(text.replace("%s", name)));
+            }
+            FISHING_TOO_LOW => {
+                let word = args.arg.map_or(-1, |w| w as i32);
+                return Some(line(benilla_ui::strings::fill(
+                    &text,
+                    &[benilla_ui::strings::Arg::D(i64::from(word))],
+                )));
+            }
+            _ => {}
+        }
+    }
     // The argument arms.
     match args.fill(caster, reason, spell) {
         Fill::Filled(name) => return Some(line(text.replace("%s", &name))),
@@ -532,8 +567,34 @@ pub(super) fn cast_fail_text(
     Some(line(strip_tokens(&text)))
 }
 
+/// Whether the player's display takes its silent exit (`0x8086ff`): no line and no log, and the cast ends as `DONT_REPORT` (`0x808705` -> `0x8055c0`); arms 4 (`0x808984`, `0x808997`, `0x8089b5`), 94 (`0x80885b`, `0x8088d9`) and 130 (`0x808723`).
+pub(super) fn exits_quietly(
+    reason: u8,
+    spell: Option<&SpellDisplay>,
+    args: FailArgs<'_>,
+    get: &dyn Fn(&str) -> Option<String>,
+) -> bool {
+    match reason {
+        0x02 => full_power_noun(args.own_power, get).is_none(),
+        0x56 | 0x9C => matches!(args.fill(Caster::Player, reason, spell), Fill::Nothing),
+        _ => false,
+    }
+}
+
+/// Arm 4's power noun: our power type's token, `None` with no player, a type past 6 or an empty token (`0x808984`, `0x808997`, `0x8089b5`, `0x8089be`).
+fn full_power_noun(own_power: Option<u8>, get: &dyn Fn(&str) -> Option<String>) -> Option<String> {
+    let power = own_power.filter(|&p| p <= 6)?;
+    get(POWER_TOKENS[usize::from(power)]).filter(|s| !s.is_empty())
+}
+
 /// 12340's `SPELL_FAILED_CUSTOM_ERROR` (wire 172) in the shared numbering.
 pub(crate) const CUSTOM_ERROR: u8 = 0xB2;
+
+/// 12340's `SPELL_FAILED_UNIQUE_GLYPH` (wire 176) in the shared numbering.
+const UNIQUE_GLYPH: u8 = 0xB6;
+
+/// 12340's `SPELL_FAILED_FISHING_TOO_LOW` (wire 181) in the shared numbering.
+const FISHING_TOO_LOW: u8 = 0xBB;
 
 /// A spell that teaches the pet: `Effect[0]` 57, or 36 on implicit target 5 (`0x808481`).
 fn teaches_pet(d: &SpellDisplay) -> bool {
@@ -954,11 +1015,93 @@ mod tests {
         );
         m.insert("RAGE", "Rage");
         let g = getter(&m);
-        let rage = spell(1, 0, 0);
-        let line =
-            cast_fail_text(Caster::Player, 0x02, Some(&rage), FailArgs::default(), &g).unwrap();
+        // The spell costs mana; our own power type is rage (`0x808990`).
+        let mana = spell(0, 0, 0);
+        let ours = |p| FailArgs {
+            own_power: Some(p),
+            ..FailArgs::default()
+        };
+        let line = cast_fail_text(Caster::Player, 0x02, Some(&mana), ours(1), &g).unwrap();
         assert_eq!(line.text, "You are already at full Rage.");
         assert_eq!(line.logged(), "Rage");
+    }
+
+    /// 12340's 4 (`0x808982`): runic power is type 6's token; no player or a type past 6 shows nothing (`0x808997` -> `0x8086ff`).
+    #[test]
+    fn full_power_names_our_power_through_the_seven_tokens() {
+        let mut m = gs();
+        m.insert(
+            "ERR_SPELL_FAILED_ALREADY_AT_FULL_POWER_S",
+            "You are already at full %s.",
+        );
+        m.insert("RUNIC_POWER", "Runic Power");
+        let g = getter(&m);
+        let at = |p: Option<u8>| {
+            cast_fail_text(
+                Caster::Player,
+                0x02,
+                None,
+                FailArgs {
+                    own_power: p,
+                    ..FailArgs::default()
+                },
+                &g,
+            )
+            .map(|l| l.text)
+        };
+        assert_eq!(
+            at(Some(6)).as_deref(),
+            Some("You are already at full Runic Power.")
+        );
+        assert_eq!(at(Some(7)), None);
+        assert_eq!(at(None), None);
+        // An empty token shows nothing and takes the silent exit (`0x8089be` -> `0x8086ff`).
+        let mut empty = m.clone();
+        empty.insert("RUNIC_POWER", "");
+        let g = getter(&empty);
+        let args = FailArgs {
+            own_power: Some(6),
+            ..FailArgs::default()
+        };
+        assert!(cast_fail_text(Caster::Player, 0x02, None, args, &g).is_none());
+        assert!(exits_quietly(0x02, None, args, &g));
+    }
+
+    /// 12340's 176 (`0x8089f3`) names the casting item, else the spell; 181 (`0x808acd`) prints the first word as a number.
+    #[test]
+    fn a_unique_glyph_names_the_item_and_fishing_prints_its_word() {
+        let mut m = gs();
+        m.insert(
+            "SPELL_FAILED_UNIQUE_GLYPH",
+            "%s: That glyph is already inscribed.",
+        );
+        m.insert("SPELL_FAILED_FISHING_TOO_LOW", "Requires Fishing %d");
+        let g = getter(&m);
+        let mut glyph = spell(0, 0, 0);
+        glyph.name = "Glyph of Fire".into();
+        let item = FailArgs {
+            item_name: Some("Glyph of Fireball"),
+            ..FailArgs::default()
+        };
+        let text = |reason, d: Option<&SpellDisplay>, args| {
+            cast_fail_text(Caster::Player, reason, d, args, &g).map(|l| l.text)
+        };
+        assert_eq!(
+            text(UNIQUE_GLYPH, Some(&glyph), item).as_deref(),
+            Some("Glyph of Fireball: That glyph is already inscribed.")
+        );
+        assert_eq!(
+            text(UNIQUE_GLYPH, Some(&glyph), FailArgs::default()).as_deref(),
+            Some("Glyph of Fire: That glyph is already inscribed.")
+        );
+        let word = FailArgs {
+            arg: Some(225),
+            ..FailArgs::default()
+        };
+        assert_eq!(
+            text(FISHING_TOO_LOW, None, word).as_deref(),
+            Some("Requires Fishing 225")
+        );
     }
 
     fn forms<const N: usize>(
@@ -1266,6 +1409,8 @@ mod tests {
             forms: Some(&forms),
             totems: Some(&totems),
             power_displays: None,
+            own_power: None,
+            item_name: None,
         };
         // `TOTEM_CATEGORY` names the tool category: 165 is the Mining Pick. The pet's table has no
         // such arm, and a word with no row shows nothing.
@@ -1398,8 +1543,7 @@ mod tests {
         );
     }
 
-    /// `SPELL_FAILED_CUSTOM_ERROR` (wire 172) names its line by the word: Fire Nova's id 83 on
-    /// both handlers, never logged; a missing word and an id with no plain row show nothing.
+    /// `SPELL_FAILED_CUSTOM_ERROR` (wire 172) names its line by the word on the player's handler, never logged, a missing word or an id with no plain row showing nothing; the pet's handler shows nothing (`0x8059f5` -> `0x80581c`).
     #[test]
     fn a_custom_refusal_shows_the_row_its_word_names() {
         let m = HashMap::from([
@@ -1420,18 +1564,17 @@ mod tests {
                 &g,
             )
         };
-        for caster in [Caster::Player, Caster::Pet] {
-            let line = say(caster, Some(83)).expect("the numbered row");
-            assert_eq!(line.text, "A fire totem line", "{caster:?}");
-            assert_eq!(line.key, PASSTHROUGH);
-            assert!(!line.logs, "the custom arm skips the combat log");
-            assert_eq!(
-                say(caster, None),
-                None,
-                "{caster:?}: no word asks for `_-1`"
-            );
-            assert_eq!(say(caster, Some(14)), None, "{caster:?}: no plain row");
-        }
+        assert_eq!(
+            say(Caster::Pet, Some(83)),
+            None,
+            "the pet's arm shows nothing"
+        );
+        let line = say(Caster::Player, Some(83)).expect("the numbered row");
+        assert_eq!(line.text, "A fire totem line");
+        assert_eq!(line.key, PASSTHROUGH);
+        assert!(!line.logs, "the custom arm skips the combat log");
+        assert_eq!(say(Caster::Player, None), None, "no word asks for `_-1`");
+        assert_eq!(say(Caster::Player, Some(14)), None, "no plain row");
         // The missing word prints signed.
         let m = HashMap::from([("SPELL_FAILED_CUSTOM_ERROR_-1", "A minus-one line")]);
         let g = getter(&m);
