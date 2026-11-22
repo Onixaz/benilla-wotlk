@@ -192,8 +192,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `0x588cc0`: the roll's end less the clock at the call, 0 for an unknown id. Deviation: an
-    // expired roll reads 0, where the reference's unsigned push reads it wrapped near 2^32.
+    // `0x588cc0`: the roll's end less the clock at the call, unsigned, so an expired roll reads
+    // near 2^32 (`0x588d33`); 0 for an unknown id.
     g.set(
         "GetLootRollTimeLeft",
         lua.create_function(|lua, roll_id: i64| {

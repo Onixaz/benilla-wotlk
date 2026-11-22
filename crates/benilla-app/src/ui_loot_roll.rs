@@ -388,7 +388,8 @@ mod net {
     }
 
     /// A player name answered: each line waiting on it composes on a found name, a placeholder
-    /// counting as found (`0x635894`), and goes on a denied one (`0x6facd0`, `0x6fb9b0`).
+    /// counting as found (`0x635894`), and goes on a denied one (`0x6facd0`, `0x6fb9b0`); a retry
+    /// asks again and tells no callback (`0x6358b3`), so the lines keep waiting.
     pub(super) fn on_name_answer(
         In(ev): In<SessionEvent>,
         mut rolls: ResMut<LootRolls>,
@@ -397,6 +398,10 @@ mod net {
         use benilla_protocol::messages::NameQueryMiss;
         let (guid, found) = match ev {
             SessionEvent::PlayerName { guid, .. } => (guid, true),
+            SessionEvent::PlayerNameMiss {
+                miss: NameQueryMiss::Retry,
+                ..
+            } => return,
             SessionEvent::PlayerNameMiss { guid, miss } => {
                 (guid, miss == NameQueryMiss::Placeholder)
             }
@@ -601,8 +606,8 @@ fn line_keys(line: &RollLine) -> (u32, Option<u64>) {
 }
 
 /// A line's next wait: its item record read with its callback (`0x6faf04`, `0x6fbc11`,
-/// `0x6fb6c6`), then its roller's name with the name's (`0x6faf24`, `0x6fbc31`); with both in, it
-/// composes.
+/// `0x6fb6c6`), then its roller's name with the name's (`0x6faf24`, `0x6fbc31` -> `0x67d770`, which
+/// asks again after a deny); with both in, it composes.
 pub(crate) fn advance_line(world: &mut World, line_id: u32) {
     let ready = bevy::ecs::system::RunSystemOnce::run_system_once_with(
         &mut *world,
@@ -621,7 +626,7 @@ pub(crate) fn advance_line(world: &mut World, line_id: u32) {
                 return false;
             }
             if let Some(guid) = roller {
-                if names.resolve(guid, &net).is_none() {
+                if names.full_name_record(guid, &net).is_none() {
                     rolls.name_waits.push((guid, line_id));
                     return false;
                 }
@@ -767,10 +772,8 @@ impl LootRollsLive<'_> {
             enchants: self.enchants.as_deref(),
         };
         let t = self.items.template_cached(r.item_id);
-        let left = r
-            .end_ms
-            .saturating_sub(now_ms(self.time.as_deref()))
-            .min(u64::from(u32::MAX)) as u32;
+        // `0x588d29`: the end less the clock in 32 bits, an expired roll wrapping near 2^32.
+        let left = r.end_ms.wrapping_sub(now_ms(self.time.as_deref())) as u32;
         Some(LootRollEntry {
             roll_id: r.roll_id,
             name: t.map(|t| catalogs.name(&t.name, r.random_property_id)),
@@ -1379,6 +1382,97 @@ mod tests {
             },
         );
         assert_eq!(app.world().resource::<ChatLog>().pending_lines().len(), 1);
+    }
+
+    /// A retry tells no callback (`0x6358b3`): a won line keeps waiting on the name and its roll
+    /// closes once the name lands.
+    #[test]
+    fn a_name_retry_keeps_the_line_waiting() {
+        let (mut app, _rx) = roll_app();
+        cache(&mut app);
+        send(
+            &mut app,
+            SessionEvent::LootStartRoll(start(0xAA, 0, ROLLED)),
+        );
+        seen(&mut app);
+        let mut w = won(84, roll_vote::NEED);
+        w.item_id = ROLLED;
+        w.winner = 0x79;
+        send(&mut app, SessionEvent::LootRollWon(w));
+        send(
+            &mut app,
+            SessionEvent::PlayerNameMiss {
+                guid: 0x79,
+                miss: benilla_protocol::messages::NameQueryMiss::Retry,
+            },
+        );
+        assert!(seen(&mut app).is_empty(), "still waiting on the name");
+        assert_eq!(app.world().resource::<LootRolls>().rolls.len(), 1);
+        send(
+            &mut app,
+            SessionEvent::PlayerName {
+                guid: 0x79,
+                name: "Jaina".into(),
+                realm: String::new(),
+                race: 1,
+                class: 8,
+                gender: 1,
+                declensions: None,
+            },
+        );
+        assert_eq!(seen(&mut app), ["cancel 0"]);
+        assert_eq!(app.world().resource::<ChatLog>().pending_lines().len(), 1);
+    }
+
+    /// The line's name read asks again for a guid denied before (`0x67d770`), rather than waiting
+    /// on an answer that never comes.
+    #[test]
+    fn a_line_asks_again_for_a_name_denied_before() {
+        let (mut app, rx) = roll_app();
+        cache(&mut app);
+        app.world_mut()
+            .resource_mut::<NameCache>()
+            .insert_player(0x7A, String::new(), None);
+        let mut a = announce(0, roll_vote::NEED, false);
+        a.item_id = ROLLED;
+        a.roller = 0x7A;
+        send(&mut app, SessionEvent::LootRoll(a));
+        assert!(sent(&rx)
+            .iter()
+            .any(|c| matches!(c, ClientCommand::NameQuery { guid: 0x7A })));
+        send(
+            &mut app,
+            SessionEvent::PlayerNameMiss {
+                guid: 0x7A,
+                miss: benilla_protocol::messages::NameQueryMiss::Placeholder,
+            },
+        );
+        assert_eq!(app.world().resource::<ChatLog>().pending_lines().len(), 1);
+    }
+
+    /// `0x588d29`: the time left is the end less the clock in 32 bits, so an expired roll reads
+    /// wrapped near 2^32.
+    #[test]
+    fn an_expired_roll_reads_its_time_left_wrapped() {
+        let (mut app, _rx) = roll_app();
+        cache(&mut app);
+        send(
+            &mut app,
+            SessionEvent::LootStartRoll(start(0xAA, 0, ROLLED)),
+        );
+        let left = |app: &mut App| {
+            crate::ui_script::live::with_live_world(app.world_mut(), |s| {
+                s.eval::<f64>("return GetLootRollTimeLeft(0)")
+            })
+            .expect("a VM")
+            .unwrap()
+        };
+        assert_eq!(left(&mut app), 60_000.0);
+        let mut real = app.world_mut().resource_mut::<Time<bevy::time::Real>>();
+        // The first update only anchors the clock; the second moves it.
+        real.update_with_duration(std::time::Duration::ZERO);
+        real.update_with_duration(std::time::Duration::from_millis(61_000));
+        assert_eq!(left(&mut app), 4_294_967_296.0 - 1_000.0);
     }
 
     /// A roll passed by everyone while its record is in flight: the start's callback, asked first,
