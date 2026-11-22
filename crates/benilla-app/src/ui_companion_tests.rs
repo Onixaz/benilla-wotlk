@@ -196,6 +196,36 @@ fn a_live_learn_and_unlearn_fire_from_their_handlers() {
     assert_eq!(lists.list(CompanionType::Critter), [10]);
 }
 
+/// Each record callback ends with its `COMPANION_LEARNED` (`0x53ec20`) before the next one on the same entry runs: the later callback is a step after that signal's listeners.
+#[test]
+fn a_learns_later_callbacks_wait_for_its_signal() {
+    let mut world = World::new();
+    let mut spells = Spells::empty_for_tests();
+    spells.catalog = catalog();
+    world.insert_resource(spells);
+    world.insert_resource(SummonSlots(summons()));
+    world.insert_resource(names_with(None));
+    world.insert_resource(commands());
+    world.init_resource::<UiEvents>();
+    world.insert_resource(CompanionLists {
+        lists: [vec![10], Vec::new()],
+        pending: vec![(700, false)],
+        ..CompanionLists::default()
+    });
+    learned_after_line(&mut world, 700, "Zebra Cat".into());
+    assert_eq!(
+        world.resource::<UiEvents>().names(),
+        ["COMPANION_LEARNED", "<world>"]
+    );
+    assert_eq!(
+        world.resource::<CompanionLists>().pending,
+        [(700, false)],
+        "the later callback waits for the signal's listeners"
+    );
+    crate::ui_script::live::fire_handler_events(&mut world);
+    assert!(world.resource::<CompanionLists>().pending.is_empty());
+}
+
 fn critter_guid(entry: u32) -> u64 {
     0xF130_0000_0000_0000 | (u64::from(entry) << 24) | 0x42
 }

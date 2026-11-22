@@ -349,10 +349,34 @@ pub(crate) fn record_answered(
     }
 }
 
-/// A learn line's tail in the creature-record callback (`0x53ebc0`): the update and `COMPANION_LEARNED`, then the callbacks still filed on `entry`.
+/// A learn line's tail in the creature-record callback (`0x53ebc0`): the update and `COMPANION_LEARNED`, then the callbacks still filed on `entry` as a step after its listeners (`0x53ec20` returns before the next callback).
 fn learned_after_line(world: &mut World, entry: u32, name: String) {
+    with_cx(world, entry, name, "a companion learn's tail", |lists, entry, name, cx| {
+        cx.update(lists, Some((entry, name)));
+        cx.ui.fire("COMPANION_LEARNED", Vec::new());
+        let name = name.to_string();
+        cx.ui
+            .world(move |world| later_callbacks(world, entry, name));
+    });
+}
+
+/// The callbacks still filed on `entry` once a learn's signal has run (`0x53ebc0`).
+fn later_callbacks(world: &mut World, entry: u32, name: String) {
+    with_cx(world, entry, name, "a companion record's later callbacks", |lists, entry, name, cx| {
+        record_answered(lists, entry, Some(name), cx);
+    });
+}
+
+/// `f` over the lists and a [`CompanionCx`] built from the `World`; nothing without the spells.
+fn with_cx(
+    world: &mut World,
+    entry: u32,
+    name: String,
+    what: &'static str,
+    f: fn(&mut CompanionLists, u32, &str, &mut CompanionCx),
+) {
     let ran = world.run_system_cached_with(
-        |In((entry, name)): In<(u32, String)>,
+        |In((entry, name, f)): In<(u32, String, fn(&mut CompanionLists, u32, &str, &mut CompanionCx))>,
          mut lists: ResMut<CompanionLists>,
          spells: Option<Res<crate::ui_action::Spells>>,
          summons: Res<crate::spell::SummonSlots>,
@@ -369,13 +393,11 @@ fn learned_after_line(world: &mut World, entry: u32, name: String) {
                 commands: &commands,
                 ui: &mut ui,
             };
-            cx.update(&mut lists, Some((entry, &name)));
-            cx.ui.fire("COMPANION_LEARNED", Vec::new());
-            record_answered(&mut lists, entry, Some(&name), &mut cx);
+            f(&mut lists, entry, &name, &mut cx);
         },
-        (entry, name),
+        (entry, name, f),
     );
-    crate::ui_cast::step_ran(ran, "a companion learn's tail");
+    crate::ui_cast::step_ran(ran, what);
 }
 
 /// One `COMPANION_UPDATE "MOUNT"` per `MOUNTED` effect of `spell_id` as an aura of it comes or goes on us (`0x724a6b`, `0x71e9b2`).
