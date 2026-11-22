@@ -210,9 +210,7 @@ pub(crate) mod net {
         }
     }
 
-    /// `SMSG_PLAYERBOUND`, in the handler's order: play the handler's own sound (the error row has
-    /// none), then show `ERR_DEATHBIND_SUCCESS_S` (error id `0x138`, a system chat line) named by
-    /// the area, in its turn. The latch stays; the hearthstone moves on `SMSG_BINDPOINTUPDATE`.
+    /// `SMSG_PLAYERBOUND` in the handler's order: its own sound, then `ERR_DEATHBIND_SUCCESS_S` (error id `0x138`, a system chat line) named by the area in its turn; the hearthstone moves on `SMSG_BINDPOINTUPDATE`.
     pub(crate) fn bound(
         area: u32,
         sounds: &mut MessageWriter<ServerSoundMessage>,

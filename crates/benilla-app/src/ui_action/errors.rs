@@ -272,11 +272,7 @@ pub(crate) fn keyed_line_s(script: &UiScript, key: &'static str, args: &[&str]) 
     (!text.is_empty()).then(|| Shown::keyed(key, text))
 }
 
-/// The one sink for a resolved line: show it on its [`MsgKind`]'s surface and queue its catalog
-/// row's sound, which `crate::sound::message` plays after the input pass, the same frame. `who`
-/// tags the debug line. A [`MsgKind::Chat`] line goes out on its row's chat type
-/// ([`benilla_ui::messages::MessageRecord::chat_type`]): 26 `CHAT_MSG_SKILL`, else
-/// `CHAT_MSG_SYSTEM`.
+/// The one sink for a resolved line: shown on its [`MsgKind`]'s surface, a [`MsgKind::Chat`] line on its row's chat type (26 `CHAT_MSG_SKILL`, else `CHAT_MSG_SYSTEM`), with its row's sound queued for `crate::sound::message`; `who` tags the debug line.
 pub(crate) fn show_messages(
     script: &mut UiScript,
     sink: &mut MessageSink,
@@ -1100,6 +1096,7 @@ mod chat_arm_tests {
             .non_send_resource::<UiScript>()
             .eval("return table.concat(SEEN, ',')")
             .unwrap();
+        // Nothing fires in the handler's turn: the line fires from the chat feed until #1416.
         assert_eq!(seen, "");
         assert_eq!(
             world.resource::<crate::ui_chat::ChatLog>().pending_events(),
