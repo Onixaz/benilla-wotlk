@@ -280,15 +280,10 @@ fn on_spell_learned(
             Some(me) => companion_add(&mut l, me, spell_id),
             None => l.known_buffer.0.push(spell_id),
         }
-        // The registrar's book update and tab flash, reached by a live learn past its exits, the
-        // same ones the flash is gated on (`0x542cbf`-`0x542d16`), then its tutorial (`0x542d1d`)
-        // and the first-rank placement on the page's first empty button, tested after the
-        // book's listeners have run (`0x542dc1`, `0x542de3`).
+        // A live learn's book update, tab flash and tutorial at its step, then the placement (`0x542cbf`-`0x542d1d`, `0x542de3`).
         if !flash.0.is_empty() {
             l.update_book(&flash, true);
-            if let Some(t) = l.tutorials.as_mut() {
-                t.write(crate::tutorial::TutorialEvent::trigger(LEARN_TUTORIAL));
-            }
+            l.ui.world(|w| crate::tutorial::trigger_at_step(w, LEARN_TUTORIAL));
         }
         if let Some(page) = place {
             l.ui.world(move |world| learn_place_step(world, spell_id, page));

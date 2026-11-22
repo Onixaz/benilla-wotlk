@@ -7528,13 +7528,14 @@ fn book_updates_fire_from_their_handlers_in_wire_order() {
     );
 }
 
-/// A live learn's first rank goes on the bar after the book update and its tab flash
-/// (`0x542cd4`, `0x542d16`, `0x542de3`): the book's listeners read the button still empty, and
-/// `ACTIONBAR_SLOT_CHANGED` follows `LEARNED_SPELL_IN_TAB`.
+/// A live learn's order: book, tab flash, tutorial, placement (`0x542cd4`, `0x542d16`, `0x542d1d`, `0x542de3`).
 #[test]
 fn a_learns_bar_placement_signals_after_the_book_update() {
     let Some(mut rig) = Rig::login_after(
-        vec![book(&[FIREBALL_1])],
+        vec![
+            book(&[FIREBALL_1]),
+            SessionEvent::TutorialFlags(vec![0; 32]),
+        ],
         &[OBJECT_TYPE_PLAYER, (FIELD_UNIT_LEVEL, 1)],
     ) else {
         return;
@@ -7548,6 +7549,7 @@ fn a_learns_bar_placement_signals_after_the_book_update() {
     let events = &[
         "SPELLS_CHANGED",
         "LEARNED_SPELL_IN_TAB",
+        "TUTORIAL_TRIGGER",
         "ACTIONBAR_SLOT_CHANGED",
     ];
     assert_eq!(
@@ -7555,6 +7557,7 @@ fn a_learns_bar_placement_signals_after_the_book_update() {
         vec![
             "SPELLS_CHANGED | act1=nil:nil",
             "LEARNED_SPELL_IN_TAB 2 | act1=nil:nil",
+            "TUTORIAL_TRIGGER 40 | act1=nil:nil",
             "ACTIONBAR_SLOT_CHANGED 1 | act1=spell:2",
         ]
     );
