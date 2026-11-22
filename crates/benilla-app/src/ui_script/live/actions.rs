@@ -280,8 +280,7 @@ impl<'w, 's> LiveView<'w, 's> {
         self.answers(|a| a.spell_has_range(r.spell, r.pet)) == Some(true)
     }
 
-    /// `IsEquippedAction` (`0x5a88b0`): an item with an inventory type worn, a copy with charges
-    /// left counting first when the item's use spell has finite charges (`0x5a8949`-`0x5a8990`).
+    /// `IsEquippedAction` (`0x5a88b0`): an item worn, a copy with charges left first for a finite use spell (`0x5a8949`-`0x5a8990`).
     pub(super) fn slot_equipped(&self, r: Resolved) -> bool {
         let (Some((objects, items, commands)), Some((_, me))) =
             (self.containers.as_ref().map(|c| c.item_reads()), self.me())

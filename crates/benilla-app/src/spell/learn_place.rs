@@ -90,10 +90,7 @@ pub(crate) fn first_empty_slot(actions: &ActionSlots, page: u8) -> Option<u8> {
     (page..page.saturating_add(PAGE_SLOTS)).find(|slot| !actions.buttons.contains_key(slot))
 }
 
-/// `0x5aafd0(0, spell)`, run before the registrar on a live learn (`0x6e7b00`): every spell
-/// button whose spell shares the new one's name and sits one rank below it, by
-/// [`SpellDisplay::rank_or_level`], in ascending slot order. The same pass re-points a bar macro
-/// bound to that rank (`0x5ab0e8`), which [`crate::ui_macro::replace_rank`] writes.
+/// `0x5aafd0(0, spell)` before a live learn's registrar (`0x6e7b00`): the spell buttons one [`SpellDisplay::rank_or_level`] below by name, in slot order.
 pub(crate) fn lower_rank_slots(
     actions: &ActionSlots,
     catalog: &SpellCatalog,
@@ -110,8 +107,7 @@ pub(crate) fn lower_rank_slots(
     slots
 }
 
-/// The rank replace's match without an old id (`0x5ab03e`-`0x5ab098`): `old` shares `new`'s name
-/// and sits one rank below it.
+/// The rank replace's match without an old id (`0x5ab03e`-`0x5ab098`): `old` shares `new`'s name, one rank below.
 pub(crate) fn is_rank_below(catalog: &SpellCatalog, new: &SpellDisplay, old: u32) -> bool {
     catalog
         .get(old)

@@ -50,9 +50,7 @@ pub struct MacroBinding {
     pub pet_book: bool,
 }
 
-/// What a macro verb did to the table, for the binding it owes: a body set parses that macro alone
-/// (`0x5663a0` -> `0x565c40`), and a delete drops its node and leaves the others' bindings as they
-/// are (`0x566d50`), which by index shifts the later ones of its set down by one.
+/// A macro verb's table change: a body set parses that macro alone (`0x5663a0` -> `0x565c40`), a delete shifts its set's later bindings (`0x566d50`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MacroChange {
     /// The 1-based index whose body was set.
@@ -211,8 +209,7 @@ impl super::UiScript {
     }
 }
 
-/// A verb's binding change at the call, before the bar's macro update signals the slots: a body
-/// set parses its macro alone (`0x565c40` -> `0x5650c0`), a delete drops one binding.
+/// A verb's binding change at the call, before the slot signals (`0x565c40` -> `0x5650c0`).
 fn rebind(lua: &mlua::Lua, change: MacroChange) {
     let macros = crate::script::model_mut_of(lua).macros.clone();
     if let Some(bindings) = super::write_live(|l| l.macros_changed(&macros, change)).flatten() {

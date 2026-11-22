@@ -340,8 +340,7 @@ fn cast_table() -> crate::ui_chat::commands::SlashCommands {
     )
 }
 
-/// A world with a VM holding `macros`, a book of Fireball 133, and a bar whose slot 4 holds
-/// macro 1 and slot 7 macro 2.
+/// A VM holding `macros`, a book of Fireball 133, macro 1 on slot 4 and macro 2 on slot 7.
 fn macro_world(macros: MacroState) -> bevy::prelude::World {
     use benilla_protocol::messages::{ActionButton, ACTION_KIND_MACRO};
     use benilla_ui::script::{SpellBookState, SpellSlotView};
@@ -376,9 +375,7 @@ fn macro_world(macros: MacroState) -> bevy::prelude::World {
     world
 }
 
-/// The book update's macro pass looks up only a macro whose `/cast` did not resolve (`0x56617b`):
-/// one resolving now takes its spell and signals its bar slot (`0x566193` -> `0x5aa920`); a bound
-/// macro keeps its spell.
+/// The macro pass looks up only an unresolved macro (`0x56617b`), which signals its slot (`0x566193` -> `0x5aa920`).
 #[test]
 fn the_book_updates_macro_pass_resolves_only_the_unresolved() {
     use super::BoundSpell;
@@ -414,9 +411,7 @@ fn the_book_updates_macro_pass_resolves_only_the_unresolved() {
         .is_empty());
 }
 
-/// The walk signals one macro's slots before it looks up the next (`0x566172`-`0x5661ae`): a slot
-/// listener for the first macro to resolve still finds the second unresolved, and the second's
-/// slot signals after.
+/// The walk signals one macro's slots before it looks up the next (`0x566172`-`0x5661ae`).
 #[test]
 fn the_book_updates_macro_pass_signals_each_macro_before_the_next_lookup() {
     use super::BoundSpell;
@@ -460,8 +455,7 @@ fn the_book_updates_macro_pass_signals_each_macro_before_the_next_lookup() {
     );
 }
 
-/// A rename sets no body, so it parses nothing (`0x566d1a` skips `0x566d20`): every macro keeps the
-/// spell it had, even one the book would now resolve otherwise.
+/// A rename parses nothing (`0x566d1a` skips `0x566d20`): every macro keeps the spell it had.
 #[test]
 fn a_rename_binds_nothing() {
     use super::BoundSpell;
@@ -505,8 +499,7 @@ fn a_body_edit_binds_only_its_macro() {
     );
 }
 
-/// A delete unlinks its node and parses nothing (`0x566d50`): the later macros of its set move
-/// down one index, each with the spell it had, and the other set is untouched.
+/// A delete parses nothing (`0x566d50`): its set's later macros move down one index with their spells.
 #[test]
 fn a_delete_shifts_the_later_bindings() {
     use super::BoundSpell;
@@ -540,8 +533,7 @@ fn a_delete_shifts_the_later_bindings() {
     );
 }
 
-/// An edit binds its macro's spell inside its call, before its slot signal (`0x565c40`,
-/// `0x566d38`): the bar's macro spell is read at the call, with no frame between.
+/// An edit binds its macro's spell inside its call, before its slot signal (`0x565c40`, `0x566d38`).
 #[test]
 fn an_edit_binds_its_macro_inside_the_call() {
     use super::BoundSpell;

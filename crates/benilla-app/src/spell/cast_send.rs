@@ -343,8 +343,7 @@ impl CastLadder<'_, '_> {
         let send = SendCommit {
             cancel_auras,
             packet: SendPacket::Cursor { commit, bound },
-            // The item send joins the shared tail, which raises `SENT` for the active player
-            // (`0x80b2dc` -> `0x80b348`, `0x80b514`).
+            // The item send joins the shared tail that raises `SENT` for the active player (`0x80b2dc` -> `0x80b348`, `0x80b514`).
             sent: Some(target),
             // The cursor's record goes on the list with the send (`0x80cda4`).
             record: match commit {
@@ -1374,8 +1373,7 @@ fn send_spell_cast(
         CastCommit::Pet { caster } => Some(caster),
         _ => None,
     };
-    // The spell and the item send join the tail that raises `SENT` for the active player
-    // (`0x80b2dc` -> `0x80b348`, `0x80b514`); the pet's caster is not.
+    // Spell and item sends join the tail raising `SENT` for the active player, not the pet (`0x80b2dc` -> `0x80b348`, `0x80b514`).
     let player_commit = !matches!(commit, CastCommit::Pet { .. });
     let send = SendCommit {
         cancel_auras,
@@ -3264,8 +3262,7 @@ mod tests {
         );
     }
 
-    /// An item use joins the send's shared tail, which raises `UNIT_SPELLCAST_SENT` for the active
-    /// player ahead of the rest (`0x80b2dc` -> `0x80b348`, `0x80b514`, `0x80b556`).
+    /// An item use raises `UNIT_SPELLCAST_SENT` first, on the send's shared tail (`0x80b2dc` -> `0x80b348`, `0x80b514`, `0x80b556`).
     #[test]
     fn an_item_use_raises_sent_ahead_of_its_tail() {
         let (mut world, _rx) = world();

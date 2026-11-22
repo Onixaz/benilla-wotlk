@@ -221,8 +221,7 @@ pub(crate) fn save_to_account_data(world: &mut World) {
     }
 }
 
-/// Every macro's bound spell off the book, keyed by 1-based index: the parse's lookup per macro
-/// (`0x565c40` -> `0x5650c0`).
+/// Every macro's bound spell off the book, by 1-based index (`0x565c40` -> `0x5650c0`).
 pub(crate) fn bind_all(
     table: &crate::ui_chat::commands::SlashCommands,
     macros: &MacroState,
@@ -236,9 +235,7 @@ pub(crate) fn bind_all(
         .collect()
 }
 
-/// A macro verb's binding change on `bound`: a parsed macro alone looked up again (`0x565c40` ->
-/// `0x5650c0`); a deleted one's binding dropped and its set's later bindings moved down one index,
-/// each node keeping the spell it had (`0x566d50` unlinks the node and parses nothing).
+/// A macro verb's binding change: a parsed macro looked up (`0x565c40` -> `0x5650c0`), a delete shifts its set's later bindings (`0x566d50`).
 pub(crate) fn apply_change(
     table: &crate::ui_chat::commands::SlashCommands,
     macros: &MacroState,
@@ -272,8 +269,7 @@ pub(crate) fn apply_change(
     }
 }
 
-/// The VM's copy of `bound`, which `GetActionAutocast` reads. The book flag stays the player's:
-/// [`run::bound_spell`] resolves the player's book only.
+/// The VM's copy of `bound`, which `GetActionAutocast` reads; [`run::bound_spell`] resolves the player's book only.
 pub(crate) fn vm_bindings(
     bound: &std::collections::HashMap<u32, BoundSpell>,
 ) -> std::collections::HashMap<u32, benilla_ui::script::MacroBinding> {
@@ -296,9 +292,7 @@ pub(crate) fn vm_bindings(
         .collect()
 }
 
-/// The rank replace's macro leg (`0x5aafd0`): each bar slot holding a macro bound to a spell
-/// `replaces` names has the macro re-pointed at `new` (`0x5ab0e2`-`0x5ab0f3`), with no slot
-/// signal; a macro on no slot keeps its spell. Returns whether a binding moved.
+/// The rank replace's macro leg (`0x5aafd0`): a bar macro on a `replaces` spell re-points at `new`, no slot signal (`0x5ab0e2`-`0x5ab0f3`).
 pub(crate) fn replace_rank(
     bound: &mut std::collections::HashMap<u32, BoundSpell>,
     bar: &crate::ui_action::ActionSlots,
@@ -334,16 +328,12 @@ pub(crate) fn sync_vm_bindings(world: &mut World) {
     }
 }
 
-/// The book update's macro pass (`0x53cea3` -> `0x566160`), ahead of its `SPELLS_CHANGED`: each
-/// macro whose `/cast` did not resolve is looked up again (`0x56617b`), and one that resolves now
-/// signals its bar slots (`0x566193` -> `0x5aa920`) before the walk looks up the next; a bound
-/// macro keeps its spell. The walk goes by index, as benilla's macros keep no node list (#691).
+/// The book's macro pass (`0x53cea3` -> `0x566160`): each unresolved macro looked up and its slots signalled before the next, by index (#691) (`0x56617b`, `0x566193`).
 pub(crate) fn book_rebind(world: &mut World) {
     rebind_from(world, 1);
 }
 
-/// The pass from 1-based `start`: the first unresolved macro that resolves stores its spell and
-/// queues its slot signals, then the walk's rest, in turn after them.
+/// The pass from 1-based `start`: the next macro to resolve stores its spell and queues its slot signals, then the rest.
 fn rebind_from(world: &mut World, start: u32) {
     let Some(macros) = world
         .get_non_send_resource::<UiScript>()

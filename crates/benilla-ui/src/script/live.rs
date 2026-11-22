@@ -685,9 +685,7 @@ pub trait LiveState {
         None
     }
 
-    /// A macro verb's binding change: a parsed macro's bound spell off the book (`0x565c40` ->
-    /// `0x5650c0`), or a deleted one's binding dropped, stored where the bar reads it; every
-    /// binding is returned keyed by 1-based index for the VM's copy. `None` without a view.
+    /// A macro verb's binding change (`0x565c40` -> `0x5650c0`, `0x566d50`), stored for the bar; every binding returned by index. `None` without a view.
     fn macros_changed(
         &mut self,
         _macros: &super::MacroState,

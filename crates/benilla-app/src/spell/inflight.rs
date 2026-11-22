@@ -397,8 +397,7 @@ const CHANNEL_INTERRUPT_MOVING: u32 = 0x8; // SpellRec+0x5c ChannelInterruptFlag
 
 /// The wire reason the movement cancel ends the cast with (`0x8066ce`): `INTERRUPTED`.
 const MOVE_CANCEL_REASON: u8 = 0x28;
-/// The wire reason Esc's `SpellStopCasting` (`0x809aa8`) and the client-controls clear
-/// (`0x5194cc` -> `0x8063c1`) end the cast with: `FAILED_QUIET` (`0x7fee0f`).
+/// The reason Esc (`0x809aa8`) and the controls clear (`0x5194cc` -> `0x8063c1`) cancel with: `FAILED_QUIET` (`0x7fee0f`).
 const STOP_CANCEL_REASON: u8 = 0x1b;
 
 /// A directional move start or a jump happened this frame (the `0x10f0` mask; there is no
@@ -410,15 +409,12 @@ pub(crate) struct LocalMoveStart(pub(crate) bool);
 ///
 /// - Esc first stops a running auto-repeat (`SpellStopCasting`), and that spends the press; the
 ///   cast survives to the next one.
-/// - The cast: `CMSG_CANCEL_CAST`, the self `Casting` reaped with a `Fail` cast event, and the
-///   running cast ended by the caller's reason ([`CastBarEdge::Cancelled`]): interrupted on a
-///   move, quiet on Esc. Movement tests the spell's `InterruptFlags`; Esc does not.
+/// - The cast: `CMSG_CANCEL_CAST`, `Casting` reaped, the cast ended by its caller's reason ([`CastBarEdge::Cancelled`]); only a move tests `InterruptFlags`.
 /// - The channel, on movement only: `CMSG_CANCEL_CHANNELLING` and nothing local; the bar and
 ///   [`ActiveChannel`] close on `MSG_CHANNEL_UPDATE(0)`. Esc cannot stop a channel: the Esc cancel
 ///   never calls the channel's, and the inflight id is 0 mid-channel.
 ///
-/// 12340's cancel (`0x806200`) ends the cast through `0x7fecc0` itself, so its end event and
-/// `STOP` fire before the server's `SMSG_SPELL_FAILURE` echo, which the bar then ignores.
+/// 12340's cancel (`0x806200`) ends the cast itself (`0x7fecc0`), ahead of the `SMSG_SPELL_FAILURE` echo the bar ignores.
 pub(super) fn local_self_cancel(mut moved: ResMut<LocalMoveStart>, mut cancel: SelfCancel) {
     if std::mem::take(&mut moved.0) {
         cancel.cancel(CancelBy::Moved);
@@ -570,8 +566,7 @@ impl SelfCancel<'_, '_> {
                         if let Some(record) = pending.current().copied() {
                             pending.release_record(&record);
                         }
-                        // The cancel ends the running cast as `0x806200` does, by its caller's
-                        // reason (`0x806349` -> `0x7fedd0`), then `STOP`.
+                        // The cancel ends the cast by its caller's reason, then `STOP` (`0x806200`, `0x806349` -> `0x7fedd0`).
                         if let Some(caster) = self_guid.0 {
                             press.cancelled(caster, reason);
                         }

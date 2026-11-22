@@ -64,10 +64,7 @@ pub(crate) struct BookInputs<'a> {
 }
 
 impl SpellBook {
-    /// The book update (`0x53ca70`) with its re-sort and its school-mask rebuild, as the learn,
-    /// the removal and our object's init run it: the book rebuilt, the masks (`0x53cd48`), the
-    /// macro pass when `macros` (a caller's first or second argument set, `0x53ce97`-`0x53cea3`),
-    /// then `SPELLS_CHANGED` (`0x53ceae`).
+    /// The book update (`0x53ca70`): the book, the masks (`0x53cd48`), the macro pass when `macros` (`0x53cea3`), then `SPELLS_CHANGED` (`0x53ceae`).
     pub(crate) fn update(
         &mut self,
         inputs: &BookInputs,

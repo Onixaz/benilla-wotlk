@@ -493,16 +493,14 @@ impl Reads<'_, '_, '_> {
         item || slot
     }
 
-    /// One bar slot's bytes (`0x5aa3b6`'s compute): the slot through its macro, a pet slot through
-    /// the pet bar, then the walk for a spell or an item; a set's slot with `sets_usable` (`0x5a9fe3`).
+    /// One bar slot's bytes (`0x5aa3b6`'s compute): through its macro or the pet bar, then the walk; a set's slot with `sets_usable` (`0x5a9fe3`).
     pub(crate) fn slot(&self, slot: u8, sets_usable: bool) -> Usable {
         use crate::ui_macro::BoundSpell;
         let Some(button) = self.slots.buttons.get(&slot) else {
             return Usable::default();
         };
         if button.kind == ACTION_KIND_EQUIPMENT_SET {
-            // The sets usable, the set saved (`0x5ae5c0`), none of its items and none of its slots locked (`0x5aa00d`, `0x5aa01e`); then a taxi
-            // flight passes (`0x5aa03d`), else the slot has no spell and needs our control (`0x5aa063`, `0x5aa0e7`).
+            // A usable, saved, unlocked set passes on a taxi flight, else needs our control (`0x5ae5c0`-`0x5aa01e`, `0x5aa03d`, `0x5aa063`).
             let usable = sets_usable
                 && self.me.is_some_and(|(_, store)| {
                     self.actions
@@ -520,8 +518,7 @@ impl Reads<'_, '_, '_> {
         let (kind, id) = match button.kind {
             ACTION_KIND_MACRO => match self.bound.and_then(|b| b.0.get(&button.action)) {
                 Some(BoundSpell::Spell(s)) => (ACTION_KIND_SPELL, *s),
-                // A macro that casts nothing has no spell: usable while it exists and we hold
-                // control (`0x5aa063`, `0x5aa0c5`).
+                // A macro that casts nothing needs our control (`0x5aa063`, `0x5aa0c5`).
                 Some(BoundSpell::None) => {
                     return Usable {
                         usable: self.control,
@@ -541,8 +538,7 @@ impl Reads<'_, '_, '_> {
                 return Usable::default();
             };
             if !entry.is_spell() {
-                // A mode or an order has no spell: usable while we hold control (`0x5aa063`,
-                // `0x5aa0d6`).
+                // A mode or an order has no spell: it needs our control (`0x5aa063`, `0x5aa0d6`).
                 return Usable {
                     usable: self.control,
                     no_power: false,

@@ -60,8 +60,7 @@ pub(crate) fn set_fixture_action(
     _script.set_action(_action, _slot);
 }
 
-/// A fixture's stand-in action state (`UiScript::set_action_state`), compiled out of the player
-/// build with the fixtures.
+/// A fixture's stand-in action state (`UiScript::set_action_state`), out of the player build.
 pub(crate) fn set_fixture_action_state(
     _script: &mut benilla_ui::script::UiScript,
     _action: u32,

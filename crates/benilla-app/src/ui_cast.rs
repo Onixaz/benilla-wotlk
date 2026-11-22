@@ -52,8 +52,7 @@ pub(crate) enum CastBarEdge {
         cast_count: u8,
         reason: u8,
     },
-    /// Our own cancel (`0x806200`) with its wire reason: the running cast ends by it (`0x7fedd0`),
-    /// quiet for Esc's `0x1b` (`0x809aa8`), interrupted for the movement cancel's `0x28` (`0x8066ce`).
+    /// Our cancel (`0x806200`) by its reason (`0x7fedd0`): quiet for Esc's `0x1b` (`0x809aa8`), interrupted for a move's `0x28` (`0x8066ce`).
     Cancelled { caster: u64, reason: u8 },
     /// `SMSG_SPELL_DELAYED`: pushback moves the running cast's start and end out by `delay_ms`.
     Delayed { caster: u64, delay_ms: u32 },
@@ -278,8 +277,7 @@ impl PressSignals<'_, '_> {
         }
     }
 
-    /// Our running cast was cancelled here (`0x806200`) with the wire `reason` its caller passes:
-    /// its end, then its finish's selection update (`0x806366`, `0x8054f0`).
+    /// Our running cast cancelled (`0x806200`) by its caller's `reason`: its end, then the selection update (`0x806366`, `0x8054f0`).
     pub(crate) fn cancelled(&mut self, caster: u64, reason: u8) {
         if let Some(edges) = self.edges.as_mut() {
             edges.0.push(CastBarEdge::Cancelled { caster, reason });
@@ -394,9 +392,7 @@ impl PressSignals<'_, '_> {
         self.edges.as_ref().map_or(&[], |e| &e.0)
     }
 
-    /// Fire the waiting edges into `script` now, in order: `SENT` with the target's name
-    /// (`0x80b533`), and a cancel's end event by its reason, the unit's cast cleared, then `STOP`
-    /// (`0x7fedd0`, `0x7fee38`).
+    /// Fire the waiting edges now: `SENT` with the target's name (`0x80b533`), a cancel's end by reason, then `STOP` (`0x7fedd0`, `0x7fee38`).
     pub(crate) fn fire(
         &mut self,
         script: &mut UiScript,
@@ -1078,8 +1074,7 @@ fn edge_system(
             let Some(run) = units.casts.get_mut(&caster) else {
                 return;
             };
-            // The delay moves the start and the end alike and clears the channel (`0x726246`,
-            // `0x72624c`, `0x726254`-`0x726260`).
+            // The delay moves start and end alike and clears the channel (`0x726246`, `0x72624c`, `0x726254`-`0x726260`).
             run.start_ms += f64::from(delay_ms);
             run.end_ms += f64::from(delay_ms);
             let run = *run;
@@ -1165,8 +1160,7 @@ fn edge_system(
             };
             unit_event(&mut ui, caster, event, spells, spell_id, 0);
         }
-        // `0x801e85`: nonzero re-times the channel, zero ends it; either clears the cast
-        // (`0x7262ad`-`0x7262b9`).
+        // `0x801e85`: nonzero re-times the channel, zero ends it; either clears the cast (`0x7262ad`-`0x7262b9`).
         CastBarEdge::ChannelUpdate {
             caster,
             remaining_ms,
@@ -1186,8 +1180,7 @@ fn edge_system(
                     0,
                 );
             } else {
-                // The update keeps the channel's length: the end is now plus what is left, the
-                // start that length before it (`0x726287`-`0x7262a5`).
+                // The update keeps the length: end = now + left, start = end - length (`0x726287`-`0x7262a5`).
                 let end_ms = now_ms + f64::from(remaining_ms);
                 let run = Running {
                     start_ms: end_ms - (run.end_ms - run.start_ms),
@@ -2045,10 +2038,7 @@ mod tests {
         assert_eq!(run(&mut app, vec![resume(99, 1_000, 2_000)]), "");
     }
 
-    /// The resume tests `AttributesEx & 4` alone (`0x80215e`): a spell with only bit 6 resumes as
-    /// a cast. Pushback moves the cast's start with its end (`0x726246`, `0x72624c`), and a
-    /// channel's nonzero update keeps its length (`0x726287`-`0x7262a5`), each read inside its
-    /// own event.
+    /// Resume tests `AttributesEx & 4` alone (`0x80215e`); pushback moves start with end (`0x726246`), a channel update keeps its length (`0x726287`).
     #[test]
     fn pushback_and_channel_updates_keep_the_reference_windows() {
         const DRAIN: u32 = 11;
@@ -2126,9 +2116,7 @@ mod tests {
         );
     }
 
-    /// A press's cancel fires inside the system holding the VM as the cancel returns
-    /// (`0x806200`): Esc's `FAILED_QUIET` (reason `0x1b`, `0x7fee0f`) while the unit still holds
-    /// its cast, then the cast cleared and `STOP`, before the system makes any other call into Lua.
+    /// A press's cancel fires in its system: Esc's `FAILED_QUIET` with the cast held, then cleared and `STOP` (`0x806200`, `0x7fee0f`).
     #[test]
     fn a_press_cancel_fires_inside_the_holding_system() {
         use bevy::ecs::system::RunSystemOnce;

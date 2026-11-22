@@ -84,8 +84,7 @@ pub(crate) struct StoredActionState {
 /// A stand-in's state and its cooldown in `GetTime` seconds.
 type StandIn = (ActionState, Option<(f64, f64, bool)>);
 
-/// The stand-in state a test or fixture pushed for `action`, which the verbs read with no view
-/// lent; none in the player build.
+/// The stand-in state a test or fixture pushed for `action`, read with no view lent; none in the player build.
 #[cfg(any(test, feature = "fixtures"))]
 fn stand_in(lua: &Lua, action: u32) -> Option<StandIn> {
     let model = lua
@@ -128,9 +127,7 @@ impl super::UiScript {
         }
     }
 
-    /// Push (or clear) one action's stand-in state, which the verbs read with no view lent; the
-    /// cooldown start is already on the `GetTime` clock, so storing only converts milliseconds to
-    /// seconds.
+    /// Push (or clear) one action's stand-in state, read with no view lent; the cooldown start is on the `GetTime` clock.
     #[cfg(any(test, feature = "fixtures"))]
     pub fn set_action_state(&mut self, action: u32, state: Option<ActionState>) {
         let mut model = self.model_mut();

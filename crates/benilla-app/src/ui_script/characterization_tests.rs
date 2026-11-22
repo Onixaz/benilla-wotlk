@@ -7560,9 +7560,7 @@ fn a_learns_bar_placement_signals_after_the_book_update() {
     );
 }
 
-/// The rank replace re-points a bar macro bound to the old rank (`0x5ab0e8`, `0x5ab0f3`): a
-/// supersede by its old id, run first (`0x6e7e46`), and a live learn by name and rank
-/// (`0x6e7b46`). A macro on no slot keeps its spell, and the slot signals nothing.
+/// The rank replace re-points a bar macro on the old rank, by supersede (`0x6e7e46`) and live learn (`0x6e7b46`), with no slot signal (`0x5ab0f3`).
 #[test]
 fn the_rank_replace_repoints_a_bar_macro() {
     use crate::ui_macro::{BoundSpell, MacroBoundSpells};
@@ -7658,10 +7656,7 @@ fn own_failure(spell_id: u32, cast_count: u8, key: &str) -> SessionEvent {
     }
 }
 
-/// A cast's end event follows its reason (`0x7fedd0`): `SpellStopCasting` cancels with `0x1b`
-/// (`0x809aa8`), so the bar ends quiet; a failure packet's interrupt reason ends it interrupted,
-/// any other reason failed; each is read with the cast still on the unit, then `STOP` with it
-/// gone (`0x7fee38`).
+/// A cast's end follows its reason (`0x7fedd0`): Esc's `0x1b` quiet (`0x809aa8`), interrupt interrupted, else failed; then `STOP` (`0x7fee38`).
 #[test]
 fn a_cast_ends_quiet_on_stopcasting_and_by_reason_on_a_failure() {
     let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
@@ -7705,9 +7700,7 @@ fn a_cast_ends_quiet_on_stopcasting_and_by_reason_on_a_failure() {
     );
 }
 
-/// Pushback moves the cast's start with its end (`0x726246`, `0x72624c`), so its length holds
-/// inside `UNIT_SPELLCAST_DELAYED`; a channel's nonzero update keeps its length (`0x726287`-
-/// `0x7262a5`) inside `CHANNEL_UPDATE`, and a zero one ends it before `CHANNEL_STOP` (`0x801ead`).
+/// Pushback keeps the cast's length (`0x726246`, `0x72624c`); a channel update keeps its length (`0x726287`), a zero one ends it (`0x801ead`).
 #[test]
 fn pushback_and_channel_updates_keep_their_lengths_inside_their_events() {
     let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
@@ -7767,9 +7760,7 @@ fn pushback_and_channel_updates_keep_their_lengths_inside_their_events() {
     );
 }
 
-/// The aura state's watch for us and for the target runs the full usable update, then always
-/// `PET_BAR_UPDATE_USABLE` (`0x71681b`, `0x716826`, `0x716836`, `0x716842`), each in its own
-/// packet's turn; another unit's moves nothing.
+/// The aura state's watch for us or the target: the full usable update, then `PET_BAR_UPDATE_USABLE` (`0x716836`, `0x716842`).
 #[test]
 fn the_aura_state_watch_signals_the_pet_bar_for_us_and_the_target() {
     use benilla_protocol::field::FIELD_UNIT_AURASTATE;
@@ -7833,10 +7824,7 @@ fn the_aura_state_watch_signals_the_pet_bar_for_us_and_the_target() {
 
 // ── The action bar (#1281) ───────────────────────────────────────────────────────────────────────
 
-/// The bar's events fire from the handlers and verbs that cause them, each read at the call:
-/// `SMSG_ACTION_BUTTONS` fills the bar and signals it whole (`0x5aaa90`); a press of a cast
-/// raises `SENT`, the current and cooldown signals of the send (`0x80b556`, `0x805d70`); a form
-/// entered updates the bonus bar (`0x6da38e`); a page turn signals the page.
+/// The bar's events, each read at its call: buttons (`0x5aaa90`), a cast's `SENT` (`0x80b556`, `0x805d70`), a form (`0x6da38e`), a page turn.
 #[test]
 fn action_bar_events_read_the_bar_at_their_events() {
     use benilla_protocol::field::FIELD_UNIT_BYTES_2;

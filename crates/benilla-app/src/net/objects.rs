@@ -1983,8 +1983,7 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     own_player_watches(sc, guid, &merged.watched);
 }
 
-/// The aura state's watch for us or the target (`0x716810`): the full usable update
-/// (`0x716836`), then `PET_BAR_UPDATE_USABLE` always (`0x716842`).
+/// The aura state's watch for us or the target (`0x716810`): the full usable update, then `PET_BAR_UPDATE_USABLE` (`0x716836`, `0x716842`).
 fn aura_state_watch(sc: &mut Scene) {
     sc.ui.world(crate::ui_action::usable_cache::step(
         crate::ui_action::usable_cache::Pass::Full,

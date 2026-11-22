@@ -100,9 +100,7 @@ pub(crate) struct Lifecycle<'w> {
 }
 
 impl Lifecycle<'_> {
-    /// The rank replace's macro leg, `0x5aafd0(old, new)`: a bar macro bound to `old`, or with no
-    /// `old` to the rank below `new`'s record, re-points at `new`; a moved binding reaches the VM's
-    /// copy in turn, ahead of the events the handler queues after it.
+    /// The rank replace's macro leg, `0x5aafd0(old, new)`: a bar macro bound to `old` (or the rank below `new`) re-points at `new`, synced in turn.
     fn replace_macro_rank(&mut self, old: Option<u32>, new: u32) {
         let Some(bound) = self.bound.as_deref_mut() else {
             return;
@@ -119,9 +117,7 @@ impl Lifecycle<'_> {
         }
     }
 
-    /// The book update with its re-sort and masks (`0x53ca70`): the book, the school masks, the
-    /// macro pass when `macros`, then `SPELLS_CHANGED`; then `LEARNED_SPELL_IN_TAB` for each spell
-    /// `learned` names (`0x542d16`).
+    /// The book update (`0x53ca70`): book, school masks, macro pass when `macros`, `SPELLS_CHANGED`, then `LEARNED_SPELL_IN_TAB` (`0x542d16`).
     fn update_book(&mut self, learned: &LearnedInTab, macros: bool) {
         let inputs = crate::ui_spellbook::BookInputs {
             known: &self.actions.spells,
@@ -248,8 +244,7 @@ fn on_spell_learned(
         if learner.is_some() {
             l.replace_macro_rank(None, spell_id);
         }
-        // Each slot the rank replace writes signals at its write (`0x5aae80`), ahead of the
-        // announcement as the registrar orders them; the first-rank placement waits for the book.
+        // The rank replace signals each slot at its write (`0x5aae80`); the first-rank placement waits for the book.
         let place = learned_spell(
             spell_id,
             (&mut l.actions, &mut l.slots),
@@ -304,8 +299,7 @@ fn on_spell_learned(
 /// The tutorial a live learn into a tab raises after its flash (`0x542d1b`).
 const LEARN_TUTORIAL: u32 = 0x27;
 
-/// A live learn's first-rank placement on the first empty button of `page`, at its step after the
-/// book update's listeners (`0x542dc1`-`0x542de3`): the slot written and signalled (`0x5aae80`).
+/// A live learn's first-rank placement on `page`'s first empty button, after the book's listeners (`0x542dc1`-`0x542de3`, `0x5aae80`).
 fn learn_place_step(world: &mut World, spell_id: u32, page: u8) {
     let Some(net) = world
         .get_resource::<NetCommands>()
@@ -461,8 +455,7 @@ fn on_spell_superceded(
         new_spell_id,
     } = ev
     {
-        // The rank replace runs first, streamed or not (`0x6e7e46`): a bar macro bound to the old
-        // rank follows; the spell slots follow the book in `ui_action::ranks`.
+        // The rank replace runs first, streamed or not (`0x6e7e46`): a bar macro on the old rank follows.
         l.replace_macro_rank(Some(old_spell_id), new_spell_id);
         // Before our object exists the pair edits the buffer: the old entry renamed, else the new one appended (`0x6e7ef4`); after, the removal then the registrar with notify set run their companion arms (`0x542eba`, `0x542ec6`), each ending in a book update (`0x5401b8`, `0x542cd4`).
         let me = our_store(&l, &stores).map(|me| race_class_of(&me.0));
@@ -1369,13 +1362,7 @@ fn put_table(book: &PlayerActions, table: Option<&[ActionButton]>) -> Vec<Action
     set
 }
 
-/// `SMSG_LEARNED_SPELL` (`0x6e7d60`): with our player streamed, `0x6e7b00(spell, slot, 1, 1)`:
-/// the rank below leaves the bar for the new one (`0x5aafd0`), then the registrar `0x542030`
-/// with its live flag set adds the spell to the book, announces it in chat, queues its tab flash,
-/// and returns the page a first rank goes on while the character is under level 11
-/// ([`super::learn_place`]), which the caller places after the book update. Before the player
-/// streams, the pair is buffered (`0x6dec70`) and the player's own init replays it as
-/// `0x6e7b00(spell, slot, 0, 1)` (`0x6e7fc5`): the book alone, no line, no flash, no button.
+/// `SMSG_LEARNED_SPELL` (`0x6e7d60`): the rank replace (`0x5aafd0`), then the live registrar (`0x542030`); before our player streams, book-only (`0x6dec70`, `0x6e7fc5`).
 ///
 /// Hidden, recipe, companion (#263) and unbooked learns skip tab and bar (`0x54265c`-`0x542856`).
 fn learned_spell(
@@ -3074,8 +3061,7 @@ mod tests {
         }
     }
 
-    /// Before our player streams, the pair is buffered and replayed with the live flag clear
-    /// (`0x6e7fc5`): the book only.
+    /// Before our player streams, the pair is buffered and replayed with the live flag clear (`0x6e7fc5`): the book only.
     #[test]
     fn a_learn_before_the_player_is_book_only() {
         let spells = catalog_with(
