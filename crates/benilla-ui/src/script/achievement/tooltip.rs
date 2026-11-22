@@ -110,8 +110,8 @@ pub(super) fn rebuild(lua: &Lua, h: crate::widget::FrameHandle) -> mlua::Result<
 }
 
 /// The achievement fill (`0x627220`): an unknown id fills nothing; the owner's name is read with
-/// the tooltip's callback, and an uncached one leaves the tooltip as it was unless `force`, the
-/// callback's rebuild, which names the owner `UNKNOWN`.
+/// the tooltip's callback, deduped (`0x62726d`), and an uncached one leaves the tooltip as it was
+/// unless `force`, the callback's rebuild, which names the owner `UNKNOWN`.
 fn set_achievement(lua: &Lua, this: &Table, l: AchievementLink, force: bool) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
     let Some(db) = crate::script::read_live(|v| v.achievement_db()).flatten() else {
@@ -120,12 +120,19 @@ fn set_achievement(lua: &Lua, this: &Table, l: AchievementLink, force: bool) -> 
     let Some(a) = db.get(l.id) else {
         return Ok(());
     };
-    let name = crate::script::write_live(|v| v.player_name_or_ask(l.guid)).flatten();
+    // A zero guid has no record and no callback (`0x67d783`).
+    let name = match l.guid {
+        0 => None,
+        g => crate::script::write_live(|v| v.player_name_or_ask(g)).flatten(),
+    };
     if name.is_none() {
-        crate::script::model_mut_of(lua)
-            .achievement
-            .name_waits
-            .push((h, l.guid));
+        let mut model = crate::script::model_mut_of(lua);
+        let waits = &mut model.achievement.name_waits;
+        // A pending record keeps one callback per tooltip (`0x67d84a`-`0x67d876`).
+        if l.guid != 0 && !waits.contains(&(h, l.guid)) {
+            waits.push((h, l.guid));
+        }
+        drop(model);
         if !force {
             return Ok(());
         }

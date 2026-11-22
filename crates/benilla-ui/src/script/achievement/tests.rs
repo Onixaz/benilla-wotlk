@@ -672,3 +672,48 @@ fn an_uncached_owner_asks_and_its_answer_rebuilds_only_a_shown_achievement() {
         "A6"
     );
 }
+
+/// A pending name keeps one callback per tooltip (`0x67d84a`-`0x67d876`): the same uncached link
+/// set twice rebuilds once on the answer; a zero guid asks nothing and leaves no wait (`0x67d783`).
+#[test]
+fn the_same_uncached_owner_set_twice_rebuilds_once_and_a_zero_guid_waits_on_nothing() {
+    let mut s = script();
+    s.s.set_screen_size(800.0, 600.0);
+    s.run(
+        r#"
+        ACHIEVEMENT_TOOLTIP_IN_PROGRESS = "In progress for %s"
+        set, cleared = 0, 0
+        T = CreateFrame("GameTooltip", "T")
+        CreateFrame("Frame", "Owner")
+        T:SetOwner(Owner, "ANCHOR_PRESERVE")
+        T:SetScript("OnTooltipSetAchievement", function() set = set + 1 end)
+        T:SetScript("OnTooltipCleared", function() cleared = cleared + 1 end)
+        "#,
+    )
+    .unwrap();
+    let link = |id: u32, guid: u64| format!("achievement:{id}:{guid:016X}:0:0:0:-1:0:0:0:0");
+    s.view.player_names.insert(0x2a, "Probe".into());
+    s.run(&format!("T:SetHyperlink({:?})", link(6, 0x2a)))
+        .unwrap();
+    assert_eq!(s.eval::<i64>("return set").unwrap(), 1);
+    s.run(&format!(
+        "T:SetHyperlink({:?}) T:SetHyperlink({:?})",
+        link(7, 0x2b),
+        link(7, 0x2b)
+    ))
+    .unwrap();
+    s.run("cleared = 0").unwrap();
+    s.view.player_names.insert(0x2b, "Other".into());
+    {
+        let Rig { s, view } = &mut s;
+        lending(view, || s.achievement_name_landed(0x2b, true));
+    }
+    assert_eq!(s.eval::<i64>("return set").unwrap(), 2);
+    assert_eq!(s.eval::<i64>("return cleared").unwrap(), 1);
+    // A zero guid: no ask, the tooltip as it was, nothing waiting.
+    s.view.name_asks.clear();
+    s.run(&format!("T:SetHyperlink({:?})", link(7, 0))).unwrap();
+    assert!(s.view.name_asks.is_empty());
+    assert_eq!(s.eval::<i64>("return set").unwrap(), 2);
+    assert!(s.s.model_mut().achievement.name_waits.is_empty());
+}
