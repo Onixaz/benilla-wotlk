@@ -17,8 +17,7 @@ use crate::net::{
     merge_store_fields, ClientCommand, FieldChanged, GuidIndex, NetCommands, NetHandlerApp,
     ObjectStore, Objects,
 };
-use crate::ui_action::{UiError, UiErrorKeys};
-use crate::ui_chat::ChatLog;
+use crate::ui_action::UiError;
 use crate::ui_script::live::UiEvents;
 use crate::ui_script::UiDrain;
 
@@ -309,13 +308,12 @@ fn refund_result(world: &mut World, result: u32, cost: Option<PurchaseCost>) {
             &mut errors,
         );
     });
-    if let Some(mut chat) = world.get_resource_mut::<ChatLog>() {
-        for line in lines {
-            crate::ui_chat::away::push_system(&mut chat, line);
-        }
+    // Each line in the handler's turn (`0x5216f0`; the system lines through `0x509dd0`).
+    for line in lines {
+        crate::ui_chat::add_chat_line_now(world, 0, line);
     }
-    if let Some(mut keys) = world.get_resource_mut::<UiErrorKeys>() {
-        keys.0.extend(errors);
+    for error in errors {
+        crate::ui_action::show_line_in_world(world, "ui_socket", error);
     }
 }
 
