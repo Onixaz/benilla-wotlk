@@ -541,8 +541,8 @@ fn a_timed_criterion_in_the_list_fires_before_the_next_criterion_lands() {
     );
 }
 
-/// The criteria update's tracked walk reads the live list between raises (`0x5b32d8`): a listener
-/// that untracks the achievement it hears about leaves the walk on the next one.
+/// The criteria update's tracked walk saves each node's next link before its raise (`0x5b3298`): a
+/// listener that untracks the achievement it hears about leaves the walk on the saved next one.
 #[test]
 fn the_criteria_walk_reads_the_tracked_list_a_listener_edits() {
     let mut s = script();
@@ -577,6 +577,43 @@ fn the_criteria_walk_reads_the_tracked_list_a_listener_edits() {
          TRACKED_ACHIEVEMENT_UPDATE(7)"
     );
     assert_eq!(s.view.achievements.tracked(), &[7, 6]);
+}
+
+/// The walk resumes from the link saved before the raise (`0x5b3298`, `0x5b32e0`): a node a
+/// listener appends behind the last one is never visited, so its only update is the add's
+/// (`0x5b24b6`).
+#[test]
+fn the_criteria_walk_ends_at_the_saved_link_past_a_listener_append() {
+    let mut s = script();
+    // 7 reads 9's criteria, so it hears about criterion 100.
+    let db = db_with(|rows| {
+        if let Some(a) = rows.iter_mut().find(|a| a.id == 7) {
+            a.shares_criteria = 9;
+        }
+    });
+    s.view.achievement_db = Some(Arc::new(db));
+    s.run("AddTrackedAchievement(7)").unwrap();
+    s.run(
+        r#"
+        local f = CreateFrame("Frame")
+        f:RegisterEvent("TRACKED_ACHIEVEMENT_UPDATE")
+        f:SetScript("OnEvent", function(_, e, id)
+            if id == 7 then AddTrackedAchievement(9) end
+        end)
+        "#,
+    )
+    .unwrap();
+    log(&mut s);
+    s.apply(AchievementUpdate::Criteria {
+        criterion: progress(100, 1, 0),
+        now: 1000,
+    });
+    // 7's update, the add's update of 9, and no walk update of 9.
+    assert_eq!(
+        log(&mut s),
+        "CRITERIA_UPDATE() TRACKED_ACHIEVEMENT_UPDATE(7) TRACKED_ACHIEVEMENT_UPDATE(9)"
+    );
+    assert_eq!(s.view.achievements.tracked(), &[7, 9]);
 }
 
 /// An owner whose name is not cached leaves the tooltip as it was and asks with the tooltip's

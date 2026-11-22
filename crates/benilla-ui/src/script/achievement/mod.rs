@@ -451,7 +451,7 @@ pub fn handle_achievement_packet(
         }
         // `0x5b3160`: the show flag, the criterion (`0x5b3218`), `CRITERIA_UPDATE` (`0x5b3224`),
         // then a timed criterion's tracker update (`0x5b326d`) or one per tracked achievement
-        // reading it (`0x5b32d8`), the tracked list read live between raises.
+        // reading it (`0x5b32d8`), each next link saved before the raise.
         AchievementUpdate::Criteria { criterion, now } => {
             let book = host.book();
             book.received = true;
@@ -464,21 +464,24 @@ pub fn handle_achievement_packet(
                 host.raise(timed_update(rec, criterion.timer1));
                 return;
             }
-            let mut at = 0;
-            while let Some(&t) = host.book().tracked.get(at) {
+            // `0x5b3298`: each node's next link is read before its compare and raise, and the walk
+            // resumes from that saved link (`0x5b32e0`), so a node a listener appends after the
+            // last one is never visited. A listener that frees the saved node leaves 12340 reading
+            // freed memory; the walk stops there.
+            let mut next = host.book().tracked.first().copied();
+            while let Some(t) = next {
+                let tracked = &host.book().tracked;
+                let saved = tracked
+                    .iter()
+                    .position(|&x| x == t)
+                    .and_then(|i| tracked.get(i + 1).copied());
                 let shares = db
                     .get(t)
                     .is_some_and(|a| a.shares_criteria == rec.achievement);
                 if t == rec.achievement || shares {
                     host.raise(tracked_update(t));
                 }
-                // The walk goes on from the node after this one; a listener's removal of it
-                // leaves its successor where it stood.
-                let tracked = &host.book().tracked;
-                at = match tracked.get(at) {
-                    Some(&held) if held == t => at + 1,
-                    _ => tracked.iter().position(|&x| x == t).map_or(at, |i| i + 1),
-                };
+                next = saved.filter(|s| host.book().tracked.contains(s));
             }
         }
         // `0x5b36f0`: a held criterion unlinks, then `CRITERIA_UPDATE` (`0x5b376b`).
