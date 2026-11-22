@@ -376,6 +376,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if !coins && id == 7 {
                 model.trade_enchant_targets.push(false);
             }
+            drop(model);
+            crate::script::calls::press_item_picks(lua);
             Ok(())
         })?,
     )?;
@@ -387,6 +389,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             crate::script::model_mut_of(lua)
                 .trade_enchant_targets
                 .push(true);
+            crate::script::calls::press_item_picks(lua);
             Ok(())
         })?,
     )?;

@@ -922,8 +922,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "PickupContainerItem",
         lua.create_function(|lua, (bag, slot): (i64, u32)| {
-            let mut model = crate::script::model_mut_of(lua);
-            pickup_container_item(&mut model, bag, slot);
+            pickup_container_item(&mut crate::script::model_mut_of(lua), bag, slot);
+            crate::script::calls::press_item_picks(lua);
             Ok(())
         })?,
     )?;

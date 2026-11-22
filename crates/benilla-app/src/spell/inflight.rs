@@ -71,6 +71,11 @@ impl PendingCast {
         self.counts.take()
     }
 
+    /// The `castCount` the next cast attempt takes, left untaken.
+    pub(crate) fn next_count(&self) -> u8 {
+        self.counts.peek()
+    }
+
     /// File a sent attempt's record at the list's end.
     pub(crate) fn file(&mut self, record: PendingRecord) {
         self.records.push(record);

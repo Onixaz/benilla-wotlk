@@ -254,7 +254,7 @@ fn the_stock_blacksmithing_window_creates_and_switches_lines() {
     assert_eq!(text(&s, "TradeSkillRankFrameSkillRank:GetText()"), "80/150");
 
     s.run("TradeSkillCreateAllButton:Click()").unwrap();
-    assert_eq!(s.take_trade_skill_casts(), [2660]);
+    assert_eq!(s.take_trade_skill_casts(), [(2660, 3)]);
     s.tick(0.0);
     assert_eq!(
         s.eval::<i64>("return TradeSkillInputBox:GetNumber()")

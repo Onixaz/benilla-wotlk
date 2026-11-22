@@ -38,15 +38,17 @@ fn feedable_pet(
 /// press, its raises fired before the next.
 pub(crate) fn drop_item_on_unit(world: &mut World) {
     let clicked_pet = world.run_system_cached(clicked_pet).unwrap_or(false);
-    let Some(mut tokens) =
-        crate::ui_script::safe_world::lend(world, |s| s.take_drop_item_on_unit())
-    else {
-        return;
-    };
+    press_dropped_tokens(world);
     if clicked_pet {
-        tokens.push("pet".to_string());
+        crate::script_calls::press_step(world, feed_leg, "pet".to_string());
     }
-    for token in tokens {
+}
+
+/// The tokens `DropItemOnUnit` queued, each its own press: inside the verb's call where the
+/// `World` is lent (`0x51bf26`), else in the press pass.
+pub(crate) fn press_dropped_tokens(world: &mut World) {
+    let tokens = crate::ui_script::safe_world::lend(world, |s| s.take_drop_item_on_unit());
+    for token in tokens.unwrap_or_default() {
         crate::script_calls::press_step(world, feed_leg, token);
     }
 }

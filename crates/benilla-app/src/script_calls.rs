@@ -41,6 +41,10 @@ pub(crate) fn apply_in_call(lua: &mlua::Lua, call: ScriptCall) -> bool {
         }
         return true;
     }
+    // The verbs that press off a queued intent: their drain, each press at its own step.
+    if let ScriptCall::Press(verb) = call {
+        return with_world(|world| press_verb(world, verb)).is_some();
+    }
     let applied = with_world(|world| {
         // What an enclosing turn queued stays its own, fired by it.
         let earlier = world.get_resource_or_init::<UiEvents>().set_aside();
@@ -79,6 +83,18 @@ pub(crate) fn apply_in_call(lua: &mlua::Lua, call: ScriptCall) -> bool {
             }
             true
         }
+    }
+}
+
+/// A verb's press inside its call: the drain of the intents it queued, each press at its own step
+/// ([`press_step`]), so the line after the call reads what it armed.
+fn press_verb(world: &mut World, verb: benilla_ui::script::VerbPress) {
+    use benilla_ui::script::VerbPress;
+    match verb {
+        VerbPress::TradeSkill => crate::ui_tradeskill::press_trade_skill_casts(world),
+        VerbPress::DropItemOnUnit => crate::ui_action::drop_item::press_dropped_tokens(world),
+        VerbPress::Death => crate::death::drain_death(world),
+        VerbPress::ItemPicks => crate::spell::targeting::commit_item_cast_on_pick(world),
     }
 }
 
@@ -230,7 +246,7 @@ fn apply_one(
                 }
             }
             // Applied by the caller, which holds no borrow for its view write.
-            ScriptCall::DestroyTotem(_) => {}
+            ScriptCall::DestroyTotem(_) | ScriptCall::Press(_) => {}
             ScriptCall::UseItem { bag, slot } => appliers.p5().use_item(script, bag, slot),
             ScriptCall::InteractObject(guid) => appliers.p0().interact_object(guid),
             ScriptCall::UseContainerItem { bag, slot } => {

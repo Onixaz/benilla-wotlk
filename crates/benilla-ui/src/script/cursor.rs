@@ -575,7 +575,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `BindEnchant()`, `ReplaceEnchant()`: queue an intent for the app; nothing is sent from here.
+    // `BindEnchant()`, `ReplaceEnchant()`: the cast at the parked item, inside the call.
     for (name, answer) in [
         ("BindEnchant", EnchantConfirm::Bind),
         ("ReplaceEnchant", EnchantConfirm::Replace),
@@ -583,8 +583,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         g.set(
             name,
             lua.create_function(move |lua, ()| {
-                let mut model = crate::script::model_mut_of(lua);
-                model.enchant_confirms.push(answer);
+                crate::script::model_mut_of(lua)
+                    .enchant_confirms
+                    .push(answer);
+                crate::script::calls::press_item_picks(lua);
                 Ok(())
             })?,
         )?;

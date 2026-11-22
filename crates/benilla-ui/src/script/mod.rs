@@ -326,7 +326,7 @@ pub use battlefield_score::{
     BattlefieldScoreRow, BattlefieldScores, BattlefieldStatColumn, BattlefieldTeamView, ScoreName,
 };
 pub use bind_confirm::PendingEquipAnswer;
-pub use calls::{apply_queued, set_apply, ApplyCall, CastAt, NearestMode, ScriptCall};
+pub use calls::{apply_queued, set_apply, ApplyCall, CastAt, NearestMode, ScriptCall, VerbPress};
 pub use camera_view::{CameraViewRequest, CAMERA_VIEW_COUNT};
 pub use channel::{ChannelCommand, ZoneChannelRow};
 pub use channel_pane::ChannelSlotInfo;

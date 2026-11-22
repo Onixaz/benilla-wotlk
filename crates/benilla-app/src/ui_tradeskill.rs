@@ -794,14 +794,7 @@ fn feed_trade_skill(
 /// `World` lent at its raises, so the next reads the GCD it armed (`0x80b583`).
 pub(crate) fn drain_trade_skill(world: &mut World) {
     use crate::ui_script::safe_world::lend;
-    for spell_id in lend(world, |s| s.take_trade_skill_casts()).unwrap_or_default() {
-        if world.resource::<TradeSkillOpen>().line.is_none() {
-            debug!("ui_tradeskill: DoTradeSkill({spell_id}) with no open book — ignored");
-            continue;
-        }
-        debug!("ui_tradeskill: DoTradeSkill({spell_id})");
-        press_trade_skill(world, spell_id);
-    }
+    press_trade_skill_casts(world);
     let edges = world.run_system_cached(own_cast_edges).unwrap_or_default();
     for (kind, spell_id) in edges {
         // The edges write the repeat at once, in the order read (start `0x5da0f0`, go `0x5da070`,
@@ -841,9 +834,42 @@ fn own_cast_edges(
         .collect()
 }
 
+/// `DoTradeSkill`'s queued casts, each a press; one that went sets its repeat and signals it
+/// (`0x5dacbb`, `0x5dacc1` -> `0x5d9fa0`), one refused sets nothing.
+pub(crate) fn press_trade_skill_casts(world: &mut World) {
+    use crate::ui_script::safe_world::lend;
+    for (spell_id, times) in lend(world, |s| s.take_trade_skill_casts()).unwrap_or_default() {
+        if world.resource::<TradeSkillOpen>().line.is_none() {
+            debug!("ui_tradeskill: DoTradeSkill({spell_id}) with no open book — ignored");
+            continue;
+        }
+        debug!("ui_tradeskill: DoTradeSkill({spell_id})");
+        if press_trade_skill(world, spell_id) {
+            lend(world, |s| s.trade_skill_cast_sent(spell_id, times));
+        }
+    }
+}
+
 /// One cast as a press: the ladder, then its raises with the `World` lent (`0x80b556`, `0x80b583`).
-fn press_trade_skill(world: &mut World, spell_id: u32) {
+/// Whether the attempt went, sent or armed the cursor (`0x80d9b0`, `0x80da1a`): its record's count
+/// is filed or held by the cursor; every refusal returns false (`0x80da2c`).
+fn press_trade_skill(world: &mut World, spell_id: u32) -> bool {
+    let count = world
+        .get_resource::<crate::spell::PendingCast>()
+        .map_or(0, |p| p.next_count());
+    let filed = |world: &World| {
+        world
+            .get_resource::<crate::spell::PendingCast>()
+            .map_or(0, |p| {
+                p.records().iter().filter(|r| r.count == count).count()
+            })
+    };
+    let before = filed(world);
     crate::script_calls::press_step(world, send_trade_skill, spell_id);
+    let held = world
+        .get_resource::<crate::spell::SpellTargeting>()
+        .is_some_and(|t| t.spell() == Some(spell_id) && t.count() == count);
+    filed(world) > before || held
 }
 
 fn send_trade_skill(
@@ -1058,6 +1084,91 @@ mod tests {
         (app, rx, me, script)
     }
 
+    /// The book with Runed Copper Rod on the standard GCD, the VM in the world.
+    fn craft_world_with_gcd() -> (
+        App,
+        crossbeam_channel::Receiver<crate::net::ClientCommand>,
+        Entity,
+    ) {
+        let (mut app, rx, me, script) = craft_world();
+        let world = app.world_mut();
+        world.insert_non_send_resource(script);
+        world.resource_mut::<TradeSkillOpen>().line = Some(333);
+        let mut spells = crate::ui_action::Spells::empty_for_tests();
+        spells.catalog = benilla_formats::SpellCatalog::from_displays(
+            [(
+                ROD,
+                SpellDisplay {
+                    name: "Runed Copper Rod".into(),
+                    start_recovery_category: 133,
+                    start_recovery_ms: 1500,
+                    ..Default::default()
+                },
+            )]
+            .into(),
+        );
+        world.insert_resource(spells);
+        (app, rx, me)
+    }
+
+    const DO_ROD: &str = r#"for i = 1, GetNumTradeSkills() do
+                       if select(2, GetTradeSkillInfo(i)) ~= "header" then
+                           SelectTradeSkill(i)
+                           DoTradeSkill(i, 3)
+                           GCD = select(2, GetSpellCooldown(7421))
+                           REPEAT = GetTradeskillRepeatCount()
+                       end
+                   end"#;
+
+    /// `DoTradeSkill` casts inside the call (`0x5dacb1` -> `0x80da40`): the caller's next line reads
+    /// the GCD the press armed and the repeat it set once the cast went (`0x5dacc1`).
+    #[test]
+    fn do_trade_skill_casts_inside_its_call() {
+        let (mut app, rx, _me) = craft_world_with_gcd();
+        let world = app.world_mut();
+        crate::ui_script::safe_world::lend(world, |s| s.run(DO_ROD))
+            .expect("a VM")
+            .expect("the chunk runs");
+        let sent = rx
+            .try_iter()
+            .filter(|c| matches!(c, crate::net::ClientCommand::CastSpell { spell_id, .. } if *spell_id == ROD))
+            .count();
+        assert_eq!(sent, 1, "the cast went out inside the call");
+        let script = world.non_send_resource::<benilla_ui::script::UiScript>();
+        let gcd: f64 = script.eval("return GCD").expect("the line ran");
+        let repeat: i64 = script.eval("return REPEAT").expect("the line ran");
+        assert_eq!(gcd, 1.5, "the next line reads the press's GCD");
+        assert_eq!(repeat, 3, "the cast went, so the repeat took the count");
+    }
+
+    /// A refused cast returns false and `DoTradeSkill` sets no repeat (`0x5dacbb`): dead, the
+    /// attempt refuses with 0x13 and the count stays the default 1.
+    #[test]
+    fn a_refused_do_trade_skill_sets_no_repeat() {
+        use benilla_protocol::field::{FIELD_UNIT_HEALTH, FIELD_UNIT_MAXHEALTH};
+        let (mut app, rx, me) = craft_world_with_gcd();
+        let world = app.world_mut();
+        world
+            .entity_mut(me)
+            .insert(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (FIELD_UNIT_HEALTH, 0),
+                (FIELD_UNIT_MAXHEALTH, 100),
+            ])));
+        crate::ui_script::safe_world::lend(world, |s| s.run(DO_ROD))
+            .expect("a VM")
+            .expect("the chunk runs");
+        assert!(
+            !rx.try_iter()
+                .any(|c| matches!(c, crate::net::ClientCommand::CastSpell { .. })),
+            "nothing went out"
+        );
+        let repeat: i64 = world
+            .non_send_resource::<benilla_ui::script::UiScript>()
+            .eval("return REPEAT")
+            .expect("the line ran");
+        assert_eq!(repeat, 1, "no repeat for a refused cast");
+    }
+
     /// Two casts in one drain are two presses: the second reads the GCD the first armed at its
     /// step (`0x80b583`), so the pending bail ends it (`0x80d34b`, `0x80d36d`) and one cast goes
     /// out.
@@ -1122,7 +1233,8 @@ mod tests {
                    end"#,
             )
             .expect("the cast runs");
-        assert_eq!(script.take_trade_skill_casts(), [ROD]);
+        assert_eq!(script.take_trade_skill_casts(), [(ROD, 3)]);
+        script.trade_skill_cast_sent(ROD, 3);
         world.insert_non_send_resource(script);
         for kind in [
             CastEventKind::Start { visuals: true },

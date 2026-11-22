@@ -892,9 +892,9 @@ pub(crate) fn ghost_probe() -> Option<bool> {
     })
 }
 
-/// Map the queued Lua death intents onto the wire, after `UiInput` so a click drains that frame;
-/// each is its own press, its raises fired before the next.
-fn drain_death(world: &mut World) {
+/// Map the queued Lua death intents onto the wire: inside the verb's call where the `World` is lent,
+/// else in the press pass after `UiInput`; each is its own press, its raises fired before the next.
+pub(crate) fn drain_death(world: &mut World) {
     let actions = crate::ui_script::safe_world::lend(world, |s| s.take_death_actions());
     for action in actions.unwrap_or_default() {
         crate::script_calls::press_step(world, death_action, action);

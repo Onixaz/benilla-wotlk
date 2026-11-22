@@ -411,6 +411,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if let Some(held) = query.and_then(|q| find_item(&model, &q, 0)) {
                 model.item_picks.push((held.bag, held.slot));
             }
+            drop(model);
+            crate::script::calls::press_item_picks(lua);
             Ok(())
         })?,
     )?;

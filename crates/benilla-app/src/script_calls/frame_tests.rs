@@ -1537,6 +1537,148 @@ fn a_cast_from_a_sent_listener_applies_inside_it() {
     assert_eq!(rig.casts(), [(BOLT, Some(OLD)), (BOLT, Some(OLD))]);
 }
 
+/// `RepopMe` sends inside the call (`0x51aab3`): the frame runs only the tick, so no press pass
+/// could have sent it.
+#[test]
+fn a_death_verb_sends_inside_its_call() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.lua(TICK_DO);
+    rig.lua("TICK_DO = function() RepopMe() end");
+    rig.frame();
+    assert!(
+        rig.sent()
+            .iter()
+            .any(|c| matches!(c, ClientCommand::RepopRequest { automatic: false })),
+        "the release went out inside the call"
+    );
+}
+
+/// `DropItemOnUnit("pet")` feeds the pet inside the call (`0x51bf26` -> `0x80dcf0`): the caller's
+/// next line reads the cursor the feed cleared, and the cast is out.
+#[test]
+fn a_drop_on_the_pet_feeds_inside_its_call() {
+    const FEED_PET: u32 = 6991;
+    const FOOD: u32 = 2287;
+    const FOOD_GUID: u64 = 0x4000_0000_0000_0077;
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    let world = rig.app.world_mut();
+    let index = world.resource::<GuidIndex>().0.clone();
+    world
+        .entity_mut(index[&ME])
+        .insert(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+            (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+            (benilla_protocol::field::FIELD_UNIT_FLAGS, 0x8),
+            (
+                benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1,
+                FOOD_GUID as u32,
+            ),
+            (
+                benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1 + 1,
+                (FOOD_GUID >> 32) as u32,
+            ),
+        ])));
+    world
+        .entity_mut(index[&PET])
+        .insert(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_UNIT_CREATED_BY_SPELL, 883),
+            (benilla_protocol::field::FIELD_UNIT_CREATEDBY, ME as u32),
+            (benilla_protocol::field::FIELD_UNIT_CREATEDBY + 1, 0),
+        ])));
+    world
+        .resource_mut::<crate::ui_action::LearnedAbilities>()
+        .feed_pet = Some(FEED_PET);
+    rig.vm().set_container(
+        0,
+        Some(benilla_ui::script::ContainerState {
+            bag_family: 0,
+            name: Some("Backpack".into()),
+            num_slots: 16,
+            slots: HashMap::from([(
+                1,
+                benilla_ui::script::ContainerSlot {
+                    item_id: FOOD,
+                    count: 1,
+                    ..Default::default()
+                },
+            )]),
+        }),
+    );
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"PickupContainerItem(0, 1)
+           TICK_DO = function() DropItemOnUnit("pet") HELD = CursorHasItem() end"#,
+    );
+    rig.frame();
+    assert!(
+        !rig.vm().eval::<bool>("return HELD").unwrap(),
+        "the next line reads the cursor the feed cleared"
+    );
+    assert!(
+        rig.sent().iter().any(|c| matches!(
+            c,
+            ClientCommand::CastSpellItem {
+                spell_id: FEED_PET,
+                item_guid: FOOD_GUID,
+                ..
+            }
+        )),
+        "Feed Pet went out at the food"
+    );
+}
+
+/// `SpellTargetItem` casts the cursor's spell at the item inside the call (`0x8008a5` ->
+/// `0x5210d0`): the caller's next line reads the cursor down and the GCD the press armed.
+#[test]
+fn an_item_pick_casts_inside_its_call() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.water_in_the_backpack();
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::spell::SpellTargeting>()
+        .enter(BOLT, crate::spell::CastCommit::Spell, 0x10);
+    rig.vm().set_container(
+        0,
+        Some(benilla_ui::script::ContainerState {
+            bag_family: 0,
+            name: Some("Backpack".into()),
+            num_slots: 16,
+            slots: HashMap::from([(
+                1,
+                benilla_ui::script::ContainerSlot {
+                    item_id: WATER,
+                    count: 5,
+                    ..Default::default()
+                },
+            )]),
+        }),
+    );
+    rig.lua(TICK_DO);
+    rig.lua(&format!(
+        "TICK_DO = function() SpellTargetItem({WATER}) UP = SpellIsTargeting() \
+         GCD = select(2, GetActionCooldown(1)) end"
+    ));
+    rig.frame();
+    assert!(
+        rig.sent().iter().any(|c| matches!(
+            c,
+            ClientCommand::CastSpellItem {
+                spell_id: BOLT,
+                item_guid: WATER_GUID,
+                ..
+            }
+        )),
+        "the cursor's spell went out at the water"
+    );
+    assert!(
+        !rig.vm().eval::<bool>("return UP == 1").unwrap(),
+        "the cursor was down by the next line"
+    );
+    let gcd: f64 = rig.vm().eval("return GCD").unwrap();
+    assert_eq!(gcd, 1.5, "the next line reads the press's GCD");
+}
+
 /// `UNIT_SPELLCAST_SENT` fires after the send and ahead of the start visuals and the GCD arm
 /// (`0x80b556`, `0x80b573`, `0x80b583`): its listener reads no cooldown yet, and the code after the
 /// call reads the GCD the rest of the press armed.

@@ -730,6 +730,11 @@ impl CastCounter {
         self.0 = count.wrapping_add(1);
         count
     }
+
+    /// The count the next cast carries, the counter left as it is.
+    pub fn peek(&self) -> u8 {
+        self.0.max(1)
+    }
 }
 
 /// The head of a 12340 `CMSG_CAST_SPELL` (sender `0x80b2f5`): `u8 castCount`, `u32 spellId`,

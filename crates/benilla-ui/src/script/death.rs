@@ -38,8 +38,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.globals().set(
             name,
             lua.create_function(move |lua, ()| {
-                let mut model = crate::script::model_mut_of(lua);
-                model.death_actions.push(action);
+                crate::script::model_mut_of(lua).death_actions.push(action);
+                super::calls::press(lua, super::VerbPress::Death);
                 Ok(())
             })?,
         )
