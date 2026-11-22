@@ -1,19 +1,19 @@
 //! The paper-doll cursor verbs: an equipped slot is an item source under
 //! [`super::EQUIPMENT_BAG`], so the shared cursor code handles its cancel, clear and world drop.
 
+use crate::script::container::SwapGate;
 use mlua::{Lua, Value};
 
 use crate::script::binding_abi::flag;
-use crate::script::container::ContainerMove;
 use crate::script::Model;
 
-use super::{queue_cursor_update, queue_lock_changed, CursorItem, CursorPayload, EQUIPMENT_BAG};
+use super::{clear_cursor, set_cursor, set_item_lock, CursorItem, CursorPayload, EQUIPMENT_BAG};
 
 /// `PickupInventoryItem(id)`, the doll slot's click, on the bag click's model: a fitting whole item
 /// moves in and the cursor clears, with no hop; a misfit on the doll's 23 slots auto-equips
 /// (`0x5e89f3`), one off a worn slot going back instead (`0x5e89e5`); a split stays held. Returns
 /// whether to repaint.
-pub(super) fn pickup_inventory_item(model: &mut Model, id: u32) -> bool {
+pub(super) fn pickup_inventory_item(model: &mut crate::script::ModelGuard<'_>, id: u32) -> bool {
     // Head 1 to Tabard 19, the bag slots 20-23, and the bank bag slots, which only `PutItemInBag`
     // reaches. Ammo (0) is refused; its leg is not built.
     if !(1..=23).contains(&id) && !super::bag_verbs::BANK_BAG_INV_SLOTS.contains(&id) {
@@ -30,7 +30,8 @@ pub(super) fn pickup_inventory_item(model: &mut Model, id: u32) -> bool {
     if !placing && (picking || crate::script::merchant::repair_mode(model)) {
         let usable = model
             .inv_slot("player", id as usize)
-            .is_some_and(|s| s.item_id != 0 && !s.locked);
+            .is_some_and(|s| s.item_id != 0)
+            && !is_inventory_item_locked(model, id);
         if usable && picking {
             model.item_picks.push((EQUIPMENT_BAG, id));
         } else if usable && (1..=19).contains(&id) {
@@ -38,11 +39,11 @@ pub(super) fn pickup_inventory_item(model: &mut Model, id: u32) -> bool {
         }
         return false;
     }
-    match model.cursor.take() {
+    match model.cursor.clone() {
         None => {
             let picked = model
                 .inv_slot("player", id as usize)
-                .filter(|s| s.item_id != 0 && !s.locked)
+                .filter(|s| s.item_id != 0 && !is_inventory_item_locked(model, id))
                 .map(|s| CursorItem {
                     bag: EQUIPMENT_BAG,
                     slot: id,
@@ -55,41 +56,36 @@ pub(super) fn pickup_inventory_item(model: &mut Model, id: u32) -> bool {
                     equip_slots: s.equip_slots.clone(),
                 });
             match picked {
+                // The setter, then the lock (`0x5e893a`).
                 Some(item) => {
-                    model.cursor = Some(CursorPayload::Item(item));
-                    queue_cursor_update(model);
-                    queue_lock_changed(model, EQUIPMENT_BAG, id);
+                    set_cursor(model, CursorPayload::Item(item));
+                    set_item_lock(model, EQUIPMENT_BAG, id, true);
                     true
                 }
                 None => false,
             }
         }
         Some(CursorPayload::Item(held)) if held.bag == EQUIPMENT_BAG && held.slot == id => {
-            queue_cursor_update(model);
-            queue_lock_changed(model, held.bag, held.slot);
+            clear_cursor(model);
             true
         }
         Some(CursorPayload::Item(held)) => {
             // A split stays held, with no event: nothing changed.
             if held.count.is_some() {
-                model.cursor = Some(CursorPayload::Item(held));
                 return false;
             }
             // A misfit takes the auto-equip path, the server picking the slot (`0x5e89f3`); every
             // item fits a bank bag slot.
             if !super::bag_verbs::fits_slot(&held, id) {
-                model.cursor = Some(CursorPayload::Item(held));
                 return auto_equip_cursor_item(model);
             }
-            model.container_moves.push(ContainerMove {
-                src_bag: held.bag,
-                src_slot: held.slot,
-                dst_bag: EQUIPMENT_BAG,
-                dst_slot: id,
-                count: None,
-            });
-            queue_cursor_update(model);
-            queue_lock_changed(model, held.bag, held.slot);
+            // A locked item in the slot refuses the swap, the cursor as it was (`0x5e8976`).
+            if is_inventory_item_locked(model, id) {
+                return false;
+            }
+            // The swap runs (`0x5e89c0`), then the slot's item locks whatever it did (`0x5e89c7`).
+            crate::script::container::swap_held(model, &held, EQUIPMENT_BAG, id);
+            set_item_lock(model, EQUIPMENT_BAG, id, true);
             true
         }
         // Mode 5, a buy into this slot: the reference sends `CMSG_BUY_ITEM_IN_SLOT` (`0x1a3`) and
@@ -114,11 +110,11 @@ pub(super) fn pickup_inventory_item(model: &mut Model, id: u32) -> bool {
                     },
                 );
             }
-            queue_cursor_update(model);
+            clear_cursor(model);
             true
         }
         Some(
-            other @ (CursorPayload::Spell(_)
+            CursorPayload::Spell(_)
             | CursorPayload::Action(_)
             | CursorPayload::Macro(_)
             | CursorPayload::EquipmentSet(_)
@@ -131,17 +127,33 @@ pub(super) fn pickup_inventory_item(model: &mut Model, id: u32) -> bool {
             | CursorPayload::Money(_)
             // Modes 11 and 12, from the guild bank, stay held for its own buttons.
             | CursorPayload::GuildBankItem(_)
-            | CursorPayload::GuildBankMoney(_)),
-        ) => {
-            model.cursor = Some(other);
-            false
-        }
+            | CursorPayload::GuildBankMoney(_),
+        ) => false,
     }
 }
 
-/// `EquipCursorItem(id)`: placing the held item on doll slot `id`.
-pub(super) fn equip_cursor_item(model: &mut Model, id: u32) -> bool {
-    pickup_inventory_item(model, id)
+/// `EquipCursorItem(slot)` past its argument gate (`0x51a3d0`), `id` the 1-based slot: no held item does nothing; the slot's own item clears the cursor (`0x51a505`); an item the slot takes swaps into it, the slot's item locking after the swap whatever it holds (`0x51a4ce`, `0x51a4db`); a misfit off a worn slot clears; anything else auto-equips with the bind question off (`0x51a51a`).
+pub(super) fn equip_cursor_item(model: &mut crate::script::ModelGuard<'_>, id: i64) {
+    let Some(CursorPayload::Item(held)) = model.cursor.clone() else {
+        return;
+    };
+    // The 0-based slots -1 and 255 skip to the auto-equip (`0x51a46d`, `0x51a479`).
+    if let Some(id) = u32::try_from(id).ok().filter(|&id| id != 0 && id != 0x100) {
+        if held.bag == EQUIPMENT_BAG && held.slot == id {
+            clear_cursor(model);
+            return;
+        }
+        if super::bag_verbs::fits_slot(&held, id) {
+            crate::script::container::swap_held(model, &held, EQUIPMENT_BAG, id);
+            set_item_lock(model, EQUIPMENT_BAG, id, true);
+            return;
+        }
+        if held.bag == EQUIPMENT_BAG && (1..=19).contains(&held.slot) {
+            clear_cursor(model);
+            return;
+        }
+    }
+    auto_equip_held(model, true);
 }
 
 /// `CursorCanGoInSlot(id)`, the doll slot's highlight on `CURSOR_UPDATE`
@@ -158,25 +170,81 @@ pub(super) fn cursor_can_go_in_slot(model: &Model, id: u32) -> bool {
 /// whole stack from a bag becomes `CMSG_AUTOEQUIP_ITEM`: the server picks the slot and swaps
 /// the displaced piece back (`ItemHandler.cpp:138-228`); an item off the doll's 23 slots goes back
 /// with nothing sent (`0x6dfcf3`); a split stays held. Returns whether to repaint.
-pub(super) fn auto_equip_cursor_item(model: &mut Model) -> bool {
-    match model.cursor.take() {
+pub(crate) fn auto_equip_cursor_item(model: &mut crate::script::ModelGuard<'_>) -> bool {
+    auto_equip_held(model, false)
+}
+
+/// [`auto_equip_cursor_item`], `suppress` skipping the record's bind arm (`0x6dfd7c`).
+fn auto_equip_held(model: &mut crate::script::ModelGuard<'_>, suppress: bool) -> bool {
+    match model.cursor.clone() {
         Some(CursorPayload::Item(item))
             if item.bag == EQUIPMENT_BAG && (1..=23).contains(&item.slot) =>
         {
-            queue_cursor_update(model);
-            queue_lock_changed(model, item.bag, item.slot);
+            clear_cursor(model);
             true
         }
         Some(CursorPayload::Item(item)) if item.bag >= 0 && item.count.is_none() => {
-            model.container_autoequips.push((item.bag, item.slot));
-            queue_cursor_update(model);
-            queue_lock_changed(model, item.bag, item.slot);
-            true
+            let gate =
+                crate::script::read_live(|l| l.auto_equip_gate(item.bag, item.slot)).flatten();
+            #[cfg(any(test, feature = "fixtures"))]
+            let gate = gate.or(model
+                .swap_gates
+                .get(&(item.bag, item.slot))
+                .map(|&g| (g, false)));
+            let (gate, ammo) = gate.unwrap_or((SwapGate::Send, false));
+            let gate = match gate {
+                SwapGate::Wait(_) | SwapGate::Ask(_) if suppress => SwapGate::Send,
+                gate => gate,
+            };
+            let queue = |model: &mut crate::script::Model| {
+                if suppress {
+                    model
+                        .container_autoequips_unasked
+                        .push((item.bag, item.slot));
+                } else {
+                    model.container_autoequips.push((item.bag, item.slot));
+                }
+            };
+            match gate {
+                // No item object: nothing moves (`0x6dfd45`).
+                SwapGate::Refuse => false,
+                // The record is out: its callback runs the equip again (`0x6dfd99`, `0x6dbbe0`).
+                SwapGate::Wait(entry) => {
+                    crate::script::item_stats::wait_item_record(
+                        model,
+                        entry,
+                        crate::script::ItemRecordWait::AutoEquip,
+                    );
+                    crate::script::item_stats::ask_item_record(model, entry);
+                    false
+                }
+                // `AUTOEQUIP_BIND_CONFIRM` is asked and the cursor stays as it was (`0x6dfe31`).
+                SwapGate::Ask(entry)
+                    if crate::script::item_stats::item_usable_by_id(model, entry) =>
+                {
+                    let ask = crate::script::HostAsk::BindAutoEquip {
+                        bag: item.bag,
+                        slot: item.slot,
+                    };
+                    match model.ask(&ask) {
+                        Some(crate::script::HostAnswer::BindIndex(index)) => model.raise(
+                            "AUTOEQUIP_BIND_CONFIRM",
+                            vec![crate::script::ScriptValue::Int(i64::from(index))],
+                        ),
+                        // No host answers in the call: the app's drain files and asks.
+                        _ => queue(model),
+                    }
+                    false
+                }
+                // The equip goes out and the cursor clears, its item still locked until the answer (`0x6dfe81`, `0x6dfebd`); ammunition is set by its id and unlocks (`0x6dfe51`).
+                SwapGate::Send | SwapGate::Ask(_) => {
+                    queue(model);
+                    super::clear_cursor_with(model, ammo, true);
+                    true
+                }
+            }
         }
-        other => {
-            model.cursor = other;
-            false
-        }
+        _ => false,
     }
 }
 
@@ -184,7 +252,7 @@ pub(super) fn auto_equip_cursor_item(model: &mut Model) -> bool {
 /// clears before the slot is read, so a held payload goes back, never placed; then the app sends
 /// `CMSG_USE_ITEM` with bag 255 and the 0-based slot, dropping an empty slot unsent, or in repair
 /// mode a worn item is repaired, locked or not.
-pub(super) fn use_inventory_item(model: &mut Model, id: u32) {
+pub(super) fn use_inventory_item(model: &mut crate::script::ModelGuard<'_>, id: u32) {
     super::clear_cursor(model);
     if !crate::script::merchant::repair_mode(model) {
         model
@@ -201,17 +269,13 @@ pub(super) fn use_inventory_item(model: &mut Model, id: u32) {
     }
 }
 
-/// `IsInventoryItemLocked(id)`: true while `id` is the held item's source or the app reports a
-/// pending operation on it. Reads [`Model::inv_slot`], since `BankFrameItemButton_UpdateLock`
-/// asks about bank slots too.
+/// `IsInventoryItemLocked(id)`: the item's lock bit (`item+0x394` bit 0), read at the call beside the slot's fed one. Reads [`Model::inv_slot`], since `BankFrameItemButton_UpdateLock` asks about bank slots too.
 pub(in crate::script) fn is_inventory_item_locked(model: &Model, id: u32) -> bool {
-    let held_here = matches!(&model.cursor, Some(CursorPayload::Item(c)) if c.bag == EQUIPMENT_BAG && c.slot == id)
-        || crate::script::socket::holds_slot(model, EQUIPMENT_BAG, id);
     let fed = usize::try_from(id)
         .ok()
         .and_then(|i| model.inv_slot("player", i))
         .is_some_and(|s| s.locked);
-    held_here || fed
+    fed || super::item_locked(model, EQUIPMENT_BAG, id)
 }
 
 /// A verb's slot argument as the live id, through the registrar's reader (`0x5e7c00`).
@@ -237,9 +301,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
     g.set(
         "EquipCursorItem",
-        lua.create_function(|lua, id: u32| {
+        lua.create_function(|lua, slot: Value| {
+            let id =
+                crate::script::binding_abi::number_arg(lua, slot, "Usage: EquipCursorItem(slot)")?;
             let mut model = crate::script::model_mut_of(lua);
-            Ok(equip_cursor_item(&mut model, id))
+            equip_cursor_item(&mut model, i64::from(id));
+            Ok(())
         })?,
     )?;
     g.set(
@@ -658,6 +725,48 @@ mod tests {
         assert_eq!(s.take_container_autoequips(), vec![(0, 1)]);
     }
 
+    /// The auto-equip's bind question returns before the send's clear (`0x6dfe31`), as a record still out does (`0x6dfd99`), whose landing equips the item if it is still the one held (`0x6dbbe0`); no item object moves nothing (`0x6dfd45`).
+    #[test]
+    fn auto_equip_cursor_item_keeps_the_cursor_through_its_question_and_its_wait() {
+        use crate::script::container::SwapGate;
+        let item_id = one_fitting_bag_item().slots[&1].item_id;
+        let locked = |s: &UiScript| {
+            s.eval::<bool>("return select(3, GetContainerItemInfo(0, 1)) == 1")
+                .unwrap()
+        };
+
+        let mut s = UiScript::new().unwrap();
+        s.set_container(0, Some(one_fitting_bag_item()));
+        s.set_swap_gate(0, 1, SwapGate::Ask(item_id));
+        s.run("PickupContainerItem(0, 1)").unwrap();
+        crate::script::tick::fired::take();
+        assert!(!s.eval::<bool>("return AutoEquipCursorItem()").unwrap());
+        assert!(crate::script::tick::fired::names().is_empty());
+        assert!(s.cursor_item().is_some() && locked(&s));
+        assert_eq!(s.take_container_autoequips(), vec![(0, 1)]);
+
+        let mut s = UiScript::new().unwrap();
+        s.set_container(0, Some(one_fitting_bag_item()));
+        s.set_swap_gate(0, 1, SwapGate::Refuse);
+        s.run("PickupContainerItem(0, 1) AutoEquipCursorItem()")
+            .unwrap();
+        assert!(s.cursor_item().is_some() && s.take_container_autoequips().is_empty());
+
+        let mut s = UiScript::new().unwrap();
+        s.set_container(0, Some(one_fitting_bag_item()));
+        s.set_swap_gate(0, 1, SwapGate::Wait(item_id));
+        s.run("PickupContainerItem(0, 1) AutoEquipCursorItem()")
+            .unwrap();
+        assert!(s.cursor_item().is_some() && s.take_container_autoequips().is_empty());
+        // Another record landing equips nothing; the held item's own does.
+        s.set_swap_gate(0, 1, SwapGate::Send);
+        s.item_record_callback(item_id + 1, true, crate::script::ItemRecordWait::AutoEquip);
+        assert!(s.cursor_item().is_some());
+        s.item_record_callback(item_id, true, crate::script::ItemRecordWait::AutoEquip);
+        assert!(s.cursor_item().is_none() && locked(&s));
+        assert_eq!(s.take_container_autoequips(), vec![(0, 1)]);
+    }
+
     #[test]
     fn auto_equip_cursor_item_puts_a_worn_item_back_and_keeps_a_split_carry() {
         let mut s = UiScript::new().unwrap();
@@ -795,14 +904,20 @@ mod tests {
         );
     }
 
+    /// `EquipCursorItem` (`0x51a3d0`): nothing held does nothing and nothing is returned; a fitting item swaps into the slot, whose item locks after the swap (`0x51a4ce`, `0x51a4db`); a misfit auto-equips with the bind question off (`0x51a51a`); the slot's own item and a misfit off a worn slot only clear (`0x51a505`); a non-number raises.
     #[test]
-    fn equip_cursor_item_routes_through_pickup() {
+    fn equip_cursor_item_swaps_a_fit_and_auto_equips_a_misfit_unasked() {
         let mut s = UiScript::new().unwrap();
         s.set_inventory_slots(doll_slots());
         s.set_container(0, Some(one_fitting_bag_item()));
-        s.run("PickupContainerItem(0, 1)").unwrap();
+        assert!(s.eval::<bool>("return EquipCursorItem(1) == nil").unwrap());
+        assert!(
+            s.cursor_item().is_none(),
+            "an empty cursor picks nothing up"
+        );
 
-        assert!(s.eval::<bool>("return EquipCursorItem(1)").unwrap());
+        s.run("PickupContainerItem(0, 1)").unwrap();
+        assert!(s.eval::<bool>("return EquipCursorItem(1) == nil").unwrap());
         assert!(s.cursor_item().is_none());
         assert_eq!(
             s.take_container_moves(),
@@ -814,9 +929,32 @@ mod tests {
                 count: None,
             }]
         );
+        assert!(s
+            .eval::<bool>("return IsInventoryItemLocked(1) == 1")
+            .unwrap());
+
+        // A slot the item does not fit: the auto-equip, asked nothing even when its gate would ask.
+        let mut s = UiScript::new().unwrap();
+        s.set_inventory_slots(doll_slots());
+        s.set_container(0, Some(one_fitting_bag_item()));
+        s.set_swap_gate(0, 1, crate::script::container::SwapGate::Ask(0));
+        s.run("PickupContainerItem(0, 1) EquipCursorItem(5)")
+            .unwrap();
+        assert!(s.cursor_item().is_none());
+        assert!(s.take_container_moves().is_empty() && s.take_container_autoequips().is_empty());
+        assert_eq!(s.take_container_autoequips_unasked(), vec![(0, 1)]);
+
+        // The slot's own item, and a worn item on a slot it does not fit, only clear.
+        s.run("PickupInventoryItem(1) EquipCursorItem(1)").unwrap();
+        assert!(s.cursor_item().is_none());
+        s.run("PickupInventoryItem(1) EquipCursorItem(5)").unwrap();
+        assert!(s.cursor_item().is_none());
+        assert!(s.take_container_moves().is_empty());
+        assert!(s.take_container_autoequips_unasked().is_empty());
+        assert!(s.run("EquipCursorItem('x')").is_err());
     }
 
-    /// The held-payload test runs first in both seams, the bag's and the doll's.
+    /// The held-payload test runs first in both seams, the bag's and the doll's; only the doll's click binds an armed spell's item.
     #[test]
     fn the_armed_item_half_reroutes_bag_and_doll_clicks() {
         crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
@@ -837,17 +975,61 @@ mod tests {
                 "a click while carrying an item is a place, not a bind"
             );
 
-            // Armed with an empty cursor: both seams bind and leave the cursor empty.
-            s.run("ClearCursor()").unwrap();
+            // Armed with an empty cursor: the doll binds and leaves the cursor empty. A fresh pair of items: the place left its two locked (`0x5d82af`, `0x6dfc0d`), and a locked item does not bind (`0x5e882c`).
             assert!(s.cursor_item().is_none());
             assert!(!s.eval::<bool>("return PickupInventoryItem(1)").unwrap());
-            s.run("PickupContainerItem(0, 1)").unwrap();
+            assert!(
+                s.take_item_picks().is_empty(),
+                "a locked item does not bind"
+            );
+            let mut s = UiScript::new().unwrap();
+            s.set_inventory_slots(doll_slots());
+            s.set_container(0, Some(one_fitting_bag_item()));
+            s.set_item_pick_armed(true);
+            assert!(!s.eval::<bool>("return PickupInventoryItem(1)").unwrap());
             assert_eq!(
                 s.take_item_picks(),
-                vec![(EQUIPMENT_BAG, 1), (0, 1)],
-                "the doll reports in the ONE bag space; the bag reports its own id"
+                vec![(EQUIPMENT_BAG, 1)],
+                "the doll's click binds its item (`0x5e884f`)"
             );
             assert!(s.cursor_item().is_none(), "a bind never stages a payload");
+            // The bag's click binds nothing: it takes the item up as on any empty cursor (`0x5d8228`); the stock button routes a targeting click to `UseContainerItem` (`0x5d874c`).
+            s.run("PickupContainerItem(0, 1)").unwrap();
+            assert!(s.take_item_picks().is_empty());
+            assert!(s.cursor_item().is_some_and(|i| (i.bag, i.slot) == (0, 1)));
         });
+    }
+
+    /// With the host's state lent `AutoEquipCursorItem` files its question and signals `AUTOEQUIP_BIND_CONFIRM` inside the call (`0x6dfdc8`, `0x6dfe31`), the cursor still holding.
+    #[test]
+    fn auto_equip_cursor_item_signals_its_question_inside_the_call() {
+        use crate::script::container::SwapGate;
+        use crate::script::{HostAnswer, HostAsk};
+        let item_id = one_fitting_bag_item().slots[&1].item_id;
+        let mut s = UiScript::new().unwrap();
+        s.set_container(0, Some(one_fitting_bag_item()));
+        s.set_swap_gate(0, 1, SwapGate::Ask(item_id));
+        s.run(
+            r#"local f = CreateFrame("Frame")
+               f:RegisterEvent("AUTOEQUIP_BIND_CONFIRM")
+               f:SetScript("OnEvent", function(_, _, index) ASKED = { index, CursorHasItem(), SEEN } end)
+               PickupContainerItem(0, 1)"#,
+        )
+        .unwrap();
+        crate::script::tick::fired::take();
+        let asked = crate::script::calls::in_call::run(
+            &mut s,
+            Some(HostAnswer::BindIndex(0)),
+            "AutoEquipCursorItem() SEEN = true",
+        );
+        assert_eq!(asked, [HostAsk::BindAutoEquip { bag: 0, slot: 1 }]);
+        assert_eq!(
+            crate::script::tick::fired::names(),
+            ["AUTOEQUIP_BIND_CONFIRM"]
+        );
+        assert!(s
+            .eval::<bool>("return ASKED[1] == 0 and ASKED[2] == 1 and ASKED[3] == nil")
+            .unwrap());
+        assert!(s.cursor_item().is_some() && s.take_container_autoequips().is_empty());
     }
 }

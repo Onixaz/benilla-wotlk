@@ -1949,7 +1949,15 @@ pub(crate) mod schedule_tests {
     /// The consumer markers: a VM holder that does one of these to host state has spent
     /// something this frame that nothing can re-spend.
     #[rustfmt::skip]
-    const CONSUMES: &[&str] = &["fire_event(", "edge_now(", "with_edge(", "mem::take(", ".drain("];
+    const CONSUMES: &[&str] = &[
+        // Split so the fired-event walker reads no event name off this list.
+        concat!("fire_event", "("),
+        "edge_now(",
+        "with_edge(",
+        "lock_moved_now(",
+        "mem::take(",
+        ".drain(",
+    ];
 
     /// Why an ungated one-shot consumer holding the VM loses nothing in the one-frame window
     /// where the wire is in world and the boot VM is still live and frameless.
@@ -1987,8 +1995,6 @@ pub(crate) mod schedule_tests {
          "`sends` exist only after Lua acknowledged, cleared or reset a flag, and go to the wire"),
         ("ui_auction/mod.rs", "drain_auction", Because::FilledByVm,
          "VM verbs; the refresh flags act only under an open window and become wire re-asks"),
-        ("ui_guild_bank/mod.rs", "drain_guild_bank", Because::FilledByVm,
-         "the requests are the VM's own guild bank verbs, and the auto-store's event answers one"),
         ("ui_char.rs", "feed_char", Because::MemoLatched,
          "`feed.vm: VmMemo<CharFeedMemo>`; `vm_reset` fires every transition on a fresh memo"),
         ("ui_chat.rs", "end_session_chat", Because::Deliberate,

@@ -129,12 +129,9 @@ fn names(s: &mut UiScript) -> Vec<String> {
     rows(s).into_iter().map(|(n, _)| n).collect()
 }
 
-fn queued(s: &UiScript) -> Vec<String> {
-    s.model_ref()
-        .pending_events
-        .iter()
-        .map(|(e, _)| e.clone())
-        .collect()
+/// The events signalled since the last read.
+fn signalled() -> Vec<String> {
+    crate::script::tick::fired::names()
 }
 
 /// The list refresh: one header per sub-class, the `(-1, -1)` verb group first and named by the
@@ -237,7 +234,7 @@ fn collapse_folds_a_header_or_all() {
         .eval::<String>("return tostring(select(2, pcall(CollapseTradeSkillSubClass, 2)))")
         .unwrap();
     assert!(err.contains("Bad sub class"), "{err}");
-    assert!(queued(&s).iter().all(|e| e == "TRADE_SKILL_UPDATE"));
+    assert!(signalled().iter().all(|e| e == "TRADE_SKILL_UPDATE"));
 }
 
 /// The sub-class menu: exclusive shows one, off hides one, 0 shows all.
@@ -311,6 +308,7 @@ fn the_name_and_level_filters_search_and_bound() {
     st.recipes[4].required_level = Some(45); // the oil
     st.recipes[0].search_text.push("+5 health".into());
     s.set_trade_skill(Some(st));
+    signalled();
 
     s.run("SetTradeSkillItemNameFilter('HEALTH')").unwrap();
     assert_eq!(names(&mut s), ["Enchant", "Enchant Bracer - Minor Health"]);
@@ -321,7 +319,7 @@ fn the_name_and_level_filters_search_and_bound() {
     );
     s.run("SetTradeSkillItemNameFilter('health')").unwrap();
     assert_eq!(
-        queued(&s),
+        signalled(),
         ["TRADE_SKILL_FILTER_UPDATE"],
         "the same text is a no-op"
     );
@@ -543,11 +541,73 @@ fn close_trade_skill_fires_the_close() {
     for (spell, times) in s.take_trade_skill_casts() {
         s.trade_skill_cast_sent(spell, times);
     }
-    s.model_mut().pending_events.clear();
+    signalled();
     s.run("CloseTradeSkill()").unwrap();
     assert!(s.take_trade_skill_close());
     assert_eq!(
-        queued(&s),
+        signalled(),
         ["UPDATE_TRADESKILL_RECAST", "TRADE_SKILL_CLOSE"]
+    );
+}
+
+/// Each filter verb writes its filter, rebuilds the list and only then signals, inside its call (`0x5dcf16`-`0x5dcf22`, `0x5dcf3d`-`0x5dcf49`, `0x5dd014`-`0x5dd022`, `0x5dd056`-`0x5dd062`, `0x5dd140`-`0x5dd14c`, `0x5dd280`-`0x5dd28c`, `0x5dd3c0`-`0x5dd3cc`, `0x5dd402`-`0x5dd40e`, `0x5dd442`-`0x5dd44e`, `0x5dd4dd`-`0x5dd4e9`, `0x5dd57b`-`0x5dd587`): its listener reads the rebuilt list ahead of the code after the call; a name, a level range or a flag that does not move signals nothing (`0x5dcf9b`, `0x5dd047`, `0x5dd3f9`, `0x5dd439`).
+#[test]
+fn a_filter_verb_rebuilds_then_signals_inside_its_call() {
+    let s = open();
+    s.run(
+        "seen = {} local f = CreateFrame('Frame') f:RegisterEvent('TRADE_SKILL_UPDATE') \
+         f:RegisterEvent('TRADE_SKILL_FILTER_UPDATE') \
+         f:SetScript('OnEvent', function(_, e) seen[#seen + 1] = e .. ':' .. GetNumTradeSkills() end)",
+    )
+    .unwrap();
+    let call = |verb: &str| {
+        s.eval::<Vec<String>>(&format!(
+            "seen = {{}} {verb} seen[#seen + 1] = 'after:' .. GetNumTradeSkills() return seen"
+        ))
+        .unwrap()
+    };
+    for (verb, event) in [
+        ("SetTradeSkillSubClassFilter(3, 1, 1)", "TRADE_SKILL_UPDATE"),
+        ("SetTradeSkillSubClassFilter(0)", "TRADE_SKILL_UPDATE"),
+        ("SetTradeSkillSubClassFilter(3, 0)", "TRADE_SKILL_UPDATE"),
+        ("SetTradeSkillSubClassFilter(0)", "TRADE_SKILL_UPDATE"),
+        ("SetTradeSkillInvSlotFilter(2, 1, 1)", "TRADE_SKILL_UPDATE"),
+        ("SetTradeSkillInvSlotFilter(0)", "TRADE_SKILL_UPDATE"),
+        ("CollapseTradeSkillSubClass(0)", "TRADE_SKILL_UPDATE"),
+        ("ExpandTradeSkillSubClass(0)", "TRADE_SKILL_UPDATE"),
+        ("CollapseTradeSkillSubClass(1)", "TRADE_SKILL_UPDATE"),
+        ("ExpandTradeSkillSubClass(1)", "TRADE_SKILL_UPDATE"),
+        (
+            "SetTradeSkillItemNameFilter('HEALTH')",
+            "TRADE_SKILL_FILTER_UPDATE",
+        ),
+        (
+            "SetTradeSkillItemNameFilter('')",
+            "TRADE_SKILL_FILTER_UPDATE",
+        ),
+        ("SetTradeSkillItemLevelFilter(1, 2)", "TRADE_SKILL_UPDATE"),
+        ("SetTradeSkillItemLevelFilter(0, 0)", "TRADE_SKILL_UPDATE"),
+        ("TradeSkillOnlyShowMakeable(1)", "TRADE_SKILL_UPDATE"),
+        ("TradeSkillOnlyShowMakeable(nil)", "TRADE_SKILL_UPDATE"),
+        ("TradeSkillOnlyShowSkillUps(1)", "TRADE_SKILL_UPDATE"),
+        ("TradeSkillOnlyShowSkillUps(nil)", "TRADE_SKILL_UPDATE"),
+    ] {
+        let seen = call(verb);
+        assert_eq!(seen.len(), 2, "{verb}: {seen:?}");
+        let (signal, shown) = seen[0].split_once(':').unwrap();
+        assert_eq!(signal, event, "{verb}");
+        assert_eq!(seen[1], format!("after:{shown}"), "{verb}");
+    }
+    for verb in [
+        "SetTradeSkillItemNameFilter('')",
+        "SetTradeSkillItemLevelFilter(0, 0)",
+        "TradeSkillOnlyShowMakeable(nil)",
+        "TradeSkillOnlyShowSkillUps(nil)",
+    ] {
+        assert_eq!(call(verb).len(), 1, "{verb}");
+    }
+    assert_eq!(
+        call("SetTradeSkillSubClassFilter(3, 1, 1)"),
+        ["TRADE_SKILL_UPDATE:2", "after:2"]
     );
 }

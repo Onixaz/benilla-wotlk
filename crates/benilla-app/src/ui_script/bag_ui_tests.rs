@@ -420,18 +420,20 @@ fn a_click_place_and_a_drag_each_move_a_bag_item_into_an_empty_slot() {
         count: None,
     };
 
-    let (b1, b5, b6) = (
-        backpack_button(&s, 1),
-        backpack_button(&s, 5),
-        backpack_button(&s, 6),
-    );
+    let (b1, b5) = (backpack_button(&s, 1), backpack_button(&s, 5));
     click(&mut s, &b1, "LeftButton");
     assert!(s.cursor_item().is_some(), "the first click picks up");
     click(&mut s, &b5, "LeftButton");
     assert!(s.cursor_item().is_none(), "the second click places");
     assert_eq!(s.take_container_moves(), vec![mv(1, 5)]);
 
-    // The move is the server's to make; the model still holds the item at slot 1.
+    // The move is the server's to make: the item still sits at slot 1, locked until the answer (`0x6dfc0d`), and a locked item does not pick up (`0x5d8208`).
+    click(&mut s, &b1, "LeftButton");
+    assert!(s.cursor_item().is_none(), "a locked item stays put");
+    drop(s);
+    let mut s = open_backpack("bag-moves-drag");
+    let _ = s.take_container_moves();
+    let (b1, b6) = (backpack_button(&s, 1), backpack_button(&s, 6));
     let (x1, y1) = centre_of(&mut s, &b1);
     let (x6, y6) = centre_of(&mut s, &b6);
     s.mouse_move(x1, y1);

@@ -36,7 +36,7 @@ mod net;
 
 #[cfg(test)]
 pub(crate) use drain::drain_bind_confirm_answers;
-pub(crate) use drain::send_auto_equip;
+pub(crate) use drain::{auto_equip_gate, send_auto_equip, swap_gate};
 use drain::{
     drain_bag_autostores, drain_container_autoequips, drain_container_destroys,
     drain_container_moves, drain_container_repairs,
@@ -77,6 +77,18 @@ const BANK_BAG_LIVE: std::ops::RangeInclusive<u32> =
 /// `BAG_FAMILY_KEYS`: what the server routes into the keyring (`Player::_CanStoreItem`) and the
 /// reference's `HasKey` searches for.
 pub(super) const BAG_FAMILY_KEYS: u32 = 9;
+
+/// The bind dialogs' answers run inside the verb that gave them: `EquipPendingItem` and `CancelPendingEquip` (`0x6e01a0`), `ConfirmBindOnUse` (`0x7093f0`); `false` in a world without their state, where they wait for the drains.
+pub(crate) fn run_bind_answers(world: &mut World) -> bool {
+    let equips = drain::run_equip_answers(world);
+    // The use's re-issue is one press, its edges fired as it returns (#1363).
+    let uses = crate::script_calls::in_call_step(world, |world| {
+        world
+            .run_system_cached(drain::drain_bind_on_use_confirms)
+            .is_ok()
+    });
+    equips || uses
+}
 
 /// Lua `(bag, 1-based slot)` to the wire `(bag_index, slot)`, the one mapping every drain shares.
 /// The backpack, the bank's generic slots, the keyring and the doll ([`EQUIPMENT_BAG`]: live id

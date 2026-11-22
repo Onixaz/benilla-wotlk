@@ -8,7 +8,7 @@ use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::{flag, number_arg};
 use super::cursor::{self, CursorGuildBankItem, CursorMoney, CursorPayload};
-use super::{read_live, write_live, Model};
+use super::{read_live, write_live, GuildBankVerdict, HostAnswer, HostAsk, Model};
 
 /// The bank's tabs (six tab records, `0xc11458`).
 pub const GUILD_BANK_TABS: usize = 6;
@@ -170,23 +170,9 @@ impl super::UiScript {
         }
     }
 
-    /// The app sent a swap: the reference clears the cursor, unlocking a held bank item, and
-    /// fires `GUILDBANKBAGSLOTS_CHANGED` (`0x5a50c0`, `0x5a5410`).
-    pub fn guild_bank_swap_sent(&mut self) {
-        let model = &mut *self.model_mut();
-        cursor::clear_cursor(model);
-        queue(model, "GUILDBANKBAGSLOTS_CHANGED");
-    }
-
-    /// A held bank item dropped back where nothing is sent: the cursor clears and the slot
-    /// unlocks (`0x5a5410`, `0x513800`).
-    pub fn guild_bank_drop_held(&mut self) {
-        cursor::clear_cursor(&mut self.model_mut());
-    }
-
-    /// The app refused a swap the reference refuses before its send: the cursor stays.
-    pub fn guild_bank_swap_refused(&mut self, error: &'static str) {
-        self.show_line(error);
+    /// A swap the app's drain decided where no host answered in the call: what its gates left.
+    pub fn settle_guild_bank(&mut self, verdict: GuildBankVerdict) {
+        settle(&mut self.model_mut(), verdict);
     }
 
     /// Drain the queued sends.
@@ -200,24 +186,30 @@ impl super::UiScript {
     }
 }
 
-fn queue(model: &mut Model, event: &str) {
-    model.pending_events.push((event.to_string(), Vec::new()));
+/// A swap at its step, inside the call (`0x5a56e3`, `0x5a63a1`, `0x5a63c5`, `0x5d8472`): the host runs its gates and its send over the lent state and the verb does what they left; with no host answering, the request waits for the app's drain.
+pub(super) fn swap(model: &mut crate::script::ModelGuard<'_>, request: GuildBankRequest) {
+    match model.ask(&HostAsk::GuildBank(request.clone())) {
+        Some(HostAnswer::GuildBank(verdict)) => settle(model, verdict),
+        _ => model.guild_bank_requests.push(request),
+    }
 }
 
-/// Fire the events this call queued since `mark`, in order and inside the call, as the cursor
-/// setter and the lock fire theirs (`0x520da7`, `0x5137f1`).
-fn fire_queued_since(lua: &Lua, mark: usize) {
-    let events = {
-        let mut model = crate::script::model_mut_of(lua);
-        if model.pending_events.len() > mark {
-            model.pending_events.split_off(mark)
-        } else {
-            Vec::new()
+/// What a swap's gates left: a refusal's line with the cursor as it was (`0x5a52e8`, `0x5a5476`), or the send's cursor clear, unlocking a held bank item, and `GUILDBANKBAGSLOTS_CHANGED` (`0x5a53d3`, `0x5a53df`; `0x5a5688`, `0x5a5694`); an unresolved item back on its own slot only clears (`0x5a55fe`).
+fn settle(model: &mut crate::script::ModelGuard<'_>, verdict: GuildBankVerdict) {
+    match verdict {
+        GuildBankVerdict::Nothing => {}
+        GuildBankVerdict::Sent => {
+            cursor::clear_cursor(model);
+            signal_event(model, "GUILDBANKBAGSLOTS_CHANGED");
         }
-    };
-    for (event, args) in events {
-        super::tick::fire_event_into(lua, &event, args);
+        GuildBankVerdict::Stored => signal_event(model, "GUILDBANKBAGSLOTS_CHANGED"),
+        GuildBankVerdict::Refused(key) => model.show(key),
+        GuildBankVerdict::DropHeld => cursor::clear_cursor(model),
     }
+}
+
+fn signal_event(model: &mut crate::script::ModelGuard<'_>, event: &str) {
+    model.raise(event, Vec::new());
 }
 
 /// Whether a guild banker is open (`0xc1dc10`), through the lent view.
@@ -246,9 +238,9 @@ fn is_locked(tab: u8, slot: u8, item_id: u32) -> bool {
 }
 
 /// `ClearCursor`'s mode-11 arm (`0x519406`): the held slot unlocks, with its event.
-pub(super) fn unlock_held(model: &mut Model, held: &CursorGuildBankItem) {
+pub(super) fn unlock_held(model: &mut crate::script::ModelGuard<'_>, held: &CursorGuildBankItem) {
     write_live(|l| l.set_guild_bank_lock(held.tab, held.slot, held.item_id, false));
-    queue(model, "GUILDBANK_ITEM_LOCK_CHANGED");
+    signal_event(model, "GUILDBANK_ITEM_LOCK_CHANGED");
 }
 
 /// Put a bank item on the cursor (`0x520d30`, kind 11, with the split), then lock its slot
@@ -260,62 +252,67 @@ fn hold(lua: &Lua, tab: u8, slot: u8, split: Option<u32>) {
     if !crate::script::live::has_control() {
         return;
     }
-    let mark = {
-        let mut model = crate::script::model_mut_of(lua);
-        let mark = model.pending_events.len();
-        cursor::clear_cursor(&mut model);
-        model.cursor = Some(CursorPayload::GuildBankItem(CursorGuildBankItem {
+    cursor::set_cursor(
+        &mut crate::script::model_mut_of(lua),
+        CursorPayload::GuildBankItem(CursorGuildBankItem {
             tab,
             slot,
             item_id: s.item_id,
             texture: s.texture.clone(),
             link: s.link.clone(),
             split,
-        }));
-        cursor::queue_cursor_update(&mut model);
-        mark
-    };
-    fire_queued_since(lua, mark);
+        }),
+    );
     write_live(|l| l.set_guild_bank_lock(tab, slot, s.item_id, true));
     super::tick::fire_event_into(lua, "GUILDBANK_ITEM_LOCK_CHANGED", Vec::new());
 }
 
-/// `PickupContainerItem`'s mode-11 arm: a held bank item dropped on a bag slot. The reference
-/// clears the cursor whatever the app then sends (`0x5d7ff0`).
-pub(super) fn drop_on_bag_slot(model: &mut Model, held: CursorGuildBankItem, bag: i64, slot: u32) {
-    if bank_open() {
-        model
-            .guild_bank_requests
-            .push(GuildBankRequest::WithdrawItem {
-                src_tab: held.tab,
-                src_slot: held.slot,
-                item_id: held.item_id,
-                bag,
-                bag_slot: slot,
-                split: held.split,
-            });
+/// `PickupContainerItem`'s mode-11 arm: a held bank item dropped on a bag slot. With no banker open nothing moves and the cursor stays (`0x5d837c`); else the swap goes out and the cursor clears (`0x5d8472`, `0x5d847b`).
+pub(super) fn drop_on_bag_slot(
+    model: &mut crate::script::ModelGuard<'_>,
+    held: CursorGuildBankItem,
+    bag: i64,
+    slot: u32,
+) {
+    if !bank_open() {
+        return;
     }
-    model.cursor = Some(CursorPayload::GuildBankItem(held));
+    swap(
+        model,
+        GuildBankRequest::WithdrawItem {
+            src_tab: held.tab,
+            src_slot: held.slot,
+            item_id: held.item_id,
+            bag,
+            bag_slot: slot,
+            split: held.split,
+        },
+    );
     cursor::clear_cursor(model);
 }
 
 /// `UseContainerItem`'s guild bank arm (`0x5d8650` calls the bank's auto-store `0x5a56b0`): with a
 /// banker open, the item goes to the current tab, slot `0xFF` for wherever it fits.
-pub(super) fn use_container_item(model: &mut Model, bag: i64, slot: u32) -> bool {
+pub(super) fn use_container_item(
+    model: &mut crate::script::ModelGuard<'_>,
+    bag: i64,
+    slot: u32,
+) -> bool {
     if !bank_open() {
         return false;
     }
     let occupied = super::container::index_slot(model, bag, slot).is_some_and(|s| s.item_id != 0);
     if occupied {
-        model
-            .guild_bank_requests
-            .push(GuildBankRequest::DepositItem {
+        swap(
+            model,
+            GuildBankRequest::DepositItem {
                 tab: current_tab(),
                 slot: 0xFF,
                 bag,
                 bag_slot: slot,
                 split: None,
-            });
+            },
+        );
     }
     true
 }
@@ -479,28 +476,28 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 match model.cursor.clone() {
                     Some(CursorPayload::Item(item)) => {
                         if bank_open() {
-                            model
-                                .guild_bank_requests
-                                .push(GuildBankRequest::DepositItem {
-                                    tab,
-                                    slot,
-                                    bag: item.bag,
-                                    bag_slot: item.slot,
-                                    split: item.count,
-                                });
+                            let request = GuildBankRequest::DepositItem {
+                                tab,
+                                slot,
+                                bag: item.bag,
+                                bag_slot: item.slot,
+                                split: item.count,
+                            };
+                            swap(&mut model, request);
                         }
                         false
                     }
                     Some(CursorPayload::GuildBankItem(held)) => {
                         if bank_open() {
-                            model.guild_bank_requests.push(GuildBankRequest::MoveItem {
+                            let request = GuildBankRequest::MoveItem {
                                 tab,
                                 slot,
                                 src_tab: held.tab,
                                 src_slot: held.slot,
                                 item_id: held.item_id,
                                 split: held.split,
-                            });
+                            };
+                            swap(&mut model, request);
                         }
                         false
                     }
@@ -510,6 +507,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if take {
                 let item = read_live(|l| l.guild_bank_item(tab, slot)).flatten();
                 if let Some((item_id, _)) = item {
+                    // A targeting cursor stops before the slot's item goes up (`0x5a6329`).
+                    if super::spellbook::targeting().active {
+                        super::calls::make(lua, super::ScriptCall::SpellStopTargeting);
+                    }
                     if !is_locked(tab, slot, item_id) {
                         hold(lua, tab, slot, None);
                     }
@@ -539,12 +540,17 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             else {
                 return Ok(());
             };
-            model.guild_bank_requests.push(GuildBankRequest::AutoStore {
+            // A targeting cursor stops before the rank's gate (`0x5a64e6`).
+            if super::spellbook::targeting().active {
+                model.call(super::ScriptCall::SpellStopTargeting);
+            }
+            let request = GuildBankRequest::AutoStore {
                 tab,
                 slot,
                 item_id,
                 count,
-            });
+            };
+            swap(&mut model, request);
             Ok(())
         })?,
     )?;
@@ -569,6 +575,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             if is_locked(tab, slot, s.item_id) || amount < 1 || amount as u32 > s.max_stack {
                 return Ok(());
+            }
+            // The cursor clears and a targeting cursor stops before the stack goes up (`0x5a6778`, `0x5a6780`).
+            cursor::clear_cursor(&mut crate::script::model_mut_of(lua));
+            if super::spellbook::targeting().active {
+                super::calls::make(lua, super::ScriptCall::SpellStopTargeting);
+            }
+            // A whole stack goes up plain and locks first (`0x5a6799`, `0x5a67a4`), then with its amount (`0x5a67ba`, `0x5a67c5`).
+            if amount as u32 == s.max_stack {
+                hold(lua, tab, slot, None);
             }
             hold(lua, tab, slot, Some(amount as u32));
             Ok(())
@@ -723,12 +738,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             {
                 return Ok(());
             }
-            let mut model = crate::script::model_mut_of(lua);
-            cursor::clear_cursor(&mut model);
-            model.cursor = Some(CursorPayload::GuildBankMoney(CursorMoney {
-                copper: amount,
-            }));
-            queue(&mut model, "GUILDBANK_UPDATE_MONEY");
+            // The money setter under mode 12 with the bank's event (`0x5a43a4`).
+            cursor::set_cursor(
+                &mut crate::script::model_mut_of(lua),
+                CursorPayload::GuildBankMoney(CursorMoney { copper: amount }),
+            );
             Ok(())
         })?,
     )?;
@@ -1206,7 +1220,7 @@ mod tests {
                 }]
             );
             // The app sent it: the cursor clears and the slot unlocks.
-            s.guild_bank_swap_sent();
+            s.settle_guild_bank(GuildBankVerdict::Sent);
             assert!(s.eval::<bool>("return GetCursorInfo() == nil").unwrap());
             assert!(s
                 .eval::<bool>("local _, _, l = GetGuildBankItemInfo(1, 3) return l == nil")
@@ -1456,6 +1470,168 @@ mod tests {
                 }]
             );
             assert_eq!(s.take_shown(), vec!["ERR_NAME_INVALID"]);
+        });
+    }
+
+    /// With the host's state lent a swap's gates run inside the call (`0x5a63a1`, `0x5a63c5`): a send clears the cursor and signals `GUILDBANKBAGSLOTS_CHANGED` before the verb returns (`0x5a5688`, `0x5a5694`), and nothing waits for the drain.
+    #[test]
+    fn a_sent_swap_clears_and_signals_inside_the_call() {
+        use crate::script::calls::in_call;
+        let (mut s, mut bank) = vm();
+        crate::script::live::lending(&mut bank, || {
+            s.run("PickupGuildBankItem(1, 3)").unwrap();
+            crate::script::tick::fired::take();
+            let asked = in_call::run(
+                &mut s,
+                Some(HostAnswer::GuildBank(GuildBankVerdict::Sent)),
+                "PickupGuildBankItem(1, 10) HELD_AFTER = GetCursorInfo()",
+            );
+            assert_eq!(
+                asked,
+                [HostAsk::GuildBank(GuildBankRequest::MoveItem {
+                    tab: 0,
+                    slot: 9,
+                    src_tab: 0,
+                    src_slot: 2,
+                    item_id: 2589,
+                    split: None
+                })]
+            );
+            let fired = crate::script::tick::fired::names();
+            assert_eq!(
+                fired.last().map(String::as_str),
+                Some("GUILDBANKBAGSLOTS_CHANGED"),
+                "{fired:?}"
+            );
+            assert!(fired.contains(&"CURSOR_UPDATE".to_string()), "{fired:?}");
+            assert!(
+                fired.contains(&"GUILDBANK_ITEM_LOCK_CHANGED".to_string()),
+                "{fired:?}"
+            );
+            assert!(s.eval::<bool>("return HELD_AFTER == nil").unwrap());
+            assert!(s.take_guild_bank_requests().is_empty());
+        });
+    }
+
+    /// A refused swap shows its line inside the call with the cursor still holding (`0x5a5476`); an unresolved item back on its own slot only clears (`0x5a55fe`); the bank-to-bag swap's refusal shows before the verb's own clear (`0x5d8472`, `0x5d847b`).
+    #[test]
+    fn a_refused_swap_shows_its_line_inside_the_call() {
+        use crate::script::calls::in_call;
+        let (mut s, mut bank) = vm();
+        crate::script::live::lending(&mut bank, || {
+            s.run(
+                r#"local f = CreateFrame("Frame")
+                   f:RegisterEvent("UI_ERROR_MESSAGE")
+                   f:SetScript("OnEvent", function() HELD_AT_LINE = GetCursorInfo() end)
+                   PickupGuildBankItem(1, 3)"#,
+            )
+            .unwrap();
+            let g = s.lua().globals();
+            g.set(
+                "ERR_GUILD_BANK_BOUND_ITEM",
+                "You cannot store soulbound items in the guild bank",
+            )
+            .unwrap();
+            crate::script::tick::fired::take();
+            let refused = Some(HostAnswer::GuildBank(GuildBankVerdict::Refused(
+                "ERR_GUILD_BANK_BOUND_ITEM",
+            )));
+            in_call::run(&mut s, refused, "PickupGuildBankItem(1, 10)");
+            assert_eq!(crate::script::tick::fired::names(), ["UI_ERROR_MESSAGE"]);
+            assert_eq!(s.take_shown(), ["ERR_GUILD_BANK_BOUND_ITEM"]);
+            assert!(s.eval::<bool>("return GetCursorInfo() == 'item'").unwrap());
+
+            // The bank-to-bag swap: the line with the item still held, then the clear.
+            s.run("HELD_AT_LINE = nil").unwrap();
+            in_call::run(&mut s, refused, "PickupContainerItem(0, 1)");
+            let fired = crate::script::tick::fired::names();
+            assert_eq!(fired[0], "UI_ERROR_MESSAGE", "{fired:?}");
+            assert!(
+                fired[1..].contains(&"CURSOR_UPDATE".to_string()),
+                "{fired:?}"
+            );
+            assert!(s
+                .eval::<bool>("return HELD_AT_LINE == 'item' and GetCursorInfo() == nil")
+                .unwrap());
+
+            s.run("PickupGuildBankItem(1, 3)").unwrap();
+            crate::script::tick::fired::take();
+            let dropped = Some(HostAnswer::GuildBank(GuildBankVerdict::DropHeld));
+            in_call::run(&mut s, dropped, "PickupGuildBankItem(1, 3)");
+            let fired = crate::script::tick::fired::names();
+            assert!(
+                !fired.contains(&"GUILDBANKBAGSLOTS_CHANGED".to_string()),
+                "{fired:?}"
+            );
+            assert!(s.eval::<bool>("return GetCursorInfo() == nil").unwrap());
+        });
+    }
+
+    /// The auto-store signals inside the call after its clear (`0x5a64c1`, `0x5a65c5`), and it and the pickup stop a targeting cursor first (`0x5a64e6`, `0x5a6329`).
+    #[test]
+    fn the_auto_store_signals_and_both_takes_stop_targeting_inside_the_call() {
+        use crate::script::calls::in_call;
+        use crate::script::live::TestTargeting;
+        let (mut s, mut bank) = vm();
+        crate::script::live::lending(&mut bank, || {
+            s.set_spell_targeting(true);
+            crate::script::tick::fired::take();
+            let stored = Some(HostAnswer::GuildBank(GuildBankVerdict::Stored));
+            let asked = in_call::run(&mut s, stored, "AutoStoreGuildBankItem(1, 3)");
+            assert_eq!(asked.len(), 1);
+            assert_eq!(
+                crate::script::tick::fired::names(),
+                [
+                    "CURSOR_UPDATE",
+                    "APPLIED SpellStopTargeting",
+                    "GUILDBANKBAGSLOTS_CHANGED"
+                ]
+            );
+            in_call::run(&mut s, None, "PickupGuildBankItem(1, 3)");
+            let fired = crate::script::tick::fired::names();
+            assert_eq!(fired[0], "APPLIED SpellStopTargeting", "{fired:?}");
+            assert_eq!(
+                fired.last().map(String::as_str),
+                Some("GUILDBANK_ITEM_LOCK_CHANGED"),
+                "{fired:?}"
+            );
+            s.set_spell_targeting(false);
+        });
+    }
+
+    /// The split clears the cursor and stops a targeting cursor before the stack goes up (`0x5a6778`, `0x5a6780`), and a whole stack goes up twice, plain and then with its amount (`0x5a6799`, `0x5a67ba`).
+    #[test]
+    fn a_split_clears_and_stops_targeting_before_it_holds() {
+        use crate::script::calls::in_call;
+        use crate::script::live::TestTargeting;
+        let (mut s, mut bank) = vm();
+        crate::script::live::lending(&mut bank, || {
+            s.set_spell_targeting(true);
+            crate::script::tick::fired::take();
+            in_call::run(&mut s, None, "SplitGuildBankItem(1, 98, 5)");
+            let fired = crate::script::tick::fired::names();
+            assert_eq!(
+                fired[..2],
+                ["CURSOR_UPDATE", "APPLIED SpellStopTargeting"],
+                "{fired:?}"
+            );
+            let locks = |fired: &[String]| {
+                fired
+                    .iter()
+                    .filter(|e| *e == "GUILDBANK_ITEM_LOCK_CHANGED")
+                    .count()
+            };
+            assert_eq!(locks(&fired), 1, "{fired:?}");
+            s.set_spell_targeting(false);
+            s.run("ClearCursor()").unwrap();
+            crate::script::tick::fired::take();
+            // The whole stack of 20: locked, unlocked by the second setter's clear, locked again.
+            s.run("SplitGuildBankItem(1, 98, 20)").unwrap();
+            assert_eq!(locks(&crate::script::tick::fired::names()), 3);
+            assert_eq!(
+                s.eval::<(String, i64)>("return GetCursorInfo()").unwrap().0,
+                "item"
+            );
         });
     }
 }

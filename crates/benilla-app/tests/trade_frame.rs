@@ -259,10 +259,14 @@ fn trade_button_click_queues_accept() {
     load_ui(&s);
     s.set_trade(Some(state()));
     s.fire_event("TRADE_SHOW", vec![]);
-    let _ = s.take_trade_accept();
+    let _ = s.take_trade_accept_sends();
 
     s.run("TradeFrameTradeButton:Click()").unwrap();
-    assert!(s.take_trade_accept(), "the Trade button queues AcceptTrade");
+    assert_eq!(
+        s.take_trade_accept_sends(),
+        [true],
+        "the Trade button queues AcceptTrade"
+    );
     assert!(s.take_errors().is_empty());
 }
 
@@ -277,7 +281,8 @@ fn player_money_input_reflects_then_offers() {
     let mut s = UiScript::new().unwrap();
     s.set_money(1_000_000); // SetTradeMoney is purse-gated
     load_ui(&s);
-    s.set_trade(Some(state())); // state().player.gold == 12345 (1g 23s 45c)
+    s.set_trade(Some(state()));
+    s.set_trade_offer_gold(12_345); // 1g 23s 45c
     s.fire_event("TRADE_SHOW", vec![]);
 
     // The three numeric boxes exist and start empty.

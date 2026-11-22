@@ -835,6 +835,51 @@ impl MerchantLive<'_, '_> {
                     });
                 }
             }
+            // A held row dropped on a bag's button (`0x5e79d0`): the same send, the bag's guid and slot `0xFF`.
+            MerchantAct::BuyInBag { bag, row } => {
+                let (Some(vendor), Some((me, me_guid))) = (self.open.vendor, me) else {
+                    return out;
+                };
+                let (Some(&r), Some((bag_index, _))) = (self.open.row_at(row), wire_pos(bag, 1))
+                else {
+                    return out;
+                };
+                let bag_guid = if bag_index == BAG_PLAYER_INVENTORY {
+                    Some(me_guid)
+                } else {
+                    me.player_inv_slot(bag_index).filter(|g| *g != 0)
+                };
+                if let Some(bag_guid) = bag_guid {
+                    let _ = self.commands.0.send(ClientCommand::BuyItemInSlot {
+                        vendor,
+                        entry: r.entry,
+                        slot: r.slot,
+                        bag_guid,
+                        bag_slot: 0xff,
+                        count: 1,
+                    });
+                }
+            }
+            // A held row dropped on a slot whose item is no bag (`0x5e8fae`): that item's guid as the bag, for the server to refuse.
+            MerchantAct::BuyInItem { player_slot, row } => {
+                let (Some(vendor), Some((me, _))) = (self.open.vendor, me) else {
+                    return out;
+                };
+                let (Some(&r), Some(bag_guid)) = (
+                    self.open.row_at(row),
+                    me.player_slot(player_slot).filter(|g| *g != 0),
+                ) else {
+                    return out;
+                };
+                let _ = self.commands.0.send(ClientCommand::BuyItemInSlot {
+                    vendor,
+                    entry: r.entry,
+                    slot: r.slot,
+                    bag_guid,
+                    bag_slot: 0xff,
+                    count: 1,
+                });
+            }
             // `0x584600`: with the vendor holding the interact target its clear runs the interaction close, whose merchant leg closes first (`0x584614` -> `0x512f3a`); no earlier leg holds it, as each window's open takes the target from the one before (`0x51fce0`).
             MerchantAct::Close => {
                 let Some(vendor) = self.open.vendor else {
@@ -1605,6 +1650,7 @@ mod tests {
                 flags2: 0,
                 required_disenchant_skill: -1,
                 item_limit_category: 0,
+                duration: 0,
                 scaling_stat_distribution: 0,
                 scaling_stat_value: 0,
                 armor_damage_modifier: 0.0,

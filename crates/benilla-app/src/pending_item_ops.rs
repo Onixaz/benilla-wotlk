@@ -3,7 +3,7 @@
 use bevy::prelude::Resource;
 
 /// The locked items by guid; the bag verbs read an item's lock at the call.
-#[derive(Debug, Default, Resource)]
+#[derive(Clone, Debug, Default, Resource)]
 pub(crate) struct PendingItemOps {
     locked: Vec<u64>,
     /// Steps on every change, so a feed notices a lock clearing the frame the set empties.

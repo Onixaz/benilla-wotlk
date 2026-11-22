@@ -145,7 +145,13 @@ pub(crate) fn commit_item_cast_on_pick(world: &mut World) {
         .run_system_cached_with(pick_guids, picks)
         .unwrap_or_default();
     let mut bind_outright: Vec<u64> = Vec::new();
-    press_step(world, item_leg, PickLeg::ImbueRaise);
+    // A parked imbue's raise waits for the VM; with nothing to raise there is no press.
+    let imbue_raise = world
+        .get_resource::<crate::ui_socket::SpellEnchantConfirm>()
+        .is_some_and(|c| c.raise);
+    if imbue_raise && world.contains_non_send::<benilla_ui::script::UiScript>() {
+        press_step(world, item_leg, PickLeg::ImbueRaise);
+    }
     for answer in lend(world, |s| s.take_enchant_confirms()).unwrap_or_default() {
         if answer == benilla_ui::script::EnchantConfirm::SpellEnchant {
             press_step(world, item_leg, PickLeg::SpellEnchant);

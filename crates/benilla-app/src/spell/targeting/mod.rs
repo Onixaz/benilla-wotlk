@@ -382,6 +382,14 @@ impl SpellTargeting {
     pub(crate) fn clear(&mut self) {
         self.0 = None;
     }
+
+    /// The guid of the item whose use raised the cursor, which the cursor's cancel hands on (`0x809a70` -> `0x80624d`).
+    pub(crate) fn cast_item(&self) -> Option<u64> {
+        match self.0.as_ref()?.commit {
+            super::cast_send::CastCommit::Item { item_guid, .. } => Some(item_guid),
+            _ => None,
+        }
+    }
 }
 
 /// Right-click cancels on the down edge (WorldFrame `OnMouseDown` → the targeting stop), sends
@@ -404,9 +412,13 @@ pub(crate) fn cancel_targeting_on_right_press(
         return;
     }
     debug!("ui_action: targeting cancelled (right-click)");
+    let item = targeting.cast_item().filter(|&g| g != 0);
     targeting.clear();
-    // The cursor's cast ends, and its finish runs the selection update (`0x8054f0`).
+    // The cancel releases the trade's enchanting item first (`0x806258`); then the cursor's cast ends, and its finish runs the selection update (`0x8054f0`).
     if let Some(mut ui) = ui {
+        if let Some(item) = item {
+            ui.write(move |script| script.cast_item_cancelled(item));
+        }
         crate::ui_action::signals::selection(&mut ui);
         ecs.queue(crate::ui_script::live::fire_handler_events);
     }
@@ -536,6 +548,9 @@ impl ScriptCursor<'_, '_> {
     pub(crate) fn stop_targeting(&mut self) {
         debug!("ui_action: targeting cancelled (ESC chain)");
         if self.ladder.ground.active() {
+            // The cancel releases the trade's enchanting item first (`0x809a70` -> `0x806258`).
+            let item = self.ladder.ground.cast_item();
+            self.ladder.press.cast_item_cancelled(item);
             self.ladder.ground.clear();
             // The cursor's cast ends, and its finish runs the selection update (`0x8054f0`).
             self.ladder.press.selection();

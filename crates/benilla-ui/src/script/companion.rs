@@ -3,7 +3,7 @@
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::flag;
-use super::cursor::{queue_cursor_update, CursorPayload, CursorSpell};
+use super::cursor::{clear_cursor, set_cursor, CursorPayload, CursorSpell};
 use super::{CastAt, ScriptCall};
 
 /// Which list, in the order of the type tokens the type parse (`0x53b600`) matches.
@@ -245,9 +245,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // PickupCompanion(type, index) (`0x53c310` → `0x53bbc0`): the spell goes on the cursor; the
     // same spell already held drops instead.
-    //
-    // Deviation: a cursor holding anything else refuses, as `PickupSpell` does here, where the
-    // reference clears it first.
+    // The cursor clears whatever it held (`0x53bbf8`): the same spell held just drops, another spell held goes with nothing picked (`0x53bc1d`), else the spell goes up through its setter (`0x53bc20`).
     g.set(
         "PickupCompanion",
         lua.create_function(|lua, (ty, index): (Value, Value)| {
@@ -257,22 +255,23 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(());
             };
             let mut model = crate::script::model_mut_of(lua);
-            match &model.cursor {
-                Some(CursorPayload::Spell(held)) if held.spell_id == c.spell_id => {
-                    model.cursor = None;
-                }
-                Some(_) => return Ok(()),
-                None => {
-                    model.cursor = Some(CursorPayload::Spell(CursorSpell {
+            let held = match &model.cursor {
+                Some(CursorPayload::Spell(held)) => held.spell_id,
+                _ => 0,
+            };
+            clear_cursor(&mut model);
+            if held == 0 {
+                set_cursor(
+                    &mut model,
+                    CursorPayload::Spell(CursorSpell {
                         book_slot: 0,
                         book_type: "spell".to_string(),
                         spell_id: c.spell_id,
                         texture: c.icon,
                         passive: false,
-                    }));
-                }
+                    }),
+                );
             }
-            queue_cursor_update(&mut model);
             Ok(())
         })?,
     )?;

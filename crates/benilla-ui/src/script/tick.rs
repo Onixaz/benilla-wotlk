@@ -8,15 +8,12 @@ use crate::widget::FrameHandle;
 use super::{event, ScriptValue, UiScript};
 
 impl UiScript {
-    /// Queue an event for the start of the next tick, behind everything queued earlier and before
-    /// that tick's `OnUpdate` pass. A drain runs a step behind its input, so firing at once would
-    /// overtake events that input already queued: the soulbind confirm for an item placed into a
-    /// worn slot must follow that placement's `CURSOR_UPDATE`, whose handler hides it
-    /// (`UIParent.lua:357-361`).
+    /// Hold an event for the start of the next tick, behind everything held earlier and before that
+    /// tick's `OnUpdate` pass: the door of a host lane whose drain runs a step behind its input (the
+    /// sound device change). A verb's own event fires at its step instead
+    /// (`ModelGuard::raise`).
     pub fn queue_event(&mut self, event: &str, args: Vec<ScriptValue>) {
-        self.model_mut()
-            .pending_events
-            .push((event.to_string(), args));
+        self.model_mut().defer_event(event, args);
     }
 
     /// Fire an event to every frame registered for it, shown or not, setting both the
@@ -52,6 +49,30 @@ impl UiScript {
     }
 }
 
+/// Every event this thread's VMs signalled, in order, for a test to read.
+#[cfg(test)]
+pub(crate) mod fired {
+    use crate::script::ScriptValue;
+
+    thread_local! {
+        static LOG: std::cell::RefCell<Vec<(String, Vec<ScriptValue>)>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    pub(super) fn note(event: &str, args: &[ScriptValue]) {
+        LOG.with(|l| l.borrow_mut().push((event.to_string(), args.to_vec())));
+    }
+
+    /// The events signalled since the last take, with their arguments.
+    pub(crate) fn take() -> Vec<(String, Vec<ScriptValue>)> {
+        LOG.with(|l| std::mem::take(&mut *l.borrow_mut()))
+    }
+
+    /// The names of the events signalled since the last take.
+    pub(crate) fn names() -> Vec<String> {
+        take().into_iter().map(|(e, _)| e).collect()
+    }
+}
+
 /// [`UiScript::fire_event`] for a caller holding `&Lua`, such as a Lua binding.
 pub(crate) fn fire_event_into(lua: &Lua, event: &str, args: Vec<ScriptValue>) {
     // A host step that holds the lent state queues its raise in turn.
@@ -59,6 +80,8 @@ pub(crate) fn fire_event_into(lua: &Lua, event: &str, args: Vec<ScriptValue>) {
         return;
     };
     let model_mut = || crate::script::model_mut_of(lua);
+    #[cfg(test)]
+    fired::note(event, &args);
     let vm = {
         let model = lua
             .app_data_ref::<crate::script::ModelCell>()
@@ -310,6 +333,131 @@ impl UiScript {
             {
                 self.push_error(e);
             }
+        }
+    }
+}
+
+/// The events that do not fire at their step: every push onto the deferred queue, by file. The
+/// counts can only fall.
+#[cfg(test)]
+mod pending_census_tests {
+    /// `(file under the workspace's crates, needle, sites, why it defers)`.
+    const DEFERRED_PUSHES: &[(&str, &str, usize, &str)] = &[
+        (
+            "benilla-ui/src/script/model.rs",
+            "pending_events.push(",
+            1,
+            "the one door, `Model::defer_event`",
+        ),
+        (
+            "benilla-ui/src/script/live.rs",
+            "defer_event(",
+            1,
+            "a unique signal with no queue lent: 12340 queues it (`0x615020`) and sends it after the frame's packets (`0x614760`)",
+        ),
+        (
+            "benilla-ui/src/script/tick.rs",
+            "defer_event(",
+            1,
+            "`UiScript::queue_event`, the host lanes' door",
+        ),
+        (
+            "benilla-app/src/sound/ui.rs",
+            ".queue_event(",
+            1,
+            "a host lane: the sound device change (#1368)",
+        ),
+    ];
+
+    /// The needles the census counts: the model's queue and its door in this crate, the host's door in both.
+    const NEEDLES: &[&str] = &["pending_events.push(", "defer_event(", ".queue_event("];
+
+    /// A file's text above its test module, comments dropped.
+    fn code(path: &std::path::Path) -> String {
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+        text.lines()
+            .take_while(|l| {
+                !l.starts_with("mod pending_census_tests") && !l.starts_with("mod tests")
+            })
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .map(|l| {
+                l.replace("fn defer_event(", "")
+                    .replace("fn queue_event(", "")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+
+    /// Every deferred push in the two crates is a listed row, at no more than its count.
+    #[test]
+    fn every_deferred_push_is_listed_and_none_grows() {
+        let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("the crates directory");
+        let mut files = Vec::new();
+        for root in ["benilla-ui/src", "benilla-app/src"] {
+            walk(&crates.join(root), &mut files);
+        }
+        assert!(files.len() > 100, "the walk found the sources");
+        let mut unlisted = Vec::new();
+        for path in files {
+            let rel = path
+                .strip_prefix(crates)
+                .expect("under crates")
+                .to_string_lossy()
+                .replace('\\', "/");
+            // A test file's pushes are its own fixtures.
+            if rel.contains("/tests/") || rel.ends_with("tests.rs") || rel.contains("_gate") {
+                continue;
+            }
+            let text = code(&path);
+            // The app reaches the model's queue only through the host's door.
+            let needles = if rel.starts_with("benilla-app/") {
+                &NEEDLES[2..]
+            } else {
+                NEEDLES
+            };
+            for needle in needles {
+                let found = text.matches(needle).count();
+                let allowed = DEFERRED_PUSHES
+                    .iter()
+                    .find(|(file, n, _, _)| *file == rel && n == needle)
+                    .map_or(0, |(_, _, sites, _)| *sites);
+                if found > allowed {
+                    unlisted.push(format!("{rel}: {found} `{needle}`, {allowed} listed"));
+                }
+                assert!(
+                    found >= allowed,
+                    "{rel}: {found} `{needle}` where {allowed} are listed: lower the row"
+                );
+            }
+        }
+        assert!(
+            unlisted.is_empty(),
+            "an event fires at its step (`ModelGuard::raise`), not from the deferred queue: {unlisted:#?}"
+        );
+    }
+
+    /// Each row says why it defers.
+    #[test]
+    fn every_row_names_its_reason() {
+        for (file, _, sites, why) in DEFERRED_PUSHES {
+            assert!(*sites > 0, "{file}: an empty row is struck");
+            assert!(
+                why.contains("0x") || why.contains("#1368") || why.contains("door"),
+                "{file}: {why}"
+            );
         }
     }
 }

@@ -153,7 +153,7 @@ pub struct ContainerState {
 /// One queued move from `(src_bag, src_slot)` to `(dst_bag, dst_slot)`. `count` is `None` for a
 /// whole stack (a move, a swap, or a merge the server tops up), `Some(n)` for a split placement
 /// (`CMSG_SPLIT_ITEM`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ContainerMove {
     pub src_bag: i64,
     pub src_slot: u32,
@@ -172,6 +172,8 @@ pub struct BagAutoStore {
     pub src_slot: u32,
     /// The container id: 0 the backpack, 1-4 a worn bag, 5-11 a bank bag.
     pub dst_bag: i64,
+    /// The 0-based player slot of a target no container id names, a bank item or a key: the packet's bag byte is the slot holding the target (`0x6dbb30`).
+    pub dst_player_slot: Option<u8>,
     pub count: Option<u32>,
 }
 
@@ -335,6 +337,11 @@ impl super::UiScript {
         drain_field!(self, container_autoequips)
     }
 
+    /// The auto-equips `EquipCursorItem` queued, sent with the bind question off (`0x51a51a`).
+    pub fn take_container_autoequips_unasked(&mut self) -> Vec<(i64, u32)> {
+        drain_field!(self, container_autoequips_unasked)
+    }
+
     /// Drain the `(bag, slot)` clicks repair mode queued, for `CMSG_REPAIR_ITEM`.
     pub fn take_container_repairs(&mut self) -> Vec<(i64, u32)> {
         drain_field!(self, container_repairs)
@@ -354,7 +361,7 @@ impl super::UiScript {
         model.pending_wrap = Some(PendingWrap { bag, slot });
         model.ui_cursor = Some(UiCursorMode::Cast);
         model.ui_cursor_dirty = true;
-        cursor::queue_lock_changed(&mut model, bag, slot);
+        cursor::set_item_lock(&mut model, bag, slot, true);
     }
 
     /// The armed gift wrap, if any; the app reads it to hold the cursor's base at Cast.
@@ -415,48 +422,31 @@ pub enum UiCursorMode {
     CastError,
 }
 
-/// The UI-side holds on `(bag, slot)` that the item lock (`item+0x394 & 1`) marks: the cursor's
-/// source, an armed wrap's paper, the auction sell slot and multi-sell, the mail attachments and
-/// the socketed item. Derived here, so the app's re-push cannot wipe them.
-pub(super) fn slot_held(model: &super::Model, bag: i64, slot: u32) -> bool {
-    matches!(
-        &model.cursor,
-        Some(CursorPayload::Item(c)) if c.bag == bag && c.slot == slot
-    ) || matches!(
-        &model.pending_wrap,
-        Some(w) if w.bag == bag && w.slot == slot
-    ) || super::auction::holds_slot(model, bag, slot)
-        || super::mail::holds_slot(model, bag, slot)
-        || super::socket::holds_slot(model, bag, slot)
-        || super::petition::holds_slot(model, bag, slot)
-}
-
-/// Whether a bag slot's item is locked: a pending operation the app reports, or a UI-side hold.
+/// Whether a bag slot's item is locked (`item+0x394` bit 0): the bit its read reports, or the one kept here with no item store lent.
 pub(super) fn bag_slot_locked(
     model: &super::Model,
     bag: i64,
     slot: u32,
     s: &ContainerSlot,
 ) -> bool {
-    s.locked || slot_held(model, bag, slot)
+    s.locked || model.item_locks.contains(&(bag, slot))
 }
 
-/// `PickupContainerItem`'s gesture:
-/// - an empty cursor picks up a resolved item whose slot is not locked;
-/// - a click on the held item's own slot cancels;
-/// - a whole stack placed anywhere else queues the move and clears the cursor; a swap lands the
-///   displaced item in the source slot, never on the cursor (no cursor set);
-/// - a split carry places onto an empty or same-item slot, and stays held over another item;
-/// - a spell or action payload stays held.
-pub(super) fn pickup_container_item(model: &mut super::Model, bag: i64, slot: u32) {
-    // An armed gift wrap completes here, before the cursor is read. `PickupContainerItem` is the
-    // only caller of the wrap sender, so an equipped item cannot be wrapped.
+/// The slot's item taken with no item and no virtual item held (`0x5d8110`-`0x5d822f`): an empty slot does nothing; a targeting cursor stops (`0x5d811f`); repair mode repairs the item (`0x5d812c`); an armed gift wrap wraps it (`0x5d81e1`); else an unlocked item goes up through the setter and locks (`0x5d8208`, `0x5d8228`, `0x5d822f`).
+fn take_slot_item(model: &mut crate::script::ModelGuard<'_>, bag: i64, slot: u32) {
+    let Some(s) = index_slot(model, bag, slot).filter(|s| s.item_id != 0) else {
+        return;
+    };
+    if super::spellbook::targeting().active {
+        model.call(super::ScriptCall::SpellStopTargeting);
+    }
+    // The app's repair drain runs the arm's `ITEM_REPAIR` and send.
+    if super::merchant::repair_mode(model) {
+        model.container_repairs.push((bag, slot));
+        return;
+    }
     if let Some(wrap) = model.pending_wrap {
-        // An empty or unresolved target leaves the wrap armed, as in the reference.
-        if !index_slot(model, bag, slot).is_some_and(|s| s.item_id != 0) {
-            return;
-        }
-        // A vanished paper also bails, the wrap armed and the paper locked.
+        // A vanished paper bails, the wrap armed and the paper locked.
         if !index_slot(model, wrap.bag, wrap.slot).is_some_and(|s| s.item_id != 0) {
             return;
         }
@@ -466,74 +456,62 @@ pub(super) fn pickup_container_item(model: &mut super::Model, bag: i64, slot: u3
         model.container_wraps.push((wrap.bag, wrap.slot, bag, slot));
         // The paper unlocks and the cursor resets right after the send, not on the answer; the
         // target never locks.
-        cursor::queue_lock_changed(model, wrap.bag, wrap.slot);
+        cursor::set_item_lock(model, wrap.bag, wrap.slot, false);
         model.ui_cursor = None;
         model.ui_cursor_dirty = true;
         return;
     }
-    // Only a held item or vendor row takes the click first. Past them an empty slot does nothing,
-    // an armed item-targeting spell binds the item and repair mode repairs it, any other payload
-    // staying held; the app's repair drain runs the arm's `ITEM_REPAIR` and send.
-    let placing = matches!(
-        model.cursor,
-        Some(CursorPayload::Item(_) | CursorPayload::Merchant(_))
-    );
-    if !placing && (super::spellbook::targeting().wants_item || super::merchant::repair_mode(model))
-    {
-        let occupied = index_slot(model, bag, slot).is_some_and(|s| s.item_id != 0);
-        if occupied && super::spellbook::targeting().wants_item {
-            model.item_picks.push((bag, slot));
-        } else if occupied {
-            model.container_repairs.push((bag, slot));
-        }
+    // A locked item never picks up.
+    if bag_slot_locked(model, bag, slot, &s) {
         return;
     }
-    // The socketed item is locked while the window holds it (`0x5c4680`), and a locked item
-    // never picks up.
-    let socketed = super::socket::holds_slot(model, bag, slot)
-        || super::petition::holds_slot(model, bag, slot);
-    match model.cursor.take() {
-        None => {
-            let picked = index_slot(model, bag, slot)
-                .filter(|s| s.item_id != 0 && !s.locked && !socketed)
-                .map(|s| CursorItem {
-                    bag,
-                    slot,
-                    item_id: s.item_id,
-                    texture: s.texture.clone(),
-                    link: s.link.clone(),
-                    quality: s.quality,
-                    count: None,
-                    bar_placeable: s.bar_placeable,
-                    equip_slots: s.equip_slots.clone(),
-                });
-            if let Some(item) = picked {
-                model.cursor = Some(CursorPayload::Item(item));
-                cursor::queue_cursor_update(model);
-                cursor::queue_lock_changed(model, bag, slot);
-            }
-        }
+    let item = CursorItem {
+        bag,
+        slot,
+        item_id: s.item_id,
+        texture: s.texture.clone(),
+        link: s.link.clone(),
+        quality: s.quality,
+        count: None,
+        bar_placeable: s.bar_placeable,
+        equip_slots: s.equip_slots.clone(),
+    };
+    cursor::set_cursor(model, CursorPayload::Item(item));
+    cursor::set_item_lock(model, bag, slot, true);
+}
+
+/// `PickupContainerItem`'s gesture (`0x5d7ff0`):
+/// - a click on the held item's own slot cancels;
+/// - a whole stack placed anywhere else locks the slot's item and runs the swap, whose send clears
+///   the cursor with its item still locked; a swap lands the displaced item in the source slot,
+///   never on the cursor (no cursor set);
+/// - a split carry queues its split onto whatever the slot holds and clears the same way;
+/// - a vendor row buys into the slot and a guild bank item withdraws into it; a bar slot's item only clears;
+/// - anything else held carries no item (`0x5d80ff`, `0x5d8108`): the slot's item is taken as on an empty cursor, the setter's clear dropping what was held.
+pub(super) fn pickup_container_item(
+    model: &mut crate::script::ModelGuard<'_>,
+    bag: i64,
+    slot: u32,
+) {
+    match model.cursor.clone() {
         Some(CursorPayload::Item(held)) if held.bag == bag && held.slot == slot => {
-            cursor::queue_cursor_update(model);
-            cursor::queue_lock_changed(model, held.bag, held.slot);
+            cursor::clear_cursor(model);
+        }
+        // A split goes out as it is and the cursor clears, its item still locked (`0x5d8278`, `0x5d8281`).
+        Some(CursorPayload::Item(held)) if held.count.is_some() => {
+            queue_move(model, &held, bag, slot, held.count);
+            cursor::clear_cursor_with(model, false, true);
         }
         Some(CursorPayload::Item(held)) => {
-            // Cloned so the moves below can borrow `model`; an unresolved slot reads as empty.
-            let dest = index_slot(model, bag, slot)
-                .filter(|d| d.item_id != 0);
-            match (held.count, dest) {
-                // A split carry cannot swap with a different item: it stays held.
-                (Some(_), Some(d)) if d.item_id != held.item_id => {
-                    model.cursor = Some(CursorPayload::Item(held));
-                }
-                // Anything else queues the move and clears: a split, a merge the server tops up,
-                // or a swap that lands the displaced item in the source slot.
-                (count, _) => {
-                    queue_move(model, &held, bag, slot, count);
-                    cursor::queue_cursor_update(model);
-                    cursor::queue_lock_changed(model, held.bag, held.slot);
-                }
+            // A locked item in the slot refuses the swap, the cursor as it was (`0x5d82a4`).
+            let refused = index_slot(model, bag, slot)
+                .is_some_and(|d| d.item_id != 0 && bag_slot_locked(model, bag, slot, &d));
+            if refused {
+                return;
             }
+            // The slot's item locks (`0x5d82af`), then the swap runs (`0x5d82dc`).
+            cursor::set_item_lock(model, bag, slot, true);
+            swap_held(model, &held, bag, slot);
         }
         // Mode 5, a held vendor row, buys into this slot whatever it holds: `CMSG_BUY_ITEM_IN_SLOT`
         // (0x1a3) with count 1, and the cursor clears either way. Deviation: a row that no longer
@@ -554,26 +532,115 @@ pub(super) fn pickup_container_item(model: &mut super::Model, bag: i64, slot: u3
                     super::MerchantAct::BuyInSlot { bag, slot, row },
                 );
             }
-            cursor::queue_cursor_update(model);
+            cursor::clear_cursor(model);
         }
         // Mode 11, a guild bank item, withdraws into this slot (`0x5d7ff0`).
         Some(CursorPayload::GuildBankItem(held)) => {
             super::guild_bank::drop_on_bag_slot(model, held, bag, slot);
         }
-        Some(
-            other @ (CursorPayload::Spell(_)
-            | CursorPayload::Action(_)
-            // Mode 12, bank money, stays held for the bag button's `WithdrawGuildBankMoney`.
-            | CursorPayload::GuildBankMoney(_)
-            | CursorPayload::Macro(_)
-            | CursorPayload::EquipmentSet(_)
-            | CursorPayload::PetAction(_)
-            // Mode 10, a stabled pet, stays held for the stable window.
-            | CursorPayload::StablePet(_)
-            // Mode 2, money, stays held for a money frame's DropFunc.
-            | CursorPayload::Money(_)),
-        ) => {
-            model.cursor = Some(other);
+        // A bar slot's item is a virtual one no arm here takes: the cursor clears (`0x5d8477`).
+        Some(CursorPayload::Action(a)) if a.kind & 0xf0 == super::action::ACTION_KIND_ITEM => {
+            cursor::clear_cursor(model);
+        }
+        _ => take_slot_item(model, bag, slot),
+    }
+}
+
+/// What the item swap does with its two ends before its send (`0x6df890`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SwapGate {
+    /// The swap goes out and the cursor clears, its item still locked (`0x6dfc04`, `0x6dfc0d`).
+    Send,
+    /// An unbound item is being equipped and its record is not cached: the swap is kept for the record's callback and nothing else moves (`0x6dfa1d`, `0x6db6f0`).
+    Wait(u32),
+    /// The item being equipped binds when equipped (`0x6dfaac`): `EQUIP_BIND_CONFIRM` is asked if the player can use it (`0x6dfac1`, `0x6dfb3d`), and the cursor stays as it was.
+    Ask(u32),
+    /// The other end's bag is not held: nothing goes out (`0x6df98f` -> `0x6dfb45`).
+    Refuse,
+}
+
+/// The item swap of the held item with `(dst_bag, dst_slot)` (`0x6df890`): the send clears the cursor with its item still locked (`0x6dfc0d`); a bind question, a record still out and a refusal return before it (`0x6dfb45`, `0x6dfb4d`), the cursor holding.
+pub(crate) fn swap_held(
+    model: &mut crate::script::ModelGuard<'_>,
+    held: &CursorItem,
+    dst_bag: i64,
+    dst_slot: u32,
+) {
+    let mv = ContainerMove {
+        src_bag: held.bag,
+        src_slot: held.slot,
+        dst_bag,
+        dst_slot,
+        count: None,
+    };
+    match swap_gate(model, &mv) {
+        SwapGate::Send => {
+            model.container_moves.push(mv);
+            cursor::clear_cursor_with(model, false, true);
+        }
+        SwapGate::Ask(_) => ask_bind(model, mv),
+        SwapGate::Wait(entry) => {
+            super::item_stats::wait_item_record(model, entry, super::ItemRecordWait::Swap(mv));
+            super::item_stats::ask_item_record(model, entry);
+        }
+        SwapGate::Refuse => {}
+    }
+}
+
+/// The swap's bind question (`0x6dface`-`0x6dfb3d`): the pending equip is filed and `EQUIP_BIND_CONFIRM` signals with its index inside the call; with no host answering, the app's drain files it.
+fn ask_bind(model: &mut crate::script::ModelGuard<'_>, mv: ContainerMove) {
+    match model.ask(&super::HostAsk::BindSwap(mv)) {
+        Some(super::HostAnswer::BindIndex(index)) => model.raise(
+            "EQUIP_BIND_CONFIRM",
+            vec![super::ScriptValue::Int(i64::from(index))],
+        ),
+        _ => model.container_bind_asks.push(mv),
+    }
+}
+
+/// The swap's gate read at the call; an item the player cannot use asks nothing (`0x6dfac1`), and with no view answering the swap goes out.
+fn swap_gate(model: &super::Model, mv: &ContainerMove) -> SwapGate {
+    let gate =
+        super::read_live(|l| l.swap_gate((mv.src_bag, mv.src_slot), (mv.dst_bag, mv.dst_slot)))
+            .flatten();
+    #[cfg(any(test, feature = "fixtures"))]
+    let gate = gate.or(model.swap_gates.get(&(mv.dst_bag, mv.dst_slot)).copied());
+    match gate.unwrap_or(SwapGate::Send) {
+        SwapGate::Ask(entry) if !super::item_stats::item_usable_by_id(model, entry) => {
+            SwapGate::Send
+        }
+        gate => gate,
+    }
+}
+
+impl super::UiScript {
+    /// The swaps that asked `EQUIP_BIND_CONFIRM` where no host answered in the call, taken: the app files each and raises its question.
+    pub fn take_container_bind_asks(&mut self) -> Vec<ContainerMove> {
+        drain_field!(self, container_bind_asks)
+    }
+
+    /// A fixture's stand-in for the swap gate of a put-down at `(bag, slot)`.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub fn set_swap_gate(&mut self, bag: i64, slot: u32, gate: SwapGate) {
+        self.model_mut().swap_gates.insert((bag, slot), gate);
+    }
+
+    /// A swap whose record is not cached is kept on that record's callback, as its gate keeps it (`0x6dfa1d`); the caller sends nothing.
+    pub fn keep_swap_for_record(&mut self, entry: u32, mv: ContainerMove) {
+        let mut model = self.model_mut();
+        super::item_stats::wait_item_record(&mut model, entry, super::ItemRecordWait::Swap(mv));
+    }
+
+    /// A kept swap's record landed (`0x6db6f0`): the swap runs again from its two ends, unsuppressed, and its send clears whatever the cursor holds (`0x6db784`).
+    pub(crate) fn swap_record_landed(&mut self, mv: ContainerMove) {
+        let mut model = self.model_mut();
+        match swap_gate(&model, &mv) {
+            SwapGate::Send => {
+                model.container_moves.push(mv);
+                cursor::clear_cursor_with(&mut model, false, true);
+            }
+            SwapGate::Ask(_) => ask_bind(&mut model, mv),
+            SwapGate::Wait(_) | SwapGate::Refuse => {}
         }
     }
 }
@@ -815,8 +882,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let model = lua
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
-                let held = slot_held(&model, bag, slot);
                 let info = index_slot(&model, bag, slot);
+                let held = info
+                    .as_ref()
+                    .is_some_and(|s| bag_slot_locked(&model, bag, slot, s));
                 let template = info
                     .as_ref()
                     .and_then(|s| super::item_stats::item_record(&model, s.item_id));
@@ -839,9 +908,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     )?,
                 ),
                 Value::Integer(i64::from(s.count)),
-                // A held item's source slot reads locked, derived from the cursor so the app's
-                // re-push cannot wipe it.
-                super::binding_abi::flag(s.locked || held_here),
+                // The item's own lock bit (`0x5d7b5e`).
+                super::binding_abi::flag(held_here),
                 Value::Integer(quality),
                 super::binding_abi::flag(s.readable),
                 super::binding_abi::flag(lootable),
@@ -895,6 +963,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 // refusing arm shows its line at once and ends the click.
                 let arm = match super::mail::use_container_item(&mut model, bag, slot) {
                     Arm::Pass => super::auction::use_container_item(&mut model, bag, slot),
+                    took => took,
+                };
+                // Then an open trade takes it (`0x5d896d`), ahead of the guild bank.
+                let arm = match arm {
+                    Arm::Pass => super::trade::use_container_item(&mut model, bag, slot),
                     took => took,
                 };
                 match arm {
@@ -1015,8 +1088,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ContainerMove, ContainerSlot, ContainerState, PendingWrap, UiCursorMode};
+    use super::{
+        ContainerMove, ContainerSlot, ContainerState, PendingWrap, SwapGate, UiCursorMode,
+    };
+    use crate::script::cursor::EQUIPMENT_BAG;
     use crate::script::{MerchantItem, MerchantState, UiScript};
+    use std::collections::HashMap;
 
     fn backpack() -> ContainerState {
         let mut slots = std::collections::HashMap::new();
@@ -1253,6 +1330,238 @@ mod tests {
         assert_eq!(s.take_container_uses(), vec![(0, 4)]);
     }
 
+    /// With no item and no virtual item held the slot's item is taken as on an empty cursor (`0x5d80ff`, `0x5d8108`): a held spell is dropped by the setter's clear, a targeting cursor stops first (`0x5d811f`), and a bar slot's item only clears (`0x5d8477`).
+    #[test]
+    fn a_click_with_no_item_held_takes_the_slots_item() {
+        use crate::script::cursor::{CursorAction, CursorPayload, CursorSpell};
+        use crate::script::live::TestTargeting;
+
+        let mut s = swap_rig();
+        s.set_cursor_for_test(CursorPayload::Spell(CursorSpell {
+            passive: false,
+            book_slot: 1,
+            book_type: "spell".into(),
+            spell_id: 133,
+            texture: None,
+        }));
+        s.run("PickupContainerItem(0, 1)").unwrap();
+        assert!(s.cursor_item().is_some_and(|i| (i.bag, i.slot) == (0, 1)));
+        assert!(slot_locked(&s, 1));
+        // An empty slot leaves the held payload alone (`0x5d8110`).
+        s.set_cursor_for_test(CursorPayload::Spell(CursorSpell {
+            passive: false,
+            book_slot: 1,
+            book_type: "spell".into(),
+            spell_id: 133,
+            texture: None,
+        }));
+        s.run("PickupContainerItem(0, 9)").unwrap();
+        assert!(matches!(s.cursor_payload(), Some(CursorPayload::Spell(_))));
+
+        let mut s = swap_rig();
+        s.set_cursor_for_test(CursorPayload::Action(CursorAction {
+            src_slot: 1,
+            kind: crate::script::action::ACTION_KIND_ITEM,
+            action: 117,
+            texture: None,
+        }));
+        s.run("PickupContainerItem(0, 1)").unwrap();
+        assert!(s.cursor_payload().is_none() && !slot_locked(&s, 1));
+
+        let mut s = swap_rig();
+        crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+            s.set_spell_targeting(true);
+            s.run("PickupContainerItem(0, 1)").unwrap();
+            assert!(s.take_stop_targeting(), "the targeting cursor stops");
+            assert!(s.cursor_item().is_some());
+            // The split stops it too, after its clear (`0x5d85f4`).
+            s.run("ClearCursor() SplitContainerItem(0, 2, 1)").unwrap();
+            assert!(s.take_stop_targeting());
+            s.set_spell_targeting(false);
+            s.run("ClearCursor() SplitContainerItem(0, 2, 1)").unwrap();
+            assert!(!s.take_stop_targeting());
+        });
+    }
+
+    /// A held guild bank item dropped on a bag slot with no banker open moves nothing and stays held (`0x5d837c`).
+    #[test]
+    fn a_bank_item_dropped_with_no_banker_stays_on_the_cursor() {
+        use crate::script::cursor::{CursorGuildBankItem, CursorPayload};
+        let mut s = swap_rig();
+        s.set_cursor_for_test(CursorPayload::GuildBankItem(CursorGuildBankItem {
+            tab: 0,
+            slot: 3,
+            item_id: 2589,
+            texture: None,
+            link: None,
+            split: None,
+        }));
+        s.run("PickupContainerItem(0, 1)").unwrap();
+        assert!(matches!(
+            s.cursor_payload(),
+            Some(CursorPayload::GuildBankItem(_))
+        ));
+        assert!(s.take_guild_bank_requests().is_empty());
+    }
+
+    /// A two-item backpack and a helmet worn in the head slot.
+    fn swap_rig() -> UiScript {
+        let mut s = UiScript::new().unwrap();
+        let mut slots = HashMap::new();
+        for (slot, item_id) in [(1, 1234), (2, 4500)] {
+            slots.insert(
+                slot,
+                ContainerSlot {
+                    item_id,
+                    count: 1,
+                    equip_slots: vec![1],
+                    ..Default::default()
+                },
+            );
+        }
+        s.set_container(
+            0,
+            Some(ContainerState {
+                bag_family: 0,
+                name: None,
+                num_slots: 16,
+                slots,
+            }),
+        );
+        let mut worn: crate::script::InventorySlots = Default::default();
+        worn[1] = Some(crate::script::InvSlotView {
+            item_id: 77,
+            count: 1,
+            equip_slots: vec![1],
+            ..Default::default()
+        });
+        s.set_inventory_slots(worn);
+        s
+    }
+
+    fn slot_locked(s: &UiScript, slot: u32) -> bool {
+        s.eval::<bool>(&format!(
+            "return select(3, GetContainerItemInfo(0, {slot})) == 1"
+        ))
+        .unwrap()
+    }
+
+    /// A swap that asks `EQUIP_BIND_CONFIRM` returns before the send and the clear (`0x6dfb3d`, `0x6dfb45`): the cursor still holds the item, both ends locked as the callers left them (`0x5d82af`, `0x5e89c7`), and nothing goes out.
+    #[test]
+    fn a_swap_that_asks_the_bind_leaves_the_cursor_holding() {
+        // A bag slot put-down of a worn item over a bind-on-equip one.
+        let mut s = swap_rig();
+        s.set_swap_gate(0, 1, SwapGate::Ask(0));
+        s.run("PickupInventoryItem(1)").unwrap();
+        crate::script::tick::fired::take();
+        s.run("PickupContainerItem(0, 1)").unwrap();
+        assert_eq!(
+            crate::script::tick::fired::names(),
+            ["ITEM_LOCK_CHANGED", "ITEM_LOCKED"],
+            "the slot's item locks and no CURSOR_UPDATE follows"
+        );
+        assert!(s.cursor_item().is_some_and(|i| i.bag == EQUIPMENT_BAG));
+        assert!(s.take_container_moves().is_empty());
+        assert_eq!(
+            s.take_container_bind_asks(),
+            [ContainerMove {
+                src_bag: EQUIPMENT_BAG,
+                src_slot: 1,
+                dst_bag: 0,
+                dst_slot: 1,
+                count: None,
+            }]
+        );
+        assert!(slot_locked(&s, 1));
+
+        // The doll's put-down of a bag item: the slot's item locks after the swap returns.
+        let mut s = swap_rig();
+        s.set_swap_gate(EQUIPMENT_BAG, 1, SwapGate::Ask(0));
+        s.run("PickupContainerItem(0, 1)").unwrap();
+        crate::script::tick::fired::take();
+        s.run("PickupInventoryItem(1)").unwrap();
+        assert_eq!(
+            crate::script::tick::fired::names(),
+            ["ITEM_LOCK_CHANGED", "ITEM_LOCKED"]
+        );
+        assert!(s.cursor_item().is_some_and(|i| (i.bag, i.slot) == (0, 1)));
+        assert!(s.take_container_moves().is_empty());
+        assert_eq!(s.take_container_bind_asks().len(), 1);
+        assert!(s
+            .eval::<bool>("return IsInventoryItemLocked(1) == 1")
+            .unwrap());
+    }
+
+    /// A swap refused before its send (`0x6df991` -> `0x6dfb45`) and one kept for its record (`0x6dfa1d`) both return with the cursor holding and nothing sent; the record's landing runs the kept swap, whose send clears the cursor with the item still locked (`0x6db784`, `0x6dfc0d`).
+    #[test]
+    fn a_refused_or_waiting_swap_leaves_the_cursor_holding() {
+        let mut s = swap_rig();
+        s.set_swap_gate(0, 2, SwapGate::Refuse);
+        s.run("PickupContainerItem(0, 1) PickupContainerItem(0, 2)")
+            .unwrap();
+        assert!(s.cursor_item().is_some_and(|i| i.slot == 1));
+        assert!(s.take_container_moves().is_empty() && s.take_container_bind_asks().is_empty());
+        assert!(
+            slot_locked(&s, 2),
+            "the slot's item locked before the swap ran"
+        );
+
+        let mut s = swap_rig();
+        s.set_swap_gate(0, 2, SwapGate::Wait(4500));
+        s.run("PickupContainerItem(0, 1) PickupContainerItem(0, 2)")
+            .unwrap();
+        assert!(s.cursor_item().is_some() && s.take_container_moves().is_empty());
+        let mv = ContainerMove {
+            src_bag: 0,
+            src_slot: 1,
+            dst_bag: 0,
+            dst_slot: 2,
+            count: None,
+        };
+        assert_eq!(
+            std::mem::take(&mut s.model_mut().item_record_waits),
+            [(4500, crate::script::ItemRecordWait::Swap(mv))]
+        );
+        // A record that did not land runs nothing (`0x6db760`).
+        s.item_record_callback(4500, false, crate::script::ItemRecordWait::Swap(mv));
+        assert!(s.cursor_item().is_some() && s.take_container_moves().is_empty());
+        s.set_swap_gate(0, 2, SwapGate::Send);
+        crate::script::tick::fired::take();
+        s.item_record_callback(4500, true, crate::script::ItemRecordWait::Swap(mv));
+        assert_eq!(crate::script::tick::fired::names(), ["CURSOR_UPDATE"]);
+        assert_eq!(s.take_container_moves(), [mv]);
+        assert!(s.cursor_payload().is_none() && slot_locked(&s, 1));
+    }
+
+    /// An item the player cannot use asks nothing: the swap goes out (`0x6dfac8`).
+    #[test]
+    fn a_bind_on_equip_item_the_player_cannot_use_swaps_unasked() {
+        let mut s = swap_rig();
+        s.set_player_req_state(crate::script::PlayerReqState {
+            level: 40,
+            class_id: 1,
+            race_id: 1,
+            ..Default::default()
+        });
+        s.set_item_template(
+            4500,
+            crate::script::ItemTemplateView {
+                allowable_class: -1,
+                allowable_race: -1,
+                required_level: 60,
+                ..Default::default()
+            },
+        );
+        s.set_swap_gate(0, 2, SwapGate::Ask(4500));
+        assert!(!s.item_usable(4500));
+        s.run("PickupContainerItem(0, 1) PickupContainerItem(0, 2)")
+            .unwrap();
+        assert!(s.cursor_payload().is_none());
+        assert_eq!(s.take_container_moves().len(), 1);
+        assert!(s.take_container_bind_asks().is_empty());
+    }
+
+    /// The put-down's clear leaves the held item locked until the answer (`0x6dfc0d`).
     #[test]
     fn pickup_then_place_swaps_and_clears_cursor() {
         let mut s = UiScript::new().unwrap();
@@ -1288,12 +1597,14 @@ mod tests {
                 count: None,
             }]
         );
-        assert!(!s
-            .eval::<bool>("local _, _, locked = GetContainerItemInfo(0, 1) return locked")
-            .unwrap());
+        assert!(
+            s.eval::<bool>("local _, _, locked = GetContainerItemInfo(0, 1) return locked")
+                .unwrap(),
+            "the swap's clear does not unlock"
+        );
     }
 
-    /// The reference's place never sets the cursor: the displaced item is never held.
+    /// The reference's place never sets the cursor: the displaced item is never held. The slot's item locks before the swap goes out (`0x5d82af`) and the held one stays locked (`0x6dfc0d`).
     #[test]
     fn pickup_place_onto_occupied_different_item_swaps_and_clears() {
         let mut s = UiScript::new().unwrap();
@@ -1344,9 +1655,21 @@ mod tests {
                 count: None,
             }]
         );
-        assert!(!s
-            .eval::<bool>("local _, _, locked = GetContainerItemInfo(0, 1) return locked")
-            .unwrap());
+        for slot in [1, 5] {
+            assert!(
+                s.eval::<bool>(&format!(
+                    "local _, _, locked = GetContainerItemInfo(0, {slot}) return locked"
+                ))
+                .unwrap(),
+                "slot {slot} stays locked until the answer"
+            );
+        }
+        // A locked item in the slot refuses the next swap, the cursor as it was (`0x5d82a4`).
+        s.run("ClearCursor() PickupContainerItem(0, 4)").unwrap();
+        let held = s.cursor_item().map(|c| c.slot);
+        s.run("PickupContainerItem(0, 5)").unwrap();
+        assert_eq!(s.cursor_item().map(|c| c.slot), held);
+        assert!(s.take_container_moves().is_empty());
     }
 
     /// A same-item placement is a plain move: the server merges the stacks.
@@ -1440,26 +1763,54 @@ mod tests {
             }]
         );
 
-        s.run("SplitContainerItem(0, 1, 3)").unwrap();
-        s.run("PickupContainerItem(0, 9)").unwrap();
-        let held = s.cursor_item().expect("kept — can't swap a partial stack");
-        assert_eq!(held.count, Some(3));
-        assert!(s.take_container_moves().is_empty());
-
-        s.run("PickupContainerItem(0, 7)").unwrap();
+        // The stack stays locked until the answer (`0x5d8281`), and a locked stack does not split (`0x5d85b9`).
+        assert!(!s
+            .eval::<bool>("return SplitContainerItem(0, 1, 3)")
+            .unwrap());
         assert!(s.cursor_item().is_none());
-        assert_eq!(
-            s.take_container_moves(),
-            vec![ContainerMove {
-                src_bag: 0,
-                src_slot: 1,
-                dst_bag: 0,
-                dst_slot: 7,
-                count: Some(3),
-            }]
-        );
     }
 
+    /// A split over another item goes out as it is, the server's to refuse (`0x5d8278`): no test of the slot's item comes before it.
+    #[test]
+    fn a_split_carry_goes_out_over_whatever_the_slot_holds() {
+        for dst in [7, 9] {
+            let mut s = UiScript::new().unwrap();
+            let mut state = backpack();
+            for (slot, item_id) in [(7, 117), (9, 999)] {
+                state.slots.insert(
+                    slot,
+                    ContainerSlot {
+                        item_id,
+                        count: 1,
+                        ..Default::default()
+                    },
+                );
+            }
+            s.set_container(0, Some(state));
+            s.run("SplitContainerItem(0, 1, 3)").unwrap();
+            s.run(&format!("PickupContainerItem(0, {dst})")).unwrap();
+            assert!(s.cursor_item().is_none(), "slot {dst}");
+            assert_eq!(
+                s.take_container_moves(),
+                vec![ContainerMove {
+                    src_bag: 0,
+                    src_slot: 1,
+                    dst_bag: 0,
+                    dst_slot: dst,
+                    count: Some(3),
+                }]
+            );
+            assert!(
+                !s.eval::<bool>(&format!(
+                    "local _, _, locked = GetContainerItemInfo(0, {dst}) return locked"
+                ))
+                .unwrap(),
+                "a split locks nothing in the slot"
+            );
+        }
+    }
+
+    /// The whole stack goes up with no split count (`0x5d8609`); a count past the stack is refused (`0x5d85e6`).
     #[test]
     fn split_of_the_whole_stack_is_a_plain_pickup() {
         let mut s = UiScript::new().unwrap();
@@ -1468,12 +1819,11 @@ mod tests {
             .eval::<bool>("return SplitContainerItem(0, 1, 5)")
             .unwrap());
         assert_eq!(s.cursor_item().unwrap().count, None);
-        // A split of more than the stack is a plain pickup too.
         s.run("ClearCursor()").unwrap();
-        assert!(s
+        assert!(!s
             .eval::<bool>("return SplitContainerItem(0, 1, 99)")
             .unwrap());
-        assert_eq!(s.cursor_item().unwrap().count, None);
+        assert!(s.cursor_item().is_none());
     }
 
     #[test]
@@ -1930,5 +2280,87 @@ mod tests {
             .eval::<mlua::Value>("return GetContainerItemPurchaseItem(0, 1)")
             .unwrap_err();
         assert!(format!("{err}").contains("Usage: ContainerItemPurchaseItem("));
+    }
+
+    /// With the host's state lent the swap's question is filed and signalled inside the call (`0x6dface`, `0x6dfb3d`), after the lock the bag slot's click takes before the swap (`0x5d82af`, `0x5d82dc`), and nothing waits for the drain.
+    #[test]
+    fn a_swap_that_asks_signals_its_question_inside_the_call() {
+        use crate::script::{HostAnswer, HostAsk};
+        let mut s = swap_rig();
+        s.set_swap_gate(0, 1, SwapGate::Ask(0));
+        s.run(
+            r#"local f = CreateFrame("Frame")
+               f:RegisterEvent("EQUIP_BIND_CONFIRM")
+               f:SetScript("OnEvent", function(_, _, index) ASKED = { index, CursorHasItem(), SEEN } end)
+               PickupInventoryItem(1)"#,
+        )
+        .unwrap();
+        crate::script::tick::fired::take();
+        let asked = crate::script::calls::in_call::run(
+            &mut s,
+            Some(HostAnswer::BindIndex(3)),
+            "PickupContainerItem(0, 1) SEEN = true",
+        );
+        assert_eq!(
+            asked,
+            [HostAsk::BindSwap(ContainerMove {
+                src_bag: EQUIPMENT_BAG,
+                src_slot: 1,
+                dst_bag: 0,
+                dst_slot: 1,
+                count: None,
+            })]
+        );
+        assert_eq!(
+            crate::script::tick::fired::names(),
+            ["ITEM_LOCK_CHANGED", "ITEM_LOCKED", "EQUIP_BIND_CONFIRM"]
+        );
+        assert!(s
+            .eval::<bool>("return ASKED[1] == 3 and ASKED[2] == 1 and ASKED[3] == nil")
+            .unwrap());
+        assert!(s.cursor_item().is_some_and(|i| i.bag == EQUIPMENT_BAG));
+        assert!(s.take_container_bind_asks().is_empty() && s.take_container_moves().is_empty());
+    }
+
+    /// A targeting cursor is stopped inside the call, before the item goes up (`0x5d811f` ahead of `0x5d8228`), and by the split between its clear and its setter (`0x5d85ec`, `0x5d85f4`, `0x5d8621`).
+    #[test]
+    fn a_pickup_stops_targeting_before_its_cursor_signals() {
+        use crate::script::live::TestTargeting;
+        let mut s = swap_rig();
+        s.set_spell_targeting(true);
+        crate::script::tick::fired::take();
+        crate::script::calls::in_call::run(&mut s, None, "PickupContainerItem(0, 1)");
+        let fired = crate::script::tick::fired::names();
+        assert_eq!(fired[0], "APPLIED SpellStopTargeting", "{fired:?}");
+        assert!(
+            fired[1..].contains(&"CURSOR_UPDATE".to_string()),
+            "{fired:?}"
+        );
+        assert!(!s.take_stop_targeting(), "nothing waits for the press pass");
+
+        crate::script::calls::in_call::run(&mut s, None, "SplitContainerItem(0, 2, 1)");
+        let fired = crate::script::tick::fired::names();
+        let stop = fired
+            .iter()
+            .position(|e| e == "APPLIED SpellStopTargeting")
+            .expect("the split stops it");
+        // The clear's unlock of the held item, the stop, then the setter's signals and the lock.
+        assert_eq!(
+            fired[..stop].last().map(String::as_str),
+            Some("CURSOR_UPDATE"),
+            "{fired:?}"
+        );
+        assert!(
+            fired[..stop].contains(&"ITEM_UNLOCKED".to_string()),
+            "{fired:?}"
+        );
+        assert!(
+            fired[stop..].contains(&"ITEM_LOCKED".to_string()),
+            "{fired:?}"
+        );
+        assert!(
+            !fired[stop..].contains(&"ITEM_UNLOCKED".to_string()),
+            "{fired:?}"
+        );
     }
 }

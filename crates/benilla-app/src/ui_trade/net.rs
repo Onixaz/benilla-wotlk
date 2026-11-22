@@ -38,14 +38,55 @@ fn on_trade_status(
             }
             _ => None,
         };
-        if let (Some((partner, open)), Some(mut ui)) = (target, ui) {
-            ui.world(move |w| {
-                if open {
-                    crate::ui_session::set_interact_target(w, partner);
-                } else {
-                    crate::ui_session::clear_interact_target(w, partner);
+        if let Some(mut ui) = ui {
+            // The packet's own arms run first: our offered coins zero on the open and on each close (`0x704545`, `0x70459f`, `0x7045eb`), on the coins' refusal (`0x70457c`), and codes 3 and 13 signal `PLAYER_MONEY` (`0x7045ab`).
+            let zeroes = match status {
+                TradeStatus::OpenWindow { .. }
+                | TradeStatus::Canceled
+                | TradeStatus::Complete
+                | TradeStatus::CloseWindow { .. }
+                | TradeStatus::Unknown13 => true,
+                TradeStatus::OnlyConjured { slot } | TradeStatus::NotEligible { slot } => {
+                    slot == 0xff
                 }
-            });
+                _ => false,
+            };
+            if zeroes {
+                ui.write(|script| script.set_trade_offer_gold(0));
+            }
+            if matches!(status, TradeStatus::Canceled | TradeStatus::Unknown13) {
+                ui.fire("PLAYER_MONEY", vec![]);
+            }
+            // The cancel signals first (`0x587503`); each close unlocks the offer's items (`0x587508`, `0x587529`, `0x58754a`) ahead of the partner setter's close.
+            if matches!(status, TradeStatus::Canceled) {
+                ui.fire("TRADE_REQUEST_CANCEL", vec![]);
+            }
+            if matches!(
+                status,
+                TradeStatus::Canceled | TradeStatus::Complete | TradeStatus::CloseWindow { .. }
+            ) {
+                ui.write(benilla_ui::script::UiScript::unlock_trade_items);
+            }
+            if let Some((partner, open)) = target {
+                // The close releases the enchanting item and keeps the completion flag (`0x5870d5`, `0x5870f2`), then drops the interact target (`0x5870f7`).
+                let completed = matches!(status, TradeStatus::Complete);
+                if !open {
+                    ui.write(move |script| script.close_trade_partner(completed));
+                }
+                ui.world(move |w| {
+                    if open {
+                        crate::ui_session::set_interact_target(w, partner);
+                    } else {
+                        crate::ui_session::clear_interact_target(w, partner);
+                    }
+                });
+            }
+            // The refused slot's item unlocks and its slot zeroes after the line (`0x587727`, `0x587742` -> `0x586410`); `0xff` is the coins.
+            if let TradeStatus::OnlyConjured { slot } | TradeStatus::NotEligible { slot } = status {
+                if slot != 0xff {
+                    ui.write(move |script| script.deny_trade_item(slot));
+                }
+            }
         }
         if let TradeStatus::CloseWindow {
             result,
@@ -109,9 +150,26 @@ fn on_trade_status_extended(
     In(ev): In<SessionEvent>,
     mut trade: ResMut<TradeSession>,
     commands: Res<NetCommands>,
+    ui: Option<ResMut<crate::ui_script::live::UiEvents>>,
 ) {
     if let SessionEvent::TradeStatusExtended { state } = ev {
-        trade_status_extended(&state, &mut trade, &commands);
+        let seventh = trade.their_seventh();
+        let update = trade_status_extended(&state, &mut trade, &commands);
+        let Some(mut ui) = ui.filter(|_| update == OfferUpdate::Applied) else {
+            return;
+        };
+        // An own-window snapshot carries our offered coins (`0x7046ff`) and denies each slot it no longer fills (`0x704810`, `0x704873` -> `0x586410`).
+        if !state.their_window {
+            let gold = state.gold;
+            ui.write(move |script| script.set_trade_offer_gold(gold));
+            for slot in trade.mirror_own(&state) {
+                ui.write(move |script| script.deny_trade_item(slot));
+            }
+        }
+        // The partner's seventh slot changing releases the enchanting item (`0x586fb6`).
+        if trade.their_seventh() != seventh {
+            ui.write(benilla_ui::script::UiScript::release_trade_enchanting_item);
+        }
     }
 }
 
@@ -165,15 +223,11 @@ fn trade_status(
             }
             trade.back_to_trade();
         }
-        // The three that close the window; `CANCELED` signals `TRADE_REQUEST_CANCEL` before the
-        // close. The reference also sends `CMSG_CANCEL_TRADE`; benilla sends none on a
-        // server-driven close (the frame's `CloseTrade` drains after the session is clear), and
-        // vmangos ignores it once the trade is gone (`Player.cpp:11739`).
-        TradeStatus::Canceled => {
-            trade.signal_request_cancel();
+        // The three that close the window, each through the partner setter, whose close ends on `CMSG_CANCEL_TRADE` whether a window stood or not (`0x587116` -> `0x704040`).
+        TradeStatus::Canceled | TradeStatus::Complete | TradeStatus::CloseWindow { .. } => {
             trade.close_window();
+            let _ = commands.0.send(ClientCommand::CancelTrade);
         }
-        TradeStatus::Complete | TradeStatus::CloseWindow { .. } => trade.close_window(),
         // The placement is bounced, not the window.
         TradeStatus::OnlyConjured { slot } | TradeStatus::NotEligible { slot } => {
             trade.bounce_own_offer(slot)
@@ -184,7 +238,6 @@ fn trade_status(
         | TradeStatus::NoTarget
         | TradeStatus::TargetTooFar
         | TradeStatus::WrongFaction
-        | TradeStatus::Unknown13
         | TradeStatus::IgnoreYou
         | TradeStatus::YouStunned
         | TradeStatus::TargetStunned
@@ -193,7 +246,12 @@ fn trade_status(
         | TradeStatus::YouLogout
         | TradeStatus::TargetLogout
         | TradeStatus::TrialAccount => trade.clear_pending(),
-        // Past `0x16`: the bare epilogue, as for case 13; vmangos never sends one.
+        // Code 13 shares the cancel's packet arm (`0x704584`): the coins zero, then the tail's clear.
+        TradeStatus::Unknown13 => {
+            trade.zero_gold();
+            trade.clear_pending();
+        }
+        // Past `0x16`: the bare epilogue; no server sends one.
         TradeStatus::Unknown(_) => {}
     }
 }
@@ -243,7 +301,7 @@ fn trade_status_extended(
     ext: &TradeStatusExtended,
     trade: &mut TradeSession,
     commands: &NetCommands,
-) {
+) -> OfferUpdate {
     let update = trade.set_offer(ext);
     bevy::log::info!(
         target: "trade",
@@ -257,6 +315,7 @@ fn trade_status_extended(
     if update == OfferUpdate::OtherTrade {
         let _ = commands.0.send(ClientCommand::CancelTrade);
     }
+    update
 }
 
 #[cfg(test)]
@@ -329,7 +388,7 @@ mod tests {
     /// A window up and both sides accepted, so a wrong close, accept reset or cell clear shows.
     fn open_trade() -> TradeSession {
         let mut trade = TradeSession::default();
-        trade.initiate(0x7);
+        trade.initiate(0x7, false);
         trade.open_window(0);
         trade.accept();
         trade.partner_accepted();
@@ -505,7 +564,7 @@ mod tests {
             // We asked: the line is owed, naming our target.
             let (mut errors, commands, _rx) = sink();
             let mut trade = TradeSession::default();
-            trade.initiate(0x7);
+            trade.initiate(0x7, false);
             trade.take_named_lines_for_test();
             trade_status(status, &mut trade, &mut errors, &commands);
             assert_eq!(
@@ -539,7 +598,7 @@ mod tests {
     fn the_plain_refusals_are_raised_immediately() {
         let (mut errors, commands, _rx) = sink();
         let mut trade = TradeSession::default();
-        trade.initiate(0x7);
+        trade.initiate(0x7, false);
         trade.take_named_lines_for_test();
         trade_status(TradeStatus::TargetDead, &mut trade, &mut errors, &commands);
         assert_eq!(errors.0, vec![UiError::key("ERR_TRADE_TARGET_DEAD")]);
@@ -589,5 +648,372 @@ mod tests {
             None,
             "an uncached item shows nothing"
         );
+    }
+}
+
+/// The offer's item locks through the handlers, each release at its own site.
+#[cfg(test)]
+mod lock_tests {
+    use benilla_protocol::messages::{TradeItem, TradeStatus, TradeStatusExtended};
+    use benilla_protocol::SessionEvent;
+    use benilla_ui::script::{ContainerSlot, ContainerState, TradeState, UiScript};
+    use bevy::prelude::*;
+
+    use super::super::TradeSession;
+    use crate::net::{ClientCommand, NetCommands};
+
+    /// A world with the trade's handlers, an open window on `0x7`, a pack of three items and a spy logging the trade and lock events.
+    fn rig() -> (App, crossbeam_channel::Receiver<ClientCommand>) {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut app = App::new();
+        app.init_resource::<TradeSession>()
+            .init_resource::<crate::ui_action::UiErrorKeys>()
+            .init_resource::<crate::ui_script::live::UiEvents>()
+            .insert_resource(NetCommands(tx));
+        super::register(&mut app);
+        let mut script = UiScript::new().unwrap();
+        let mut slots = std::collections::HashMap::new();
+        for (slot, item_id) in [(1, 2589), (2, 2770), (3, 118)] {
+            slots.insert(
+                slot,
+                ContainerSlot {
+                    guid: 0x4000_0000_0000_0000 + u64::from(slot),
+                    item_id,
+                    count: 1,
+                    ..Default::default()
+                },
+            );
+        }
+        script.set_container(
+            0,
+            Some(ContainerState {
+                bag_family: 0,
+                name: None,
+                num_slots: 16,
+                slots,
+            }),
+        );
+        script.set_trade(Some(TradeState::default()));
+        script
+            .run(
+                "LOG = {} local f = CreateFrame('Frame') \
+                 for _, e in ipairs({'TRADE_REQUEST_CANCEL', 'TRADE_PLAYER_ITEM_CHANGED', 'ITEM_UNLOCKED', 'PLAYER_TRADE_MONEY', 'TRADE_CLOSED'}) do f:RegisterEvent(e) end \
+                 f:SetScript('OnEvent', function(_, e, a, b) LOG[#LOG + 1] = e .. (b and (':' .. b) or a and (':' .. a) or '') end)",
+            )
+            .unwrap();
+        app.insert_non_send_resource(script);
+        {
+            let mut trade = app.world_mut().resource_mut::<TradeSession>();
+            trade.initiate(0x7, false);
+            trade.open_window(9);
+        }
+        (app, rx)
+    }
+
+    fn run(app: &mut App, lua: &str) {
+        crate::ui_script::live::with_live_world(app.world_mut(), |s| s.run(lua).unwrap());
+    }
+
+    fn log(app: &mut App) -> String {
+        app.world_mut()
+            .non_send_resource::<UiScript>()
+            .eval::<String>("local l = table.concat(LOG, ' ') LOG = {} return l")
+            .unwrap()
+    }
+
+    fn locked(app: &mut App, slot: u32) -> bool {
+        crate::ui_script::live::with_live_world(app.world_mut(), |s| {
+            s.eval::<bool>(&format!(
+                "return select(3, GetContainerItemInfo(0, {slot})) == 1"
+            ))
+            .unwrap()
+        })
+        .unwrap()
+    }
+
+    fn status(app: &mut App, status: TradeStatus) {
+        crate::net::handlers::dispatch(app.world_mut(), vec![SessionEvent::TradeStatus { status }]);
+    }
+
+    fn sent(rx: &crossbeam_channel::Receiver<ClientCommand>) -> Vec<String> {
+        rx.try_iter().map(|c| format!("{c:?}")).collect()
+    }
+
+    /// Two items offered in slots 1 and 3.
+    fn offered() -> (App, crossbeam_channel::Receiver<ClientCommand>) {
+        let (mut app, rx) = rig();
+        run(
+            &mut app,
+            "PickupContainerItem(0, 1) ClickTradeButton(1) PickupContainerItem(0, 2) ClickTradeButton(3)",
+        );
+        assert!(locked(&mut app, 1) && locked(&mut app, 2));
+        log(&mut app);
+        (app, rx)
+    }
+
+    /// `0x587503`, `0x587508`, `0x587513`: the cancel signals, the offer's items unlock, then the partner setter's close sends the cancel.
+    #[test]
+    fn a_cancel_signals_then_unlocks_the_offer_and_sends_the_cancel() {
+        let (mut app, rx) = offered();
+        status(&mut app, TradeStatus::Canceled);
+        assert_eq!(
+            log(&mut app),
+            "TRADE_REQUEST_CANCEL ITEM_UNLOCKED:1 ITEM_UNLOCKED:2"
+        );
+        assert!(!locked(&mut app, 1) && !locked(&mut app, 2));
+        assert!(!app.world().resource::<TradeSession>().is_open());
+        assert_eq!(sent(&rx), ["CancelTrade"]);
+    }
+
+    /// `0x587529`, `0x58754a`: the completion and the close each unlock the offer, and only the completion silences `CloseTrade`'s coins (`0x587534` passes 1, `0x587949`).
+    #[test]
+    fn a_completion_and_a_close_unlock_the_offer() {
+        for (closing, coins) in [
+            (TradeStatus::Complete, ""),
+            (
+                TradeStatus::CloseWindow {
+                    result: 0,
+                    target: false,
+                    item: 0,
+                },
+                "PLAYER_TRADE_MONEY",
+            ),
+        ] {
+            let (mut app, rx) = offered();
+            status(&mut app, closing);
+            assert_eq!(log(&mut app), "ITEM_UNLOCKED:1 ITEM_UNLOCKED:2");
+            assert_eq!(sent(&rx), ["CancelTrade"]);
+            // The feed's push of the closed window, then the frame's `CloseTrade`.
+            app.world_mut()
+                .non_send_resource_mut::<UiScript>()
+                .set_trade(None);
+            run(&mut app, "CloseTrade()");
+            assert_eq!(log(&mut app), coins, "{closing:?}");
+        }
+    }
+
+    /// The completed trade's items leave before or after its status: an item gone first is out of the offer and unlocks nothing (`0x70b0df` -> `0x586aa0`), one still held unlocks at the status (`0x5864b3`).
+    #[test]
+    fn a_completion_unlocks_whichever_side_of_the_items_leaving_it_lands() {
+        // The destroy first: the slot's clear goes out and signals, and the status has nothing of it to unlock.
+        let (mut app, _rx) = offered();
+        crate::ui_script::live::with_live_world(app.world_mut(), |s| {
+            s.trade_item_destroyed(0x4000_0000_0000_0001)
+        });
+        assert_eq!(log(&mut app), "TRADE_PLAYER_ITEM_CHANGED:1");
+        status(&mut app, TradeStatus::Complete);
+        assert_eq!(log(&mut app), "ITEM_UNLOCKED:2");
+
+        // The status first: both unlock, and the destroy then takes the item out of the slots that stand.
+        let (mut app, _rx) = offered();
+        status(&mut app, TradeStatus::Complete);
+        assert_eq!(log(&mut app), "ITEM_UNLOCKED:1 ITEM_UNLOCKED:2");
+        crate::ui_script::live::with_live_world(app.world_mut(), |s| {
+            s.trade_item_destroyed(0x4000_0000_0000_0001)
+        });
+        assert_eq!(log(&mut app), "TRADE_PLAYER_ITEM_CHANGED:1");
+    }
+
+    /// `0x587727`, `0x587742` -> `0x586455`: a refused slot's item unlocks and its slot zeroes; the window stands.
+    #[test]
+    fn a_refused_slot_unlocks_its_item_and_the_window_stands() {
+        for refusal in [
+            TradeStatus::OnlyConjured { slot: 2 },
+            TradeStatus::NotEligible { slot: 2 },
+        ] {
+            let (mut app, _rx) = offered();
+            status(&mut app, refusal);
+            assert_eq!(log(&mut app), "ITEM_UNLOCKED:2 TRADE_PLAYER_ITEM_CHANGED:3");
+            assert!(locked(&mut app, 1) && !locked(&mut app, 2));
+            assert!(app.world().resource::<TradeSession>().is_open());
+        }
+        // `0xff` is the coins: no slot is touched (`0x586418`).
+        let (mut app, _rx) = offered();
+        status(&mut app, TradeStatus::OnlyConjured { slot: 0xff });
+        assert_eq!(log(&mut app), "");
+        assert!(locked(&mut app, 1) && locked(&mut app, 2));
+    }
+
+    fn wire_item(entry: u32) -> TradeItem {
+        TradeItem {
+            entry,
+            display_id: 1,
+            count: 1,
+            wrapped: false,
+            gift_creator: 0,
+            perm_enchant: 0,
+            socket_enchants: [0; 3],
+            creator: 0,
+            charges: 0,
+            suffix_factor: 0,
+            random_prop_id: 0,
+            lock_id: 0,
+            max_durability: 0,
+            durability: 0,
+        }
+    }
+
+    fn snapshot(app: &mut App, their_window: bool, state_index: u32, filled: &[(usize, u32)]) {
+        let mut slots = [None; 7];
+        for &(i, entry) in filled {
+            slots[i] = Some(wire_item(entry));
+        }
+        crate::net::handlers::dispatch(
+            app.world_mut(),
+            vec![SessionEvent::TradeStatusExtended {
+                state: Box::new(TradeStatusExtended {
+                    their_window,
+                    trade_id: 9,
+                    state_index,
+                    side_state: state_index,
+                    gold: 0,
+                    enchant_spell_id: 0,
+                    slots,
+                }),
+            }],
+        );
+    }
+
+    /// `0x704810`, `0x704873`: an own-window snapshot denies a slot the one before it filled and it leaves empty, in either order with the slot's own status.
+    #[test]
+    fn an_own_snapshot_denies_the_slot_it_no_longer_fills() {
+        let (mut app, _rx) = offered();
+        snapshot(&mut app, false, 5, &[(0, 2589), (2, 2770)]);
+        assert_eq!(log(&mut app), "", "both slots stand in it");
+        snapshot(&mut app, false, 6, &[(0, 2589)]);
+        assert_eq!(log(&mut app), "ITEM_UNLOCKED:2 TRADE_PLAYER_ITEM_CHANGED:3");
+        assert!(locked(&mut app, 1) && !locked(&mut app, 2));
+        // The status after it finds the slot empty and signals it alone (`0x586410` has no gate).
+        status(&mut app, TradeStatus::NotEligible { slot: 2 });
+        assert_eq!(log(&mut app), "TRADE_PLAYER_ITEM_CHANGED:3");
+
+        // The status first: the snapshot after it still denies, the mirror being its own.
+        let (mut app, _rx) = offered();
+        snapshot(&mut app, false, 5, &[(0, 2589), (2, 2770)]);
+        status(&mut app, TradeStatus::NotEligible { slot: 2 });
+        assert_eq!(log(&mut app), "ITEM_UNLOCKED:2 TRADE_PLAYER_ITEM_CHANGED:3");
+        snapshot(&mut app, false, 6, &[(0, 2589)]);
+        assert_eq!(log(&mut app), "TRADE_PLAYER_ITEM_CHANGED:3");
+
+        // A slot only we filled, which no snapshot showed, is not denied by one that lacks it.
+        let (mut app, _rx) = offered();
+        snapshot(&mut app, false, 5, &[(0, 2589)]);
+        assert_eq!(log(&mut app), "");
+        assert!(locked(&mut app, 2));
+    }
+
+    /// `0x586fb6`, `0x5870d5`: the enchanting item unlocks when the partner's seventh slot changes and when a status closes the window.
+    #[test]
+    fn the_enchanting_item_unlocks_on_the_partners_slot_change_and_on_the_close() {
+        let aim = |app: &mut App| {
+            snapshot(app, true, 2, &[(6, 6217)]);
+            // The feed's push of the partner's column.
+            let mut st = TradeState::default();
+            st.target.slots[6] = Some(Default::default());
+            let facts = benilla_ui::script::TradeItemFacts {
+                enchants_on_use: true,
+                ..Default::default()
+            };
+            {
+                let mut script = app.world_mut().non_send_resource_mut::<UiScript>();
+                script.set_trade(Some(st));
+                script.set_trade_item_facts(0, 3, facts);
+            }
+            run(app, "UseContainerItem(0, 3)");
+            assert!(locked(app, 3));
+            log(app);
+        };
+        let (mut app, _rx) = rig();
+        aim(&mut app);
+        snapshot(&mut app, true, 3, &[(0, 118), (6, 6217)]);
+        assert!(locked(&mut app, 3), "another slot's change leaves it");
+        snapshot(&mut app, true, 4, &[(0, 118)]);
+        assert_eq!(log(&mut app), "ITEM_UNLOCKED:3");
+
+        let (mut app, _rx) = rig();
+        aim(&mut app);
+        status(&mut app, TradeStatus::Canceled);
+        assert_eq!(log(&mut app), "TRADE_REQUEST_CANCEL ITEM_UNLOCKED:3");
+    }
+
+    /// The status packet's own arms run ahead of the trade's (`0x7044dd`): our offered coins zero on the open, each close and the coins' refusal (`0x704545`, `0x70459f`, `0x7045eb`, `0x70457c`), codes 3 and 13 signal `PLAYER_MONEY` first (`0x7045ab`), and our own snapshot carries the coins (`0x7046ff`).
+    #[test]
+    fn the_status_arms_zero_the_offered_coins_and_signal_the_purse() {
+        let coins = |app: &App| {
+            app.world()
+                .non_send_resource::<UiScript>()
+                .trade_offer_gold()
+        };
+        let close = TradeStatus::CloseWindow {
+            result: 0,
+            target: false,
+            item: 0,
+        };
+        for (code, zeroed) in [
+            (TradeStatus::OpenWindow { trade_id: 9 }, true),
+            (TradeStatus::Canceled, true),
+            (TradeStatus::Complete, true),
+            (close, true),
+            (TradeStatus::Unknown13, true),
+            (TradeStatus::OnlyConjured { slot: 0xff }, true),
+            (TradeStatus::NotEligible { slot: 0xff }, true),
+            (TradeStatus::OnlyConjured { slot: 2 }, false),
+            (TradeStatus::Accept, false),
+            (TradeStatus::BackToTrade, false),
+            (TradeStatus::TargetTooFar, false),
+        ] {
+            let (mut app, _rx) = rig();
+            app.world_mut()
+                .non_send_resource_mut::<UiScript>()
+                .set_trade_offer_gold(500);
+            status(&mut app, code);
+            assert_eq!(coins(&app), if zeroed { 0 } else { 500 }, "{code:?}");
+        }
+
+        let spy = "local f = CreateFrame('Frame') f:RegisterEvent('PLAYER_MONEY') \
+                   f:SetScript('OnEvent', function(_, e) LOG[#LOG + 1] = e end)";
+        let (mut app, _rx) = rig();
+        run(&mut app, spy);
+        status(&mut app, TradeStatus::Canceled);
+        assert_eq!(log(&mut app), "PLAYER_MONEY TRADE_REQUEST_CANCEL");
+        let (mut app, _rx) = rig();
+        run(&mut app, spy);
+        status(&mut app, TradeStatus::Unknown13);
+        assert_eq!(log(&mut app), "PLAYER_MONEY");
+        status(&mut app, TradeStatus::Complete);
+        assert_eq!(log(&mut app), "", "a completion signals no purse");
+
+        let (mut app, _rx) = rig();
+        let gold_snapshot = |app: &mut App, their_window: bool, gold: u32| {
+            crate::net::handlers::dispatch(
+                app.world_mut(),
+                vec![SessionEvent::TradeStatusExtended {
+                    state: Box::new(TradeStatusExtended {
+                        their_window,
+                        trade_id: 9,
+                        state_index: 5,
+                        side_state: 5,
+                        gold,
+                        enchant_spell_id: 0,
+                        slots: [None; 7],
+                    }),
+                }],
+            );
+        };
+        gold_snapshot(&mut app, false, 250);
+        assert_eq!(coins(&app), 250);
+        gold_snapshot(&mut app, true, 99);
+        assert_eq!(coins(&app), 250, "the partner's coins are not ours");
+    }
+
+    /// `0x5880c7`, `0x5880f4`, `0x588133`, `0x588138`: the world leave unlocks the offer and the enchanting item, closes the window and sends the cancel twice.
+    #[test]
+    fn the_world_leave_unlocks_the_offer_and_cancels_twice() {
+        let (mut app, rx) = offered();
+        super::super::leave_world(app.world_mut());
+        crate::ui_script::live::fire_handler_events(app.world_mut());
+        assert_eq!(log(&mut app), "ITEM_UNLOCKED:1 ITEM_UNLOCKED:2");
+        assert!(!app.world().resource::<TradeSession>().is_open());
+        assert_eq!(sent(&rx), ["CancelTrade", "CancelTrade"]);
     }
 }

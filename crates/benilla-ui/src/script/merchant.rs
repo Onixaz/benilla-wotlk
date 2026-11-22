@@ -148,6 +148,10 @@ pub enum MerchantAct {
     Sell { bag: i64, slot: u32 },
     /// A held vendor row dropped into a Lua slot: `CMSG_BUY_ITEM_IN_SLOT`, count 1.
     BuyInSlot { bag: i64, slot: u32, row: u32 },
+    /// A held vendor row dropped on a bag's own button (`0x5e79d0`): the same send into Lua container `bag`, its slot `0xFF`.
+    BuyInBag { bag: i64, row: u32 },
+    /// A held row dropped on a slot whose item is no bag: the same send, that item's guid as the bag (`0x5e8fae`).
+    BuyInItem { player_slot: u8, row: u32 },
     /// `CloseMerchant` (`0x584600`).
     Close,
 }
@@ -239,7 +243,7 @@ impl super::UiScript {
 }
 
 /// The close's legs after each `MERCHANT_CLOSED` (`0x584646`-`0x58467c`).
-fn close_legs(model: &mut super::Model) {
+fn close_legs(model: &mut crate::script::ModelGuard<'_>) {
     if matches!(model.cursor, Some(CursorPayload::Merchant(_))) {
         crate::script::cursor::clear_cursor(model);
     }
@@ -380,6 +384,15 @@ pub(crate) fn merchant_act(model: &mut super::Model, act: MerchantAct) -> Mercha
         MerchantAct::Sell { bag, slot } => model.merchant_cursor_sells.push((bag, slot)),
         MerchantAct::BuyInSlot { bag, slot, row } => {
             model.merchant_slot_buys.push((bag, slot, row + 1));
+        }
+        MerchantAct::BuyInBag { bag, row } => {
+            model.merchant_slot_buys.push((bag, 0xff, row + 1));
+        }
+        // A test's queue names the player slot as a bag id below every container's.
+        MerchantAct::BuyInItem { player_slot, row } => {
+            model
+                .merchant_slot_buys
+                .push((-1000 - i64::from(player_slot), 0xff, row + 1));
         }
         MerchantAct::Close => model.merchant_close = true,
     }
@@ -646,7 +659,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             // The grab's `CURSOR_UPDATE` signal; mode 5 skips the mode-7 `ACTIONBAR_SHOWGRID`
             // branch.
             model.cursor = Some(payload);
-            crate::script::cursor::queue_cursor_update(&mut model);
+            crate::script::cursor::raise_cursor_update(&mut model);
             Ok(())
         })?,
     )?;
@@ -1811,14 +1824,17 @@ mod tests {
         let mut s = UiScript::new().unwrap();
         s.set_merchant(Some(stock()));
         listen_cursor_events(&mut s);
-        s.set_cursor_for_test(CursorPayload::Spell(CursorSpell {
-            book_slot: 1,
-            book_type: "spell".into(),
-            spell_id: 133,
-            texture: None,
-            passive: false,
-        }));
-        cursor::queue_cursor_update(&mut s.model_mut()); // the pickup's own transition
+        // The pickup's own transition, through the spell setter.
+        cursor::set_cursor(
+            &mut s.model_mut(),
+            CursorPayload::Spell(CursorSpell {
+                book_slot: 1,
+                book_type: "spell".into(),
+                spell_id: 133,
+                texture: None,
+                passive: false,
+            }),
+        );
         assert_eq!(cursor_event_counts(&mut s), (1, 1, 0), "the spell pickup");
 
         s.run("PickupMerchantItem(0)").unwrap();

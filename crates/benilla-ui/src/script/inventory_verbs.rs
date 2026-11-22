@@ -46,7 +46,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let sellable = usize::try_from(slot0 + 1)
                 .ok()
                 .and_then(|slot| model.inv_slot("player", slot))
-                .is_some_and(|v| v.item_id != 0 && !v.locked);
+                .is_some_and(|v| v.item_id != 0)
+                && !u32::try_from(slot0 + 1)
+                    .is_ok_and(|id| super::cursor::doll::is_inventory_item_locked(&model, id));
             if sellable {
                 model.ui_cursor = Some(UiCursorMode::Buy);
                 model.ui_cursor_dirty = true;
@@ -103,7 +105,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let mut model = crate::script::model_mut_of(lua);
             let changed = recompute_inventory_alerts(&mut model);
             for event in alert_events(changed) {
-                model.pending_events.push((event.to_string(), Vec::new()));
+                model.raise(event, Vec::new());
             }
             Ok(MultiValue::new())
         })?,

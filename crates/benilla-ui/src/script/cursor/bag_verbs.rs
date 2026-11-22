@@ -2,10 +2,9 @@
 
 use mlua::{Lua, MultiValue, Value};
 
-use crate::script::container::ContainerMove;
-use crate::script::Model;
-
-use super::{clear_cursor, queue_cursor_update, queue_lock_changed, CursorItem, CursorPayload};
+use super::{
+    clear_cursor, clear_cursor_with, set_cursor, set_item_lock, CursorItem, CursorPayload,
+};
 use super::{doll::pickup_inventory_item, EQUIPMENT_BAG};
 
 /// The ids `PutItemInBag` and `PickupBagFromSlot` take: what their argument reader (`0x5e7c00`)
@@ -18,9 +17,7 @@ fn accepts(live: u32) -> bool {
         || (87..=118).contains(&live)
 }
 
-/// The live container id of a bag slot, the inverse of `ContainerIDToInventoryID`. Deviation:
-/// an auto-store into a bank item or keyring slot sends nothing, because no container id names
-/// it and no stock caller passes one; the reference sends it and the server refuses.
+/// The live container id of a bag slot, the inverse of `ContainerIDToInventoryID`; a bank item or keyring slot has none, and its target is the item in the slot itself (`0x5e8dbf`).
 fn autostore_container(live: u32) -> Option<i64> {
     match live {
         20..=23 => Some(i64::from(live) - 19),
@@ -51,91 +48,114 @@ pub(super) fn fits_slot(item: &CursorItem, id: u32) -> bool {
     u8::try_from(id).is_ok_and(|id| item.equip_slots.contains(&id))
 }
 
-/// `PutItemInBag(inventorySlot)`: true (the reference's `1`) when the click was consumed against an
-/// occupied slot, else false (nil). An empty cursor's nil is what lets `BagSlotButton_OnClick` open
-/// the bag.
-pub(super) fn put_item_in_bag(model: &mut Model, live: u32) -> bool {
+/// `PutItemInBag(inventorySlot)` (`0x5ea780` -> `0x5e8d30`): true (the reference's `1`) when the click was consumed against an occupied slot, else false (nil). An empty cursor's nil is what lets `BagSlotButton_OnClick` open the bag.
+pub(super) fn put_item_in_bag(model: &mut crate::script::ModelGuard<'_>, live: u32) -> bool {
     if !accepts(live) {
         return false;
     }
-    // An empty or non-item cursor answers nil and sends nothing. At an occupied slot the reference
-    // clears such a cursor, buying a held vendor row first.
-    let Some(CursorPayload::Item(held)) = model.cursor.clone() else {
+    // A bank bag slot with no banker open does nothing (`0x5e8d75`).
+    if BANK_BAG_INV_SLOTS.contains(&live) && crate::script::read_live(|l| l.banker()) == Some(None)
+    {
         return false;
-    };
+    }
     let occupied = usize::try_from(live)
         .ok()
         .and_then(|slot| model.inv_slot("player", slot))
         .is_some();
-
     if !occupied {
-        // An empty slot: the doll handler equips the bag, and the answer is nil whether or not it
-        // went.
+        // An empty slot: the doll handler equips the bag, and the answer is nil whether or not it went (`0x5e8dde`).
         pickup_inventory_item(model, live);
         return false;
     }
-
-    // The held bag is this slot's own: a cancel that sends nothing and answers 1.
-    if held.bag == EQUIPMENT_BAG && held.slot == live {
-        model.cursor = None;
-        queue_cursor_update(model);
-        queue_lock_changed(model, held.bag, held.slot);
+    // A locked bag only clears the cursor (`0x5e8e09`), as the held bag's own slot does (`0x5e8e1c`).
+    let held = match model.cursor.clone() {
+        Some(CursorPayload::Item(held)) => Some(held),
+        _ => None,
+    };
+    let own = held
+        .as_ref()
+        .is_some_and(|h| h.bag == EQUIPMENT_BAG && h.slot == live);
+    if own || super::doll::is_inventory_item_locked(model, live) {
+        clear_cursor(model);
         return true;
     }
-
-    if is_container(&held) || held.bag == EQUIPMENT_BAG {
-        // A swap; an item from a bag equipment slot enters this fork too, hence the `||`. A split
-        // stack cannot swap and stays held: the reference splits only when storing.
-        if held.count.is_none() {
-            model.cursor = None;
-            model.container_moves.push(ContainerMove {
-                src_bag: held.bag,
-                src_slot: held.slot,
-                dst_bag: EQUIPMENT_BAG,
-                dst_slot: live,
-                count: None,
-            });
-            queue_cursor_update(model);
-            queue_lock_changed(model, held.bag, held.slot);
-            return true;
-        }
-        model.cursor = Some(CursorPayload::Item(held));
-        return true;
-    }
-
-    // Store into the bag: `CMSG_AUTOSTORE_BAG_ITEM` (`0x10B`), or `CMSG_SPLIT_ITEM` (`0x10E`) for
-    // a split. The client picks no slot: the store carries none, the split carries `0xFF`.
-    let Some(dst_bag) = autostore_container(live) else {
+    // No held item: a held vendor row is bought into the bag (`0x5e8fae`), then the cursor clears and the answer is nil (`0x5e8fb6`).
+    let Some(held) = held else {
+        buy_held_row(model, autostore_container(live), live);
+        clear_cursor(model);
         return false;
     };
-    model.cursor = None;
+    // An item already inside this bag just drops (`0x5e8e3b`).
+    if autostore_container(live) == Some(held.bag) {
+        clear_cursor(model);
+        return true;
+    }
+    // A bag off a bag slot, or any container, swaps with this one: the slot's bag locks (`0x5e8ea1`, `0x5e8ede`), then the swap runs (`0x5e8f0c`).
+    if is_container(&held) || (held.bag == EQUIPMENT_BAG && (20..=23).contains(&held.slot)) {
+        set_item_lock(model, EQUIPMENT_BAG, live, true);
+        crate::script::container::swap_held(model, &held, EQUIPMENT_BAG, live);
+        return true;
+    }
+
+    // Store into the slot's item, a bag or not: `CMSG_AUTOSTORE_BAG_ITEM` (`0x10B`), or `CMSG_SPLIT_ITEM` (`0x10E`) for a split (`0x5e8f45`, `0x5e8f60`). The client picks no slot: the store carries none, the split carries `0xFF`.
+    let dst_bag = autostore_container(live);
     model.bag_autostores.push(crate::script::BagAutoStore {
         src_bag: held.bag,
         src_slot: held.slot,
-        dst_bag,
+        dst_bag: dst_bag.unwrap_or(0),
+        dst_player_slot: dst_bag.is_none().then_some((live - 1) as u8),
         count: held.count,
     });
-    queue_cursor_update(model);
-    queue_lock_changed(model, held.bag, held.slot);
+    // The cursor clears with its item still locked until the answer (`0x5e8f69`).
+    clear_cursor_with(model, false, true);
     true
 }
 
-/// `PutItemInBackpack()`, a thunk to `PutItemInBag(0xFF)` whose target is the player's own guid:
-/// the empty-slot leg is unreachable and the reference skips the swap, so even a bag is stored into
-/// the backpack.
-pub(super) fn put_item_in_backpack(model: &mut Model) -> bool {
+/// A held vendor row bought into Lua container `bag`, the vendor open (`0x5e8f7d`-`0x5e8fae`); a row that no longer resolves buys nothing, where the reference dereferences it unchecked.
+fn buy_held_row(model: &mut crate::script::ModelGuard<'_>, bag: Option<i64>, live: u32) {
+    let Some(CursorPayload::Merchant(held)) = model.cursor.clone() else {
+        return;
+    };
+    let resolves = crate::script::merchant::merchant_row(
+        model,
+        crate::script::MerchantList::Items,
+        held.row as usize,
+        false,
+    )
+    .is_some_and(|it| it.item_id == held.item_id);
+    if resolves {
+        // The buy names the slot's item as its bag, a bag or not (`0x5e8fae`).
+        let act = match bag {
+            Some(bag) => crate::script::MerchantAct::BuyInBag { bag, row: held.row },
+            None => crate::script::MerchantAct::BuyInItem {
+                player_slot: (live - 1) as u8,
+                row: held.row,
+            },
+        };
+        crate::script::merchant::merchant_act(model, act);
+    }
+}
+
+/// `PutItemInBackpack()` (`0x5ea7f0`), `PutItemInBag(0xFF)` whose target is the player's own guid: no empty-slot leg and no swap, so even a bag is stored into the backpack; no held item clears the cursor and answers nil (`0x5e8fb6`), and an item already in the backpack just drops (`0x5e8e47`).
+pub(super) fn put_item_in_backpack(model: &mut crate::script::ModelGuard<'_>) -> bool {
     let Some(CursorPayload::Item(held)) = model.cursor.clone() else {
+        buy_held_row(model, Some(0), 0);
+        clear_cursor(model);
         return false;
     };
-    model.cursor = None;
+    if held.bag == 0 {
+        clear_cursor(model);
+        return true;
+    }
     model.bag_autostores.push(crate::script::BagAutoStore {
         src_bag: held.bag,
         src_slot: held.slot,
         dst_bag: 0,
+        dst_player_slot: None,
         count: held.count,
     });
-    queue_cursor_update(model);
-    queue_lock_changed(model, held.bag, held.slot);
+    // The cursor clears with its item still locked until the answer (`0x5e8f69`).
+    clear_cursor_with(model, false, true);
     true
 }
 
@@ -143,7 +163,7 @@ pub(super) fn put_item_in_backpack(model: &mut Model) -> bool {
 /// reference clears only a held item; with nothing held it skips the clear and its `CURSOR_UPDATE`,
 /// as the reference does. Takes only a container, and never places or swaps. The client has no
 /// empty-bag rule: the server refuses with `EQUIP_ERR_CAN_ONLY_DO_WITH_EMPTY_BAGS`.
-pub(super) fn pickup_bag_from_slot(model: &mut Model, live: u32) {
+pub(super) fn pickup_bag_from_slot(model: &mut crate::script::ModelGuard<'_>, live: u32) {
     if !accepts(live) {
         return;
     }
@@ -153,7 +173,7 @@ pub(super) fn pickup_bag_from_slot(model: &mut Model, live: u32) {
     let picked = usize::try_from(live)
         .ok()
         .and_then(|slot| model.inv_slot("player", slot))
-        .filter(|s| s.item_id != 0 && !s.locked)
+        .filter(|s| s.item_id != 0 && !super::doll::is_inventory_item_locked(model, live))
         .map(|s| CursorItem {
             bag: EQUIPMENT_BAG,
             slot: live,
@@ -166,10 +186,10 @@ pub(super) fn pickup_bag_from_slot(model: &mut Model, live: u32) {
             equip_slots: s.equip_slots.clone(),
         })
         .filter(is_container);
+    // The setter, then the lock (`0x5e8d17`).
     if let Some(item) = picked {
-        model.cursor = Some(CursorPayload::Item(item));
-        queue_cursor_update(model);
-        queue_lock_changed(model, EQUIPMENT_BAG, live);
+        set_cursor(model, CursorPayload::Item(item));
+        set_item_lock(model, EQUIPMENT_BAG, live, true);
     }
 }
 
@@ -237,10 +257,10 @@ mod tests {
     #[test]
     fn an_empty_cursor_skips_the_clear_and_its_signal() {
         let s = UiScript::new().unwrap();
-        let before = s.model_ref().pending_events.len();
+        crate::script::tick::fired::take();
         s.run("PickupBagFromSlot(20)").unwrap();
         assert!(s.cursor_payload().is_none());
-        assert_eq!(s.model_ref().pending_events.len(), before);
+        assert!(crate::script::tick::fired::names().is_empty());
     }
 
     /// An item that is a bag: `equip_slots` is `find_equip_slot(INVTYPE_BAG)`.
@@ -389,28 +409,90 @@ mod tests {
                 src_slot: 2,
                 // Container 5 is bank bag slot 1 (`ContainerIDToInventoryID(5) == 68`).
                 dst_bag: 5,
+                dst_player_slot: None,
                 count: None,
             }]
         );
     }
 
+    /// A key's slot is no bag: the store names the key itself as its bag, by the player slot holding it, for the server to refuse (`0x5e8f60` -> `0x6dbb30`), and the cursor clears with the item still locked (`0x5e8f69`).
+    #[test]
+    fn an_occupied_keyring_slot_takes_the_store_for_the_server_to_refuse() {
+        let mut s = UiScript::new().unwrap();
+        s.set_container(0, Some(backpack()));
+        let mut keys = std::collections::HashMap::new();
+        keys.insert(
+            1,
+            ContainerSlot {
+                item_id: 5396,
+                count: 1,
+                ..Default::default()
+            },
+        );
+        s.set_container(
+            -2,
+            Some(ContainerState {
+                bag_family: 0,
+                name: None,
+                num_slots: 32,
+                slots: keys,
+            }),
+        );
+        s.run("PickupContainerItem(0, 2)").unwrap();
+
+        assert_eq!(s.eval::<i64>("return PutItemInBag(87)").unwrap(), 1);
+        assert!(s.cursor_item().is_none());
+        assert_eq!(
+            s.take_bag_autostores(),
+            vec![BagAutoStore {
+                src_bag: 0,
+                src_slot: 2,
+                dst_bag: 0,
+                // Live id 87 is the first keyring slot, player slot 86.
+                dst_player_slot: Some(86),
+                count: None,
+            }]
+        );
+        assert!(s
+            .eval::<bool>("return select(3, GetContainerItemInfo(0, 2)) == 1")
+            .unwrap());
+    }
+
+    /// The backpack button stores whatever is held, a bag included, and the cursor clears with the item still locked (`0x5e8f69`); an item already in the backpack just drops (`0x5e8e47`), and no held item clears the cursor and answers nil (`0x5e8fb6`).
     #[test]
     fn the_backpack_button_always_auto_stores_even_a_bag() {
         let mut s = UiScript::new().unwrap();
         s.set_container(0, Some(backpack()));
-        s.run("PickupContainerItem(0, 1)").unwrap();
+        s.set_container(1, Some(backpack()));
+        s.run("PickupContainerItem(1, 1)").unwrap();
 
         assert_eq!(s.eval::<i64>("return PutItemInBackpack()").unwrap(), 1);
         assert!(s.take_container_moves().is_empty());
         assert_eq!(
             s.take_bag_autostores(),
             vec![BagAutoStore {
-                src_bag: 0,
+                src_bag: 1,
                 src_slot: 1,
                 dst_bag: 0,
+                dst_player_slot: None,
                 count: None,
             }]
         );
+        assert!(s
+            .eval::<bool>("local _, _, locked = GetContainerItemInfo(1, 1) return locked")
+            .unwrap());
+
+        s.run("PickupContainerItem(0, 1)").unwrap();
+        assert_eq!(s.eval::<i64>("return PutItemInBackpack()").unwrap(), 1);
+        assert!(s.cursor_item().is_none() && s.take_bag_autostores().is_empty());
+        assert!(!s
+            .eval::<bool>("local _, _, locked = GetContainerItemInfo(0, 1) return locked")
+            .unwrap());
+
+        s.run(r#"local f = CreateFrame("Frame") f:RegisterEvent("CURSOR_UPDATE") f:SetScript("OnEvent", function() Cleared = true end)"#).unwrap();
+        assert!(s
+            .eval::<bool>("return PutItemInBackpack() == nil and Cleared")
+            .unwrap());
     }
 
     #[test]

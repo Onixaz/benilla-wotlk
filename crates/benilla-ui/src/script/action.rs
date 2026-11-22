@@ -157,12 +157,6 @@ impl super::UiScript {
         drain_field!(self, action_sets)
     }
 
-    /// Drain the GlobalStrings keys of engine-side refusals; the app fires `UI_ERROR_MESSAGE` for
-    /// each, where the reference calls its error display inline.
-    pub fn take_ui_errors(&mut self) -> Vec<&'static str> {
-        drain_field!(self, ui_errors)
-    }
-
     /// Drain the catalog keys of lines verbs displayed inline, for the app to sound.
     pub fn take_message_sounds(&mut self) -> Vec<&'static str> {
         drain_field!(self, message_sounds)
@@ -409,12 +403,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if let Some(refusal) =
                 super::cursor::use_action_places(&mut model, action, in_binding, &mut changed)
             {
-                let grid = super::cursor::take_grid_edge(&mut model);
                 drop(model);
                 if let Some(line) = refusal {
                     crate::script::ui_errors::show_line_now(lua, line);
                 }
-                super::action_slots::signal_all(lua, grid, changed);
+                super::action_slots::signal_all(lua, changed);
                 return Ok(());
             }
             // A set slot wears the set (`0x5abdcc` → the equipment manager's set equip `0x5ae660`).

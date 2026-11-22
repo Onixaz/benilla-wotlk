@@ -446,6 +446,8 @@ impl CastLadder<'_, '_> {
             }
         }
         if !rest && self.ground.active() {
+            let item = self.ground.cast_item();
+            self.press.cast_item_cancelled(item);
             self.ground.clear();
             self.press.selection();
             // The rungs below run after the stop's selection update has (`0x80d3ce`).
@@ -872,6 +874,7 @@ fn send_spell_cast(
     // with no packet, and continues down the ladder.
     if top && ground.active() {
         debug!("ui_action: cast {spell_id} supersedes the targeting cursor");
+        press.cast_item_cancelled(ground.cast_item());
         ground.clear();
         // The cursor's cast ends, and its finish runs the selection update (`0x8054f0`).
         press.selection();

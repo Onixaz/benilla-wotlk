@@ -162,11 +162,8 @@ fn write_stand_in(model: &mut Model, action: u32, to: Option<Word>, texture: Opt
 #[cfg(not(any(test, feature = "fixtures")))]
 fn write_stand_in(_: &mut Model, _: u32, _: Option<Word>, _: Option<String>) {}
 
-/// A bar verb's signals inside its call: the cursor's grid edge first, then each slot written.
-pub(crate) fn signal_all(lua: &mlua::Lua, grid: Option<String>, changed: Vec<u32>) {
-    if let Some(event) = grid {
-        super::tick::fire_event_into(lua, &event, Vec::new());
-    }
+/// A bar verb's slot signals inside its call, one for each slot written.
+pub(crate) fn signal_all(lua: &mlua::Lua, changed: Vec<u32>) {
     for action in changed {
         signal(lua, action);
     }

@@ -18,6 +18,8 @@ pub enum SoundRequest {
     KitName(String),
     /// `PlaySoundFile("path")`: a file path, no kit.
     File(String),
+    /// An item's put-down kit off its sound group, by item id (`0x4d0020` with 1), for the trade's remove click and add (`0x587a7e`, `0x58792a`).
+    ItemPutDown(u32),
 }
 
 /// One queued `PlayMusic` or `StopMusic`, for the app's Lua music slot.

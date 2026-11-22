@@ -63,6 +63,11 @@ impl PendingEquips {
         u32::try_from(idx).unwrap_or(u32::MAX)
     }
 
+    /// The record at `index`, left filed: the answer reads it at each step and zeroes it last (`0x6e02e2`).
+    pub(crate) fn get(&self, index: u32) -> Option<PendingEquip> {
+        *self.slots.get(index as usize)?
+    }
+
     /// Frees the element. An index nobody filed does nothing, as the reference bounds-checks the
     /// index.
     pub(crate) fn take(&mut self, index: u32) -> Option<PendingEquip> {
@@ -158,10 +163,8 @@ impl BindGate<'_> {
             PendingEquip::AutoEquip { .. } => "AUTOEQUIP_BIND_CONFIRM",
         };
         debug!("ui_bind_confirm: {event} index {index} for {rec:?}");
-        // Queued, not fired: the triggering action has already queued its `CURSOR_UPDATE`, which
-        // hides both equip dialogs (`UIParent.lua:357-361`). Fired now, the question would come
-        // first and be cancelled on the next tick.
-        script.queue_event(event, vec![ScriptValue::Int(i64::from(index))]);
+        // Signalled where it is filed (`0x6dfb3d`, `0x6dfe31`).
+        script.fire_event(event, vec![ScriptValue::Int(i64::from(index))]);
     }
 
     /// Files the deferred use and raises `USE_BIND`, with no argument: a second deferred use
@@ -172,7 +175,38 @@ impl BindGate<'_> {
             pending.bag_index, pending.slot
         );
         self.on_use.0 = Some(pending);
-        // Queued like the equip arms, though `CURSOR_UPDATE` does not hide `USE_BIND`.
-        script.queue_event("USE_BIND_CONFIRM", vec![]);
+        // Signalled where it is filed (`0x709387`).
+        script.fire_event("USE_BIND_CONFIRM", vec![]);
     }
+}
+
+/// A swap's bind question filed inside the verb that asked (`0x6dface`): its index, which the verb signals `EQUIP_BIND_CONFIRM` with (`0x6dfb3d`).
+pub(crate) fn file_swap(
+    In(mv): In<benilla_ui::script::ContainerMove>,
+    mut equips: ResMut<PendingEquips>,
+) -> u32 {
+    equips.add(PendingEquip::Swap {
+        src_bag: mv.src_bag,
+        src_slot: mv.src_slot,
+        dst_bag: mv.dst_bag,
+        dst_slot: mv.dst_slot,
+    })
+}
+
+/// `AutoEquipCursorItem`'s bind question filed inside the verb (`0x6dfdc8`): its index, which the verb signals `AUTOEQUIP_BIND_CONFIRM` with (`0x6dfe31`); `None` when the slot holds no item object.
+pub(crate) fn file_auto_equip(
+    In((bag, slot)): In<(i64, u32)>,
+    mut equips: ResMut<PendingEquips>,
+    objects: Objects,
+    self_q: Query<&crate::net::ObjectStore, With<crate::net::SelfPlayer>>,
+) -> Option<u32> {
+    let (bag_index, wire_slot) = crate::ui_items::wire_pos(bag, slot)?;
+    let slot0 = u8::try_from(slot.checked_sub(1)?).ok()?;
+    let store = self_q.iter().next()?;
+    let guid = crate::ui_items::slot_guid(&store.0, bag, slot0, &objects)?;
+    Some(equips.add(PendingEquip::AutoEquip {
+        bag_index,
+        slot: wire_slot,
+        guid,
+    }))
 }

@@ -912,15 +912,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             let delta = add_preview(&mut model, side, group, t, i, points as i32);
             if delta != 0 {
-                model.pending_events.push((
-                    side.preview_event().into(),
+                model.raise(
+                    side.preview_event(),
                     vec![
                         ScriptValue::Int(index),
                         ScriptValue::Int(tab),
                         ScriptValue::Int(group as i64 + 1),
                         ScriptValue::Int(delta.into()),
                     ],
-                ));
+                );
             }
             Ok(())
         })?,
@@ -1063,7 +1063,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 }
 
 /// Reset a group's preview, one tab or all, and fire the side's event when its total moved.
-fn reset_preview(model: &mut Model, side: Side, group: usize, tab: Option<usize>, tab_arg: i64) {
+fn reset_preview(
+    model: &mut crate::script::ModelGuard<'_>,
+    side: Side,
+    group: usize,
+    tab: Option<usize>,
+    tab_arg: i64,
+) {
     if group >= state(model, side).groups.len() {
         return;
     }
@@ -1076,15 +1082,15 @@ fn reset_preview(model: &mut Model, side: Side, group: usize, tab: Option<usize>
     }
     let after = group_preview_spent(model, side, group);
     if after != before {
-        model.pending_events.push((
-            side.preview_event().into(),
+        model.raise(
+            side.preview_event(),
             vec![
                 ScriptValue::Int(0),
                 ScriptValue::Int(tab_arg),
                 ScriptValue::Int(group as i64 + 1),
                 ScriptValue::Int((after - before).into()),
             ],
-        ));
+        );
     }
 }
 
@@ -1556,7 +1562,7 @@ mod tests {
     fn a_pet_tier_takes_three_points_and_previews_fire_the_pet_event() {
         let mut s = script();
         s.set_pet_talents(pet_state());
-        s.model_mut().pending_events.clear();
+        crate::script::tick::fired::take();
         s.run("AddPreviewTalentPoints(1, 3, 1, true, 1)").unwrap();
         assert_eq!(
             s.eval::<i64>("return GetGroupPreviewTalentPointsSpent(true, 1)")
@@ -1572,14 +1578,8 @@ mod tests {
             2,
             "the third point in A opens C"
         );
-        let fired: Vec<String> = s
-            .model_ref()
-            .pending_events
-            .iter()
-            .map(|(e, _)| e.clone())
-            .collect();
         assert_eq!(
-            fired,
+            crate::script::tick::fired::names(),
             vec!["PREVIEW_PET_TALENT_POINTS_CHANGED"; 2],
             "the pet's event, never the player's"
         );

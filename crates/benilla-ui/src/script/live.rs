@@ -125,6 +125,16 @@ pub trait LiveState {
         false
     }
 
+    /// Add `text` to the chat log on the catalog row's `chat_type` inside the call (`0x509dd0`): the
+    /// line recorded and its event's name and arguments handed back to fire; `None` with no chat log.
+    fn add_chat_line(
+        &mut self,
+        _chat_type: u8,
+        _text: &str,
+    ) -> Option<(&'static str, Vec<super::ScriptValue>)> {
+        None
+    }
+
     /// The world-state readout's admitted row count at the call (`0x548720`), `None` without one.
     fn world_state_ui_count(&self) -> Option<usize> {
         None
@@ -566,6 +576,11 @@ pub trait LiveState {
         false
     }
 
+    /// The bar's usable update at the call (`0x5aa470`), with whether equipment sets can be used (`0x5ad6b0`): whether a slot's bytes moved, `None` with no bar lent.
+    fn bar_usable_update(&mut self, _sets_usable: bool) -> Option<bool> {
+        None
+    }
+
     /// `IsUsableAction`'s pair for the 1-based `action` off the bar's usable cache (`0x5a7e60`);
     /// `None` without a view.
     fn action_usable(&self, _action: u32) -> Option<(bool, bool)> {
@@ -926,6 +941,21 @@ pub trait LiveState {
         None
     }
 
+    /// The item swap's gate over its two ends, each `(bag, 1-based slot)` (`0x6df890`); `None` with no active player held.
+    fn swap_gate(&self, _src: (i64, u32), _dst: (i64, u32)) -> Option<super::SwapGate> {
+        None
+    }
+
+    /// `AutoEquipCursorItem`'s gate over the held item at `(bag, 1-based slot)` and whether it is ammunition (`0x6dfd45`-`0x6dfe51`); `None` with no active player held.
+    fn auto_equip_gate(&self, _bag: i64, _slot: u32) -> Option<(super::SwapGate, bool)> {
+        None
+    }
+
+    /// What the trade offer's gates read off held item `item` (`0x587aff`-`0x587bcf`, `0x5877b0`, `0x5d896d`); `None` with no item store held.
+    fn trade_item_facts(&self, _item: u64) -> Option<super::TradeItemFacts> {
+        None
+    }
+
     /// The tooltip's ask of a refundable purchase's record when it holds none and none is pending (`0x62d57d`-`0x62d598`).
     fn ask_refund_record(&mut self, _item: u64) {}
 
@@ -1243,6 +1273,16 @@ pub trait LiveState {
         self.guild_bank_slot(tab, slot).and_then(|s| s.texture)
     }
 
+    /// The item lock (`item+0x394` bit 0) of `guid`; `None` with no item store lent.
+    fn item_locked(&self, _guid: u64) -> Option<bool> {
+        None
+    }
+
+    /// Lock (`0x706fe0`) or unlock (`0x707020`) the item `guid`: whether its bit moved; `None` with no item store lent.
+    fn set_item_lock(&mut self, _guid: u64, _locked: bool) -> Option<bool> {
+        None
+    }
+
     /// Whether slot `(tab, slot)` holds `item_id` locked (`0x5a4c40`).
     fn guild_bank_locked(&self, _tab: u8, _slot: u8, _item_id: u32) -> bool {
         false
@@ -1309,10 +1349,10 @@ pub(crate) fn has_control() -> bool {
     read_live(|l| l.has_control()).unwrap_or(true)
 }
 
-/// Queue `event` with the frame's unique signals (`0x615020`), which fire once each after the frame's packets (`0x614760`); with no queue lent, the model's pending events take it.
+/// Queue `event` with the frame's unique signals (`0x615020`), which fire once each after the frame's packets (`0x614760`); with no queue lent, the model's deferred events take it.
 pub(crate) fn unique_signal(model: &mut super::model::Model, event: &'static str) {
     if write_live(|l| l.unique_signal(event)) != Some(true) {
-        model.pending_events.push((event.to_string(), Vec::new()));
+        model.defer_event(event, Vec::new());
     }
 }
 
@@ -1494,6 +1534,8 @@ pub(crate) struct TestView {
     pub trainer_is_open: Option<bool>,
     /// The trainer zero legs run.
     pub trainer_zeroes: u32,
+    /// The chat lines the display added inside its calls, with their wire chat type.
+    pub chat_lines: Vec<(u8, String)>,
 }
 
 /// The gossip globals a test view lends.
@@ -1628,6 +1670,21 @@ impl LiveState for TestView {
     fn taxi_act(&mut self, act: super::TaxiAct) -> Option<super::TaxiOutcome> {
         self.taxi_acts.push(act);
         None
+    }
+
+    /// A system line fires `CHAT_MSG_SYSTEM`, a skill line `CHAT_MSG_SKILL`, with the text alone.
+    fn add_chat_line(
+        &mut self,
+        chat_type: u8,
+        text: &str,
+    ) -> Option<(&'static str, Vec<super::ScriptValue>)> {
+        self.chat_lines.push((chat_type, text.to_string()));
+        let event = if chat_type == 26 {
+            "CHAT_MSG_SKILL"
+        } else {
+            "CHAT_MSG_SYSTEM"
+        };
+        Some((event, vec![super::ScriptValue::Str(text.to_string())]))
     }
 
     fn trainer_buy(&mut self, spell_id: u32) -> bool {

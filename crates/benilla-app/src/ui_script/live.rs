@@ -61,7 +61,7 @@ pub(crate) struct LiveView<'w, 's> {
     pub(crate) actions: Option<ResMut<'w, crate::ui_action::PlayerActions>>,
     /// The bar's slots, which every loan owns: the bar verbs write them in the call.
     pub(crate) slots: Option<ResMut<'w, crate::ui_action::ActionSlots>>,
-    /// The items a send locked (`item+0x314` bit 0), read into each slot's `locked`.
+    /// The item locks (`item+0x394` bit 0): a verb locks and unlocks in the call (`0x513740`, `0x513770`).
     pub(crate) pending: Option<ResMut<'w, crate::pending_item_ops::PendingItemOps>>,
     /// The open trade-skill book (`[0xc235a4]`), the current and selected tests' trade arm.
     pub(crate) trade: Option<ResMut<'w, crate::ui_tradeskill::TradeSkillOpen>>,
@@ -180,6 +180,8 @@ pub(crate) struct MainState<'w> {
     pub(crate) refunds: Option<NonSendMut<'w, crate::ui_socket::RefundRecords>>,
     pub(crate) guild_bank: Option<NonSendMut<'w, crate::ui_guild_bank::GuildBankState>>,
     pub(crate) spirit: Option<NonSendMut<'w, crate::ui_dialog_verbs::AreaSpiritHealer>>,
+    /// The chat windows, where the message display adds a chat line inside its call (`0x52183c`).
+    pub(crate) chat: Option<ResMut<'w, crate::ui_chat::ChatWindows>>,
 }
 
 mod actions;
@@ -420,6 +422,14 @@ impl LiveState for LiveView<'_, '_> {
             .as_deref_mut()
             .map(|s| s.unique_signal(event))
             .is_some()
+    }
+
+    fn add_chat_line(
+        &mut self,
+        chat_type: u8,
+        text: &str,
+    ) -> Option<(&'static str, Vec<ScriptValue>)> {
+        crate::ui_chat::add_chat_line(self.lent.chat.as_deref_mut()?, chat_type, text)
     }
 
     fn world_state_ui_count(&self) -> Option<usize> {
@@ -1278,6 +1288,10 @@ impl LiveState for LiveView<'_, '_> {
         self.write_slot_word(slot, word)
     }
 
+    fn bar_usable_update(&mut self, sets_usable: bool) -> Option<bool> {
+        self.bar_update(sets_usable)
+    }
+
     fn action_usable(&self, action: u32) -> Option<(bool, bool)> {
         let caches = self.usable.as_deref()?;
         let cell = action
@@ -1587,6 +1601,19 @@ impl LiveState for LiveView<'_, '_> {
         self.guild_bank.as_ref()?.texture(s.item_id)
     }
 
+    fn item_locked(&self, guid: u64) -> Option<bool> {
+        Some(self.pending.as_deref()?.is_locked(guid))
+    }
+
+    fn set_item_lock(&mut self, guid: u64, locked: bool) -> Option<bool> {
+        let pending = self.pending.as_deref_mut()?;
+        Some(if locked {
+            pending.lock(guid)
+        } else {
+            pending.unlock(guid)
+        })
+    }
+
     fn guild_bank_locked(&self, tab: u8, slot: u8, item_id: u32) -> bool {
         self.lent
             .guild_bank
@@ -1789,6 +1816,62 @@ impl LiveState for LiveView<'_, '_> {
         let records = self.lent.refunds.as_deref()?;
         let held = self.index.as_ref()?.0.contains_key(&item);
         Some(held.then(|| records.view(item)).flatten())
+    }
+
+    fn swap_gate(&self, src: (i64, u32), dst: (i64, u32)) -> Option<benilla_ui::script::SwapGate> {
+        let (objects, items, _) = self.containers.as_ref()?.item_reads();
+        let me = objects.player_object()?;
+        Some(crate::ui_items::swap_gate(
+            me,
+            objects,
+            items,
+            self.enchants.as_deref(),
+            src,
+            dst,
+        ))
+    }
+
+    fn auto_equip_gate(&self, bag: i64, slot: u32) -> Option<(benilla_ui::script::SwapGate, bool)> {
+        let (objects, items, _) = self.containers.as_ref()?.item_reads();
+        let me = objects.player_object()?;
+        Some(crate::ui_items::auto_equip_gate(
+            me,
+            objects,
+            items,
+            self.enchants.as_deref(),
+            bag,
+            slot,
+        ))
+    }
+
+    fn trade_item_facts(&self, item: u64) -> Option<benilla_ui::script::TradeItemFacts> {
+        let index = self.index.as_ref()?;
+        let fields = index
+            .0
+            .get(&item)
+            .and_then(|&e| self.stores.get(e).ok())
+            .map(|s| &s.0);
+        let held = |guid: u64| {
+            index
+                .0
+                .get(&guid)
+                .and_then(|&e| self.stores.get(e).ok())
+                .is_some()
+        };
+        let template = fields
+            .and_then(|f| f.object_entry())
+            .zip(self.items.as_deref())
+            .and_then(|(entry, items)| items.template_cached(entry));
+        Some(fields.map_or_else(Default::default, |f| {
+            crate::ui_trade::item_facts(
+                f,
+                template,
+                self.active_player(),
+                self.enchants.as_deref(),
+                self.spells.as_deref(),
+                &held,
+            )
+        }))
     }
 
     fn bound_trade_stamp(&self, item: u64) -> Option<Option<u32>> {

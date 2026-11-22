@@ -573,9 +573,6 @@ pub(crate) struct Model {
     /// `(action id, packed)` per stand-in slot a verb wrote with no view lent, 0 clearing it.
     #[cfg(any(test, feature = "fixtures"))]
     pub(crate) action_sets: Vec<(u32, u32)>,
-    /// GlobalStrings keys of refusals this crate raises, fired by the app as `UI_ERROR_MESSAGE`
-    /// (the reference's error display), each a literal from its table (stride `0x14`).
-    pub(crate) ui_errors: Vec<&'static str>,
     /// Catalog keys of lines a verb displayed inline, whose sound the app plays.
     pub(crate) message_sounds: Vec<&'static str>,
 
@@ -689,8 +686,6 @@ pub(crate) struct Model {
     pub(crate) vehicle_requests: Vec<super::vehicle::VehicleRequest>,
     /// `s_vehicleAimNormPower`, 0..1.
     pub(crate) vehicle_aim_power: f32,
-    /// Keyed refusals with one `%s`, shown by the app like [`Self::ui_errors`].
-    pub(crate) ui_errors_s: Vec<(&'static str, String)>,
     /// Chat-kind lines the app resolved and showed through [`super::UiScript::show_text`], their
     /// key and text, which the app adds to the chat log.
     pub(crate) chat_lines: Vec<(&'static str, String)>,
@@ -709,15 +704,21 @@ pub(crate) struct Model {
     pub(crate) has_key: bool,
     /// What the cursor carries; nothing moves locally, the server's updates settle the bags.
     pub(crate) cursor: Option<cursor::CursorPayload>,
-    /// The action bar's drop grid: shown on the cursor's empty-to-held edge for any payload but a
-    /// pet action or a vendor row (mode 5; the grab setter shows it for mode 7 only).
+    /// A cursor setter showed a drop grid, the action bar's or the pet bar's (`0xbd074c`): the clear hides it.
     pub(crate) cursor_grid_shown: bool,
-    /// The pet bar's grid, lit only by a pet-action pickup; never both grids at once.
-    pub(crate) pet_grid_shown: bool,
+    /// The payload mode (`0xbd0748`) standing over zeroed fields, 0 for none: the clear zeroes the fields first and the mode after its grid hide (`0x519301`..`0x519470`).
+    pub(crate) cursor_standing: u8,
+    /// The item lock bit (`item+0x394` bit 0) by `(bag, slot)`, kept here only while no item store is lent.
+    pub(crate) item_locks: Vec<(i64, u32)>,
     /// The world pick under the cursor (`[this+0x350]`): a world click drops no payload on an
     /// object, only an item on terrain, and anything over nothing.
     /// Held-item bag moves, sent as `CMSG_SWAP_INV_ITEM` or `CMSG_SPLIT_ITEM`.
     pub(crate) container_moves: Vec<container::ContainerMove>,
+    /// The swaps that asked `EQUIP_BIND_CONFIRM` in their call (`0x6dfb3d`), for the app to file.
+    pub(crate) container_bind_asks: Vec<container::ContainerMove>,
+    /// A fixture's stand-in for the swap gate, by the put-down's `(bag, slot)`.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) swap_gates: HashMap<(i64, u32), container::SwapGate>,
     /// `(bag, slot)` clicks made in repair mode.
     pub(crate) container_repairs: Vec<(i64, u32)>,
     /// Picked `(bag, slot)`s; a paper-doll click is `EQUIPMENT_BAG` and its 1-based inventory slot.
@@ -738,6 +739,8 @@ pub(crate) struct Model {
     pub(crate) ui_cursor_dirty: bool,
     /// `AutoEquipCursorItem`'s `(bag, slot)` sources, sent as `CMSG_AUTOEQUIP_ITEM`.
     pub(crate) container_autoequips: Vec<(i64, u32)>,
+    /// `EquipCursorItem`'s auto-equips, which ask no bind question (`0x51a51a`).
+    pub(crate) container_autoequips_unasked: Vec<(i64, u32)>,
     /// `PutItemInBag` and `PutItemInBackpack` stores, sent as `CMSG_AUTOSTORE_BAG_ITEM`, or
     /// `CMSG_SPLIT_ITEM` for a split stack.
     pub(crate) bag_autostores: Vec<container::BagAutoStore>,
@@ -917,16 +920,29 @@ pub(crate) struct Model {
     /// and `SetTradeMoney` copper (`CMSG_SET_TRADE_GOLD`).
     pub(crate) trade: Option<trade::TradeState>,
     pub(crate) trade_initiates: Vec<String>,
-    pub(crate) trade_accept: bool,
-    pub(crate) trade_unaccept: bool,
+    /// The accept sends in call order: `true` `CMSG_ACCEPT_TRADE`, `false` `CMSG_UNACCEPT_TRADE`.
+    pub(crate) trade_accept_sends: Vec<bool>,
+    /// Our accept flag and the partner's (`0xbfa660`, `0xbfa664`).
+    pub(crate) trade_accepts: (bool, bool),
+    /// Our offered coins (`0xca0b74`), kept whether a window stands or not.
+    pub(crate) trade_offer_gold: u32,
     pub(crate) trade_close: bool,
     /// `BeginTrade()` and `CancelTrade()` calls.
     pub(crate) trade_begin: bool,
     pub(crate) trade_cancel: bool,
-    pub(crate) trade_set_money: Option<u32>,
-    /// Items dropped on our slots, `(1-based trade slot, bag, slot)`, and the slots clicks cleared.
-    pub(crate) trade_set_items: Vec<(u32, i64, u32)>,
-    pub(crate) trade_clear_items: Vec<u32>,
+    /// The coin offers the money verbs sent, in call order.
+    pub(crate) trade_set_money: Vec<u32>,
+    /// Our slots' placements and clears, in the order the calls made them.
+    pub(crate) trade_item_sends: Vec<trade::TradeItemSend>,
+    /// Our offer's slots as the clicks wrote them (`0xbfa620`), zeroed at the window's open.
+    pub(crate) trade_own_items: [Option<trade::TradeOwnItem>; trade::TRADE_SLOTS],
+    /// The enchanting item, locked while it aims at the partner's seventh slot (`0xbfa680`).
+    pub(crate) trade_enchanting_item: Option<(u64, i64, u32)>,
+    /// The last close was a completed trade (`0xbfa678`), which `CloseTrade` reads.
+    pub(crate) trade_completed: bool,
+    /// A fixture's stand-in for the offer gates' item reads, by `(bag, slot)`.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) trade_item_facts: HashMap<(i64, u32), trade::TradeItemFacts>,
 
     /// The open questgiver panel, its greeting-row selects and its button calls.
     pub(crate) quest: Option<quest::QuestState>,
@@ -1093,8 +1109,7 @@ pub(crate) struct Model {
     pub(crate) nameplates: super::nameplate::NamePlates,
     /// The world-state readout's rows, gated and resolved by the app.
     pub(crate) worldstate: super::worldstate::WorldStateUiState,
-    /// Events bindings raise. Deviation: fired at the next tick, not synchronously as in the
-    /// reference, because a binding runs inside Lua and cannot re-enter handler dispatch.
+    /// Events deferred to the next tick ([`Model::defer_event`]).
     pub(crate) pending_events: Vec<(String, Vec<ScriptValue>)>,
     /// The last cursor position in UI space (logical px, y-up), behind `GetCursorPosition()`.
     pub(crate) cursor_pos: (f32, f32),
@@ -1163,6 +1178,11 @@ pub(crate) struct Model {
 }
 
 impl Model {
+    /// Hold `event` for the next tick's head: the one door for an event that does not fire at its step, a unique signal with no queue lent (`0x615020`, sent at `0x614760`) or a host lane's.
+    pub(crate) fn defer_event(&mut self, event: &str, args: Vec<ScriptValue>) {
+        self.pending_events.push((event.to_string(), args));
+    }
+
     /// The selected quest-log row's detail, resolved per call as the reference's bindings do.
     pub(crate) fn selected_quest_detail(&self) -> Option<quest_log::QuestLogDetail> {
         let index = usize::try_from(self.quest_log_selection.checked_sub(1)?).ok()?;
@@ -1630,7 +1650,6 @@ impl Model {
             action_bar_page: 0,
             #[cfg(any(test, feature = "fixtures"))]
             action_sets: Vec::new(),
-            ui_errors: Vec::new(),
             message_sounds: Vec::new(),
             companion_intents: Vec::new(),
             macros: macros::MacroState::default(),
@@ -1687,7 +1706,6 @@ impl Model {
             power_displays: Default::default(),
             vehicle_requests: Vec::new(),
             vehicle_aim_power: 0.0,
-            ui_errors_s: Vec::new(),
             chat_lines: Vec::new(),
             pet_abandons: 0,
             pet_dismisses: 0,
@@ -1697,8 +1715,12 @@ impl Model {
             has_key: false,
             cursor: None,
             cursor_grid_shown: false,
-            pet_grid_shown: false,
+            cursor_standing: 0,
+            item_locks: Vec::new(),
             container_moves: Vec::new(),
+            container_bind_asks: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
+            swap_gates: HashMap::new(),
             container_repairs: Vec::new(),
             item_picks: Vec::new(),
             enchant_confirms: Vec::new(),
@@ -1708,6 +1730,7 @@ impl Model {
             ui_cursor: None,
             ui_cursor_dirty: false,
             container_autoequips: Vec::new(),
+            container_autoequips_unasked: Vec::new(),
             bag_autostores: Vec::new(),
             drag_registered: HashMap::new(),
             frame_indented_wrap: HashSet::new(),
@@ -1801,14 +1824,19 @@ impl Model {
             auction_sell_item: None,
             trade: None,
             trade_initiates: Vec::new(),
-            trade_accept: false,
-            trade_unaccept: false,
+            trade_accept_sends: Vec::new(),
+            trade_accepts: (false, false),
+            trade_offer_gold: 0,
             trade_close: false,
             trade_begin: false,
             trade_cancel: false,
-            trade_set_money: None,
-            trade_set_items: Vec::new(),
-            trade_clear_items: Vec::new(),
+            trade_set_money: Vec::new(),
+            trade_item_sends: Vec::new(),
+            trade_own_items: Default::default(),
+            trade_enchanting_item: None,
+            trade_completed: false,
+            #[cfg(any(test, feature = "fixtures"))]
+            trade_item_facts: HashMap::new(),
             quest: None,
             death_actions: Vec::new(),
             quest_log: Vec::new(),

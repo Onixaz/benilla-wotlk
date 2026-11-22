@@ -544,6 +544,15 @@ impl SelfCancel<'_, '_> {
                         .unwrap_or(0),
                     Inflight::Strike(_) => queued_melee.count().unwrap_or(0),
                 };
+                // The cast's item releases the trade's enchanting item ahead of the send (`0x806258`): an item record's caster is the item (`0x80624d`).
+                let item = match slot {
+                    Inflight::Cast(_) => pending
+                        .current()
+                        .filter(|r| r.spell_id == spell_id && r.item.is_some())
+                        .map(|r| r.caster),
+                    Inflight::Strike(_) => None,
+                };
+                press.cast_item_cancelled(item);
                 let _ = net.0.send(ClientCommand::CancelCast { spell_id, count });
                 match slot {
                     Inflight::Cast(_) => {
@@ -1154,6 +1163,90 @@ mod tests {
                     })
                 ),
                 "the second press reaches the cast half"
+            );
+        }
+
+        /// The cancel of a cast an item started releases the trade's enchanting item ahead of the cast's end (`0x806258`); another item's cast leaves it locked (`0x80624d`).
+        #[test]
+        fn cancelling_an_items_cast_releases_the_trades_enchanting_item() {
+            use benilla_ui::script::{ContainerSlot, ContainerState, TradeItemFacts, TradeState};
+            const SCROLL: u64 = 0x4000_0000_0000_0001;
+            let cancelled = |cast_item: u64| {
+                let (mut app, _rx) = harness(HashMap::new());
+                let mut script = UiScript::new().unwrap();
+                let slot = ContainerSlot {
+                    guid: SCROLL,
+                    item_id: 38_682,
+                    count: 1,
+                    ..Default::default()
+                };
+                script.set_container(
+                    0,
+                    Some(ContainerState {
+                        bag_family: 0,
+                        name: None,
+                        num_slots: 16,
+                        slots: HashMap::from([(1, slot)]),
+                    }),
+                );
+                let mut trade = TradeState::default();
+                trade.target.slots[6] = Some(Default::default());
+                script.set_trade(Some(trade));
+                let facts = TradeItemFacts {
+                    enchants_on_use: true,
+                    ..Default::default()
+                };
+                script.set_trade_item_facts(0, 1, facts);
+                script.run("UseContainerItem(0, 1)").unwrap();
+                script.take_script_calls();
+                script
+                    .run(
+                        "LOG = {} local f = CreateFrame('Frame') f:RegisterEvent('ITEM_UNLOCKED') \
+                         f:RegisterEvent('UNIT_SPELLCAST_INTERRUPTED') \
+                         f:SetScript('OnEvent', function(_, e) LOG[#LOG + 1] = e end)",
+                    )
+                    .unwrap();
+                app.insert_non_send_resource(script);
+                app.world_mut()
+                    .resource_mut::<PendingCast>()
+                    .file(PendingRecord {
+                        item: Some(38_682),
+                        ..PendingRecord::player(FIREBALL, 1, cast_item)
+                    });
+                mark_casting(&mut app, FIREBALL);
+                let edges = app
+                    .world_mut()
+                    .run_system_once(|mut cancel: SelfCancel| {
+                        cancel.cancel_player_spells();
+                        let edges = cancel.press.pending().to_vec();
+                        cancel.press.flush(&mut cancel.ecs);
+                        edges
+                    })
+                    .unwrap();
+                let log = app
+                    .world()
+                    .non_send_resource::<UiScript>()
+                    .eval::<String>("return table.concat(LOG, ' ')")
+                    .unwrap();
+                (edges, log)
+            };
+            use crate::ui_cast::CastBarEdge;
+            let end = [
+                CastBarEdge::Cancelled { caster: 10 },
+                CastBarEdge::Selection,
+            ];
+            let (edges, log) = cancelled(SCROLL);
+            assert_eq!(edges[0], CastBarEdge::CastItemCancelled(SCROLL));
+            assert_eq!(edges[1..], end, "the release is ahead of the cast's end");
+            assert_eq!(
+                log, "ITEM_UNLOCKED UNIT_SPELLCAST_INTERRUPTED",
+                "the unlock fires ahead of the cast's end"
+            );
+            let (edges, log) = cancelled(SCROLL + 1);
+            assert_eq!(edges[0], CastBarEdge::CastItemCancelled(SCROLL + 1));
+            assert_eq!(
+                log, "UNIT_SPELLCAST_INTERRUPTED",
+                "another item's cast leaves it locked"
             );
         }
 

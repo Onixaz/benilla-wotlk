@@ -1591,6 +1591,37 @@ fn the_taxi_map_opens_from_its_handler_and_acts_inside_its_calls() {
     assert!(fired_in_call(&mut rig, "CloseTaxiMap()", TAXI_EVENTS, verbs).is_empty());
 }
 
+/// An info-kind refusal fires `UI_INFO_MESSAGE` inside the verb's call (`0x5216f0` -> `0x521863`): `TakeTaxiNode` past our coinage (`0x591680` -> `0x5914b0`, the line at `0x591572`) logs its line ahead of the chunk's marker, and the frame's feed shows it no second time (#1306).
+#[test]
+fn an_info_refusal_fires_in_its_call_before_the_marker() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let _rx = tap(&mut rig);
+    rig.packets(vec![npc_at(NPC, 0x2000, NEAR)], 2);
+    rig.packets(vec![stormwind_nodes(NPC)], 2);
+    let thelsamar = taxi_slot(&mut rig, "Thelsamar, Loch Modan");
+    let read = |rig: &mut Rig| {
+        super::live::with_live_world(rig.app.world_mut(), |s| {
+            s.eval::<Vec<String>>("return Log").unwrap()
+        })
+        .expect("a VM")
+    };
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run(&format!(
+            "Log = {{}} local f = CreateFrame('Frame') f:RegisterEvent('UI_INFO_MESSAGE') \
+             f:SetScript('OnEvent', function(_, e, t) Log[#Log + 1] = e .. ':' .. t end) \
+             TakeTaxiNode({thelsamar}) Log[#Log + 1] = 'after'"
+        ))
+    })
+    .expect("a VM")
+    .expect("the chunk runs");
+    let expected = ["UI_INFO_MESSAGE:You don't have enough money!", "after"];
+    assert_eq!(read(&mut rig), expected);
+    rig.packets(Vec::new(), 2);
+    assert_eq!(read(&mut rig), expected, "the feed shows it no second time");
+}
+
 /// A second flight master's map closes the first through the setup's close (`0x593306`), `TAXIMAP_CLOSED` before `TAXIMAP_OPENED`; the same one again does nothing (`0x5932fc`); an `OK` activate reply closes the map in its turn (`0x6ceeb3`), and a refusal shows its line (`0x6ceea7`). Each close fires twice, the flight master holding the interact target (`0x590bb7` -> `0x512f58`).
 #[test]
 fn a_second_flight_master_closes_the_first_and_a_reply_closes_in_its_turn() {

@@ -12,7 +12,7 @@
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::{bool_or_default, flag};
-use super::cursor::{queue_cursor_update, CursorPayload, CursorSpell};
+use super::cursor::{clear_cursor, set_cursor, CursorPayload, CursorSpell};
 use super::{CastAt, Model, ScriptCall};
 
 pub(super) const BOOKTYPE_SPELL: &str = "spell";
@@ -438,13 +438,15 @@ fn rank_number(subtext: Option<&str>) -> u32 {
 }
 
 /// `PickupSpell(id, bookType)`, the spell button's drag and shift-click
-/// (`SpellBookFrame.lua:266-290`). It refuses while the cursor holds anything, where the
-/// reference's setters clear the cursor first.
-fn pickup_spell(model: &mut Model, id: u32, book_type: &str) -> bool {
-    if model.cursor.is_some() {
-        return false;
-    }
-    let Some(slot) = book_slot(model, id, book_type) else {
+/// (`SpellBookFrame.lua:266-290`; `0x53baf0`). The cursor clears whatever it held (`0x53bb4c`): the same spell held just drops, another spell held goes with nothing picked (`0x53bb76`), else the slot's spell goes up through its setter.
+fn pickup_spell(model: &mut crate::script::ModelGuard<'_>, id: u32, book_type: &str) -> bool {
+    let slot = book_slot(model, id, book_type).map(std::borrow::Cow::into_owned);
+    let held = match &model.cursor {
+        Some(CursorPayload::Spell(held)) => held.spell_id,
+        _ => 0,
+    };
+    clear_cursor(model);
+    let Some(slot) = slot.filter(|_| held == 0) else {
         return false;
     };
     // The pickup's pet arm puts the pet's raw word on the cursor (cursor mode 4), the player arm a
@@ -471,8 +473,7 @@ fn pickup_spell(model: &mut Model, id: u32, book_type: &str) -> bool {
             passive: slot.passive,
         })
     };
-    model.cursor = Some(payload);
-    queue_cursor_update(model);
+    set_cursor(model, payload);
     true
 }
 
@@ -1378,9 +1379,6 @@ mod tests {
             s.cursor_payload()
         );
 
-        // Tick first to flush the first pickup's `CURSOR_UPDATE`, so the count below is the
-        // refused call's alone.
-        s.tick(0.0);
         s.run(
             r#"
             cursorUpdates = 0
@@ -1390,27 +1388,47 @@ mod tests {
             "#,
         )
         .unwrap();
-        s.run(r#"PickupSpell(3, BOOKTYPE_SPELL)"#).unwrap(); // already holding -> refused, no-op
-        s.tick(0.01);
+        // Another spell held: the clear runs and nothing is picked (`0x53bb4c`, `0x53bb76`).
+        s.run(r#"PickupSpell(3, BOOKTYPE_SPELL)"#).unwrap();
         assert_eq!(
             s.eval::<i64>("return cursorUpdates").unwrap(),
-            0,
-            "refused pickup fires no CURSOR_UPDATE"
+            1,
+            "the clear's CURSOR_UPDATE, inside the call"
         );
-        // Still holding the first pickup: a refusal never clobbers it.
-        assert!(
-            matches!(
-                s.cursor_payload(),
-                Some(crate::script::CursorPayload::Spell(c))
-                    if c.book_slot == 1 && c.book_type == "spell" && c.spell_id == 133
-            ),
-            "{:?}",
-            s.cursor_payload()
+        assert!(s.cursor_payload().is_none(), "{:?}", s.cursor_payload());
+    }
+
+    /// The pickup clears the cursor (`0x53bb4c`) and the spell setter clears it again (`0x520a0a`), each signalling `CURSOR_UPDATE` from its tail (`0x519476`) before the spell is written (`0x520a20`); the setter signals no more, and shows the grid with the spell held (`0x520a38`).
+    #[test]
+    fn a_spell_pickup_signals_from_the_clear_then_shows_the_grid() {
+        let mut s = UiScript::new().unwrap();
+        s.set_spellbook(book());
+        s.run(
+            r#"Log = {}
+            local f = CreateFrame("Frame")
+            f:RegisterEvent("CURSOR_UPDATE")
+            f:RegisterEvent("ACTIONBAR_SHOWGRID")
+            f:SetScript("OnEvent", function(_, event)
+                Log[#Log + 1] = event .. (CursorHasSpell() and " held" or " empty")
+            end)
+            PickupSpell(1, BOOKTYPE_SPELL)
+            Log[#Log + 1] = "after""#,
+        )
+        .unwrap();
+        assert_eq!(
+            s.eval::<Vec<String>>("return Log").unwrap(),
+            [
+                "CURSOR_UPDATE empty",
+                "CURSOR_UPDATE empty",
+                "ACTIONBAR_SHOWGRID held",
+                "after"
+            ]
         );
     }
 
+    /// A held payload that is no spell goes with the clear, and the slot's spell is picked up (`0x53bb4c`, `0x53bb91`).
     #[test]
-    fn pickup_spell_refuses_while_already_holding_any_payload() {
+    fn pickup_spell_clears_another_payload_and_takes_the_spell() {
         let mut s = UiScript::new().unwrap();
         s.set_spellbook(book());
         s.set_cursor_for_test(CursorPayload::Action(CursorAction {
@@ -1420,14 +1438,13 @@ mod tests {
             texture: None,
         }));
 
-        assert!(!s
+        assert!(s
             .eval::<bool>(r#"return PickupSpell(1, BOOKTYPE_SPELL)"#)
             .unwrap());
-        // The original (action) payload survives untouched.
         assert!(
             matches!(
                 s.cursor_payload(),
-                Some(crate::script::CursorPayload::Action(_))
+                Some(crate::script::CursorPayload::Spell(c)) if c.spell_id == 133
             ),
             "{:?}",
             s.cursor_payload()

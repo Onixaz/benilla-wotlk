@@ -349,22 +349,22 @@ fn sort_rows(rows: &mut [AuctionItemRow], criteria: &[(u8, bool)]) {
 }
 
 /// The update event each list fires once re-sorted (`0x59b980`, `0x59b9e0`, `0x59cab0`).
-fn queue_list_event(model: &mut Model, list: usize) {
+fn raise_list_event(model: &mut crate::script::ModelGuard<'_>, list: usize) {
     let event = match list {
         LIST => "AUCTION_ITEM_LIST_UPDATE",
         BIDDER => "AUCTION_BIDDER_LIST_UPDATE",
         _ => "AUCTION_OWNED_LIST_UPDATE",
     };
-    model.pending_events.push((event.to_string(), Vec::new()));
+    model.raise(event, Vec::new());
 }
 
-/// Re-sort one list in place and queue its update event, as the reference's list sorts do.
-fn apply_sort(model: &mut Model, list: usize) {
+/// Re-sort one list in place and signal its update event, as the reference's list sorts do.
+fn apply_sort(model: &mut crate::script::ModelGuard<'_>, list: usize) {
     let criteria = model.auction_sort[list].clone();
     if let Some(state) = model.auction.as_mut() {
         sort_rows(&mut state.lists[list].rows, &criteria);
     }
-    queue_list_event(model, list);
+    raise_list_event(model, list);
 }
 
 impl super::UiScript {
@@ -402,19 +402,21 @@ impl super::UiScript {
         set_field!(self, auction_can_get_all, get_all);
     }
 
-    /// The items a multi-sell holds locked, as `(bag, slot)`; each change queues
+    /// The items a multi-sell holds locked, as `(bag, slot)`; each change signals
     /// `ITEM_LOCK_CHANGED` for the slot.
     pub fn set_auction_locked(&mut self, slots: Vec<(i64, u32)>) {
         if self.model_ref().auction_locked == slots {
             return;
         }
         let mut model = self.model_mut();
-        let old = std::mem::take(&mut model.auction_locked);
-        for &(bag, slot) in old.iter().filter(|s| !slots.contains(s)) {
-            cursor::queue_lock_changed(&mut model, bag, slot);
+        let old = model.auction_locked.clone();
+        for held in old.iter().filter(|s| !slots.contains(s)) {
+            model.auction_locked.retain(|s| s != held);
+            cursor::set_item_lock(&mut model, held.0, held.1, false);
         }
         for &(bag, slot) in slots.iter().filter(|s| !old.contains(s)) {
-            cursor::queue_lock_changed(&mut model, bag, slot);
+            model.auction_locked.push((bag, slot));
+            cursor::set_item_lock(&mut model, bag, slot, true);
         }
         model.auction_locked = slots;
     }
@@ -485,18 +487,9 @@ impl super::UiScript {
         }
         let mut model = self.model_mut();
         if let Some(it) = model.auction_sell_item.take() {
-            cursor::queue_lock_changed(&mut model, it.bag, it.slot);
+            cursor::set_item_lock(&mut model, it.bag, it.slot, false);
         }
     }
-}
-
-/// Whether `(bag, slot)` reads locked for the auction house: the sell slot or a multi-sell item.
-pub(super) fn holds_slot(model: &Model, bag: i64, slot: u32) -> bool {
-    model
-        .auction_sell_item
-        .as_ref()
-        .is_some_and(|it| it.bag == bag && it.slot == slot)
-        || model.auction_locked.contains(&(bag, slot))
 }
 
 fn row_at<'a>(model: &'a Model, kind: &str, index: usize) -> Option<&'a AuctionItemRow> {
@@ -1341,7 +1334,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             // A multi-sell keeps the slot until its last stack is out.
             if direct || num_stacks <= 1 || model.auction_start.is_none() {
                 model.auction_sell_item = None;
-                cursor::queue_lock_changed(&mut model, it.bag, it.slot);
+                cursor::set_item_lock(&mut model, it.bag, it.slot, false);
             }
             Ok(())
         })?,
@@ -1533,7 +1526,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
 /// `UseContainerItem`'s auction arm (`0x5d88e0`): with the Auctions tab showing, the clicked item
 /// replaces the sell slot's.
-pub(super) fn use_container_item(model: &mut Model, bag: i64, slot: u32) -> Arm {
+pub(super) fn use_container_item(
+    model: &mut crate::script::ModelGuard<'_>,
+    bag: i64,
+    slot: u32,
+) -> Arm {
     if !model.auction_tab_showing || model.auction.is_none() {
         return Arm::Pass;
     }
@@ -1544,8 +1541,9 @@ pub(super) fn use_container_item(model: &mut Model, bag: i64, slot: u32) -> Arm 
         return Arm::Refused(key);
     }
     if let Some(prev) = model.auction_sell_item.take() {
-        cursor::queue_lock_changed(model, prev.bag, prev.slot);
+        cursor::set_item_lock(model, prev.bag, prev.slot, false);
     }
+    // The lock signals only on its edge (`0x706fe0`).
     model.auction_sell_item = Some(CursorItem {
         bag,
         slot,
@@ -1557,14 +1555,14 @@ pub(super) fn use_container_item(model: &mut Model, bag: i64, slot: u32) -> Arm 
         equip_slots: s.equip_slots.clone(),
         bar_placeable: s.bar_placeable,
     });
-    cursor::queue_lock_changed(model, bag, slot);
+    cursor::set_item_lock(model, bag, slot, true);
     Arm::Took
 }
 
 /// The sell slot's click: a refused item stays held with its reason; the same item goes back;
 /// otherwise the cursor's item and the slot's trade places, either side possibly empty. The
 /// refusal is handed back for the caller to show at once.
-fn click_auction_sell_item(model: &mut Model) -> Option<&'static str> {
+fn click_auction_sell_item(model: &mut crate::script::ModelGuard<'_>) -> Option<&'static str> {
     let held = match &model.cursor {
         Some(CursorPayload::Item(item)) => Some(item.clone()),
         None => None,
@@ -1579,9 +1577,7 @@ fn click_auction_sell_item(model: &mut Model) -> Option<&'static str> {
             .as_ref()
             .is_some_and(|s| s.bag == item.bag && s.slot == item.slot);
         if same {
-            model.cursor = None;
-            cursor::queue_cursor_update(model);
-            cursor::queue_lock_changed(model, item.bag, item.slot);
+            cursor::clear_cursor(model);
             return None;
         }
     }
@@ -1590,16 +1586,8 @@ fn click_auction_sell_item(model: &mut Model) -> Option<&'static str> {
         count: None,
         ..item
     });
-    model.cursor = previous.clone().map(CursorPayload::Item);
-    cursor::queue_cursor_update(model);
-    for it in model
-        .auction_sell_item
-        .clone()
-        .iter()
-        .chain(previous.iter())
-    {
-        cursor::queue_lock_changed(model, it.bag, it.slot);
-    }
+    // The slot's item back through the item setter, neither item unlocking (`0x59d4d3`).
+    cursor::swap_cursor_item(model, previous);
     None
 }
 
@@ -1702,18 +1690,16 @@ mod tests {
             .unwrap();
         assert_eq!(first, 300, "highest bid first, reversed");
 
-        s.model_mut().pending_events.clear();
+        crate::script::tick::fired::take();
         s.run(r#"SortAuctionSetSort("list", "bid", false) SortAuctionApplySort("list")"#)
             .unwrap();
         let first: i64 = s
             .eval(r#"local _,_,_,_,_,_,m = GetAuctionItemInfo("list", 1) return m"#)
             .unwrap();
         assert_eq!(first, 100);
-        assert!(s
-            .model_ref()
-            .pending_events
+        assert!(crate::script::tick::fired::names()
             .iter()
-            .any(|(e, _)| e == "AUCTION_ITEM_LIST_UPDATE"));
+            .any(|e| e == "AUCTION_ITEM_LIST_UPDATE"));
     }
 
     #[test]

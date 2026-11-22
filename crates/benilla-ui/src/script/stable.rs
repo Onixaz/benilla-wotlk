@@ -291,11 +291,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     drop_verb(held, i, &list, pet_out)
                 })
                 .flatten();
-            super::cursor::clear_cursor(&mut model);
-            drop(model);
+            // The send goes out ahead of the clear (`0x5a1d88`, `0x5a1d9f`).
             if let Some(intent) = intent {
                 send(intent);
             }
+            super::cursor::clear_cursor(&mut model);
             Ok(Value::Nil)
         })?,
     )?;
@@ -314,10 +314,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let mut model = crate::script::model_mut_of(lua);
             super::cursor::clear_cursor(&mut model);
             if let (Some(texture), Ok(slot)) = (icon, u8::try_from(i.max(0))) {
+                // The grab writes the pet and signals nothing more (`0x520d08`).
                 model.cursor = Some(super::cursor::CursorPayload::StablePet(
                     super::cursor::CursorStablePet { slot, texture },
                 ));
-                super::cursor::queue_cursor_update(&mut model);
             }
             Ok(())
         })?,
@@ -621,6 +621,27 @@ mod tests {
                 .unwrap());
             crate::script::live::test_view(|tv| {
                 assert!(tv.take_sent().is_empty());
+            });
+        });
+    }
+
+    /// The drop's send goes out before its cursor clear (`0x5a1d88`, `0x5a1d9f`): a send a `CURSOR_UPDATE` listener makes lands after it.
+    #[test]
+    fn a_drop_sends_before_it_clears_the_cursor() {
+        let s = UiScript::new().unwrap();
+        let mut loan_v = view();
+        crate::script::live::lending(&mut loan_v, || {
+            s.eval::<()>("PickupStablePet(1)").unwrap();
+            s.run(
+                "local f = CreateFrame('Frame') f:RegisterEvent('CURSOR_UPDATE')              f:SetScript('OnEvent', function() StablePet() end)",
+            )
+            .unwrap();
+            s.eval::<()>("ClickStablePet(0)").unwrap();
+            crate::script::live::test_view(|tv| {
+                assert_eq!(
+                    tv.take_sent(),
+                    vec![StableIntent::Swap(8), StableIntent::Stable]
+                );
             });
         });
     }
