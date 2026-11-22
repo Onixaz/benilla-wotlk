@@ -216,6 +216,11 @@ const CALLS_NO_LUA: &[(&str, &str, &str)] = &[
         "reads the focus and the names a token resolves through off the model",
     ),
     (
+        "portrait/mod.rs",
+        "sync_portraits",
+        "reads the focus off the model for the focus portrait",
+    ),
+    (
         "death/mod.rs",
         "death_action",
         "one death intent as a press, its raises queued in turn; `press_step` fires them with the          `World` lent",

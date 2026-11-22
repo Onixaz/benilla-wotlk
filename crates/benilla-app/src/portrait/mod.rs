@@ -64,14 +64,19 @@ pub(crate) mod test_bake;
 
 /// The round portrait slots, each with its own layer and camera. `"npc"` is an interaction
 /// interact target ([`crate::ui_session::InteractTarget`]); `"targettarget"` resolves only while drawn,
-/// and so do a party member's pet, `"partypetN"`, and the loot source `SetLootPortrait` binds
-/// ([`benilla_ui::script::LOOT_PORTRAIT_UNIT`]).
-const SLOTS: [&str; 14] = [
+/// and so do a party member's pet, `"partypetN"`, the vehicle, the focus and the loot source
+/// `SetLootPortrait` binds ([`benilla_ui::script::LOOT_PORTRAIT_UNIT`]).
+///
+/// Deviation: a fixed list. The binding (`0x6113e0`) resolves any token through the `Unit*`
+/// resolver; a token off this list draws nothing.
+const SLOTS: [&str; 16] = [
     "player",
     "target",
     "targettarget",
     "pet",
     "npc",
+    "vehicle",
+    "focus",
     "party1",
     "party2",
     "party3",
@@ -706,6 +711,8 @@ pub(crate) struct PartyBooths<'w, 's> {
     bakes: ResMut<'w, PortraitBakes>,
     images: ResMut<'w, Assets<Image>>,
     targets: Query<'w, 's, (&'static BoothCam, &'static mut RenderTarget)>,
+    /// The VM, whose focus `"focus"` bakes; absent in a UI-less harness.
+    vm: Option<NonSend<'w, benilla_ui::script::UiScript>>,
 }
 
 /// Tags a booth camera with its slot token (not the M2 rig, `benilla_assets::PortraitCamera`).
@@ -1328,7 +1335,7 @@ fn sync_portraits(
     mut booth_light: ResMut<BoothLight>,
     creatures: Option<Res<Creatures>>,
     selection: Res<Selection>,
-    self_q: Query<Entity, With<SelfPlayer>>,
+    self_q: Query<(Entity, Option<&crate::vehicle::Passenger>), With<SelfPlayer>>,
     ent_q: Query<&NetEntity>,
     stores_q: Query<&crate::net::ObjectStore>,
     look: DressedLook,
@@ -1351,7 +1358,7 @@ fn sync_portraits(
         let mut unseen: Option<String> = None;
         let mut occupant: Option<u64> = None;
         let unit: Option<Entity> = match token {
-            "player" => self_q.single().ok(),
+            "player" => self_q.single().ok().map(|(e, _)| e),
             "target" => {
                 if selection.target.is_none() {
                     // A group member or pet selected by guid alone.
@@ -1381,7 +1388,7 @@ fn sync_portraits(
                 let guid = self_q
                     .iter()
                     .next()
-                    .and_then(|e| stores_q.get(e).ok())
+                    .and_then(|(e, _)| stores_q.get(e).ok())
                     .and_then(|s| s.0.unit_pet_guid())
                     .unwrap_or(0);
                 let entity = (guid != 0)
@@ -1394,6 +1401,26 @@ fn sync_portraits(
                 entity
             }
             "npc" => crate::ui_session::interact_entity(&interact, &index),
+            // The seated player's transport (`0x60ac87`) and the focus `[0xbd07d0]`, each gated on
+            // the UI drawing it: the stock vehicle art and the focus frame ship hidden.
+            "vehicle" | "focus" => {
+                let (entity, stand_in) = drawn_unit_subject(
+                    party.panes.0.contains_key(token),
+                    if token == "vehicle" {
+                        crate::ui_unit::tokens::seated_vehicle(
+                            self_q.iter().next().and_then(|(_, p)| p.copied()),
+                        )
+                    } else {
+                        party
+                            .vm
+                            .as_deref()
+                            .map(benilla_ui::script::UiScript::focus_guid)
+                    },
+                    |g| party.index.0.get(&g).copied(),
+                );
+                unseen = stand_in.or(unseen);
+                entity
+            }
             // Gated on the UI drawing it, as `"targettarget"`: no stock file binds it.
             benilla_ui::script::LOOT_PORTRAIT_UNIT => party
                 .panes
@@ -2334,6 +2361,24 @@ fn unheld_subject(
     )
 }
 
+/// `"vehicle"`'s or `"focus"`'s subject, by the token's resolved guid: nothing while the UI is not
+/// drawing the slot, the held entity, else the reference's 2D TemporaryPortrait for a unit the
+/// object manager does not hold. A focus naming nobody names no unit, so it draws blank.
+fn drawn_unit_subject(
+    drawn: bool,
+    guid: Option<u64>,
+    held: impl Fn(u64) -> Option<Entity>,
+) -> (Option<Entity>, Option<String>) {
+    let Some(guid) = guid.filter(|&g| drawn && g != 0 && g != benilla_ui::script::focus::NOBODY)
+    else {
+        return (None, None);
+    };
+    match held(guid) {
+        Some(e) => (Some(e), None),
+        None => (None, Some(creature_temporary_portrait())),
+    }
+}
+
 /// What `"partypetN"`'s portrait shows, as the entity to bake and the stand-in file: the pet the
 /// roster names for that party slot while the UI draws the slot. A pet the client does not hold
 /// takes the roster pet's stand-in, and one with no pet record, blank, so neither.
@@ -2409,6 +2454,40 @@ mod tests {
         for token in crate::ui_party::PARTY_PET_TOKENS {
             assert!(SLOTS.contains(&token), "{token} has no slot");
         }
+    }
+
+    /// The stock player frame's vehicle art (`PlayerFrame.lua`) and the focus frame bind these
+    /// (#1318), and `SetPortraitTexture` draws only a token a slot bakes.
+    #[test]
+    fn the_vehicle_and_the_focus_have_portrait_slots() {
+        for token in ["vehicle", "focus"] {
+            assert!(SLOTS.contains(&token), "{token} has no slot");
+        }
+    }
+
+    /// The vehicle's and the focus's portrait: the held unit's bake, the stand-in for a unit not
+    /// held, and nothing while undrawn, unseated, unfocused or focused on nobody.
+    #[test]
+    fn a_drawn_vehicle_or_focus_bakes_its_unit_else_its_stand_in() {
+        const CART: u64 = 0xF150_0000_0000_0007;
+        let mut world = World::new();
+        let held = world.spawn_empty().id();
+        let index = |g: u64| (g == CART).then_some(held);
+        assert_eq!(
+            drawn_unit_subject(true, Some(CART), index),
+            (Some(held), None)
+        );
+        assert_eq!(
+            drawn_unit_subject(true, Some(CART + 1), index),
+            (None, Some(creature_temporary_portrait()))
+        );
+        assert_eq!(drawn_unit_subject(false, Some(CART), index), (None, None));
+        assert_eq!(drawn_unit_subject(true, None, index), (None, None));
+        assert_eq!(drawn_unit_subject(true, Some(0), index), (None, None));
+        assert_eq!(
+            drawn_unit_subject(true, Some(benilla_ui::script::focus::NOBODY), index),
+            (None, None)
+        );
     }
 
     /// The party pet's portrait, by what the client holds: the pet's own model while it is held,
