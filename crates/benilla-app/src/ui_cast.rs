@@ -52,9 +52,10 @@ pub(crate) enum CastBarEdge {
         cast_count: u8,
         reason: u8,
     },
-    /// Our own move or Esc cancel (`0x806200`, reason `0x28`): the running cast ends interrupted.
-    Cancelled { caster: u64 },
-    /// `SMSG_SPELL_DELAYED`: pushback moves the running cast's end out by `delay_ms`.
+    /// Our own cancel (`0x806200`) with its wire reason: the running cast ends by it (`0x7fedd0`),
+    /// quiet for Esc's `0x1b` (`0x809aa8`), interrupted for the movement cancel's `0x28` (`0x8066ce`).
+    Cancelled { caster: u64, reason: u8 },
+    /// `SMSG_SPELL_DELAYED`: pushback moves the running cast's start and end out by `delay_ms`.
     Delayed { caster: u64, delay_ms: u32 },
     /// `MSG_CHANNEL_START`.
     ChannelStart {
@@ -277,11 +278,11 @@ impl PressSignals<'_, '_> {
         }
     }
 
-    /// Our running cast was cancelled here (`0x806200`): its end, then its finish's selection
-    /// update (`0x806366`, `0x8054f0`).
-    pub(crate) fn cancelled(&mut self, caster: u64) {
+    /// Our running cast was cancelled here (`0x806200`) with the wire `reason` its caller passes:
+    /// its end, then its finish's selection update (`0x806366`, `0x8054f0`).
+    pub(crate) fn cancelled(&mut self, caster: u64, reason: u8) {
         if let Some(edges) = self.edges.as_mut() {
-            edges.0.push(CastBarEdge::Cancelled { caster });
+            edges.0.push(CastBarEdge::Cancelled { caster, reason });
             edges.0.push(CastBarEdge::Selection);
         }
     }
@@ -394,8 +395,8 @@ impl PressSignals<'_, '_> {
     }
 
     /// Fire the waiting edges into `script` now, in order: `SENT` with the target's name
-    /// (`0x80b533`), and a cancel's `INTERRUPTED`, the unit's cast cleared, then `STOP`
-    /// (`0x8066ce`, `0x7fee38`).
+    /// (`0x80b533`), and a cancel's end event by its reason, the unit's cast cleared, then `STOP`
+    /// (`0x7fedd0`, `0x7fee38`).
     pub(crate) fn fire(
         &mut self,
         script: &mut UiScript,
@@ -450,11 +451,11 @@ impl PressSignals<'_, '_> {
                     let args = sent.args(index, spells, spell_id, target);
                     script.fire_event("UNIT_SPELLCAST_SENT", args);
                 }
-                CastBarEdge::Cancelled { caster } => {
+                CastBarEdge::Cancelled { caster, reason } => {
                     let run = casts.casts.get(&caster).copied();
                     let Some(run) = run else { continue };
                     let args = spell_args(spells, run.spell_id, run.cast_count);
-                    script.fire_unit_event(caster, "UNIT_SPELLCAST_INTERRUPTED", args.clone());
+                    script.fire_unit_event(caster, cancel_event(reason), args.clone());
                     let casts = casts.as_mut();
                     if casts.casts.get(&caster).is_some_and(|r| {
                         (r.spell_id, r.cast_count) == (run.spell_id, run.cast_count)
@@ -735,6 +736,14 @@ fn end_event(reason: u8) -> &'static str {
         }
         _ => "UNIT_SPELLCAST_FAILED",
     }
+}
+
+/// `AttributesEx` bit 2, the channel test the resume handler applies (`0x80215e`).
+const ATTR_EX_CHANNELED_1: u32 = 0x4;
+
+/// A local cancel's end event by the 12340 wire reason its caller passes to `0x806200`.
+fn cancel_event(reason: u8) -> &'static str {
+    end_event(benilla_protocol::messages::wotlk_cast_fail_shared(reason))
 }
 
 /// The spell's `(name, rank)`, `("", "")` for an id with no row.
@@ -1051,7 +1060,7 @@ fn edge_system(
             cast_count,
             end_event(reason),
         ),
-        CastBarEdge::Cancelled { caster } => {
+        CastBarEdge::Cancelled { caster, reason } => {
             let Some(run) = units.casts.get(&caster).copied() else {
                 return;
             };
@@ -1062,15 +1071,19 @@ fn edge_system(
                 caster,
                 run.spell_id,
                 run.cast_count,
-                "UNIT_SPELLCAST_INTERRUPTED",
+                cancel_event(reason),
             );
         }
         CastBarEdge::Delayed { caster, delay_ms } => {
             let Some(run) = units.casts.get_mut(&caster) else {
                 return;
             };
+            // The delay moves the start and the end alike and clears the channel (`0x726246`,
+            // `0x72624c`, `0x726254`-`0x726260`).
+            run.start_ms += f64::from(delay_ms);
             run.end_ms += f64::from(delay_ms);
             let run = *run;
+            units.channels.remove(&caster);
             unit_event(
                 &mut ui,
                 caster,
@@ -1126,7 +1139,8 @@ fn edge_system(
             let Some(d) = spells.and_then(|s| s.catalog.get(spell_id)) else {
                 return;
             };
-            let channel = d.tooltip_channeled();
+            // `AttributesEx & 4` alone (`0x80215e`).
+            let channel = d.attributes_ex & ATTR_EX_CHANNELED_1 != 0;
             let end_ms = now_ms + f64::from(remaining_ms);
             let run = Running {
                 spell_id,
@@ -1151,7 +1165,8 @@ fn edge_system(
             };
             unit_event(&mut ui, caster, event, spells, spell_id, 0);
         }
-        // `0x801e85`: nonzero re-times the channel, zero ends it.
+        // `0x801e85`: nonzero re-times the channel, zero ends it; either clears the cast
+        // (`0x7262ad`-`0x7262b9`).
         CastBarEdge::ChannelUpdate {
             caster,
             remaining_ms,
@@ -1159,6 +1174,7 @@ fn edge_system(
             let Some(run) = units.channels.get(&caster).copied() else {
                 return;
             };
+            units.casts.remove(&caster);
             if remaining_ms == 0 {
                 units.channels.remove(&caster);
                 unit_event(
@@ -1170,8 +1186,12 @@ fn edge_system(
                     0,
                 );
             } else {
+                // The update keeps the channel's length: the end is now plus what is left, the
+                // start that length before it (`0x726287`-`0x7262a5`).
+                let end_ms = now_ms + f64::from(remaining_ms);
                 let run = Running {
-                    end_ms: now_ms + f64::from(remaining_ms),
+                    start_ms: end_ms - (run.end_ms - run.start_ms),
+                    end_ms,
                     ..run
                 };
                 units.channels.insert(caster, run);
@@ -1594,13 +1614,18 @@ mod tests {
             "START:player:Lesser Heal:8 INTERRUPTED:player:Lesser Heal:9 \
              INTERRUPTED:player:Lesser Heal:8 STOP:player:Lesser Heal:8"
         );
+        // The movement cancel's `0x28` ends it interrupted (`0x8066ce`, `0x7fedf0`).
+        let cancelled = |reason| CastBarEdge::Cancelled { caster: ME, reason };
         assert_eq!(
-            run(
-                &mut app,
-                vec![start(10), CastBarEdge::Cancelled { caster: ME }]
-            ),
+            run(&mut app, vec![start(10), cancelled(0x28)]),
             "START:player:Lesser Heal:10 INTERRUPTED:player:Lesser Heal:10 \
              STOP:player:Lesser Heal:10"
+        );
+        // Esc's `0x1b` ends it quiet (`0x809aa8`, `0x7fee0f`).
+        assert_eq!(
+            run(&mut app, vec![start(12), cancelled(0x1b)]),
+            "START:player:Lesser Heal:12 FAILED_QUIET:player:Lesser Heal:12 \
+             STOP:player:Lesser Heal:12"
         );
         // An instant opens nothing; its launch only succeeds.
         let instant = CastBarEdge::Start {
@@ -2020,9 +2045,90 @@ mod tests {
         assert_eq!(run(&mut app, vec![resume(99, 1_000, 2_000)]), "");
     }
 
+    /// The resume tests `AttributesEx & 4` alone (`0x80215e`): a spell with only bit 6 resumes as
+    /// a cast. Pushback moves the cast's start with its end (`0x726246`, `0x72624c`), and a
+    /// channel's nonzero update keeps its length (`0x726287`-`0x7262a5`), each read inside its
+    /// own event.
+    #[test]
+    fn pushback_and_channel_updates_keep_the_reference_windows() {
+        const DRAIN: u32 = 11;
+        const ARCANE: u32 = 12;
+        let mut app = feed_app();
+        let row = |name: &str, rank: Option<&str>, attributes_ex| SpellDisplay {
+            name: name.into(),
+            rank: rank.map(Into::into),
+            attributes_ex,
+            ..Default::default()
+        };
+        let catalog = benilla_formats::SpellCatalog::from_displays(
+            [
+                (HEAL, row("Lesser Heal", Some("Rank 1"), 0)),
+                (DRAIN, row("Drain", None, 0x4)),
+                (ARCANE, row("Arcane", None, 0x40)),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        app.world_mut().resource_mut::<Spells>().catalog = catalog;
+        app.world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .run(
+                "local f = CreateFrame('Frame')
+                 for _, e in ipairs({'START', 'DELAYED', 'CHANNEL_START', 'CHANNEL_UPDATE'}) do
+                     f:RegisterEvent('UNIT_SPELLCAST_' .. e)
+                 end
+                 f:SetScript('OnEvent', function(self, e, u)
+                     local v = e:find('CHANNEL') and UnitChannelInfo or UnitCastingInfo
+                     local _, _, _, _, a, b = v(u)
+                     table.insert(SEEN, e:sub(16) .. '=' .. tostring(a) .. '|' .. tostring(b)) end)",
+            )
+            .unwrap();
+        let start = CastBarEdge::Start {
+            caster: ME,
+            spell_id: HEAL,
+            cast_count: 2,
+            cast_time_ms: 2_000,
+            immunities: None,
+            hidden: false,
+        };
+        let delayed = CastBarEdge::Delayed {
+            caster: ME,
+            delay_ms: 500,
+        };
+        assert_eq!(
+            run(&mut app, vec![start, delayed]),
+            "START:player:Lesser Heal:2 START=100000|102000 \
+             DELAYED:player:Lesser Heal:2 DELAYED=100500|102500"
+        );
+        let channel = CastBarEdge::ChannelStart {
+            caster: ME,
+            spell_id: DRAIN,
+            duration_ms: 8_000,
+        };
+        assert_eq!(run(&mut app, vec![channel]), "CHANNEL_START=100000|108000");
+        app.world_mut()
+            .resource_mut::<crate::ui_script::UiClock>()
+            .ui_now = 102.0;
+        let update = CastBarEdge::ChannelUpdate {
+            caster: ME,
+            remaining_ms: 3_000,
+        };
+        assert_eq!(run(&mut app, vec![update]), "CHANNEL_UPDATE=97000|105000");
+        let resume = CastBarEdge::Resume {
+            caster: ME,
+            spell_id: ARCANE,
+            remaining_ms: 1_000,
+            total_ms: 3_000,
+        };
+        assert_eq!(
+            run(&mut app, vec![resume]),
+            "START:player:Arcane:0 START=100000|103000"
+        );
+    }
+
     /// A press's cancel fires inside the system holding the VM as the cancel returns
-    /// (`0x806200`): `INTERRUPTED` while the unit still holds its cast, then the cast cleared and
-    /// `STOP`, before the system makes any other call into Lua.
+    /// (`0x806200`): Esc's `FAILED_QUIET` (reason `0x1b`, `0x7fee0f`) while the unit still holds
+    /// its cast, then the cast cleared and `STOP`, before the system makes any other call into Lua.
     #[test]
     fn a_press_cancel_fires_inside_the_holding_system() {
         use bevy::ecs::system::RunSystemOnce;
@@ -2042,17 +2148,21 @@ mod tests {
             .run(
                 "HELD = {} local f = CreateFrame('Frame')
                  f:RegisterEvent('UNIT_SPELLCAST_INTERRUPTED') f:RegisterEvent('UNIT_SPELLCAST_STOP')
+                 f:RegisterEvent('UNIT_SPELLCAST_FAILED_QUIET')
                  f:SetScript('OnEvent', function(_, e)
                      HELD[#HELD + 1] = e:sub(16) .. '=' .. tostring((UnitCastingInfo('player'))) end)",
             )
             .unwrap();
         app.world_mut()
             .run_system_once(|mut press: PressSignals, mut ui: ResMut<UiEvents>| {
-                press.cancelled(ME);
+                press.cancelled(ME, 0x1b);
                 assert_eq!(
                     press.pending(),
                     [
-                        CastBarEdge::Cancelled { caster: ME },
+                        CastBarEdge::Cancelled {
+                            caster: ME,
+                            reason: 0x1b
+                        },
                         CastBarEdge::Selection
                     ]
                 );
@@ -2065,7 +2175,7 @@ mod tests {
             .non_send_resource::<UiScript>()
             .eval::<String>("return table.concat(HELD, ' ')")
             .unwrap();
-        assert_eq!(after, "INTERRUPTED=Lesser Heal STOP=nil");
+        assert_eq!(after, "FAILED_QUIET=Lesser Heal STOP=nil");
         assert!(!app.world().resource::<UnitCasts>().casting(ME));
     }
 
