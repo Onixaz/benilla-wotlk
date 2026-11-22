@@ -351,32 +351,41 @@ pub(crate) fn record_answered(
 
 /// A learn line's tail in the creature-record callback (`0x53ebc0`): the update and `COMPANION_LEARNED`, then the callbacks still filed on `entry` as a step after its listeners (`0x53ec20` returns before the next callback).
 fn learned_after_line(world: &mut World, entry: u32, name: String) {
-    with_cx(world, entry, name, "a companion learn's tail", |lists, entry, name, cx| {
-        cx.update(lists, Some((entry, name)));
-        cx.ui.fire("COMPANION_LEARNED", Vec::new());
-        let name = name.to_string();
-        cx.ui
-            .world(move |world| later_callbacks(world, entry, name));
-    });
+    with_cx(
+        world,
+        entry,
+        name,
+        "a companion learn's tail",
+        |lists, entry, name, cx| {
+            cx.update(lists, Some((entry, name)));
+            cx.ui.fire("COMPANION_LEARNED", Vec::new());
+            let name = name.to_string();
+            cx.ui
+                .world(move |world| later_callbacks(world, entry, name));
+        },
+    );
 }
 
 /// The callbacks still filed on `entry` once a learn's signal has run (`0x53ebc0`).
 fn later_callbacks(world: &mut World, entry: u32, name: String) {
-    with_cx(world, entry, name, "a companion record's later callbacks", |lists, entry, name, cx| {
-        record_answered(lists, entry, Some(name), cx);
-    });
+    with_cx(
+        world,
+        entry,
+        name,
+        "a companion record's later callbacks",
+        |lists, entry, name, cx| {
+            record_answered(lists, entry, Some(name), cx);
+        },
+    );
 }
 
+/// A step over the lists and a [`CompanionCx`], with the answered entry and name.
+type CxStep = fn(&mut CompanionLists, u32, &str, &mut CompanionCx);
+
 /// `f` over the lists and a [`CompanionCx`] built from the `World`; nothing without the spells.
-fn with_cx(
-    world: &mut World,
-    entry: u32,
-    name: String,
-    what: &'static str,
-    f: fn(&mut CompanionLists, u32, &str, &mut CompanionCx),
-) {
+fn with_cx(world: &mut World, entry: u32, name: String, what: &'static str, f: CxStep) {
     let ran = world.run_system_cached_with(
-        |In((entry, name, f)): In<(u32, String, fn(&mut CompanionLists, u32, &str, &mut CompanionCx))>,
+        |In((entry, name, f)): In<(u32, String, CxStep)>,
          mut lists: ResMut<CompanionLists>,
          spells: Option<Res<crate::ui_action::Spells>>,
          summons: Res<crate::spell::SummonSlots>,

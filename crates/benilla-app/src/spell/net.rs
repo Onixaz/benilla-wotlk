@@ -2410,10 +2410,7 @@ mod tests {
             rx.try_iter().any(|c| {
                 matches!(
                     c,
-                    crate::net::ClientCommand::CastSpell {
-                        spell_id: NOVA,
-                        ..
-                    }
+                    crate::net::ClientCommand::CastSpell { spell_id: NOVA, .. }
                 )
             })
         };

@@ -333,12 +333,8 @@ impl PetCastEnd<'_, '_> {
             .and_then(|p| p.find(spell_id, cast_count))
             .map(|r| r.caster)
             .filter(|&c| c != 0);
-        let pet = recorded.or_else(|| {
-            self.player
-                .iter()
-                .next()
-                .and_then(|s| s.0.unit_pet_guid())
-        })?;
+        let pet =
+            recorded.or_else(|| self.player.iter().next().and_then(|s| s.0.unit_pet_guid()))?;
         let &entity = self.index.0.get(&pet)?;
         let seq = self.play_seq.next();
         let running = self
