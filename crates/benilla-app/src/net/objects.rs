@@ -613,9 +613,9 @@ fn record_callback(sc: &mut Scene, entry: u32, landed: bool, wait: crate::items:
             }
         }
         // An unknown item names "UNKNOWN".
-        RecordWait::CastFailure(fail) => sc
-            .ui
-            .world(move |world| crate::ui_action::show_refusal(world, fail)),
+        RecordWait::CastFailure(fail) => sc.ui.world(move |world| {
+            crate::ui_action::show_refusal(world, fail);
+        }),
     }
 }
 

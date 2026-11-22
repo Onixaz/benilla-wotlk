@@ -486,6 +486,12 @@ fn on_cast_result(In(ev): In<SessionEvent>, mut ladder: CastLadder, mut r: Reply
             !success && reason != Some(0x17) && ladder.cooldowns.has_spell(spell_id);
         // The routine's auto-repeat cancel (`0x8082d3`, `0x8083c6`), signalled in its place below.
         let mut cancels: Vec<&'static str> = Vec::new();
+        // The pending record's caster, an item use's item (`0x809bb1` -> `0x8051d0`, `0x80624d`).
+        let item = ladder
+            .pending
+            .find(spell_id, cast_count)
+            .map(|rec| rec.caster)
+            .filter(|&c| c != 0 && Some(c) != r.self_guid.0);
         cast_result(
             (spell_id, cast_count, wire_reason.unwrap_or(0)),
             success,
@@ -521,21 +527,28 @@ fn on_cast_result(In(ev): In<SessionEvent>, mut ladder: CastLadder, mut r: Reply
         // routine's cancel and before the cast's end (`0x808aa5`, `0x808b00`, then `0x808b75`).
         // `0x17` DONT_REPORT shows nothing. `SMSG_CAST_FAILED` is addressed to the caster, and this
         // handler is ours.
-        if let (false, Some(reason)) = (success, reason.filter(|&r| r != 0x17)) {
-            r.ui.refuse(crate::ui_action::CastFail {
+        let failed_ours = !success && reason.is_some() && r.self_guid.0.is_some();
+        if let (false, Some(reason)) = (success, reason) {
+            let fail = crate::ui_action::CastFail {
                 arg,
                 arg2,
+                item,
                 ..crate::ui_action::CastFail::local(spell_id, reason)
-            });
-        }
-        let failed_ours = !success && reason.is_some() && r.self_guid.0.is_some();
-        if let (false, Some(reason), Some(caster)) = (success, reason, r.self_guid.0) {
-            r.ui.cast_edge(CastBarEdge::Failed {
-                caster,
-                spell_id,
-                cast_count,
-                reason,
-            });
+            };
+            match (reason, r.self_guid.0) {
+                (0x17, Some(caster)) => r.ui.cast_edge(CastBarEdge::Failed {
+                    caster,
+                    spell_id,
+                    cast_count,
+                    reason,
+                }),
+                (0x17, None) => {}
+                // The line, then the end, on `DONT_REPORT` after a silent exit (`0x8086ff`).
+                (_, Some(caster)) => r.ui.world(move |world| {
+                    crate::ui_action::refuse_then_end(world, fail, caster, cast_count);
+                }),
+                (_, None) => r.ui.refuse(fail),
+            }
         }
         // The failure routine's finish after the line's and the end's listeners (`0x808b7f` -> `0x8054f0`).
         finish_ours(

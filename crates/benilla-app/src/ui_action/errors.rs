@@ -28,6 +28,8 @@ pub(crate) struct CastFail {
     /// pass exits past both the line and the log; its retry, the cache callback, calls the error
     /// display directly and never the combat log, so a redisplay is not logged.
     pub redisplay: bool,
+    /// The casting item of an item use, the pending record's caster (`0x80624d`), which `0xb6` names (`0x808a0a`).
+    pub item: Option<u64>,
 }
 
 /// Who failed to cast, which picks the reference's handler: `SMSG_CAST_RESULT` and
@@ -53,6 +55,7 @@ impl CastFail {
             arg2: None,
             caster: Caster::Player,
             redisplay: false,
+            item: None,
         }
     }
 

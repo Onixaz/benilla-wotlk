@@ -4723,6 +4723,7 @@ fn a_refused_pet_order_or_cast_flushes_the_cooldowns_from_its_handler() {
         spell_id,
         reason: 0x0c,
         arg: None,
+        arg2: None,
         wire_reason: 0x0c,
     };
     let seen = rig.packets(vec![failed(GROWL), failed(1)], 2);

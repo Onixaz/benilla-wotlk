@@ -477,8 +477,8 @@ pub(super) fn cast_fail_text(
             // Health takes `0x123`, the rest a per-power table entry, the same five ids as the
             // player's, so [`power_keys`] serves both.
             0x4D => return no_power(),
-            // `0x8059f5`.
-            CUSTOM_ERROR => return custom_error(args.arg, &get_text),
+            // The pet's custom error fills its buffer and shows nothing (`0x8059f5` -> `0x80581c`).
+            CUSTOM_ERROR => return None,
             // The pet sends `0x01`, `0x02`, `0x09`, `0x18`, `0x28`, `0x41` and `0x8e` to its
             // generic arm, so it never says those lines. `0x17` goes there too and shows nothing
             // only because 1.12 ships no `SPELL_FAILED_DONT_REPORT`. `0x56`'s pet arm (errorId
@@ -570,6 +570,24 @@ pub(super) fn cast_fail_text(
         Fill::Template => {}
     }
     Some(line(strip_tokens(&text)))
+}
+
+/// Whether the player's display takes its silent exit (`0x8086ff`): no line and no log, and the cast ends as `DONT_REPORT` (`0x808705` -> `0x8055c0`); arms 4 (`0x808984`, `0x808997`, `0x8089b5`), 94 (`0x80885b`, `0x8088d9`) and 130 (`0x808723`).
+pub(super) fn exits_quietly(
+    reason: u8,
+    spell: Option<&SpellDisplay>,
+    args: FailArgs<'_>,
+    get: &dyn Fn(&str) -> Option<String>,
+) -> bool {
+    match reason {
+        0x02 => args
+            .own_power
+            .filter(|&p| p <= 6)
+            .and_then(|p| get(POWER_TOKENS[usize::from(p)]).filter(|s| !s.is_empty()))
+            .is_none(),
+        0x56 | 0x9C => matches!(args.fill(Caster::Player, reason, spell), Fill::Nothing),
+        _ => false,
+    }
 }
 
 /// 12340's `SPELL_FAILED_CUSTOM_ERROR` (wire 172) in the shared numbering.
@@ -1521,7 +1539,8 @@ mod tests {
     }
 
     /// `SPELL_FAILED_CUSTOM_ERROR` (wire 172) names its line by the word: Fire Nova's id 83 on
-    /// both handlers, never logged; a missing word and an id with no plain row show nothing.
+    /// the player's handler, never logged; a missing word and an id with no plain row show nothing.
+    /// The pet's handler fills its buffer and shows nothing (`0x8059f5` -> `0x80581c`).
     #[test]
     fn a_custom_refusal_shows_the_row_its_word_names() {
         let m = HashMap::from([
@@ -1542,7 +1561,12 @@ mod tests {
                 &g,
             )
         };
-        for caster in [Caster::Player, Caster::Pet] {
+        assert_eq!(
+            say(Caster::Pet, Some(83)),
+            None,
+            "the pet's arm shows nothing"
+        );
+        for caster in [Caster::Player] {
             let line = say(caster, Some(83)).expect("the numbered row");
             assert_eq!(line.text, "A fire totem line", "{caster:?}");
             assert_eq!(line.key, PASSTHROUGH);
