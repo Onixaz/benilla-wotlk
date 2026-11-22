@@ -13,13 +13,25 @@ use benilla_dbc::{FieldType, Schema, SchemaField};
 
 use crate::dbc::{parse, str_at, u32_at};
 
-/// The named dispel classes by `Spell.dbc` `Dispel` id; a row the gate withholds is absent.
+/// The named dispel classes by `Spell.dbc` `Dispel` id; a row the gate withholds is absent. Every
+/// row's `Mask` is kept, gated or not.
 #[derive(Default)]
 pub struct SpellDispelTypes {
     names: HashMap<u32, String>,
+    masks: HashMap<u32, u32>,
 }
 
 impl SpellDispelTypes {
+    /// The class's dispel mask as the steal registration reads it (`0x542234`-`0x542270`): the
+    /// row's `Mask` (`+0x8`), else `1 << dispel` for no row or a zero mask.
+    pub fn mask(&self, dispel: u32) -> u32 {
+        self.masks
+            .get(&dispel)
+            .copied()
+            .filter(|&m| m != 0)
+            .unwrap_or_else(|| 1u32.wrapping_shl(dispel))
+    }
+
     /// The class name; `None` for no dispel class (0) or one the gate withholds.
     pub fn name(&self, dispel: u32) -> Option<&str> {
         self.names.get(&dispel).map(String::as_str)
@@ -54,8 +66,10 @@ pub fn load_spell_dispel_types(chain: &mut Chain) -> Result<SpellDispelTypes> {
         .context("reading SpellDispelType.dbc")?;
     let set = parse(&bytes, schema(), "SpellDispelType.dbc")?;
     let mut names = HashMap::new();
+    let mut masks = HashMap::new();
     for r in set.records() {
         let Some(id) = u32_at(r, 0) else { continue };
+        masks.insert(id, u32_at(r, 18).unwrap_or(0));
         // The gate first: a 0 here withholds the name however good the string is (Stealth, id 5).
         if u32_at(r, 19).unwrap_or(0) == 0 {
             continue;
@@ -64,7 +78,7 @@ pub fn load_spell_dispel_types(chain: &mut Chain) -> Result<SpellDispelTypes> {
             names.insert(id, name);
         }
     }
-    Ok(SpellDispelTypes { names })
+    Ok(SpellDispelTypes { names, masks })
 }
 
 #[cfg(test)]
@@ -77,6 +91,12 @@ mod tests {
         let mut chain = crate::open_chain(&data).expect("open chain");
         let types = load_spell_dispel_types(&mut chain).expect("load SpellDispelType");
         assert_eq!(types.name(1), Some("Magic"));
+        assert_eq!(types.mask(1), 2, "Magic's mask is its own bit");
+        assert_eq!(
+            types.mask(0x40),
+            1,
+            "no row: the bit, as the shift masks to five bits"
+        );
         assert_eq!(types.name(2), Some("Curse"));
         assert_eq!(types.name(3), Some("Disease"));
         assert_eq!(types.name(4), Some("Poison"));

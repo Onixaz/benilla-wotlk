@@ -115,6 +115,37 @@ pub trait LiveState {
         0
     }
 
+    /// `UnitAura`'s walk over `guid`'s auras at the call (`0x6147c0`): a held unit's listed auras
+    /// in display order behind its unit gate, else its roster record's block; `pick` sees each in
+    /// order, the first it takes is built with its times on `ui_now`'s clock, and `raid` decides
+    /// each one's second-list membership. `Some(None)` for no aura taken.
+    fn find_unit_aura(
+        &self,
+        _guid: u64,
+        _ui_now: f64,
+        _raid: bool,
+        _pick: &mut dyn FnMut(&super::AuraFacts<'_>) -> bool,
+    ) -> Option<Option<super::AuraState>> {
+        None
+    }
+
+    /// `guid`'s raw aura slots at the call, unfiltered, times on `ui_now`'s clock; `Some(None)` for
+    /// a unit neither held nor on the roster.
+    fn unit_aura_slots(&self, _guid: u64, _ui_now: f64) -> Option<Option<super::UnitAuraSlots>> {
+        None
+    }
+
+    /// The minimap's tracking spell (`0xbeba68`), a session global the aura handler writes.
+    fn tracking_spell(&self) -> Option<u32> {
+        None
+    }
+
+    /// Write the tracking spell inside the call, as `SetTracking()` zeroes it (`0x57f4c2`); false
+    /// where no view is lent.
+    fn set_tracking_spell(&mut self, _spell_id: u32) -> bool {
+        false
+    }
+
     /// An item spell's range check from us toward `target` at the call (`0x809610`): `Some(None)` with no answer, `None` where no view lends the check.
     fn item_spell_in_range(&self, _spell_id: u32, _target: u64) -> Option<Option<bool>> {
         None

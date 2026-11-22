@@ -22,7 +22,7 @@ use benilla_protocol::messages::{party_operation, party_result};
 const INVITE_ACCEPT_SOUND: &str = "igPlayerInviteAccept";
 
 /// One handler per group kind, plus the session-end listener.
-pub(super) fn register(app: &mut App) {
+pub(crate) fn register(app: &mut App) {
     use SessionEventKind as K;
     app.net_handler(K::GroupInvite, on_invite)
         .net_handler(K::GroupDecline, on_decline)
@@ -316,9 +316,29 @@ fn on_command_result(
     }
 }
 
-fn on_member_stats(In(ev): In<SessionEvent>, mut group: ResMut<GroupState>) {
+/// `SMSG_PARTY_MEMBER_STATS` and `_FULL` (`0x6cf9b0`): the record patched, then `UNIT_AURA` queued
+/// for the member when its aura block moved (`0x6cf808`) and, with a pet named, for the pet when
+/// the pet's block moved (`0x6cf941`), each fired at the frame's flush.
+fn on_member_stats(
+    In(ev): In<SessionEvent>,
+    mut group: ResMut<GroupState>,
+    signals: Option<NonSendMut<crate::ui_script::live::UniqueSignals>>,
+) {
     if let SessionEvent::PartyMemberStats { guid, full, info } = ev {
+        // Only a full packet or one carrying a block can move one.
+        let moves = full || info.auras.is_some() || info.pet_auras.is_some();
+        let before = moves.then(|| group.aura_blocks(guid));
         group.apply_stats(guid, full, *info);
+        let (Some(before), Some(mut signals)) = (before, signals) else {
+            return;
+        };
+        let after = group.aura_blocks(guid);
+        if before.0 != after.0 {
+            signals.unique_unit_signal(guid, "UNIT_AURA");
+        }
+        if after.2 != 0 && before.1 != after.1 {
+            signals.unique_unit_signal(after.2, "UNIT_AURA");
+        }
     }
 }
 

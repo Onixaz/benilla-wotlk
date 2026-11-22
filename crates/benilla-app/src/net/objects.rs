@@ -1944,6 +1944,12 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
             crate::ui_action::usable_cache::Pass::Power,
         ));
     }
+    // The aura vision watch walks every visible unit with the moved bits (`0x6da7ba`).
+    let vision = merged.aura_vision;
+    if vision != 0 {
+        sc.ui
+            .world(move |world| crate::ui_aura::aura_vision_moved(world, vision));
+    }
     for _ in 0..merged.bar_updates {
         sc.ui.world(crate::ui_action::usable_cache::step(
             crate::ui_action::usable_cache::Pass::Bar,
@@ -2381,6 +2387,9 @@ fn merge_fields(
             merged.override_moved |= own
                 && e.unit_field(benilla_protocol::field::FIELD_PLAYER_FIELD_BYTES2)
                 && (e.old ^ e.new) & 0xffff != 0;
+            if own && e.unit_field(benilla_protocol::field::FIELD_PLAYER_FIELD_BYTES2) {
+                merged.aura_vision |= ((e.old ^ e.new) >> 24) as u8;
+            }
             // Our visible items' entries (`0x6e1ec2`) and our ammo (`0x5e8413`) refresh the bar.
             merged.bar_updates += u8::from(
                 own && ((0..19u8).any(|slot| {
@@ -2558,6 +2567,8 @@ struct Merged {
     aura_state_moved: bool,
     /// A unit's `UNIT_FIELD_POWER1..7` moved.
     power_moved: bool,
+    /// The bits of our own aura vision byte (`PLAYER_FIELD_BYTES2` byte 3) that moved.
+    aura_vision: u8,
 }
 
 /// The form watch's tracking leg (`0x6da130`): with nothing tracked, the first known tracking spell

@@ -563,6 +563,9 @@ pub(crate) fn load_ingame_ui_on_world_entry(world: &mut World) {
     let ui_scale = world
         .get_resource::<super::UiScaleCvar>()
         .map_or(1.0, |c| c.0);
+    let tracking = world
+        .get_resource::<crate::unit_auras::TrackingSpell>()
+        .map_or(0, |t| t.0);
     // No sound during the load edge, as in the reference's UI init. Every call into Lua reads the
     // client through the lent `World`.
     silenced_ui_load(&mut script, |script| {
@@ -585,9 +588,15 @@ pub(crate) fn load_ingame_ui_on_world_entry(world: &mut World) {
             world,
             script,
             identity.as_ref(),
-            // Before `VARIABLES_LOADED`: the minimap's town type restores there
-            // (`0x5128d0`).
-            |script| script.load_tracked_state(class_id),
+            // Before `VARIABLES_LOADED`: the minimap's town type restores there (`0x5128d0`);
+            // a tracking spell the session already holds clears it, as its setter did
+            // (`0x57ea41`), where it landed before this UI stood.
+            |script| {
+                script.load_tracked_state(class_id);
+                if tracking != 0 {
+                    script.tracking_spell_moved(tracking);
+                }
+            },
             |world, script| {
                 crate::ui_chat::restore_chat_looks(world, script);
                 // `UIParent` scales last, so the whole load read a bare root (`0x52a980` runs

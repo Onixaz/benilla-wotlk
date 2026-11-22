@@ -270,9 +270,8 @@ impl Plugin for UiThreatPlugin {
                 Update,
                 feed_threat
                     .in_set(crate::ui_unit::UnitFeed)
-                    // After the snapshots and the resolver's guids its fan-out and tooltip read.
-                    .after(crate::ui_unit::EnterWorldFeed)
-                    .after(crate::ui_aura::AuraEvents),
+                    // After the snapshots its fan-out and tooltip read.
+                    .after(crate::ui_unit::EnterWorldFeed),
             );
     }
 }

@@ -223,6 +223,7 @@ pub(crate) fn active_player_init(In((race, class, form)): In<(u8, u8, u8)>, init
         actions,
     } = init;
     book.set_race_class(race, class);
+    book.clear_registered();
     {
         use crate::ui_action::usable_cache::{edit_step, ListEdit};
         ui.world(edit_step(ListEdit::Rebuild));

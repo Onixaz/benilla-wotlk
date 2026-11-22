@@ -90,6 +90,10 @@ pub(crate) struct LiveView<'w, 's> {
         ),
     >,
     auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
+    /// The units' aura tables and the roster records the aura verbs walk (`0x6147c0`).
+    aura: crate::ui_aura::AuraLive<'w, 's>,
+    /// The minimap's tracking spell (`0xbeba68`).
+    tracking: Option<ResMut<'w, crate::unit_auras::TrackingSpell>>,
     /// The wire, for the sends a verb makes inside its call.
     commands: Option<Res<'w, crate::net::NetCommands>>,
     /// The usability walk's other inputs, for `GetPetActionSlotUsable` (`0x5d5400`).
@@ -416,6 +420,43 @@ impl LiveState for LiveView<'_, '_> {
 
     fn item_spell_in_range(&self, spell_id: u32, target: u64) -> Option<Option<bool>> {
         Some(self.item_range.in_range(spell_id, target))
+    }
+
+    fn find_unit_aura(
+        &self,
+        guid: u64,
+        ui_now: f64,
+        raid: bool,
+        pick: &mut dyn FnMut(&benilla_ui::script::AuraFacts<'_>) -> bool,
+    ) -> Option<Option<benilla_ui::script::AuraState>> {
+        let pet = self.pet_bar.as_deref().map(|b| &b.spells);
+        let book = crate::ui_aura::AuraBook {
+            known: self.actions.as_deref().map(|a| &a.spells),
+            dispel_types: self
+                .book
+                .as_deref()
+                .map_or(&[][..], |b| &b.dispel_types[..]),
+            steal_mask: self.book.as_deref().map_or(0, |b| b.steal_mask),
+            pet: pet.map_or(0, |p| p.pet_guid),
+            pet_spells: pet.map_or(&[][..], |p| &p.spells[..]),
+        };
+        Some(self.aura.find(guid, ui_now, raid, book, pick))
+    }
+
+    fn unit_aura_slots(
+        &self,
+        guid: u64,
+        ui_now: f64,
+    ) -> Option<Option<benilla_ui::script::UnitAuraSlots>> {
+        Some(self.aura.slots(guid, ui_now))
+    }
+
+    fn tracking_spell(&self) -> Option<u32> {
+        self.tracking.as_ref().map(|t| t.0)
+    }
+
+    fn set_tracking_spell(&mut self, spell_id: u32) -> bool {
+        self.tracking.as_mut().map(|t| t.0 = spell_id).is_some()
     }
 
     fn unique_signal(&mut self, event: &'static str) -> bool {
@@ -2508,31 +2549,48 @@ fn fire_batch(world: &mut World, batch: &mut Vec<UiEvent>, lines: &mut Vec<Strin
     });
 }
 
-/// The unique signals queued this frame: each event once, however often it is queued (`0x6143f0`), fired in queue order once per frame after the packets (`0x52b247` -> `0x614760`). Main-thread state the handlers fill and a verb's call queues into ([`Lent`]).
+/// The unique signals queued this frame: each `(guid, event)` once, however often it is queued (`0x6143f0`), fired in queue order once per frame after the packets (`0x52b247` -> `0x614760`), a unit's to every token naming it then (`0x60bf10`). Main-thread state the handlers fill and a verb's call queues into ([`Lent`]).
 #[derive(Default)]
-pub(crate) struct UniqueSignals(Vec<&'static str>);
+pub(crate) struct UniqueSignals {
+    queue: Vec<(u64, &'static str)>,
+    /// The queued pairs, for the once-only test.
+    waiting: std::collections::HashSet<(u64, &'static str)>,
+}
 
 impl UniqueSignals {
-    /// Queue `event` for the frame's flush unless it already waits (`0x615020`).
+    /// Queue `event` for the frame's flush unless it already waits (`0x615020`, the null guid).
     pub(crate) fn unique_signal(&mut self, event: &'static str) {
-        if !self.0.contains(&event) {
-            self.0.push(event);
+        self.unique_unit_signal(0, event);
+    }
+
+    /// Queue `event` for `unit` unless the pair already waits (`0x6143f0`); the flush fires it for
+    /// each token naming the unit.
+    pub(crate) fn unique_unit_signal(&mut self, unit: u64, event: &'static str) {
+        if self.waiting.insert((unit, event)) {
+            self.queue.push((unit, event));
         }
     }
 
     /// The game UI's shutdown empties the queue (`0x52902f`), so nothing waits for the next login.
     pub(crate) fn clear(&mut self) {
-        self.0.clear();
+        self.queue.clear();
+        self.waiting.clear();
     }
 
     /// The queued event names, in order.
     #[cfg(test)]
     pub(crate) fn names(&self) -> Vec<&'static str> {
-        self.0.clone()
+        self.queue.iter().map(|&(_, event)| event).collect()
+    }
+
+    /// The queued `(guid, event)` pairs, in order.
+    #[cfg(test)]
+    pub(crate) fn queued(&self) -> Vec<(u64, &'static str)> {
+        self.queue.clone()
     }
 }
 
-/// The game UI's idle tail (`0x52af40`): the watch timers run (`0x52b229`), then the frame's unique signals fire in queue order without arguments (`0x52b247` -> `0x614760`), after the feeds that queue them; with no VM they are dropped.
+/// The game UI's idle tail (`0x52af40`): the watch timers run (`0x52b229`), then the frame's unique signals fire in queue order (`0x52b247` -> `0x614760`), a unit's with each token naming it as the argument, after the feeds that queue them; with no VM they are dropped.
 pub(crate) fn flush_unique_signals(world: &mut World) {
     if world.get_non_send_resource::<UiScript>().is_none() {
         if let Some(mut signals) = world.get_non_send_resource_mut::<UniqueSignals>() {
@@ -2544,16 +2602,29 @@ pub(crate) fn flush_unique_signals(world: &mut World) {
     // The count taken at entry, its entries still queued while they fire, so a re-queue matches one in flight (`0x6143f0`); the count is zeroed after the loop, dropping what the handlers queued (`0x6147a3`).
     let Some(events) = world
         .get_non_send_resource::<UniqueSignals>()
-        .map(|s| s.0.clone())
+        .map(|s| s.queue.clone())
     else {
         return;
     };
     super::safe_world::lend(world, |script| {
-        for event in events {
-            script.fire_event(event, Vec::new());
+        for (unit, event) in events {
+            if unit == 0 {
+                script.fire_event(event, Vec::new());
+            } else {
+                // The tokens naming the unit as it fires (`0x614784` -> `0x60bf10`).
+                script.fire_unit_event(unit, event, Vec::new());
+            }
         }
     });
     world.non_send_resource_mut::<UniqueSignals>().clear();
+}
+
+/// Queue `event` for `unit` with the frame's unique signals (`0x6143f0`), from a step that runs
+/// in a handler's turn; with no queue, as a bare app has, nothing.
+pub(crate) fn queue_unit_signal(world: &mut World, unit: u64, event: &'static str) {
+    if let Some(mut signals) = world.get_non_send_resource_mut::<UniqueSignals>() {
+        signals.unique_unit_signal(unit, event);
+    }
 }
 
 /// The disconnect runs the game UI's shutdown, which empties the unique signals (`0x52902f`).

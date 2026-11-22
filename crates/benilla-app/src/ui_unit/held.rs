@@ -342,7 +342,7 @@ mod tests {
             .init_resource::<GroupState>()
             .insert_resource(NetCommands(tx))
             .add_plugins(crate::ui_aura::UiAuraPlugin)
-            .add_systems(Update, feed_chain_units.after(crate::ui_aura::AuraEvents));
+            .add_systems(Update, feed_chain_units);
         app.insert_non_send_resource(UiScript::new().unwrap());
         {
             let mut names = app.world_mut().resource_mut::<NameCache>();
@@ -568,31 +568,5 @@ mod tests {
         app.update();
         // The name would be the name cache's, which a chain's end does not read yet.
         assert_eq!(health(&mut app, "raid3target"), 0);
-    }
-
-    /// The chain feed is declared after the aura feed, read off the schedule graph.
-    #[test]
-    fn the_chain_feed_runs_after_the_aura_feed_it_reads() {
-        use crate::game_plugins::schedule_tests::{census, headless_client, SyncPoints};
-
-        let mut app = headless_client();
-        let c = census(&mut app, Update, SyncPoints::Declared);
-        if !c.systems.values().any(|s| s.name.contains("benilla_app::")) {
-            eprintln!("skipped: this build carries no type names");
-            return;
-        }
-        let one = |suffix: &str| {
-            let mut hits = c.systems.iter().filter(|(_, s)| s.name.ends_with(suffix));
-            match (hits.next(), hits.next()) {
-                (Some((k, _)), None) => *k,
-                _ => panic!("exactly one system named `…{suffix}` in Update"),
-            }
-        };
-        let aura = one("::ui_aura::feed_auras");
-        let feed = "::ui_unit::held::feed_chain_units";
-        assert!(
-            c.dependencies.contains(&(aura, one(feed))),
-            "{feed} is declared after feed_auras"
-        );
     }
 }
