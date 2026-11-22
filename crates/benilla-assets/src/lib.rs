@@ -1,4 +1,4 @@
-//! `benilla-assets`: the WoW 1.12.1 MPQ patch chain as an `mpq://` Bevy asset source backed by
+//! `benilla-assets`: the WoW 3.3.5a (build 12340) MPQ patch chain as an `mpq://` Bevy asset source backed by
 //! [`benilla_formats::Chain`], and the per-format loaders (BLP, M2, WMO, ADT, WDT) on top of it.
 
 use std::path::Path;

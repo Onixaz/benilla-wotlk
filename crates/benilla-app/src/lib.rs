@@ -1,7 +1,8 @@
-//! `benilla`: a from-scratch World of Warcraft 1.12.1 client on Bevy. It opens the patch chain from
-//! the install (`$WOW_DATA`, the project folder on a dev build, else beside the binary), streams
-//! the world around the player through the `benilla-assets` `mpq://` pipeline, and runs the network
-//! session on a background thread ([`net`]).
+//! `benilla`: a from-scratch World of Warcraft 3.3.5a (build 12340) client on Bevy. It opens the
+//! patch chain from the install (`$WOW_DATA`, `$WOW_INSTALL`, the project folder on a dev build,
+//! else beside the binary; `benilla_formats::install`), streams the world around the player through
+//! the `benilla-assets` `mpq://` pipeline, and runs the network session on a background thread
+//! ([`net`]).
 //!
 //! The world is loaded when a character enters it and released when they leave; the glue screens
 //! have no world behind them, so with no server the client sits at the login screen, as the
