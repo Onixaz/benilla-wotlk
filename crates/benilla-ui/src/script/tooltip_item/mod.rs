@@ -160,18 +160,6 @@ fn block_instance(name: Option<String>, link: Option<&str>) -> render::ItemInsta
     }
 }
 
-/// The item's name with its roll's suffix (`0x706d70`).
-fn rolled_name(lua: &Lua, name: &str, roll: i32) -> String {
-    let suffix = crate::script::item_stats::roll_suffix(roll);
-    match (suffix, crate::strings::global(lua, "ITEM_SUFFIX_TEMPLATE")) {
-        (Some(sfx), Some(t)) => crate::strings::fill(
-            &t,
-            &[crate::strings::Arg::S(name), crate::strings::Arg::S(&sfx)],
-        ),
-        _ => name.to_string(),
-    }
-}
-
 /// `OnTooltipSetItem` once the lines are built, before the show (`0x62d890`, `0x623760`).
 pub(super) fn fire_set_item(lua: &Lua, this: &Table) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
@@ -621,7 +609,7 @@ fn set_item_link(
     };
     match view_of(lua, id) {
         Some(v) => {
-            let name = rolled_name(lua, &v.name, fields.random_property);
+            let name = crate::script::item_stats::rolled_name(lua, &v.name, fields.random_property);
             // The link block rides to the builder, so a scaling item shows the link's level.
             let inst = render::ItemInstance {
                 name: Some(name),
@@ -702,7 +690,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 (id != 0).then(|| {
                     let view = item_record(&model, id);
                     let name = view.as_ref().map_or_else(String::new, |v| {
-                        rolled_name(lua, &v.name, fields.random_property)
+                        crate::script::item_stats::rolled_name(lua, &v.name, fields.random_property)
                     });
                     let quality = view.map_or(1, |v| v.quality);
                     (
@@ -1143,25 +1131,14 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
     )?;
 
     // GameTooltip:SetTradePlayerItem(slot) / SetTradeTargetItem(slot) (`TradeFrame.xml:150`,
-    // `TradeFrame.xml:106`), no returns: the slot's item, the target side off the partner's slot
-    // guids (a guid table indexed by slot). An empty or out-of-range slot leaves the tooltip
-    // untouched. The enchant line is not rendered: the trade view has no enchant id.
+    // `TradeFrame.xml:106`), no returns: our slot's item object, or the partner's slot in the
+    // window's copy, read at the call. An empty or out-of-range slot leaves the tooltip untouched.
     for (name, player_side) in [("SetTradePlayerItem", true), ("SetTradeTargetItem", false)] {
         m.set(
             name,
             lua.create_function(move |lua, (this, slot): (Table, usize)| {
                 let h = frame_handle_of(lua, &this)?;
-                let item = {
-                    let model = lua
-                        .app_data_ref::<crate::script::ModelCell>()
-                        .expect("model app_data");
-                    model.trade.as_ref().and_then(|t| {
-                        let side = if player_side { &t.player } else { &t.target };
-                        slot.checked_sub(1)
-                            .and_then(|n| side.slots.get(n))
-                            .and_then(|s| s.clone())
-                    })
-                };
+                let item = crate::script::trade::shown_slot(lua, player_side, slot);
                 let Some(item) = item.filter(|i| i.item_id != 0) else {
                     return Ok(());
                 };
@@ -1208,7 +1185,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let h = frame_handle_of(lua, &this)?;
             let found = {
                 let model = crate::script::model_mut_of(lua);
-                model.loot.as_ref().and_then(|l| {
+                crate::script::loot::window(&model).and_then(|l| {
                     let row = slot.checked_sub(1).and_then(|n| l.rows.get(n))?.clone()?;
                     (!row.is_coin && row.item_id != 0).then_some((row, l.source_level))
                 })

@@ -134,6 +134,15 @@ local VERBS = {
     { "totem1left", function() return GetTotemTimeLeft(1) end },
     { "casting", function() return (UnitCastingInfo("player")) end },
     { "castid", function() return (select(8, UnitCastingInfo("player"))) end },
+    { "castlen", function() local _, _, _, _, a, b = UnitCastingInfo("player") return a and b - a end },
+    { "chan", function() return (UnitChannelInfo("player")) end },
+    { "chanlen", function() local _, _, _, _, a, b = UnitChannelInfo("player") return a and b - a end },
+    { "act1", function() local t, id = GetActionInfo(1) return tostring(t) .. ":" .. tostring(id) end },
+    { "usable1", function() return (IsUsableAction(1)) end },
+    { "cd1", function() return (select(2, GetActionCooldown(1))) end },
+    { "current1", function() return IsCurrentAction(1) end },
+    { "page", function() return GetActionBarPage() end },
+    { "bonus", function() return GetBonusBarOffset() end },
     { "stopcast", function() return SpellStopCasting ~= nil end },
     { "tabs", function() return GetNumSpellTabs() end },
     { "book1", function() return (GetSpellName(1, "spell")) end },
@@ -185,6 +194,18 @@ local VERBS = {
     { "itnext", function() return ItemTextHasNextPage() end },
     { "merchantn", function() return GetMerchantNumItems() end },
     { "npc", function() return UnitGUID("npc") end },
+    { "tt1", function() return (GetTradeTargetItemInfo(1)) end },
+    { "tt1n", function() return (select(3, GetTradeTargetItemInfo(1))) end },
+    { "tt3", function() return (GetTradeTargetItemInfo(3)) end },
+    { "tgold", function() return GetTargetTradeMoney() end },
+    { "pgold", function() return GetPlayerTradeMoney() end },
+    { "lootn", function() return GetNumLootItems() end },
+    { "l1", function() return (select(2, GetLootSlotInfo(1))) end },
+    { "l2", function() return (select(2, GetLootSlotInfo(2))) end },
+    { "l3", function() return (select(2, GetLootSlotInfo(3))) end },
+    { "l3q", function() return (select(4, GetLootSlotInfo(3))) end },
+    { "coin1", function() return LootSlotIsCoin(1) end },
+    { "item2", function() return LootSlotIsItem(2) end },
     { "npcname", function() return UnitName("npc") end },
     { "buybackn", function() return GetNumBuybackItems() end },
     { "repaircost", function() return GetRepairAllCost() end },
@@ -4718,6 +4739,7 @@ fn a_refused_pet_order_or_cast_flushes_the_cooldowns_from_its_handler() {
         spell_id,
         reason: 0x0c,
         arg: None,
+        arg2: None,
         wire_reason: 0x0c,
     };
     let seen = rig.packets(vec![failed(GROWL), failed(1)], 2);
@@ -7514,6 +7536,375 @@ fn book_updates_fire_from_their_handlers_in_wire_order() {
     );
 }
 
+/// A live learn's order: book, tab flash, tutorial, placement (`0x542cd4`, `0x542d16`, `0x542d1d`, `0x542de3`).
+#[test]
+fn a_learns_bar_placement_signals_after_the_book_update() {
+    let Some(mut rig) = Rig::login_after(
+        vec![
+            book(&[FIREBALL_1]),
+            SessionEvent::TutorialFlags(vec![0; 32]),
+        ],
+        &[OBJECT_TYPE_PLAYER, (FIELD_UNIT_LEVEL, 1)],
+    ) else {
+        return;
+    };
+    let seen = rig.packets(
+        vec![SessionEvent::SpellLearned {
+            spell_id: FROSTBOLT_1,
+        }],
+        3,
+    );
+    let events = &[
+        "SPELLS_CHANGED",
+        "LEARNED_SPELL_IN_TAB",
+        "TUTORIAL_TRIGGER",
+        "ACTIONBAR_SLOT_CHANGED",
+    ];
+    assert_eq!(
+        pin(&seen, events, &["act1"]),
+        vec![
+            "SPELLS_CHANGED | act1=nil:nil",
+            "LEARNED_SPELL_IN_TAB 2 | act1=nil:nil",
+            "TUTORIAL_TRIGGER 40 | act1=nil:nil",
+            "ACTIONBAR_SLOT_CHANGED 1 | act1=spell:2",
+        ]
+    );
+}
+
+/// The rank replace re-points a bar macro on the old rank, by supersede (`0x6e7e46`) and live learn (`0x6e7b46`), with no slot signal (`0x5ab0f3`).
+#[test]
+fn the_rank_replace_repoints_a_bar_macro() {
+    use crate::ui_macro::{BoundSpell, MacroBoundSpells};
+    use benilla_protocol::messages::{ActionButton, ACTION_KIND_MACRO};
+    const FIREBALL_3: u32 = 145;
+    let Some(mut rig) = Rig::login_after(
+        vec![book(&[FIREBALL_1])],
+        &[OBJECT_TYPE_PLAYER, (FIELD_UNIT_LEVEL, 20)],
+    ) else {
+        return;
+    };
+    lua(
+        &mut rig,
+        "CreateMacro('a', 1, '/cast Fireball') CreateMacro('b', 1, '/cast Fireball')",
+    );
+    rig.run(1);
+    rig.packets(
+        vec![SessionEvent::ActionButtons {
+            state: benilla_protocol::messages::ACTION_BUTTONS_SET,
+            buttons: vec![ActionButton {
+                slot: 0,
+                action: 1,
+                kind: ACTION_KIND_MACRO,
+            }],
+        }],
+        2,
+    );
+    let bound = |rig: &Rig, index: u32| {
+        rig.app
+            .world()
+            .resource::<MacroBoundSpells>()
+            .0
+            .get(&index)
+            .copied()
+    };
+    assert_eq!(bound(&rig, 1), Some(BoundSpell::Spell(FIREBALL_1)));
+    let seen = rig.packets(
+        vec![SessionEvent::SpellSuperceded {
+            old_spell_id: FIREBALL_1,
+            new_spell_id: FIREBALL_2,
+        }],
+        3,
+    );
+    assert_eq!(bound(&rig, 1), Some(BoundSpell::Spell(FIREBALL_2)));
+    assert_eq!(
+        bound(&rig, 2),
+        Some(BoundSpell::Spell(FIREBALL_1)),
+        "a macro on no slot is not walked"
+    );
+    assert!(
+        !seen.iter().any(|s| s.event == "ACTIONBAR_SLOT_CHANGED"),
+        "the macro write signals no slot"
+    );
+    rig.packets(
+        vec![SessionEvent::SpellLearned {
+            spell_id: FIREBALL_3,
+        }],
+        3,
+    );
+    assert_eq!(bound(&rig, 1), Some(BoundSpell::Spell(FIREBALL_3)));
+}
+
+// ── The cast bar (#1281) ─────────────────────────────────────────────────────────────────────────
+
+/// `SMSG_SPELL_START` for our own cast of `spell_id` lasting `ms`.
+fn own_start(spell_id: u32, cast_count: u8, ms: u32) -> SessionEvent {
+    SessionEvent::SpellStart {
+        caster: ME,
+        cast_count,
+        spell_id,
+        cast_flags: 0,
+        cast_time_ms: ms,
+        target: None,
+        ammo_display_id: None,
+        immunities: None,
+    }
+}
+
+/// `SMSG_SPELL_FAILURE` for our cast with the 3.3.5a wire reason named `key`.
+fn own_failure(spell_id: u32, cast_count: u8, key: &str) -> SessionEvent {
+    use benilla_protocol::messages::{wotlk_cast_fail_shared, WOTLK_CAST_FAIL_KEYS};
+    let wire = WOTLK_CAST_FAIL_KEYS
+        .iter()
+        .position(|k| *k == key)
+        .expect("a 3.3.5a reason") as u8;
+    SessionEvent::SpellFailed {
+        other: false,
+        caster: ME,
+        cast_count,
+        spell_id,
+        reason: wotlk_cast_fail_shared(wire),
+        wire_reason: wire,
+    }
+}
+
+/// A cast's end follows its reason (`0x7fedd0`): Esc's `0x1b` quiet (`0x809aa8`), interrupt interrupted, else failed; then `STOP` (`0x7fee38`).
+#[test]
+fn a_cast_ends_quiet_on_stopcasting_and_by_reason_on_a_failure() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    const FIREBALL: u32 = 133;
+    let events = &[
+        "UNIT_SPELLCAST_START",
+        "UNIT_SPELLCAST_FAILED",
+        "UNIT_SPELLCAST_FAILED_QUIET",
+        "UNIT_SPELLCAST_INTERRUPTED",
+        "UNIT_SPELLCAST_STOP",
+    ];
+    let verbs = &["casting", "castid"];
+    let mut seen = rig.packets(vec![own_start(FIREBALL, 1, 3000)], 2);
+    lua(&mut rig, "SpellStopCasting()");
+    rig.run(1);
+    seen.extend(rig.take());
+    seen.extend(rig.packets(
+        vec![
+            own_start(FIREBALL, 2, 3000),
+            own_failure(FIREBALL, 2, "SPELL_FAILED_INTERRUPTED"),
+            own_start(FIREBALL, 3, 3000),
+            own_failure(FIREBALL, 3, "SPELL_FAILED_NOT_READY"),
+        ],
+        2,
+    ));
+    assert_eq!(
+        pin(&seen, events, verbs),
+        vec![
+            "UNIT_SPELLCAST_START player Fireball Rank 1 1 | casting=Fireball castid=1",
+            "UNIT_SPELLCAST_FAILED_QUIET player Fireball Rank 1 1 | casting=Fireball castid=1",
+            "UNIT_SPELLCAST_STOP player Fireball Rank 1 1 | casting=nil castid=nil",
+            "UNIT_SPELLCAST_START player Fireball Rank 1 2 | casting=Fireball castid=2",
+            "UNIT_SPELLCAST_INTERRUPTED player Fireball Rank 1 2 | casting=Fireball castid=2",
+            "UNIT_SPELLCAST_STOP player Fireball Rank 1 2 | casting=nil castid=nil",
+            "UNIT_SPELLCAST_START player Fireball Rank 1 3 | casting=Fireball castid=3",
+            "UNIT_SPELLCAST_FAILED player Fireball Rank 1 3 | casting=Fireball castid=3",
+            "UNIT_SPELLCAST_STOP player Fireball Rank 1 3 | casting=nil castid=nil",
+        ]
+    );
+}
+
+/// Pushback keeps the cast's length (`0x726246`, `0x72624c`); a channel update keeps its length (`0x726287`), a zero one ends it (`0x801ead`).
+#[test]
+fn pushback_and_channel_updates_keep_their_lengths_inside_their_events() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    const FIREBALL: u32 = 133;
+    const ARCANE_MISSILES: u32 = 5143;
+    let events = &[
+        "UNIT_SPELLCAST_START",
+        "UNIT_SPELLCAST_DELAYED",
+        "UNIT_SPELLCAST_CHANNEL_START",
+        "UNIT_SPELLCAST_CHANNEL_UPDATE",
+        "UNIT_SPELLCAST_CHANNEL_STOP",
+    ];
+    let verbs = &["castlen", "chan", "chanlen"];
+    let mut seen = rig.packets(
+        vec![
+            own_start(FIREBALL, 1, 2000),
+            SessionEvent::SpellDelayed {
+                caster: ME,
+                delay_ms: 500,
+            },
+        ],
+        2,
+    );
+    seen.extend(rig.packets(
+        vec![SessionEvent::ChannelStart {
+            caster: ME,
+            spell_id: ARCANE_MISSILES,
+            duration_ms: 5000,
+        }],
+        2,
+    ));
+    seen.extend(rig.packets(
+        vec![SessionEvent::ChannelUpdate {
+            caster: ME,
+            remaining_ms: 2000,
+        }],
+        2,
+    ));
+    seen.extend(rig.packets(
+        vec![SessionEvent::ChannelUpdate {
+            caster: ME,
+            remaining_ms: 0,
+        }],
+        2,
+    ));
+    assert_eq!(
+        pin(&seen, events, verbs),
+        vec![
+            "UNIT_SPELLCAST_START player Fireball Rank 1 1 | castlen=2000 chan=nil chanlen=nil",
+            "UNIT_SPELLCAST_DELAYED player Fireball Rank 1 1 | castlen=2000 chan=nil chanlen=nil",
+            "UNIT_SPELLCAST_CHANNEL_START player Arcane Missiles Rank 1 0 | castlen=nil chan=Arcane Missiles chanlen=5000",
+            "UNIT_SPELLCAST_CHANNEL_UPDATE player Arcane Missiles Rank 1 0 | castlen=nil chan=Arcane Missiles chanlen=5000",
+            "UNIT_SPELLCAST_CHANNEL_STOP player Arcane Missiles Rank 1 0 | castlen=nil chan=nil chanlen=nil",
+        ]
+    );
+}
+
+/// The aura state's watch for us or the target: the full usable update, then `PET_BAR_UPDATE_USABLE` (`0x716836`, `0x716842`).
+#[test]
+fn the_aura_state_watch_signals_the_pet_bar_for_us_and_the_target() {
+    use benilla_protocol::field::FIELD_UNIT_AURASTATE;
+    const MOB: u64 = 0xF130_0000_0000_7001;
+    const OTHER: u64 = 0xF130_0000_0000_7002;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let unit = |guid: u64| SessionEvent::ObjectCreate {
+        guid,
+        kind: EntityKind::Unit,
+        display_id: None,
+        position: [-8949.0, -132.0, 83.5],
+        orientation: 0.0,
+        scale: 1.0,
+        speeds: None,
+        mover: None,
+        transport_progress: None,
+        transport: None,
+        spline: None,
+        vehicle: None,
+        attack_target: None,
+        spawned: true,
+        fields: ObjectFields::from_pairs(&[
+            (2, 0x9),
+            (FIELD_UNIT_HEALTH, 500),
+            (FIELD_UNIT_MAXHEALTH, 500),
+            (FIELD_UNIT_LEVEL, 80),
+        ])
+        .into_created(ObjectType::Unit),
+    };
+    rig.packets(vec![unit(MOB), unit(OTHER)], 2);
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::target::Selection>()
+        .guid = Some(MOB);
+    // The target change's own events, apart.
+    rig.run(2);
+    rig.take();
+    let aura_state = |guid: u64| SessionEvent::ObjectValues {
+        guid,
+        fields: ObjectFields::from_pairs(&[(FIELD_UNIT_AURASTATE, 0x2)]),
+    };
+    let events = &["SPELL_UPDATE_USABLE", "PET_BAR_UPDATE_USABLE"];
+    let ours = rig.packets(vec![self_values(&[(FIELD_UNIT_AURASTATE, 0x2)])], 2);
+    let other = rig.packets(vec![aura_state(OTHER)], 2);
+    let target = rig.packets(vec![aura_state(MOB)], 2);
+    assert_eq!(
+        [
+            pin(&ours, events, &[]),
+            pin(&other, events, &[]),
+            pin(&target, events, &[])
+        ],
+        [
+            vec!["SPELL_UPDATE_USABLE", "PET_BAR_UPDATE_USABLE"],
+            vec![],
+            vec!["SPELL_UPDATE_USABLE", "PET_BAR_UPDATE_USABLE"],
+        ]
+    );
+}
+
+// ── The action bar (#1281) ───────────────────────────────────────────────────────────────────────
+
+/// The bar's events, each read at its call: buttons (`0x5aaa90`), a cast's `SENT` (`0x80b556`, `0x805d70`), a form (`0x6da38e`), a page turn.
+#[test]
+fn action_bar_events_read_the_bar_at_their_events() {
+    use benilla_protocol::field::FIELD_UNIT_BYTES_2;
+    use benilla_protocol::messages::ActionButton;
+    const FROST_ARMOR: u32 = 168;
+    let Some(mut rig) = Rig::login_after(
+        vec![book(&[FIREBALL_1, FROST_ARMOR])],
+        &[OBJECT_TYPE_PLAYER, (FIELD_UNIT_LEVEL, 1)],
+    ) else {
+        return;
+    };
+    let events = &[
+        "ACTIONBAR_SLOT_CHANGED",
+        "ACTIONBAR_UPDATE_USABLE",
+        "ACTIONBAR_UPDATE_STATE",
+        "ACTIONBAR_UPDATE_COOLDOWN",
+        "UPDATE_BONUS_ACTIONBAR",
+        "ACTIONBAR_PAGE_CHANGED",
+        "CURRENT_SPELL_CAST_CHANGED",
+        "SPELL_UPDATE_COOLDOWN",
+        "UNIT_SPELLCAST_SENT",
+        "UPDATE_MULTI_CAST_ACTIONBAR",
+    ];
+    let verbs = &["act1", "usable1", "current1", "cd1", "page", "bonus"];
+    let mut seen = rig.packets(
+        vec![SessionEvent::ActionButtons {
+            state: benilla_protocol::messages::ACTION_BUTTONS_SET,
+            buttons: vec![ActionButton {
+                slot: 0,
+                action: FROST_ARMOR,
+                kind: 0,
+            }],
+        }],
+        2,
+    );
+    lua(&mut rig, "UseAction(1)");
+    rig.run(1);
+    seen.extend(rig.take());
+    seen.extend(rig.packets(vec![self_values(&[(FIELD_UNIT_BYTES_2, 17 << 24)])], 2));
+    lua(&mut rig, "ChangeActionBarPage(2)");
+    rig.run(1);
+    seen.extend(rig.take());
+    // The whole-bar load signals every slot it writes; slot 1 and the closing 0 are pinned.
+    seen.retain(|s| s.event != "ACTIONBAR_SLOT_CHANGED" || s.args == "1" || s.args == "0");
+    let at = |e: &str, cur: &str, cd: &str, rest: &str| {
+        format!("{e} | act1=spell:2 usable1=1 current1={cur} cd1={cd} {rest}")
+    };
+    assert_eq!(
+        pin(&seen, events, verbs),
+        vec![
+            at("ACTIONBAR_SLOT_CHANGED 0", "nil", "0", "page=1 bonus=0"),
+            at(
+                "UNIT_SPELLCAST_SENT player Frost Armor Rank 1 ",
+                "1",
+                "0",
+                "page=1 bonus=0"
+            ),
+            at("ACTIONBAR_UPDATE_STATE", "1", "0", "page=1 bonus=0"),
+            at("CURRENT_SPELL_CAST_CHANGED", "1", "0", "page=1 bonus=0"),
+            at("ACTIONBAR_UPDATE_COOLDOWN", "1", "1", "page=1 bonus=0"),
+            at("SPELL_UPDATE_COOLDOWN", "1", "1", "page=1 bonus=0"),
+            at("ACTIONBAR_UPDATE_STATE", "1", "1", "page=1 bonus=0"),
+            at("CURRENT_SPELL_CAST_CHANGED", "1", "1", "page=1 bonus=0"),
+            at("UPDATE_BONUS_ACTIONBAR", "1", "1", "page=1 bonus=1"),
+            at("ACTIONBAR_PAGE_CHANGED", "1", "1", "page=2 bonus=1"),
+        ]
+    );
+}
+
 /// The stock `EquipmentManager`'s in-flight slots clear on `ITEM_UNLOCKED` at the item's place (#682): a bag slot when the server's update moves the locked item there (`0x5d9863` -> `0x513770` -> `0x707041`), an inventory slot when the cursor's clear unlocks it (`0x5192c9` -> `0x707041`); the put-down's clear leaves the moved item locked, so its slot stays marked until the update (`0x6dfc0d`).
 #[test]
 fn the_equipment_managers_in_flight_slots_clear_at_their_unlock() {
@@ -7763,4 +8154,270 @@ fn the_vehicle_token_reads_the_seat_at_the_call() {
         .entity_mut(me)
         .remove::<crate::vehicle::Passenger>();
     assert_eq!(rig.live_now().line(&["veh"]), "NOW | veh=nil");
+}
+
+/// A trade from open to cancel: the partner's offer, the partner's accept, a template that lands
+/// late and the cancel, each event with the trade verbs' answers at it. The window's state is the
+/// VM's (`0xbfa400`-`0xbfa684`), written in each handler's turn; the verbs read it and the wire's
+/// cells at the call. Against the per-frame feed this replaced:
+/// - an empty slot answers `nil, nil, 0, 0` (`0x587e6e`-`0x587e8d`), so its count reads 0, not nil;
+/// - the offer fires no `TRADE_UPDATE`: the offer update signals each slot that moved and the coins
+///   (`0x586f96`, `0x587092`), and `TRADE_UPDATE` is the record callback's (`0x586080`), once per
+///   read that missed (four here, the observer reading slot 3 at each event);
+/// - the late record fires no `TRADE_TARGET_ITEM_CHANGED`: the window's copy did not move;
+/// - the cancel's `PLAYER_MONEY` reads the wire's coins already zeroed (`0x704594`, `0x7045ab`),
+///   `TRADE_CLOSED` reads no `"npc"` (`0x5870f7` before `0x58710e`), its line follows the close
+///   (`0x58751d`), and the partner's copy stays until the next open (`0x58716d`).
+#[test]
+fn a_trade_fires_from_its_handlers_with_the_offer_read_at_the_call() {
+    use benilla_protocol::messages::{TradeItem, TradeStatus, TradeStatusExtended};
+    const PARTNER: u64 = 0x0000_0000_0000_0777;
+    const GEM: u32 = 0x7_1001;
+    const LATE: u32 = 0x7_1002;
+    let human = (benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE, 1);
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER, human]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    rig.packets(
+        vec![
+            player_create_with(PARTNER, &[human]),
+            SessionEvent::ItemTemplate {
+                entry: GEM,
+                info: Some(Box::new(crate::items::test_template("Charz Gem"))),
+            },
+        ],
+        2,
+    );
+    const EVENTS: &[&str] = &[
+        "TRADE_SHOW",
+        "TRADE_UPDATE",
+        "TRADE_TARGET_ITEM_CHANGED",
+        "TRADE_PLAYER_ITEM_CHANGED",
+        "TRADE_ACCEPT_UPDATE",
+        "TRADE_MONEY_CHANGED",
+        "PLAYER_TRADE_MONEY",
+        "PLAYER_MONEY",
+        "TRADE_REQUEST_CANCEL",
+        "TRADE_CLOSED",
+        "UI_INFO_MESSAGE",
+    ];
+    const VERBS: &[&str] = &["npc", "tt1", "tt1n", "tt3", "tgold", "pgold"];
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::ui_trade::TradeSession>()
+        .begin(PARTNER);
+    let open = rig.packets(
+        vec![SessionEvent::TradeStatus {
+            status: TradeStatus::OpenWindow { trade_id: 1 },
+        }],
+        3,
+    );
+    let item = |entry: u32, count: u32| TradeItem {
+        entry,
+        display_id: 1,
+        count,
+        wrapped: false,
+        gift_creator: 0,
+        perm_enchant: 0,
+        socket_enchants: [0; 3],
+        creator: 0,
+        charges: 0,
+        suffix_factor: 0,
+        random_prop_id: 0,
+        lock_id: 0,
+        max_durability: 0,
+        durability: 0,
+    };
+    let mut slots: [Option<TradeItem>; 7] = Default::default();
+    slots[0] = Some(item(GEM, 3));
+    slots[2] = Some(item(LATE, 1));
+    let offer = rig.packets(
+        vec![SessionEvent::TradeStatusExtended {
+            state: Box::new(TradeStatusExtended {
+                their_window: true,
+                trade_id: 1,
+                state_index: 1,
+                side_state: 2,
+                gold: 500,
+                enchant_spell_id: 0,
+                slots,
+            }),
+        }],
+        3,
+    );
+    let accept = rig.packets(
+        vec![SessionEvent::TradeStatus {
+            status: TradeStatus::Accept,
+        }],
+        3,
+    );
+    let late = rig.packets(
+        vec![SessionEvent::ItemTemplate {
+            entry: LATE,
+            info: Some(Box::new(crate::items::test_template("Charz Late"))),
+        }],
+        3,
+    );
+    let cancel = rig.packets(
+        vec![SessionEvent::TradeStatus {
+            status: TradeStatus::Canceled,
+        }],
+        3,
+    );
+    let got: Vec<Vec<String>> = [open, offer, accept, late, cancel]
+        .iter()
+        .map(|seen| pin(seen, EVENTS, VERBS))
+        .collect();
+    let at = |s: &str| format!("{s} | npc=0x0000000000000777 tt1=Charz Gem tt1n=3");
+    assert_eq!(
+        got,
+        vec![
+            vec!["TRADE_SHOW | npc=0x0000000000000777 tt1=nil tt1n=0 tt3=nil tgold=0 pgold=0".to_string()],
+            vec![
+                at("TRADE_TARGET_ITEM_CHANGED 1") + " tt3=nil tgold=500 pgold=0",
+                at("TRADE_TARGET_ITEM_CHANGED 3") + " tt3=nil tgold=500 pgold=0",
+                at("TRADE_MONEY_CHANGED") + " tt3=nil tgold=500 pgold=0",
+            ],
+            vec![at("TRADE_ACCEPT_UPDATE 0 1") + " tt3=nil tgold=500 pgold=0"],
+            vec![at("TRADE_UPDATE") + " tt3=Charz Late tgold=500 pgold=0"; 4],
+            vec![
+                at("PLAYER_MONEY") + " tt3=Charz Late tgold=0 pgold=0",
+                at("TRADE_REQUEST_CANCEL") + " tt3=Charz Late tgold=0 pgold=0",
+                "PLAYER_TRADE_MONEY | npc=nil tt1=Charz Gem tt1n=3 tt3=Charz Late tgold=0 pgold=0"
+                    .to_string(),
+                "TRADE_CLOSED | npc=nil tt1=Charz Gem tt1n=3 tt3=Charz Late tgold=0 pgold=0"
+                    .to_string(),
+                "UI_INFO_MESSAGE Trade cancelled. | npc=nil tt1=Charz Gem tt1n=3 tt3=Charz Late tgold=0 pgold=0"
+                    .to_string(),
+            ],
+        ]
+    );
+}
+
+/// A corpse's loot from open to its last row: a record that lands late, a slot redrawn with a new
+/// item, two rows and the coins taken, each event with the loot verbs' answers at it. The window is
+/// the client's (`0xbfa690`), moved and signalled by each handler at its step and read at the call:
+/// - the window opens at its last record's callback (`0x589511`), and the changed slot's callback
+///   signals its row, then opens the window again once none is pending (`0x5894ac`, `0x589511`);
+/// - `GetNumLootItems` counts through the last row with an item, plus the coin slot (`0x588190`),
+///   and taken coins answer `""` (`0x588459`);
+/// - the last row's `LOOT_SLOT_CLEARED` reads the window still open (`0x5899c4`), its looted row at
+///   quality -1 (`0x588310` on item 0), and the close follows it (`0x589a19`).
+#[test]
+fn a_loot_window_fires_from_its_handlers_with_the_rows_read_at_the_call() {
+    use benilla_protocol::messages::{LootItem, LootSlotChanged};
+    const CORPSE: u64 = 0x0000_0000_0000_0888;
+    const GEM: u32 = 0x8_1001;
+    const LATE: u32 = 0x8_1002;
+    const NEW: u32 = 0x8_1003;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let template = |entry: u32, name: &str| SessionEvent::ItemTemplate {
+        entry,
+        info: Some(Box::new(crate::items::test_template(name))),
+    };
+    rig.packets(
+        vec![
+            player_create_with(CORPSE, &[(FIELD_UNIT_HEALTH, 0)]),
+            template(GEM, "Charz Gem"),
+        ],
+        2,
+    );
+    const EVENTS: &[&str] = &[
+        "LOOT_OPENED",
+        "LOOT_SLOT_CLEARED",
+        "LOOT_SLOT_CHANGED",
+        "LOOT_CLOSED",
+        "LOOT_BIND_CONFIRM",
+    ];
+    const VERBS: &[&str] = &["lootn", "l1", "l2", "l3", "l3q", "coin1", "item2"];
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::ui_loot::LootLatch>()
+        .0 = Some(CORPSE);
+    let row = |slot: u8, item_id: u32, count: u32| LootItem {
+        slot,
+        item_id,
+        count,
+        display_info_id: 1,
+        random_property_id: 0,
+        random_suffix: 0,
+        slot_type: 0,
+    };
+    let open = rig.packets(
+        vec![SessionEvent::LootResponse {
+            guid: CORPSE,
+            loot_type: 1,
+            gold: 250,
+            items: vec![row(0, GEM, 2), row(1, LATE, 1)],
+        }],
+        3,
+    );
+    let late = rig.packets(vec![template(LATE, "Charz Late")], 3);
+    let changed = rig.packets(
+        vec![SessionEvent::LootSlotChanged(LootSlotChanged {
+            looted_target: CORPSE,
+            slot: 1,
+            item_id: NEW,
+            display_info_id: 1,
+            random_suffix: 0,
+            random_property_id: 0,
+            count: 4,
+        })],
+        3,
+    );
+    let landed = rig.packets(vec![template(NEW, "Charz New")], 3);
+    let taken = rig.packets(vec![SessionEvent::LootRemoved { slot: 0 }], 3);
+    let coins = rig.packets(vec![SessionEvent::LootClearMoney], 3);
+    let last = rig.packets(vec![SessionEvent::LootRemoved { slot: 1 }], 3);
+    let got: Vec<Vec<String>> = [open, late, changed, landed, taken, coins, last]
+        .iter()
+        .map(|seen| pin(seen, EVENTS, VERBS))
+        .collect();
+    let at = |e: &str, rest: &str| format!("{e} | {rest}");
+    let full = "lootn=3 l1=2 Silver 50 Copper l2=Charz Gem";
+    assert_eq!(
+        got,
+        vec![
+            vec![],
+            vec![at(
+                "LOOT_OPENED 0",
+                &format!("{full} l3=Charz Late l3q=1 coin1=1 item2=1")
+            )],
+            vec![],
+            vec![
+                at(
+                    "LOOT_SLOT_CHANGED 3",
+                    &format!("{full} l3=Charz New l3q=1 coin1=1 item2=1")
+                ),
+                at(
+                    "LOOT_OPENED 0",
+                    &format!("{full} l3=Charz New l3q=1 coin1=1 item2=1")
+                ),
+            ],
+            vec![at(
+                "LOOT_SLOT_CLEARED 2",
+                "lootn=3 l1=2 Silver 50 Copper l2= l3=Charz New l3q=1 coin1=1 item2=nil"
+            )],
+            vec![at(
+                "LOOT_SLOT_CLEARED 1",
+                "lootn=3 l1= l2= l3=Charz New l3q=1 coin1=nil item2=nil"
+            )],
+            vec![
+                at(
+                    "LOOT_SLOT_CLEARED 3",
+                    "lootn=1 l1= l2= l3= l3q=-1 coin1=nil item2=nil"
+                ),
+                at(
+                    "LOOT_CLOSED",
+                    "lootn=0 l1= l2= l3= l3q=0 coin1=nil item2=nil"
+                ),
+            ],
+        ]
+    );
 }

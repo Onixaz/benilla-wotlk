@@ -144,6 +144,7 @@ where
             Vec::new(),
         ),
     };
+    assert_one_raise_list(world, !raised.is_empty());
     if !raised.is_empty() {
         crate::ui_script::safe_world::lend(world, |script| {
             for raise in raised {
@@ -184,15 +185,26 @@ pub(crate) fn answer_in_call(
 }
 
 /// A press that did not run drops its whole press silently: a hard failure in a debug build.
-fn step_ran<O, E: std::fmt::Display>(ran: Result<O, E>) -> Option<O> {
+pub(crate) fn step_ran<O, E: std::fmt::Display>(ran: Result<O, E>) -> Option<O> {
     match ran {
         Ok(out) => Some(out),
-        Err(e) if cfg!(debug_assertions) => panic!("script_calls: a press step did not run: {e}"),
+        Err(e) if cfg!(debug_assertions) => panic!("a press or handler step did not run: {e}"),
         Err(e) => {
-            warn!("script_calls: a press step did not run: {e}");
+            warn!("a press or handler step did not run: {e}");
             None
         }
     }
+}
+
+/// A step's raises fire in two lists, the VM's in turn and the handler queue's, so one step never raises on both: a hard failure in a debug build.
+pub(crate) fn assert_one_raise_list(world: &World, raised: bool) {
+    let queued = world
+        .get_resource::<crate::ui_script::live::UiEvents>()
+        .is_some_and(|ui| !ui.is_empty());
+    debug_assert!(
+        !(raised && queued),
+        "a step raised both in turn and on the handler queue: their order is lost"
+    );
 }
 
 /// Apply the calls that waited where no `World` was lent, in call order, in the press pass after
@@ -366,6 +378,14 @@ impl crate::ui_action::signals::SignalSink for InTurn<'_> {
         self.0.fire(event, Vec::new());
     }
 
+    fn fire(&mut self, event: &'static str, args: Vec<benilla_ui::script::ScriptValue>) {
+        self.0.fire(event, args);
+    }
+
+    fn unlock_item(&mut self, guid: u64) {
+        crate::ui_action::signals::SignalSink::unlock_item(self.0, guid);
+    }
+
     fn line(&mut self, line: crate::ui_action::UiError) {
         self.0
             .write(move |script| crate::ui_action::signals::SignalSink::line(script, line));
@@ -484,7 +504,7 @@ mod tests {
 
     /// A press step whose system cannot run loses its whole press (its send, its GCD arm): a debug build fails on it.
     #[test]
-    #[should_panic(expected = "a press step did not run")]
+    #[should_panic(expected = "a press or handler step did not run")]
     fn a_press_step_that_cannot_run_fails_loudly() {
         #[derive(Resource)]
         struct Absent;

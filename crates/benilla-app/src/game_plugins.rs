@@ -716,7 +716,7 @@ pub(crate) mod schedule_tests {
     /// - A pure cache, where a miss records itself (`NameCache`, the GameObject templates, the
     ///   page texts, `WorldAssets`, `Creatures`' and `ItemDisplays`' display models): two misses for one key commute.
     ///   A cache that is also a window's state is not pure, and not here.
-    /// - An append-only sink (`ChatLog`, `MessageSounds`, `UiErrorKeys`, `UiErrorTexts`):
+    /// - An append-only sink (`ChatLog`, `MessageSounds`):
     ///   writers commute, and a drain's order against a writer is one frame of latency.
     /// - A random stream (`SoundKits`, `AnimRng`): any interleaving of draws is a valid draw,
     ///   the reference's contract for its single stream.
@@ -828,8 +828,6 @@ pub(crate) mod schedule_tests {
         const SINKS: &[ClassRow] = &[
             ("ChatLog", TypeId::of::<crate::ui_chat::ChatLog>),
             ("MessageSounds", TypeId::of::<crate::sound::MessageSounds>),
-            ("UiErrorKeys", TypeId::of::<crate::ui_action::UiErrorKeys>),
-            ("UiErrorTexts", TypeId::of::<crate::ui_action::UiErrorTexts>),
             // The cast send appends; the vehicle's aim drains it once, after the frame's casts.
             (
                 "TrajectoryCasts",
@@ -1989,6 +1987,8 @@ pub(crate) mod schedule_tests {
          "runs in the challenge packet's handler turn, as 12340's handler fires `DUEL_REQUESTED` (`0x5cfd8b`); a packet before the interface loads has no listener in 12340 either"),
         ("ui_unit.rs", "target_set_tail", Because::Deliberate,
          "the selection setter's tail (`0x524f54`), run inside the script call that moved the selection"),
+        ("net/handler_step_tests.rs", "both", Because::Deliberate,
+         "a test's step that raises on both lists, run by `net::handlers::step` alone and never scheduled"),
         ("sound/ui.rs", "feed_drivers", Because::MemoLatched,
          "the device list rides a `VmMemo` seed, glue VM included, which a gate would starve; a `SOUND_DEVICE_UPDATE` taken before the interface is up is the reference's own drop, as the sound device-change handler signals only once the game UI is initialised"),
         ("tutorial.rs", "drain_tutorials", Because::FilledByVm,
@@ -2011,8 +2011,6 @@ pub(crate) mod schedule_tests {
          "both packets answer the `CMSG_LOGOUT_REQUEST`/cancel the game menu sent"),
         ("ui_loot/mod.rs", "drain_loot_asks", Because::Deliberate,
          "the pre-VM take of `LootMoveStart` is documented at the line and publishes nothing to the VM; the event-firing takes are Lua's queues"),
-        ("ui_loot/mod.rs", "feed_loot", Because::PlayerRoundTrip,
-         "it takes `LootMoveStart` only on a window it has just opened, which answers a loot click"),
         ("ui_loot_roll.rs", "drain_loot_rolls", Because::FilledByVm,
          "only a Need/Greed/Pass click queues a confirm or vote, held in the VM"),
         ("ui_loot_roll.rs", "feed_loot_rolls", Because::PlayerRoundTrip,

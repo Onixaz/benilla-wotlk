@@ -335,7 +335,7 @@ mod tests {
     fn the_trade_pair_moves_coins_between_the_cursor_and_the_offer() {
         let mut s = UiScript::new().unwrap();
         s.set_money(1_000);
-        s.set_trade(Some(crate::script::TradeState::default()));
+        s.open_trade_partner(0x7, false);
         s.run("PickupPlayerMoney(300) AddTradeMoney()").unwrap();
         assert_eq!(
             s.take_trade_money(),

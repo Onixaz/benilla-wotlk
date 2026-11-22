@@ -90,30 +90,28 @@ pub(crate) fn first_empty_slot(actions: &ActionSlots, page: u8) -> Option<u8> {
     (page..page.saturating_add(PAGE_SLOTS)).find(|slot| !actions.buttons.contains_key(slot))
 }
 
-/// `0x5aafd0(0, spell)`, run before the registrar on a live learn (`0x6e7b00`): every spell
-/// button whose spell shares the new one's name and sits one rank below it, by
-/// [`SpellDisplay::rank_or_level`], in ascending slot order. The reference also re-points a
-/// macro bound to the old rank (`[rec+0x564]`); benilla's macro binding re-resolves from the
-/// book, so the bar's macros need no write.
+/// `0x5aafd0(0, spell)` before a live learn's registrar (`0x6e7b00`): the spell buttons one [`SpellDisplay::rank_or_level`] below by name, in slot order.
 pub(crate) fn lower_rank_slots(
     actions: &ActionSlots,
     catalog: &SpellCatalog,
     new: &SpellDisplay,
 ) -> Vec<u8> {
-    let new_rank = new.rank_or_level();
     let mut slots: Vec<u8> = actions
         .buttons
         .values()
         .filter(|b| b.kind == ACTION_KIND_SPELL && b.action != new.id)
-        .filter(|b| {
-            catalog
-                .get(b.action)
-                .is_some_and(|old| old.name == new.name && new_rank == old.rank_or_level() + 1)
-        })
+        .filter(|b| is_rank_below(catalog, new, b.action))
         .map(|b| b.slot)
         .collect();
     slots.sort_unstable();
     slots
+}
+
+/// The rank replace's match without an old id (`0x5ab03e`-`0x5ab098`): `old` shares `new`'s name, one rank below.
+pub(crate) fn is_rank_below(catalog: &SpellCatalog, new: &SpellDisplay, old: u32) -> bool {
+    catalog
+        .get(old)
+        .is_some_and(|old| old.name == new.name && new.rank_or_level() == old.rank_or_level() + 1)
 }
 
 #[cfg(test)]

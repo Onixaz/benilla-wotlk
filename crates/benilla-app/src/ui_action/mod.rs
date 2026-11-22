@@ -29,8 +29,6 @@ mod feed;
 #[cfg(test)]
 mod feed_tests;
 mod net;
-#[cfg(test)]
-mod queue_census_tests;
 mod ranks;
 pub(crate) mod signals;
 pub(crate) mod slots;
@@ -53,11 +51,15 @@ pub(crate) struct ActionRanks;
 
 #[cfg(test)]
 pub(crate) use cast_refusal::take_refusals;
-pub(crate) use cast_refusal::{show_refusal, CastFailShow, CastRefusals, RefusalsSeen, WaitRecord};
+pub(crate) use cast_refusal::{
+    refuse_then_end, show_refusal, CastFailShow, CastRefusals, RefusalsSeen, WaitRecord,
+};
+#[cfg(test)]
+pub(crate) use errors::take_lines_in_turn;
 pub(crate) use errors::{
     attack_actor_blocked, attack_actor_refusal, keyed_line, reagent_totem_refusal, show_in_turn,
     show_line_in_world, show_messages, ui_error_text, CastFail, Caster, FillArg, MessageSink,
-    Shown, ToolCheck, UiError, UiErrorKeys, UiErrorTexts,
+    Shown, TextSink, ToolCheck, UiError,
 };
 pub(crate) use weapon_icon::{melee_auto_attack_icon, ranged_weapon_icon};
 
@@ -467,8 +469,6 @@ impl Plugin for UiActionPlugin {
             .init_resource::<usable_cache::UsableCaches>()
             .init_resource::<TempActionBar>()
             .init_resource::<LearnedAbilities>()
-            .init_resource::<UiErrorKeys>()
-            .init_resource::<UiErrorTexts>()
             .init_resource::<GoOpenerCasts>()
             .add_systems(Startup, load_spells.after(AssetSet::Open))
             .add_systems(Startup, load_spell_mechanics.after(AssetSet::Open))

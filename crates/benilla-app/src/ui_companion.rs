@@ -223,6 +223,7 @@ pub(crate) fn active_player_init(In((race, class, form)): In<(u8, u8, u8)>, init
         actions,
     } = init;
     book.set_race_class(race, class);
+    book.clear_registered();
     {
         use crate::ui_action::usable_cache::{edit_step, ListEdit};
         ui.world(edit_step(ListEdit::Rebuild));
@@ -253,7 +254,8 @@ pub(crate) fn active_player_init(In((race, class, form)): In<(u8, u8, u8)>, init
             summons: summons.as_deref().map_or(&EMPTY_SUMMONS, |s| &s.0),
             skill_lines: skill_lines.as_deref().map(|s| &*s.catalog),
         };
-        book.update(&inputs, &mut schools, ui);
+        // Our object's init passes its first argument set (`0x6e7fd5`).
+        book.update(&inputs, &mut schools, ui, true);
     };
     let (Some(spells), Some(summons), Some(names), Some(commands)) = (
         spells.as_deref(),
@@ -337,13 +339,76 @@ pub(crate) fn record_answered(
         match name {
             Some(name) if notify => {
                 cx.learn_line(name);
-                cx.update(lists, answered);
-                cx.ui.fire("COMPANION_LEARNED", Vec::new());
+                // The update, `COMPANION_LEARNED` and the later callbacks after the line's listeners (`0x5427be`).
+                let name = name.to_string();
+                cx.ui
+                    .world(move |world| learned_after_line(world, entry, name));
+                return;
             }
             _ if lists.pending.is_empty() => cx.update(lists, answered),
             _ => {}
         }
     }
+}
+
+/// A learn line's tail in the creature-record callback (`0x53ebc0`): the update and `COMPANION_LEARNED`, then the callbacks still filed on `entry` as a step after its listeners (`0x53ec20` returns before the next callback).
+fn learned_after_line(world: &mut World, entry: u32, name: String) {
+    with_cx(
+        world,
+        entry,
+        name,
+        "a companion learn's tail",
+        |lists, entry, name, cx| {
+            cx.update(lists, Some((entry, name)));
+            cx.ui.fire("COMPANION_LEARNED", Vec::new());
+            let name = name.to_string();
+            cx.ui
+                .world(move |world| later_callbacks(world, entry, name));
+        },
+    );
+}
+
+/// The callbacks still filed on `entry` once a learn's signal has run (`0x53ebc0`).
+fn later_callbacks(world: &mut World, entry: u32, name: String) {
+    with_cx(
+        world,
+        entry,
+        name,
+        "a companion record's later callbacks",
+        |lists, entry, name, cx| {
+            record_answered(lists, entry, Some(name), cx);
+        },
+    );
+}
+
+/// A step over the lists and a [`CompanionCx`], with the answered entry and name.
+type CxStep = fn(&mut CompanionLists, u32, &str, &mut CompanionCx);
+
+/// `f` over the lists and a [`CompanionCx`] built from the `World`; nothing without the spells.
+fn with_cx(world: &mut World, entry: u32, name: String, what: &'static str, f: CxStep) {
+    let ran = world.run_system_cached_with(
+        |In((entry, name, f)): In<(u32, String, CxStep)>,
+         mut lists: ResMut<CompanionLists>,
+         spells: Option<Res<crate::ui_action::Spells>>,
+         summons: Res<crate::spell::SummonSlots>,
+         names: Res<NameCache>,
+         commands: Res<NetCommands>,
+         mut ui: ResMut<UiEvents>| {
+            let Some(spells) = spells.as_deref() else {
+                return;
+            };
+            let mut cx = CompanionCx {
+                catalog: &spells.catalog,
+                summons: &summons.0,
+                names: &names,
+                commands: &commands,
+                ui: &mut ui,
+            };
+            f(&mut lists, entry, &name, &mut cx);
+        },
+        (entry, name, f),
+    );
+    crate::ui_cast::step_ran(ran, what);
 }
 
 /// One `COMPANION_UPDATE "MOUNT"` per `MOUNTED` effect of `spell_id` as an aura of it comes or goes on us (`0x724a6b`, `0x71e9b2`).

@@ -1,6 +1,8 @@
-//! The loot-window bindings: the app pushes the open loot ([`UiScript::set_loot`]), a coin row
-//! first when there is gold, and the Lua verbs queue intents it drains. `slot` is 1-based; the app
-//! maps a row to the money intent or the item's wire slot, which Lua never sees.
+//! The loot-window bindings. The window is the client's (`[0xbfa8d8]` the object, `[0xbfa8d0]` the
+//! coins, the 18-row table at `0xbfa690`), read at each call through the live view
+//! ([`super::LiveState::loot_window`]); a coin row comes first while the window has coins. Its events
+//! fire from the packet handlers that move it. `slot` is 1-based; the app maps a row to the money
+//! intent or the item's wire slot, which Lua never sees.
 //!
 //! `LootSlot` is the take: 12340's binding `0x589520` calls the take dispatcher `0x589140`, and the
 //! stock row click ends in it (`LootFrame.lua:221`). `ConfirmLootSlot` (`0x589590` → `0x589300`)
@@ -11,6 +13,7 @@
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::flag;
+use super::model::Model;
 
 /// The quality `GetLootSlotInfo` answers on an item-cache miss: the reference's -1, never nil.
 /// Stock `UIParent.lua:66` builds `ITEM_QUALITY_COLORS` from -1, and `LootFrame_Update` indexes it
@@ -26,12 +29,12 @@ const CACHE_MISS_NAME: &str = "";
 /// pushes as nil.
 const MISSING_ICON: &str = "Interface\\Icons\\INV_Misc_QuestionMark";
 
-/// The quality of a slot with no item (past the end, slot 0, no window): the reference's guards
-/// return 0. A cleared slot takes -1 instead: its itemId is 0, which the reference turns into a
-/// NULL record, the cache-miss arm.
+/// The quality of a slot with no item (past the table, slot 0, no window, the coin slot once its
+/// coins are taken): the reference's guards return 0 (`0x588310`). A cleared item row takes -1
+/// instead: its itemId is 0, which the reference turns into a NULL record, the cache-miss arm.
 const NO_SLOT_QUALITY: i64 = 0;
 
-/// One loot-window row, resolved by the app; its 1-based slot is its place in [`LootState::rows`].
+/// One loot-window row, resolved at the call; its 1-based slot is its place in [`LootState::rows`].
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LootRow {
     /// Item name or the coin's money text; `None` while in flight, answered as [`CACHE_MISS_NAME`].
@@ -57,19 +60,19 @@ pub struct LootRow {
     pub random_property_id: u32,
 }
 
-/// One open loot window, pushed whole by the app; `None` means no loot is open.
+/// One open loot window as a verb reads it; `None` means no loot is open.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LootState {
-    /// The fixed slot list. A looted slot becomes `None`: still counted by `GetNumLootItems`, read
-    /// once at `OnShow` (`LootFrame.lua:132`), but neither item nor coin, so `LootFrame_Update`
-    /// hides its button in place (`LootFrame.lua:80`).
+    /// The display slots: the coin row first when [`Self::coin_slot`], then the item table. A
+    /// looted slot is `None`: neither item nor coin, so `LootFrame_Update` hides its button in
+    /// place (`LootFrame.lua:80`). The live view lists all 18 table rows, an empty one `None`.
     pub rows: Vec<Option<LootRow>>,
+    /// Display slot 1 is the coin's (`[0xbfa8d0]` nonzero), kept once its coins are taken
+    /// (`0x589184` stores -1), so the item rows keep their slots.
+    pub coin_slot: bool,
     /// `IsFishingLoot` (wire `loot_type` 3): the reel-in sound and portrait (`LootFrame.lua:137`).
     pub fishing: bool,
-    /// The names `GetMasterLootCandidate(i)` answers by 1-based slot, from `SMSG_LOOT_MASTER_LIST`.
-    /// Not packed: in a raid each candidate sits in their subgroup's five-slot block, which the
-    /// dropdown labels "Group N" (`LootFrame.lua:197-213`). A `None` (an empty slot, or a name not
-    /// yet resolved) answers nil.
+    /// The names `GetMasterLootCandidate(i)` answers by 1-based slot where no view is lent.
     pub master_candidates: Vec<Option<String>>,
     /// The loot source resolves as a unit object (typemask 8): a corpse, not a chest, a bobber or
     /// an item. `SetLootPortrait` bakes it under the token [`LOOT_PORTRAIT_UNIT`].
@@ -79,17 +82,61 @@ pub struct LootState {
     pub source_level: u32,
 }
 
+impl LootState {
+    /// `GetNumLootItems` (`0x588190`): through the last table row with an item, plus the coin slot,
+    /// so a trailing looted row drops off the count.
+    fn count(&self) -> usize {
+        let coin = usize::from(self.coin_slot);
+        let items = self.rows.get(coin..).unwrap_or_default();
+        coin + items.iter().rposition(Option::is_some).map_or(0, |i| i + 1)
+    }
+}
+
 /// The portrait key `SetLootPortrait` binds a texture to, which the app bakes from the loot
 /// source. Upper case, so no `SetPortraitTexture` token, which is lowercased, can name it.
 pub const LOOT_PORTRAIT_UNIT: &str = "LOOT";
 
+/// The open loot at the call; with no view lent, a fixture's.
+pub(crate) fn window(model: &Model) -> Option<LootState> {
+    if let Some(window) = super::read_live(|l| l.loot_window()).flatten() {
+        return window;
+    }
+    #[cfg(any(test, feature = "fixtures"))]
+    {
+        model.loot.clone()
+    }
+    #[cfg(not(any(test, feature = "fixtures")))]
+    {
+        let _ = model;
+        None
+    }
+}
+
+/// The looted object (`[0xbfa8d8]`), 0 with no loot open; with no view lent, a fixture's.
+pub(crate) fn source(model: &Model) -> u64 {
+    if let Some(Some(guid)) = super::read_live(|l| l.loot_source()) {
+        return guid;
+    }
+    #[cfg(any(test, feature = "fixtures"))]
+    {
+        model.loot_source
+    }
+    #[cfg(not(any(test, feature = "fixtures")))]
+    {
+        let _ = model;
+        0
+    }
+}
+
 impl super::UiScript {
-    /// Push (or clear, with `None`) the open loot.
+    /// A test's or a capture fixture's open loot (or none), read where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_loot(&mut self, state: Option<LootState>) {
         set_field!(self, loot, state);
     }
 
-    /// Push the looted object's guid, 0 with no loot open (`[0xbfa8d8]`).
+    /// A test's looted object, 0 with no loot open, read where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_loot_source(&mut self, guid: u64) {
         set_field!(self, loot_source, guid);
     }
@@ -125,6 +172,14 @@ fn loot_slot_arg(slot: f64) -> Option<u32> {
     (slot >= 1.0).then_some(slot as u32)
 }
 
+/// Display slot `slot` (1-based) of the open loot: `Some(Some(row))` an item or the coins,
+/// `Some(None)` an empty row or taken coins, `None` no such slot.
+fn slot_of(window: Option<&LootState>, slot: usize) -> Option<Option<&LootRow>> {
+    window
+        .and_then(|l| slot.checked_sub(1).and_then(|n| l.rows.get(n)))
+        .map(Option::as_ref)
+}
+
 /// Register the loot globals.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
@@ -138,7 +193,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, texture: Value| {
             let rh = super::region::this_texture(lua, &texture)?;
             let mut model = crate::script::model_mut_of(lua);
-            if !model.loot.as_ref().is_some_and(|l| l.source_unit) {
+            if !window(&model).is_some_and(|l| l.source_unit) {
                 super::region::clear_texture(&mut model, rh);
                 return Ok(Value::Nil);
             }
@@ -151,47 +206,41 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetNumLootItems(): cleared slots included, so it holds still while a window is open.
+    // GetNumLootItems() (`0x588190`): through the last row with an item, plus the coin slot.
     g.set(
         "GetNumLootItems",
         lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(model.loot.as_ref().map_or(0, |l| l.rows.len()) as i64)
+            let model = crate::script::model_mut_of(lua);
+            Ok(window(&model).map_or(0, |l| l.count()) as i64)
         })?,
     )?;
 
     // GetLootSlotInfo(slot) → texture, item, quantity, quality, locked (`0x588570`,
     // `LootFrame.lua:97`), five on every leg: `locked` is 1 for a `LOCKED` slot type
-    // (`[0xbfa6ac]` == 3) and nil otherwise. No item is `nil, "", 0, 0`, a cleared slot
-    // `nil, "", 0, -1`. The miss sentinels are a floor: the reference opens no window before every
-    // template lands, and the app holds `LOOT_OPENED` back likewise.
+    // (`[0xbfa6ac]` == 3) and nil otherwise. No slot is `nil, "", 0, 0`, a looted item row
+    // `nil, "", 0, -1` (`0x588310` reads the record of item 0), taken coins `nil, "", 0, 0`
+    // (`0x5883a7`, `0x588459`, `0x588329`). The miss sentinels are a floor: the window opens once
+    // every record has landed (`0x5896b0`, `0x589460`).
     g.set(
         "GetLootSlotInfo",
         lua.create_function(|lua, slot: usize| {
-            // `Some(Some(row))` live, `Some(None)` cleared, `None` no such slot.
-            let slot_state = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                model
-                    .loot
-                    .as_ref()
-                    .and_then(|l| slot.checked_sub(1).and_then(|n| l.rows.get(n)))
-                    .cloned()
+            let window = {
+                let model = crate::script::model_mut_of(lua);
+                window(&model)
             };
-            let Some(Some(row)) = slot_state else {
-                let cleared = slot_state.is_some();
+            let state = slot_of(window.as_ref(), slot);
+            let Some(Some(row)) = state else {
+                let coins_taken = slot == 1 && window.as_ref().is_some_and(|l| l.coin_slot);
+                let quality = if state.is_some() && !coins_taken {
+                    CACHE_MISS_QUALITY
+                } else {
+                    NO_SLOT_QUALITY
+                };
                 return Ok(MultiValue::from_vec(vec![
                     Value::Nil,
                     Value::String(lua.create_string(CACHE_MISS_NAME)?),
                     Value::Integer(0),
-                    Value::Integer(if cleared {
-                        CACHE_MISS_QUALITY
-                    } else {
-                        NO_SLOT_QUALITY
-                    }),
+                    Value::Integer(quality),
                     Value::Nil,
                 ]));
             };
@@ -214,21 +263,19 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetLootSlotLink(slot): nil out of range, for the coin row and while the template is in
-    // flight. The stock row click hands it to `DressUpItemLink` (`LootFrame.lua:149`) and
-    // `ChatFrameEditBox:Insert` (`:152`), both of which take a nil.
+    // GetLootSlotLink(slot) (`0x5886d0` → `0x5884a0`): nil out of range, for the coin row and while
+    // the record is in flight, which it reads with no callback. The stock row click hands it to
+    // `DressUpItemLink` (`LootFrame.lua:149`) and `ChatFrameEditBox:Insert` (`:152`), both of which
+    // take a nil.
     g.set(
         "GetLootSlotLink",
         lua.create_function(|lua, slot: usize| {
             let link = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                model
-                    .loot
-                    .as_ref()
-                    .and_then(|l| slot.checked_sub(1).and_then(|n| l.rows.get(n)))
-                    .and_then(|r| r.as_ref()?.link.clone())
+                let model = crate::script::model_mut_of(lua);
+                let window = window(&model);
+                slot_of(window.as_ref(), slot)
+                    .flatten()
+                    .and_then(|r| r.link.clone())
             };
             match link {
                 Some(link) => Ok(Value::String(lua.create_string(&link)?)),
@@ -237,41 +284,44 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // LootSlotIsItem(slot) (`0x588750`): a table row holding an item.
     g.set(
         "LootSlotIsItem",
         lua.create_function(|lua, slot: usize| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(super::binding_abi::flag(
-                slot.checked_sub(1)
-                    .and_then(|n| model.loot.as_ref()?.rows.get(n)?.as_ref())
+            let model = crate::script::model_mut_of(lua);
+            let window = window(&model);
+            Ok(flag(
+                slot_of(window.as_ref(), slot)
+                    .flatten()
                     .is_some_and(|r| !r.is_coin),
             ))
         })?,
     )?;
 
+    // LootSlotIsCoin(slot) (`0x588810`): slot 1 while the coins are there.
     g.set(
         "LootSlotIsCoin",
         lua.create_function(|lua, slot: usize| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(super::binding_abi::flag(
-                slot.checked_sub(1)
-                    .and_then(|n| model.loot.as_ref()?.rows.get(n)?.as_ref())
+            let model = crate::script::model_mut_of(lua);
+            let window = window(&model);
+            Ok(flag(
+                slot_of(window.as_ref(), slot)
+                    .flatten()
                     .is_some_and(|r| r.is_coin),
             ))
         })?,
     )?;
 
+    // IsFishingLoot() (`0x5888e0`): the last window's loot type (`[0xbfa68c]`), which a close
+    // leaves in place.
     g.set(
         "IsFishingLoot",
         lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(flag(model.loot.as_ref().is_some_and(|l| l.fishing)))
+            if let Some(Some(fishing)) = super::read_live(|l| l.loot_fishing()) {
+                return Ok(flag(fishing));
+            }
+            let model = crate::script::model_mut_of(lua);
+            Ok(flag(window(&model).is_some_and(|l| l.fishing)))
         })?,
     )?;
 
@@ -313,24 +363,24 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetMasterLootCandidate(index): nil, never an error, out of range or on an empty slot, since
+    // GetMasterLootCandidate(index) (`0x588920`): the candidate list's guid at `index - 1`
+    // (`0x6fa770`) and its name read off the name cache, which leaves its callback on a miss
+    // (`0x58899d`, `0x588150`); nil, never an error, out of range or on an empty slot, since
     // `GroupLootDropDown_Initialize` probes slots 1-5 in a party and 1-40 in a raid and reads nil
     // as nobody (`LootFrame.lua:168-232`).
     g.set(
         "GetMasterLootCandidate",
         lua.create_function(|lua, index: u32| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            let name = index.checked_sub(1).and_then(|i| {
-                model
-                    .loot
-                    .as_ref()?
-                    .master_candidates
-                    .get(i as usize)?
-                    .clone()
-            });
-            Ok(name)
+            let Some(index) = index.checked_sub(1) else {
+                return Ok(None);
+            };
+            if let Some(Some(name)) = super::write_live(|l| l.master_loot_candidate(index)) {
+                return Ok(name);
+            }
+            let model = crate::script::model_mut_of(lua);
+            Ok(window(&model)
+                .and_then(|l| l.master_candidates.get(index as usize).cloned())
+                .flatten())
         })?,
     )?;
 
@@ -408,6 +458,7 @@ mod tests {
 
     fn loot() -> LootState {
         LootState {
+            coin_slot: false,
             source_unit: false,
             source_level: 0,
             master_candidates: Vec::new(),
@@ -526,6 +577,45 @@ mod tests {
         assert!(s.eval::<bool>("return not LootSlotIsItem(1)").unwrap());
         assert!(s.eval::<bool>("return not LootSlotIsCoin(1)").unwrap());
         assert!(s.eval::<bool>("return LootSlotIsItem(2)").unwrap());
+    }
+
+    /// `GetNumLootItems` counts through the last row with an item, plus the coin slot
+    /// (`0x588190`); taken coins answer `nil, "", 0, 0` (`0x5883a7`, `0x588459`, `0x588329`)
+    /// where a looted item row answers -1 (`0x588310` on item 0).
+    #[test]
+    fn the_count_stops_at_the_last_item_and_taken_coins_read_quality_0() {
+        let mut s = UiScript::new().unwrap();
+        let mut l = loot();
+        l.coin_slot = true;
+        l.rows.extend([None, None]);
+        s.set_loot(Some(l.clone()));
+        assert_eq!(
+            s.eval::<i64>("return GetNumLootItems()").unwrap(),
+            3,
+            "trailing empty rows are not counted"
+        );
+        l.rows[2] = None;
+        s.set_loot(Some(l.clone()));
+        assert_eq!(s.eval::<i64>("return GetNumLootItems()").unwrap(), 2);
+        assert_eq!(
+            s.eval::<i64>("return select(4, GetLootSlotInfo(3))")
+                .unwrap(),
+            -1,
+            "a looted item row inside the table"
+        );
+        l.rows[1] = None;
+        l.rows[0] = None;
+        s.set_loot(Some(l));
+        assert_eq!(
+            s.eval::<i64>("return GetNumLootItems()").unwrap(),
+            1,
+            "the coin slot still counts once its coins are taken"
+        );
+        let (name, count, quality) = s
+            .eval::<(String, i64, i64)>("local _, n, c, q = GetLootSlotInfo(1) return n, c, q")
+            .unwrap();
+        assert_eq!((name.as_str(), count, quality), ("", 0, 0));
+        assert!(s.eval::<bool>("return not LootSlotIsCoin(1)").unwrap());
     }
 
     #[test]

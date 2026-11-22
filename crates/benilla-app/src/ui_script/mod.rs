@@ -43,6 +43,8 @@ mod load_log;
 mod manifest;
 #[cfg(test)]
 mod raise_census_tests;
+#[cfg(test)]
+mod raise_step_census_tests;
 /// The server alert's fetch and `LaunchURL`'s browser, for the stock glue screens.
 pub(crate) mod server_alert;
 #[cfg(test)]
@@ -830,7 +832,8 @@ fn demo_units(script: &mut UiScript, player: u64, fired: &mut VmMemo<bool>) {
                 }),
             );
             // Server-less a slot has no usable state; a live bar's resting state is usable.
-            script.set_action_state(
+            crate::dev::set_fixture_action_state(
+                script,
                 action,
                 Some(benilla_ui::script::ActionState {
                     usable: true,

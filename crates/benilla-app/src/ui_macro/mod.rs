@@ -54,11 +54,6 @@ impl Plugin for UiMacroPlugin {
                     // Once per VM, in `Update`: it needs both the patch chain and the VM, and each
                     // login builds a fresh VM.
                     load_icon_catalog.in_set(crate::ui_script::UiFeed),
-                    // Before the action feeds read it (they run in `UnitFeed`), so a macro edited
-                    // this frame reports its new spell's cooldown the same frame.
-                    rebind_macro_spells
-                        .in_set(crate::ui_script::UiFeed)
-                        .before(crate::ui_unit::UnitFeed),
                     // In-world only: the per-character file needs the character.
                     load_macros
                         .in_set(crate::ui_script::UiFeed)
@@ -148,6 +143,9 @@ fn load_macros(
     mut script: crate::ui_script::InTurn,
     data: Res<crate::account_data::AccountData>,
     mut files: ResMut<MacroFiles>,
+    table: Option<Res<crate::ui_chat::commands::SlashCommands>>,
+    book: Res<crate::ui_spellbook::SpellBook>,
+    mut bound: ResMut<MacroBoundSpells>,
 ) {
     use crate::account_data::store::{MACROS_ACCOUNT, MACROS_CHARACTER};
     let Some(mut script) = script.turn() else {
@@ -171,6 +169,11 @@ fn load_macros(
         state.account.len(),
         state.character.len()
     );
+    // The load binds every macro's spell before its bar signal (`0x567f8d`, `0x567fac`).
+    if let Some(table) = table.as_deref() {
+        bound.0 = bind_all(table, &state, &book.live.book);
+        script.set_macro_bindings(vm_bindings(&bound.0));
+    }
     script.set_macros(state);
     // `UPDATE_MACROS`: the macro frame redraws on it, as after an edit.
     script.fire_event("UPDATE_MACROS", vec![]);
@@ -218,66 +221,177 @@ pub(crate) fn save_to_account_data(world: &mut World) {
     }
 }
 
-/// Recompute every macro's bound spell when the macro table or the spell book changes: gated on
-/// the engine's macro generation and on change detection over the book.
-fn rebind_macro_spells(
-    script: Option<NonSendMut<UiScript>>,
-    book: Res<crate::ui_spellbook::SpellBook>,
-    table: Option<Res<crate::ui_chat::commands::SlashCommands>>,
-    mut bound: ResMut<MacroBoundSpells>,
-    mut last_generation: Local<crate::ui_script::VmMemo<Option<u64>>>,
+/// Every macro's bound spell off the book, by 1-based index (`0x565c40` -> `0x5650c0`).
+pub(crate) fn bind_all(
+    table: &crate::ui_chat::commands::SlashCommands,
+    macros: &MacroState,
+    book: &benilla_ui::script::SpellBookState,
+) -> std::collections::HashMap<u32, BoundSpell> {
+    (1..=benilla_ui::script::MAX_MACRO_INDEX as u32)
+        .filter_map(|index| {
+            let m = macros.get(index as usize)?;
+            Some((index, run::bound_spell(table, &m.body, book)))
+        })
+        .collect()
+}
+
+/// A macro verb's binding change: a parsed macro looked up (`0x565c40` -> `0x5650c0`), a delete shifts its set's later bindings (`0x566d50`).
+pub(crate) fn apply_change(
+    table: &crate::ui_chat::commands::SlashCommands,
+    macros: &MacroState,
+    book: &benilla_ui::script::SpellBookState,
+    bound: &mut std::collections::HashMap<u32, BoundSpell>,
+    change: benilla_ui::script::MacroChange,
 ) {
-    let (Some(mut script), Some(table)) = (script, table) else {
+    use benilla_ui::script::{MacroChange, MAX_ACCOUNT_MACROS, MAX_MACRO_INDEX};
+    match change {
+        MacroChange::Parsed(index) => match macros.get(index as usize) {
+            Some(m) => {
+                bound.insert(index, run::bound_spell(table, &m.body, book));
+            }
+            None => {
+                bound.remove(&index);
+            }
+        },
+        MacroChange::Deleted(index) => {
+            let last = if index as usize <= MAX_ACCOUNT_MACROS {
+                MAX_ACCOUNT_MACROS
+            } else {
+                MAX_MACRO_INDEX
+            } as u32;
+            bound.remove(&index);
+            for later in index + 1..=last {
+                if let Some(b) = bound.remove(&later) {
+                    bound.insert(later - 1, b);
+                }
+            }
+        }
+    }
+}
+
+/// The VM's copy of `bound`, which `GetActionAutocast` reads; [`run::bound_spell`] resolves the player's book only.
+pub(crate) fn vm_bindings(
+    bound: &std::collections::HashMap<u32, BoundSpell>,
+) -> std::collections::HashMap<u32, benilla_ui::script::MacroBinding> {
+    bound
+        .iter()
+        .map(|(&index, b)| {
+            let spell = match *b {
+                BoundSpell::None => 0,
+                BoundSpell::Unresolved => -1,
+                BoundSpell::Spell(id) => id as i32,
+            };
+            (
+                index,
+                benilla_ui::script::MacroBinding {
+                    spell,
+                    pet_book: false,
+                },
+            )
+        })
+        .collect()
+}
+
+/// The rank replace's macro leg (`0x5aafd0`): a bar macro on a `replaces` spell re-points at `new`, no slot signal (`0x5ab0e2`-`0x5ab0f3`).
+pub(crate) fn replace_rank(
+    bound: &mut std::collections::HashMap<u32, BoundSpell>,
+    bar: &crate::ui_action::ActionSlots,
+    new: u32,
+    replaces: impl Fn(u32) -> bool,
+) -> bool {
+    let mut moved = false;
+    for b in bar
+        .buttons
+        .values()
+        .filter(|b| b.kind == benilla_protocol::messages::ACTION_KIND_MACRO)
+    {
+        if let Some(spell) = bound.get_mut(&b.action) {
+            if let BoundSpell::Spell(old) = *spell {
+                if old != 0 && replaces(old) {
+                    *spell = BoundSpell::Spell(new);
+                    moved = true;
+                }
+            }
+        }
+    }
+    moved
+}
+
+/// The VM's copy of [`MacroBoundSpells`] written from it, in turn with the handler's events.
+pub(crate) fn sync_vm_bindings(world: &mut World) {
+    let Some(bound) = world.get_resource::<MacroBoundSpells>() else {
         return;
     };
-    // Per VM: a fresh VM restarts its generation at 0, which a bare memo would gate off for good.
-    let last_generation = last_generation.get(&script);
-    let generation = script.macros_generation();
-    if *last_generation == Some(generation) && !book.is_changed() {
-        return;
+    let vm = vm_bindings(&bound.0);
+    if let Some(mut script) = world.get_non_send_resource_mut::<UiScript>() {
+        script.set_macro_bindings(vm);
     }
-    *last_generation = Some(generation);
+}
 
-    let (macros, book) = (script.macros(), &book.live.book);
-    let mut fresh = std::collections::HashMap::new();
-    for index in 1..=benilla_ui::script::MAX_MACRO_INDEX as u32 {
-        let Some(m) = macros.get(index as usize) else {
-            continue;
-        };
-        fresh.insert(index, run::bound_spell(&table, &m.body, book));
+/// The book's macro pass (`0x53cea3` -> `0x566160`): each unresolved macro looked up and its slots signalled before the next, by index (#691) (`0x56617b`, `0x566193`).
+pub(crate) fn book_rebind(world: &mut World) {
+    rebind_from(world, 1);
+}
+
+/// The pass from 1-based `start`: the next macro to resolve stores its spell and queues its slot signals, then the rest.
+fn rebind_from(world: &mut World, start: u32) {
+    let Some(macros) = world
+        .get_non_send_resource::<UiScript>()
+        .map(UiScript::macros)
+    else {
+        return;
+    };
+    let (Some(table), Some(book), Some(bound)) = (
+        world.get_resource::<crate::ui_chat::commands::SlashCommands>(),
+        world.get_resource::<crate::ui_spellbook::SpellBook>(),
+        world.get_resource::<MacroBoundSpells>(),
+    ) else {
+        return;
+    };
+    let mut unresolved: Vec<u32> = bound
+        .0
+        .iter()
+        .filter(|&(&index, b)| index >= start && *b == BoundSpell::Unresolved)
+        .map(|(&index, _)| index)
+        .collect();
+    unresolved.sort_unstable();
+    let found = unresolved.into_iter().find_map(|index| {
+        let m = macros.get(index as usize)?;
+        match run::bound_spell(table, &m.body, &book.live.book) {
+            now @ BoundSpell::Spell(_) => Some((index, now)),
+            _ => None,
+        }
+    });
+    let Some((index, now)) = found else {
+        return;
+    };
+    debug!("ui_macro: the book update resolved macro {index}");
+    world
+        .resource_mut::<MacroBoundSpells>()
+        .0
+        .insert(index, now);
+    sync_vm_bindings(world);
+    let slots: Vec<u8> = world
+        .get_resource::<crate::ui_action::ActionSlots>()
+        .map(|bar| {
+            let mut slots: Vec<u8> = bar
+                .buttons
+                .values()
+                .filter(|b| {
+                    b.kind == benilla_protocol::messages::ACTION_KIND_MACRO && b.action == index
+                })
+                .map(|b| b.slot)
+                .collect();
+            slots.sort_unstable();
+            slots
+        })
+        .unwrap_or_default();
+    for slot in slots {
+        crate::ui_script::live::in_turn(world, move |world| {
+            crate::ui_action::slots::slot_changed(world, slot)
+        });
     }
-    // The engine's copy, for `GetActionAutocast`, re-pushed on every recompute so a fresh VM has
-    // it. The book flag stays the player's: `run::bound_spell` resolves the player's book only.
-    script.set_macro_bindings(
-        fresh
-            .iter()
-            .map(|(&index, b)| {
-                let spell = match *b {
-                    BoundSpell::None => 0,
-                    BoundSpell::Unresolved => -1,
-                    BoundSpell::Spell(id) => id as i32,
-                };
-                (
-                    index,
-                    benilla_ui::script::MacroBinding {
-                        spell,
-                        pet_book: false,
-                    },
-                )
-            })
-            .collect(),
-    );
-    if fresh != bound.0 {
-        let spells = fresh
-            .values()
-            .filter(|b| matches!(b, BoundSpell::Spell(_)))
-            .count();
-        debug!(
-            "ui_macro: {} macro(s), {spells} bound to a spell",
-            fresh.len()
-        );
-        bound.0 = fresh;
-    }
+    crate::ui_script::live::in_turn(world, move |world| rebind_from(world, index + 1));
 }
 
 /// The event each macro line is fired as: id `0x188`, whose registry slot is written once, with
