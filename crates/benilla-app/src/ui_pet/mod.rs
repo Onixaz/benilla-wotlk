@@ -27,7 +27,8 @@ pub(crate) use bar::{action_live, bar_live, PetSlotWalk, WalkLent};
 // A pet bar press, applied in call order by `crate::script_calls`.
 pub(crate) use drain::pet_stop_on_old_target_clear;
 pub(crate) use drain::{
-    plain_press_word, press_plain, stop_pet_attack, toggle_slot_autocast, PetCast, PetPress,
+    plain_press_word, press_plain, send_pet_action, stop_pet_attack, toggle_slot_autocast, PetCast,
+    PetPress,
 };
 use menu::drain_pet_menu;
 #[cfg(test)]

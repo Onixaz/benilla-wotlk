@@ -944,19 +944,20 @@ impl LiveState for LiveView<'_, '_> {
         }
     }
 
-    /// A reaction or non-Attack command press on the lent words inside the call (`0x5d4210`): gate, latch and signal, then the send.
-    fn pet_press(&mut self, slot: u32, order: Option<u32>) -> Option<bool> {
+    /// A reaction or non-Attack command press on the lent words inside the call (`0x5d4210`): gate and latch; the VM signals, then sends.
+    fn pet_press(&mut self, slot: u32, order: Option<u32>) -> Option<benilla_ui::script::PetLatch> {
         let entry = crate::ui_pet::plain_press_word(self.pet_bar.as_deref()?, slot, order)?;
         let selected = self.selection.as_deref().and_then(|s| s.guid);
         let pet = self.pet_unit.as_ref()?;
         let bar = self.pet_bar.as_deref_mut()?;
-        Some(crate::ui_pet::press_plain(
-            bar,
-            pet,
-            entry,
-            selected,
-            self.commands.as_deref(),
-        ))
+        Some(crate::ui_pet::press_plain(bar, pet, entry, selected))
+    }
+
+    /// The latched press's send, under the pet the bar holds now (`0x5d4585`).
+    fn pet_press_send(&mut self, word: u32, target: u64) {
+        if let (Some(bar), Some(c)) = (self.pet_bar.as_deref(), self.commands.as_deref()) {
+            crate::ui_pet::send_pet_action(bar, c, word, target);
+        }
     }
 
     /// The bar toggle (`0x5d5d20`) on the lent words: gate, flip, send, in 12340's order.

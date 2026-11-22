@@ -1787,6 +1787,34 @@ fn a_select_from_a_use_glyph_listener_applies_inside_it() {
     assert_eq!(selected, Some(NEW));
 }
 
+/// The item-use fork runs the direct use after `USE_GLYPH`'s listeners (`0x5d8ad3` before
+/// `0x5d8ae3` -> `0x708c20`): a cast the listener makes goes out first, and the use then meets its
+/// GCD and sends nothing (as the listener ran after the use, the use went alone).
+#[test]
+fn a_use_glyph_listeners_cast_sends_before_the_glyphs_use() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.water_in_the_backpack();
+    rig.retemplate(|t| t.class = 16);
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"local f = CreateFrame("Frame")
+        f:RegisterEvent("USE_GLYPH")
+        f:SetScript("OnEvent", function() UseAction(1) end)
+        TICK_DO = function() UseContainerItem(0, 1) TICK_DO = nil end"#,
+    );
+    rig.frame();
+    let sends: Vec<&str> = rig
+        .sent()
+        .into_iter()
+        .filter_map(|c| match c {
+            ClientCommand::CastSpell { .. } => Some("cast"),
+            ClientCommand::UseItem { .. } => Some("use"),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sends, ["cast"]);
+}
+
 /// A lootable item's lock edge (`0x6dcded` -> `0x706feb`) raises as `UseContainerItem` returns:
 /// its listener's `TargetUnit` applies inside it.
 #[test]

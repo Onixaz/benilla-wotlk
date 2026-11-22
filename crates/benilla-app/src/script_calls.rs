@@ -56,10 +56,10 @@ pub(crate) fn apply_in_call(lua: &mlua::Lua, call: ScriptCall) -> bool {
         if applied.is_some() {
             crate::ui_unit::target_set_tail(world);
         }
-        // The applier's raises as the call returns, with the `World` lent again: the ones it made
-        // through the VM (the item-use fork's `USE_GLYPH` `0x5d8ad3`, the lock edges `0x706feb`,
-        // the selection's refusal line `0x5216f0`), then its queued ones (`0x80b556`, `0x806200`).
-        // #1363 fires each at its step inside the press.
+        // The applier's raises with the `World` lent again: the ones it made through the VM, each
+        // last on its path or followed by its rest as a step of its own (`USE_GLYPH` `0x5d8ad3`
+        // then the use; a lock edge `0x706feb` then its send; the selection's line `0x5216f0`),
+        // then its queued ones (`0x80b556`, `0x806200`, the pet latch `0x5d4530` then its send).
         if !raised.is_empty() {
             crate::ui_script::safe_world::lend(world, |script| {
                 for raise in raised {
@@ -141,7 +141,7 @@ pub(crate) fn apply_script_calls(world: &mut World) {
 
 /// Apply one call in its owner's applier; its signals, lines and the press's edges queue on `ui`,
 /// and what it raises through the VM queues in turn ([`raises_in_turn`]), for the caller to fire
-/// once the applier's borrows end (#1363 moves each to its step).
+/// once the applier's borrows end, each last on its path or followed by its rest as a step.
 ///
 /// [`raises_in_turn`]: benilla_ui::script::world_loan::raises_in_turn
 #[allow(clippy::type_complexity)] // the appliers, one per owner of the state a call touches
@@ -311,7 +311,7 @@ impl crate::ui_action::signals::SignalSink for InTurn<'_> {
     }
 }
 
-/// A pet press, then the `PET_BAR_UPDATE`s its latch raised (`0x5d4530`) and what its cooldown start made (`0x805d70`): an on-hold start's usable update (`0x805ed1`), then the pet's cooldown flush (`0x805eda`), in turn on `ui` as the press returns.
+/// A pet press, then the `PET_BAR_UPDATE`s its latch raised (`0x5d4530`) and what its cooldown start made (`0x805d70`): an on-hold start's usable update (`0x805ed1`), then the pet's cooldown flush (`0x805eda`), in turn on `ui` as the press returns; its `CMSG_PET_ACTION` after their listeners (`0x5d4556`).
 pub(crate) fn pet_press(
     press: &mut crate::ui_pet::PetPress,
     ui: &mut InTurn,
@@ -331,6 +331,21 @@ pub(crate) fn pet_press(
         press.cooldown_start_in_turn(ui.0);
     }
     crate::ui_pet::bar_signals_in_turn(ui.0, signals, now_signals);
+    if let crate::ui_pet::PetCast::Send {
+        packed,
+        target_guid,
+    } = out
+    {
+        ui.0.world(move |w| {
+            if let (Some(bar), Some(c)) = (
+                w.get_resource::<crate::ui_pet::PetBar>(),
+                w.get_resource::<crate::net::NetCommands>(),
+            ) {
+                crate::ui_pet::send_pet_action(bar, c, packed, target_guid);
+            }
+        });
+        return crate::ui_pet::PetCast::Done;
+    }
     out
 }
 

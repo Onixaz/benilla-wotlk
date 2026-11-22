@@ -1,8 +1,8 @@
 //! A cast refusal's line, shown in its caller's turn. The spell-failure display (`0x808200`) runs
 //! inside the press or the packet handler that refuses, before its caller goes on, so a refusal
 //! rides the same ordered stream as the press's other signals ([`crate::ui_cast::CastBarEdge`]):
-//! a press fires it in order as it returns (at its step in the reference, #1363; a Lua verb's
-//! press runs after the call returns, #1235), a handler in its turn.
+//! a press fires it at its step with the `World` lent, inside the Lua call that pressed, its later
+//! rungs after its listeners; a handler in its turn.
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
