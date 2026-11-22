@@ -667,6 +667,12 @@ pub(crate) struct CameraControl {
     pub(crate) hold_pitch_for_aim: bool,
     /// The pitch the held look would have turned the camera by, for the vehicle aim to take.
     pub(crate) aim_pitch_delta: f32,
+    /// The vehicle's camera pitch offset as it eases in, radians: the view looks that much lower
+    /// (`0x606f90`), the arm untouched. Written by the seat camera.
+    pub(crate) vehicle_pitch_offset: f32,
+    /// The vehicle's camera yaw offset as it eases in: the arm swings that far about the pivot
+    /// while the view keeps its yaw (`0x600730`). Written by the seat camera.
+    pub(crate) vehicle_yaw_offset: f32,
     /// The mouse buttons the world owns this frame, latched by [`latch_world_mouse`].
     pub(super) world_mouse: WorldMouse,
     /// Logical cursor position captured when look began, to restore on release.
@@ -1423,15 +1429,23 @@ pub(super) fn seat_camera(
     let arm_rotation = Quat::from_euler(EulerRot::YXZ, cam.yaw, arm_pitch, 0.0);
     // Not re-clamped: the bias is composed after that clamp, bounded only by its own one-sided
     // accumulate (`SmartPivot::route_pitch`) and ±89° at the body hand-off.
-    let rotation = if bias == 0.0 {
+    // A vehicle's pitch offset turns the view down before the bias turns it (`0x606f90`).
+    let look_pitch = arm_pitch + bias - rig.vehicle_pitch_offset;
+    let rotation = if look_pitch == arm_pitch {
         arm_rotation
     } else {
-        Quat::from_euler(EulerRot::YXZ, cam.yaw, arm_pitch + bias, 0.0)
+        Quat::from_euler(EulerRot::YXZ, cam.yaw, look_pitch, 0.0)
     };
     // `Transform::forward()` is exactly `rotation * -Z`; computed here so the write can be gated.
     let cam_fwd = arm_rotation * Vec3::NEG_Z;
     let pivot = player_pos + Vec3::Y * cam_pivot_height;
-    let seat = pivot - cam_fwd * rig.distance;
+    // A vehicle's yaw offset swings the arm, not the look (`0x601d60` through `0x600730`).
+    let arm_fwd = if rig.vehicle_yaw_offset == 0.0 {
+        cam_fwd
+    } else {
+        Quat::from_rotation_y(rig.vehicle_yaw_offset) * cam_fwd
+    };
+    let seat = pivot - arm_fwd * rig.distance;
     let boom = seat - head;
     let boom_len = boom.length().max(1.0e-3);
     // The camera collides with the WMO camera/LOS faces (DETAIL kept, NOCAMCOLLIDE dropped),

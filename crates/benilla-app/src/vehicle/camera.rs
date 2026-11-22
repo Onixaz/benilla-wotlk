@@ -8,8 +8,13 @@
 //!   vehicle for a seat that follows it (`flagsB & 0x200`): `(off.y, -off.x, off.z)` turned by
 //!   the focus's facing.
 //!
-//! Not built: the seat's camera timing and fade, the vehicle's yaw and pitch offsets and the
-//! tracking style, and the hierarchy of vehicle cameras a nested vehicle chains.
+//! - the vehicle's camera pitch and yaw offsets ease in on the enter and out on the exit
+//!   (`0x74c0e0`, `0x6007b0`, `0x6006a0`), over the seat's own camera timing (`flagsB & 0x40`
+//!   entering, `0x80` exiting: its delay, then its duration), else over the passenger's motion
+//!   (`0x75af00`), else at once (`0x75aac0`).
+//!
+//! Not built: the seat camera's own position and facing chasers (columns 53-54), the vehicle's
+//! camera fade, the tracking style, and the hierarchy of vehicle cameras a nested vehicle chains.
 
 use bevy::prelude::*;
 
@@ -63,11 +68,61 @@ fn camera_offset(seat: &VehicleSeatRec) -> Option<Vec3> {
     (o != [0.0; 3]).then(|| wow_to_bevy([o[1], -o[0], o[2]]))
 }
 
-/// What the zoom feed holds between frames: the seat it last answered and the ask count.
+/// What the zoom feed holds between frames: the seat it last answered and the ask count, the
+/// offsets' eases, and the seat's camera timing for the exit.
 #[derive(Default)]
 pub(super) struct CameraMemory {
     seat: Option<(u32, u8)>,
     count: u32,
+    pitch: Ease,
+    yaw: Ease,
+    /// The offsets a change heads for once the passenger's motion times it.
+    at_motion: Option<(f32, f32)>,
+    /// The seat left's own exit timing (`flagsB & 0x80`): delay and duration.
+    exit_timing: Option<(f32, f32)>,
+}
+
+/// One camera offset easing between two values over a window (`0x5fe8d0`, `0x6007b0`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(super) struct Ease {
+    from: f32,
+    to: f32,
+    start_s: f64,
+    end_s: f64,
+}
+
+impl Ease {
+    /// The value at `now`: `from` before the window, `to` after, the cosine ease between
+    /// (`0x5fffd0`).
+    pub(super) fn at(&self, now: f64) -> f32 {
+        if self.end_s <= self.start_s || now >= self.end_s {
+            return self.to;
+        }
+        let t = ((now - self.start_s) / (self.end_s - self.start_s)).max(0.0) as f32;
+        let eased = 0.5 - (t * std::f32::consts::PI).cos() * 0.5;
+        self.from + eased * (self.to - self.from)
+    }
+
+    /// Head for `to` over `[start, end]` from wherever the value stands at `now`; an empty window
+    /// sets it.
+    pub(super) fn set(&mut self, to: f32, now: f64, start_s: f64, end_s: f64) {
+        self.from = self.at(now);
+        self.to = to;
+        self.start_s = start_s;
+        self.end_s = end_s;
+    }
+}
+
+/// A seat's own camera timing, `(delay, duration)`: the enter's under `flagsB & 0x40` (columns
+/// 46-47), the exit's under `0x80` (48-49) (`0x75aac0`).
+fn seat_timing(seat: &VehicleSeatRec, entering: bool) -> Option<(f32, f32)> {
+    if entering {
+        (seat.flags_b & 0x40 != 0)
+            .then_some((seat.camera_entering_delay, seat.camera_entering_duration))
+    } else {
+        (seat.flags_b & 0x80 != 0)
+            .then_some((seat.camera_exiting_delay, seat.camera_exiting_duration))
+    }
 }
 
 /// Feed the seat's zoom range and focus to the camera.
@@ -80,6 +135,7 @@ pub(super) fn feed_vehicle_camera(
             Option<&Passenger>,
             Option<&CameraPivot>,
             Option<&NetEntity>,
+            Option<&super::passenger::Transit>,
         ),
         With<SelfPlayer>,
     >,
@@ -96,13 +152,18 @@ pub(super) fn feed_vehicle_camera(
     zoom: Option<ResMut<VehicleSeatZoom>>,
     focus: Option<ResMut<VehicleFocus>>,
     mut memory: Local<CameraMemory>,
+    (rig, time): (
+        Option<ResMut<crate::player::CameraControl>>,
+        Res<Time<Real>>,
+    ),
 ) {
     let (Some(limit), Some(mut zoom), Some(mut focus)) = (limit, zoom, focus) else {
         return;
     };
-    let Ok((own, own_tf, passenger, own_pivot, own_net)) = me.single() else {
+    let Ok((own, own_tf, passenger, own_pivot, own_net, transit)) = me.single() else {
         return;
     };
+    let now = time.elapsed_secs_f64();
     let seated = passenger.filter(|p| matches!(p.state, 1..=3));
     let vehicle = seated.and_then(|p| Some((p, *index.0.get(&p.vehicle)?)));
     let seat = vehicle.and_then(|(p, e)| {
@@ -125,6 +186,51 @@ pub(super) fn feed_vehicle_camera(
         };
         memory.count = memory.count.wrapping_add(1);
         zoom.ask = Some((memory.count, ask));
+        // The offsets head for the new seat's vehicle's, or none: over the seat's own timing,
+        // else over the passenger's motion, else at once.
+        let rec = seat.and_then(|(_, _, id, _)| tables.vehicle(id));
+        let to = rec.map_or((0.0, 0.0), |r| (r.camera_pitch_offset, r.camera_yaw_offset));
+        let timing = match seat {
+            Some((.., s)) => seat_timing(s, true),
+            None => memory.exit_timing,
+        };
+        let animated = passenger.is_some_and(|p| matches!(p.state, 1 | 2 | 4 | 5));
+        memory.at_motion = None;
+        match timing {
+            Some((delay, duration)) => {
+                let start = now + f64::from(delay.max(0.0));
+                let end = start + f64::from(duration.max(0.0));
+                memory.pitch.set(to.0, now, start, end);
+                memory.yaw.set(to.1, now, start, end);
+            }
+            None if animated => memory.at_motion = Some(to),
+            None => {
+                memory.pitch.set(to.0, now, now, now);
+                memory.yaw.set(to.1, now, now, now);
+            }
+        }
+        memory.exit_timing = seat.and_then(|(.., s)| seat_timing(s, false));
+    }
+    // A change timed by the passenger's motion eases over it once it starts (`0x75af00`), or at
+    // once should the passenger settle without one.
+    if let Some(to) = memory.at_motion {
+        let moving = passenger.is_some_and(|p| matches!(p.state, 2 | 5));
+        let window = transit
+            .filter(|_| moving)
+            .and_then(|t| Some((t.start_s, t.end_s?)));
+        let settled = passenger.is_none_or(|p| matches!(p.state, 0 | 3));
+        if let Some((start, end)) = window.or(settled.then_some((now, now))) {
+            memory.at_motion = None;
+            memory.pitch.set(to.0, now, start, end);
+            memory.yaw.set(to.1, now, start, end);
+        }
+    }
+    if let Some(mut rig) = rig {
+        let (pitch, yaw) = (memory.pitch.at(now), memory.yaw.at(now));
+        if rig.vehicle_pitch_offset != pitch || rig.vehicle_yaw_offset != yaw {
+            rig.vehicle_pitch_offset = pitch;
+            rig.vehicle_yaw_offset = yaw;
+        }
     }
     // The focus: the vehicle for a seat that follows it, else our body, at the offset.
     focus.0 = seat.and_then(|(_, vehicle, _, s)| {
@@ -184,6 +290,36 @@ mod tests {
         // A preferred distance past a default bound widens it.
         let (range, _) = seat_zoom(&seat(0x400 | 0x800), 15.0).unwrap();
         assert_eq!(range, (None, Some(20.0)));
+    }
+
+    /// The offsets ease on the cosine over their window from where they stand, and an empty
+    /// window sets them (`0x5fffd0`, `0x6007b0`).
+    #[test]
+    fn an_offset_eases_in_over_its_window() {
+        let mut e = Ease::default();
+        e.set(0.25, 0.0, 1.0, 3.0);
+        assert_eq!(e.at(0.5), 0.0, "before the window");
+        assert!((e.at(2.0) - 0.125).abs() < 1e-6, "half way is half");
+        assert_eq!(e.at(3.5), 0.25);
+        e.set(0.0, 3.5, 3.5, 3.5);
+        assert_eq!(e.at(3.5), 0.0, "an empty window sets it");
+    }
+
+    /// The seat's own camera timing under its flags.
+    #[test]
+    fn a_seat_times_its_camera_under_its_flags() {
+        let s = VehicleSeatRec {
+            flags_b: 0x40,
+            camera_entering_delay: 0.5,
+            camera_entering_duration: 1.0,
+            camera_exiting_delay: 0.2,
+            camera_exiting_duration: 0.4,
+            ..Default::default()
+        };
+        assert_eq!(seat_timing(&s, true), Some((0.5, 1.0)));
+        assert_eq!(seat_timing(&s, false), None);
+        let exit = VehicleSeatRec { flags_b: 0x80, ..s };
+        assert_eq!(seat_timing(&exit, false), Some((0.2, 0.4)));
     }
 
     #[test]
