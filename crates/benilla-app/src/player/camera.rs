@@ -509,6 +509,43 @@ pub(super) fn model_pivot_height(pivot: &CameraPivot, scale: f32, swimming: bool
     (local * scale).clamp(CAM_PIVOT_FLOOR, CAM_PIVOT_CEIL)
 }
 
+/// The ceiling on a camera target's pivot height (`0x718080`, read by `0x604e00`): a non-player
+/// unit's collision height less 1/6 yd, capped at `2.0278 − 1/6` yd, so a tall vehicle such as the
+/// Demolisher frames like a man-sized unit. A ceiling at or under 0 is the 15 yd default.
+///
+/// Deviation: the reference caps a player at its collision height less 1/6 too; that half is not
+/// applied, as a capture measured a human's pivot at 1.9003 yd and benilla's player collision
+/// heights are not yet checked against it.
+pub(crate) fn pivot_ceiling(collision_height: Option<f32>, player: bool) -> f32 {
+    const UNIT_CAP: f32 = 2.027_777_7;
+    const MARGIN: f32 = 1.0 / 6.0;
+    if player {
+        return CAM_PIVOT_CEIL;
+    }
+    let h = collision_height.unwrap_or(crate::player::DEFAULT_COLLISION_HEIGHT);
+    let ceiling = if h <= UNIT_CAP {
+        h - MARGIN
+    } else {
+        UNIT_CAP - MARGIN
+    };
+    if ceiling <= 0.0 {
+        CAM_PIVOT_CEIL
+    } else {
+        ceiling
+    }
+}
+
+/// A pivot height under `0x604e00`'s clamp: the 5/6 yd floor first, then the ceiling.
+pub(crate) fn clamp_pivot(height: f32, ceiling: f32) -> f32 {
+    if height < CAM_PIVOT_FLOOR {
+        CAM_PIVOT_FLOOR
+    } else if height >= ceiling {
+        ceiling
+    } else {
+        height
+    }
+}
+
 /// World head height above a unit's feet: the standing preset, or [`CAM_PIVOT_FALLBACK`] with no
 /// model. For the 3D-audio listener (`Sound_ListenerAtCharacter=1`) and a far-sight subject, whose
 /// movement flags we do not carry. A camera pivot passes the raw `OBJECT_FIELD_SCALE_X`, as the
@@ -1908,6 +1945,28 @@ mod tests {
         assert_eq!(model_pivot_height(&p, 1.0, false), 2.0);
         assert_eq!(model_pivot_height(&p, 0.01, false), CAM_PIVOT_FLOOR);
         assert_eq!(model_pivot_height(&p, 100.0, false), CAM_PIVOT_CEIL);
+    }
+
+    /// A creature's pivot stops at `2.0278 − 1/6` yd whatever its height, a short one's at its own
+    /// collision height less 1/6; the floor wins over a ceiling under it.
+    #[test]
+    fn a_tall_unit_frames_under_the_reference_ceiling() {
+        let unit = pivot_ceiling(Some(6.0), false);
+        assert!((unit - (2.027_777_7 - 1.0 / 6.0)).abs() < 1e-6);
+        assert!(
+            (clamp_pivot(4.48, unit) - unit).abs() < 1e-6,
+            "the Demolisher's 4.48"
+        );
+        assert_eq!(clamp_pivot(1.59, unit), 1.59, "the Catapult's is under it");
+        let short = pivot_ceiling(Some(1.5), false);
+        assert!((short - (1.5 - 1.0 / 6.0)).abs() < 1e-6);
+        assert_eq!(
+            pivot_ceiling(Some(2.5), true),
+            CAM_PIVOT_CEIL,
+            "a player is not capped"
+        );
+        assert_eq!(pivot_ceiling(Some(0.1), false), CAM_PIVOT_CEIL);
+        assert_eq!(clamp_pivot(0.2, 0.5), CAM_PIVOT_FLOOR);
     }
 
     /// The swim preset, `cam+0x124`: the standing height less `StandSeq.max.z − SwimSeq.max.z`. The

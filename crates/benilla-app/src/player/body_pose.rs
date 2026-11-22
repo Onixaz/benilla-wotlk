@@ -19,7 +19,8 @@ pub(super) fn drive(
 ) -> Option<f32> {
     // Scale is left alone: the renderer bakes the display scale in.
     let mut cam_pivot_target = None;
-    if let Ok((entity, mut t, motion, pivot, .., twist, _, net_entity)) = body.single_mut() {
+    if let Ok((entity, mut t, motion, pivot, .., twist, _, net_entity, height)) = body.single_mut()
+    {
         t.translation = player.pos;
         // The active mover's own eased pitch and fly bank (`0x719b80`); the wire tail streams
         // the raw aim.
@@ -42,6 +43,7 @@ pub(super) fn drive(
         cam_pivot_target = pivot_target(
             pivot,
             net_entity,
+            height,
             move_flags_now & crate::creature_anim::move_flags::SWIMMING != 0,
         );
         if let Some(mut motion) = motion {
@@ -74,9 +76,17 @@ pub(super) fn drive(
 pub(super) fn pivot_target(
     pivot: Option<&CameraPivot>,
     net: Option<&crate::net::NetEntity>,
+    height: Option<&crate::entities::CollisionHeight>,
     swimming: bool,
 ) -> Option<f32> {
-    pivot.map(|p| model_pivot_height(p, net.map_or(1.0, |n| n.scale), swimming))
+    let player = net.is_some_and(|n| n.kind == benilla_protocol::EntityKind::Player);
+    let ceiling = super::camera::pivot_ceiling(height.map(|h| h.0), player);
+    pivot.map(|p| {
+        super::camera::clamp_pivot(
+            model_pivot_height(p, net.map_or(1.0, |n| n.scale), swimming),
+            ceiling,
+        )
+    })
 }
 
 /// `WOW_TWIST_GAP=<radians>` pins the counter-twist's yaw gap; the env is read once.
