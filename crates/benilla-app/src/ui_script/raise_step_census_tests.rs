@@ -197,6 +197,14 @@ fn blank(source: &str) -> String {
     String::from_utf8(out).expect("only ASCII bytes were replaced")
 }
 
+/// Whether `text` names `word` as a whole word.
+fn names(text: &str, word: &str) -> bool {
+    let part = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+    text.match_indices(word).any(|(at, _)| {
+        !part(text[..at].chars().next_back()) && !part(text[at + word.len()..].chars().next())
+    })
+}
+
 /// The index of the bracket closing the one at `open`.
 fn closing(text: &str, open: usize, lhs: u8, rhs: u8) -> Option<usize> {
     let mut depth = 0usize;
@@ -286,15 +294,9 @@ fn queue_bundles(files: &BTreeMap<String, String>) -> BTreeSet<String> {
         let before = holders.len();
         for (name, body) in &bodies {
             let holds = ["UiEvents", "InTurn"]
-                .iter()
-                .chain(
-                    holders
-                        .iter()
-                        .map(String::as_str)
-                        .collect::<Vec<_>>()
-                        .iter(),
-                )
-                .any(|t| Regex::new(&format!(r"\b{t}\b")).unwrap().is_match(body));
+                .into_iter()
+                .chain(holders.iter().map(String::as_str))
+                .any(|t| names(body, t));
             if holds {
                 holders.insert(name.clone());
             }
@@ -317,9 +319,9 @@ fn raises_before_a_write(params: &str, body: &str, bundles: &BTreeSet<String>) -
             continue;
         }
         let head = ty.trim_start_matches("Option<");
-        if Regex::new(r"\bUiEvents\b").unwrap().is_match(&ty) {
+        if names(&ty, "UiEvents") {
             queues.push(name);
-        } else if Regex::new(r"\bInTurn\b").unwrap().is_match(&ty) && !ty.contains("script_calls") {
+        } else if names(&ty, "InTurn") && !ty.contains("script_calls") {
             turns.push(name);
         } else if LINE_QUEUES.iter().any(|q| ty.contains(q))
             || head.starts_with("Res<")
@@ -453,12 +455,9 @@ fn every_handler_that_raises_before_a_write_is_listed_by_its_part() {
     let mut holding = 0;
     let mut found = BTreeSet::new();
     for (rel, name, params, body) in handlers(&files) {
-        let holds = Regex::new(r"\b(UiEvents|InTurn)\b")
-            .unwrap()
-            .is_match(&params)
-            || bundles
-                .iter()
-                .any(|b| Regex::new(&format!(r"\b{b}\b")).unwrap().is_match(&params));
+        let holds = names(&params, "UiEvents")
+            || names(&params, "InTurn")
+            || bundles.iter().any(|b| names(&params, b));
         if !holds {
             continue;
         }
