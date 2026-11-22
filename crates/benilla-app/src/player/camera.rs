@@ -661,7 +661,7 @@ pub(crate) struct VehicleFade {
     pub(crate) whole: f32,
 }
 
-/// `0x606f90`'s vehicle fade: the cosine ramp from gone to whole (`OrganicSmooth`) over the
+/// `0x606f90`'s vehicle fade: the cosine ramp from gone to whole over the
 /// camera's distance to the model past the near plane.
 pub(crate) fn vehicle_fade_alpha(fade: &VehicleFade, eye: Vec3, nearclip: f32) -> f32 {
     let near = eye.distance(fade.at) - nearclip;
@@ -693,19 +693,6 @@ pub(crate) struct CameraControl {
     pub(crate) hold_pitch_for_aim: bool,
     /// The pitch the held look would have turned the camera by, for the vehicle aim to take.
     pub(crate) aim_pitch_delta: f32,
-    /// The vehicle's camera pitch offset as it eases in, radians: the view looks that much lower
-    /// (`0x606f90`), the arm untouched. Written by the seat camera.
-    pub(crate) vehicle_pitch_offset: f32,
-    /// The vehicle's camera yaw offset as it eases in: the arm swings that far about the pivot
-    /// while the view keeps its yaw (`0x600730`). Written by the seat camera.
-    pub(crate) vehicle_yaw_offset: f32,
-    /// Seated in a vehicle whose record fades it near the camera (`flags & 0x80000`): the camera
-    /// fades by its distance to the vehicle's model over the record's scalars of the model's radius,
-    /// in place of the self window, and the vehicle fades with us (`0x606f90`). Written by the
-    /// seat camera.
-    pub(crate) vehicle_fade: Option<VehicleFade>,
-    /// The vehicle the fade last reached, to hand back opaque.
-    pub(super) vehicle_faded: Option<Entity>,
     /// The mouse buttons the world owns this frame, latched by [`latch_world_mouse`].
     pub(super) world_mouse: WorldMouse,
     /// Logical cursor position captured when look began, to restore on release.
@@ -734,6 +721,19 @@ pub(crate) struct CameraControl {
     pub(super) vehicle_zoom_seen: u32,
     /// The distance before a seat's zoom, which its exit restores (`m_vehicleExitZoomDistance`).
     pub(super) vehicle_exit_zoom: Option<f32>,
+    /// The vehicle's camera pitch offset as it eases in, radians: the view looks that much lower
+    /// (`0x606f90`), the arm untouched. Written by the seat camera.
+    pub(crate) vehicle_pitch_offset: f32,
+    /// The vehicle's camera yaw offset as it eases in: the arm swings that far about the pivot
+    /// while the view keeps its yaw (`0x600730`). Written by the seat camera.
+    pub(crate) vehicle_yaw_offset: f32,
+    /// Seated in a vehicle whose record fades it near the camera (`flags & 0x80000`): the camera
+    /// fades by its distance to the vehicle's model over the record's scalars of the model's radius,
+    /// in place of the self window, and the vehicle fades with us (`0x606f90`). Written by the
+    /// seat camera.
+    pub(crate) vehicle_fade: Option<VehicleFade>,
+    /// The vehicle the fade last reached, to hand back opaque.
+    pub(super) vehicle_faded: Option<Entity>,
 }
 
 impl CameraControl {
