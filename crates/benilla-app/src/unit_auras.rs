@@ -273,10 +273,12 @@ impl Plugin for UnitAurasPlugin {
     }
 }
 
-/// What our own auras' effect watch reads: our guid, the catalog and the queue it fires into.
+/// What our own auras' effect watch reads: our guid, the catalog, the stance bar and the queue it
+/// fires into.
 type OwnAuraWatch<'w> = (
     Option<Res<'w, crate::net::SelfGuid>>,
     Option<Res<'w, crate::ui_action::Spells>>,
+    Option<Res<'w, crate::ui_action::usable_cache::UsableCaches>>,
     Option<ResMut<'w, crate::ui_script::live::UiEvents>>,
 );
 
@@ -313,7 +315,7 @@ fn on_aura_update(
     if !store.is_unit() {
         return; // the lookup is unit-typed (`0x4d4db0`, mask 8)
     }
-    let (me, spells, mut ui) = own;
+    let (me, spells, caches, mut ui) = own;
     let mine = me.is_some_and(|m| m.0 == Some(update.unit));
     // Whether the packet adds or removes an aura, the reader's `changed` (`0x72fb6e`).
     let all_moves = own_aura_moves(auras.as_deref(), &update);
@@ -359,6 +361,18 @@ fn on_aura_update(
             }
             if !update.all {
                 tracking_moved(ui, spell, removed);
+                // A stance-bar spell with no shapeshift effect (aura 36): its add or removal moves
+                // no form byte, so it signals the form itself (`0x727835`, `0x722144`).
+                let on_stance_bar = caches
+                    .as_ref()
+                    .is_some_and(|c| c.stances.iter().any(|s| s.spell == spell));
+                let shapeshifts = spells
+                    .as_ref()
+                    .and_then(|s| s.catalog.get(spell))
+                    .is_some_and(|d| d.effect_apply_aura.contains(&SPELL_AURA_MOD_SHAPESHIFT));
+                if on_stance_bar && !shapeshifts {
+                    ui.fire("UPDATE_SHAPESHIFT_FORM", Vec::new());
+                }
             }
         }
         for spell in live {
@@ -397,6 +411,9 @@ fn on_aura_update(
         });
     }
 }
+
+/// `SPELL_AURA_MOD_SHAPESHIFT`, the effect `0x7fde50` tests for (`0x727822`, `0x722131`).
+const SPELL_AURA_MOD_SHAPESHIFT: u32 = 36;
 
 /// The minimap's tracking spell at one of our aura's add or removal: a tracking aura's removal
 /// clears it (`0x722113`), one added that is not already the spell sets it (`0x727804`).

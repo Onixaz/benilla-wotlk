@@ -293,3 +293,40 @@ fn a_tracking_aura_sets_and_clears_the_tracking_spell() {
     flush(&mut app);
     assert_eq!(seen(&mut app), ["MINIMAP_UPDATE_TRACKING", "player=0"]);
 }
+
+/// A stance-bar aura with no shapeshift effect, a paladin's aura, moves no form byte: its add and
+/// removal on us fire `UPDATE_SHAPESHIFT_FORM` in the handler's turn (`0x727835`, `0x722144`); an
+/// aura off the stance bar fires nothing.
+#[test]
+fn a_stance_aura_signals_the_form_where_it_is_added_and_removed() {
+    use crate::ui_action::usable_cache::{SpellUsable, Usable, UsableCaches};
+    const DEVOTION_AURA: u32 = 465;
+    let mut app = app();
+    let mut caches = UsableCaches::default();
+    caches.stances.push(SpellUsable {
+        spell: DEVOTION_AURA,
+        usable: Usable::default(),
+    });
+    app.insert_resource(caches);
+    app.world_mut()
+        .non_send_resource::<UiScript>()
+        .run(
+            r#"local f = CreateFrame("Frame") f:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
+                f:SetScript("OnEvent", function(self, event) table.insert(SEEN, event) end)"#,
+        )
+        .unwrap();
+    packets(&mut app, vec![auras(ME, vec![(3, aura(DEVOTION_AURA, 1))])]);
+    assert_eq!(
+        seen(&mut app),
+        ["UPDATE_SHAPESHIFT_FORM"],
+        "before the flush"
+    );
+    flush(&mut app);
+    assert_eq!(seen(&mut app), ["player=0"]);
+    packets(&mut app, vec![auras(ME, vec![(3, None)])]);
+    assert_eq!(seen(&mut app), ["UPDATE_SHAPESHIFT_FORM"]);
+    flush(&mut app);
+    let _ = seen(&mut app);
+    packets(&mut app, vec![auras(ME, vec![(4, aura(6673, 1))])]);
+    assert!(seen(&mut app).is_empty(), "off the stance bar");
+}
