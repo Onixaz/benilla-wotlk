@@ -1,5 +1,6 @@
-//! The group loot roll bindings `GroupLootFrame` calls: the app pushes the open rolls and drains
-//! the votes `RollOnLoot` queues, 0 Pass, 1 Need, 2 Greed, 3 Disenchant. `START_LOOT_ROLL` carries
+//! The group loot roll bindings `GroupLootFrame` calls: each reads the client's roll list at the
+//! call through the live view ([`super::LiveState::loot_roll`]), and the app drains the votes
+//! `RollOnLoot` queues, 0 Pass, 1 Need, 2 Greed, 3 Disenchant. `START_LOOT_ROLL` carries
 //! `(rollID, rollTime)` and `CANCEL_LOOT_ROLL` the `rollID`. The `rollID` is client-internal, as
 //! `CMSG_LOOT_ROLL` addresses `(lootedTarget, itemSlot)`, so the app allocates its own.
 
@@ -13,7 +14,7 @@ const DISENCHANT: i64 = 3;
 /// The quality from which a Disenchant vote asks first (`0x6fbc70`: `quality >= 3`).
 const DISENCHANT_CONFIRM_QUALITY: u32 = 3;
 
-/// One open group loot roll, resolved by the app and pushed whole each frame.
+/// One group loot roll on the client's list, resolved at the call.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LootRollEntry {
     /// The client-internal `rollID`, allocated by the app and stable for the roll's life.
@@ -43,16 +44,19 @@ pub struct LootRollEntry {
     pub link: Option<String>,
     /// The drop's random property, the hover's enchant source.
     pub random_property_id: u32,
+    /// Our vote went out (`+0x42`): the roll stays listed until it resolves, but takes no vote.
+    pub finished: bool,
 }
 
-/// Every open group loot roll, in the order the app opened them.
+/// A fixture's open rolls, in the order they opened, read where no view is lent.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LootRollsState {
     pub rolls: Vec<LootRollEntry>,
 }
 
 impl super::UiScript {
-    /// Push the open-rolls snapshot (an empty list means no roll is open).
+    /// A test's or a capture fixture's open rolls, read where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_loot_rolls(&mut self, state: LootRollsState) {
         set_field!(self, loot_rolls, state);
     }
@@ -71,21 +75,37 @@ impl super::UiScript {
     }
 }
 
-fn find(model: &Model, roll_id: i64) -> Option<&LootRollEntry> {
-    model
-        .loot_rolls
-        .rolls
-        .iter()
-        .find(|r| i64::from(r.roll_id) == roll_id)
+/// The roll `roll_id` on the list at the call (`0x6fb150`); with no view lent, a fixture's.
+pub(crate) fn find(model: &Model, roll_id: i64) -> Option<LootRollEntry> {
+    if let Some(entry) = super::read_live(|l| l.loot_roll(roll_id)).flatten() {
+        return entry;
+    }
+    #[cfg(any(test, feature = "fixtures"))]
+    {
+        model
+            .loot_rolls
+            .rolls
+            .iter()
+            .find(|r| i64::from(r.roll_id) == roll_id)
+            .cloned()
+    }
+    #[cfg(not(any(test, feature = "fixtures")))]
+    {
+        let _ = model;
+        None
+    }
 }
 
-/// `0x6fbc70`: a vote other than Pass asks first unless confirmed, by the cached template, then
-/// goes out only when the vote mask allows it.
+/// `0x6fbc70`: a roll our vote finished takes none; a vote other than Pass asks first unless
+/// confirmed, by the cached template, then goes out only when the vote mask allows it.
 fn roll(lua: &Lua, roll_id: i64, roll_type: i64, confirmed: bool) {
     let mut model = crate::script::model_mut_of(lua);
     let Some(entry) = find(&model, roll_id) else {
         return;
     };
+    if entry.finished {
+        return;
+    }
     let (Ok(id), Ok(kind)) = (u32::try_from(roll_id), u8::try_from(roll_type)) else {
         return;
     };
@@ -130,12 +150,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     "Usage: GetLootRollItemInfo(id)".into(),
                 ));
             };
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
+            let model = crate::script::model_mut_of(lua);
             let Some(r) = find(&model, roll_id as i64) else {
                 return Ok(mlua::MultiValue::new());
             };
+            drop(model);
             let (Some(name), Some(quality)) = (r.name.clone(), r.quality) else {
                 return Ok(mlua::MultiValue::new());
             };
@@ -163,10 +182,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetLootRollItemLink",
         lua.create_function(|lua, roll_id: i64| {
             let link = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                find(&model, roll_id).and_then(|r| r.link.clone())
+                let model = crate::script::model_mut_of(lua);
+                find(&model, roll_id).and_then(|r| r.link)
             };
             match link {
                 Some(link) => Ok(Value::String(lua.create_string(&link)?)),
@@ -175,13 +192,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // 0 for an unknown id; the stock `OnUpdate` clamps it to the bar's minimum anyway.
+    // `0x588cc0`: the roll's end less the clock at the call, 0 for an unknown id. Deviation: an
+    // expired roll reads 0, where the reference's unsigned push reads it wrapped near 2^32.
     g.set(
         "GetLootRollTimeLeft",
         lua.create_function(|lua, roll_id: i64| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
+            let model = crate::script::model_mut_of(lua);
             Ok(find(&model, roll_id).map_or(0, |r| r.time_left_ms))
         })?,
     )?;
@@ -233,6 +249,7 @@ mod tests {
                     item_id: 17182,
                     link: Some("|cffa335ee|Hitem:17182:0:0:0|h[Staff of Jordan]|h|r".into()),
                     random_property_id: 0,
+                    finished: false,
                 },
                 LootRollEntry {
                     roll_id: 8,
@@ -248,6 +265,7 @@ mod tests {
                     item_id: 4949,
                     link: None,
                     random_property_id: 0,
+                    finished: false,
                 },
                 LootRollEntry {
                     roll_id: 9,
