@@ -113,7 +113,8 @@ pub(crate) fn down_ray_pick(
         }
         let start = g.ref_start as usize;
         let end = (start + g.ref_count as usize).min(portal_refs.len());
-        for r in &portal_refs[start..end] {
+        // A start past the table (a portal-less group's) reads no refs, not a panic.
+        for r in portal_refs.get(start..end).unwrap_or(&[]) {
             let Some(info) = portal_infos.get(r.portal as usize) else {
                 continue;
             };
