@@ -593,6 +593,8 @@ pub(crate) fn load_ingame_ui_on_world_entry(world: &mut World) {
             // (`0x57ea41`), where it landed before this UI stood.
             |script| {
                 script.load_tracked_state(class_id);
+                // `0x5128d0` loads the tracked achievements after the town type (`0x5b3840`).
+                script.load_tracked_achievements();
                 if tracking != 0 {
                     script.tracking_spell_moved(tracking);
                 }
@@ -786,6 +788,8 @@ pub(crate) fn shutdown_ui_state(
         script.fire_event("PLAYER_LEAVING_WORLD", vec![]);
     }
     script.fire_event("PLAYER_LOGOUT", vec![]);
+    // The tracked achievements save before the saved variables (`0x528f00` -> `0x5b1fa0`).
+    script.save_tracked_achievements();
     crate::ui_saved::save(script, identity);
     addons::save_addon_variables(script, identity);
     addons::save_enable_state(script, identity);

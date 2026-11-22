@@ -1,37 +1,35 @@
-//! The achievement feed: the three DBC tables, pushed once per VM, and the packets of 3.3.5a's
-//! achievement engine (handlers `0x5b32f0`, `0x5b3020`, `0x5b3160`, `0x5b34a0`, `0x5b36f0`,
-//! `0x5b3610`). The app keeps the book a fresh VM is seeded with and hands each packet on to the
-//! live VM, which applies it and fires its events. The book empties when the world session ends, as
-//! the game shutdown clears every list (`0x5b4f00`).
+//! The achievement engine's client side: the three DBC tables and the client's lists, which the
+//! bindings read at the call through the live view, and the packet handlers of 3.3.5a's engine
+//! (`0x5b32f0`, `0x5b3020`, `0x5b3160`, `0x5b34a0`, `0x5b36f0`, `0x5b3610`), which write the lists
+//! and fire their events at their steps. A UI reload keeps the lists; the game shutdown clears them
+//! (`0x5b4f00`).
 
-use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 use benilla_assets::{AssetSet, LockRecover, WorldAssets};
 use benilla_protocol::messages::{AllAchievementData, CriteriaProgress};
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use benilla_ui::script::{
-    AchievementBook, AchievementCategoryRow, AchievementCriteriaRow, AchievementDb, AchievementRow,
-    AchievementUpdate, CriteriaWire,
+    handle_achievement_packet, AchievementBook, AchievementCategoryRow, AchievementCriteriaRow,
+    AchievementDb, AchievementEvent, AchievementHost, AchievementRow, AchievementUpdate,
+    CriteriaWire,
 };
 
 use crate::char_select::ClientState;
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, NetHandlerApp, SelfGuid};
-use crate::ui_unit::UnitFeed;
 
 /// The achievement tables, absent when the client data failed to load.
 #[derive(Resource, Clone)]
 pub(crate) struct Achievements(pub(crate) Arc<AchievementDb>);
 
-/// The player's book as the packets left it, and the packets the live VM has not taken yet.
+/// The client's achievement lists (`0xacfd98`-`0xacfde0`), which the handlers and the bindings
+/// write.
 #[derive(Resource, Default)]
-pub(crate) struct PlayerAchievements {
-    book: AchievementBook,
-    pending: Vec<AchievementUpdate>,
-}
+pub(crate) struct PlayerAchievements(pub(crate) AchievementBook);
 
 pub(crate) struct UiAchievementPlugin;
 
@@ -39,8 +37,11 @@ impl Plugin for UiAchievementPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PlayerAchievements>()
             .add_systems(Startup, load_achievements.after(AssetSet::Open))
-            .add_systems(Update, feed_achievements.in_set(UnitFeed))
-            .add_systems(OnExit(ClientState::InWorld), end_session)
+            // After the UI shutdown's tracked-list save (`0x529160`: `0x528f00`, then `0x5b4f00`).
+            .add_systems(
+                OnExit(ClientState::InWorld),
+                end_session.after(crate::ui_script::end_ui_session),
+            )
             .net_handler(SessionEventKind::AllAchievementData, on_achievement_packet)
             .net_handler(SessionEventKind::AchievementEarned, on_achievement_packet)
             .net_handler(SessionEventKind::CriteriaUpdate, on_achievement_packet)
@@ -140,13 +141,12 @@ fn unix_now() -> u32 {
         .map_or(0, |d| d.as_secs() as u32)
 }
 
-/// One packet into the app's book and the VM's queue.
-fn on_achievement_packet(
-    In(ev): In<SessionEvent>,
-    mut held: ResMut<PlayerAchievements>,
-    db: Option<Res<Achievements>>,
-    self_guid: Res<SelfGuid>,
-) {
+/// The six achievement handlers (`0x5b32f0`, `0x5b3020`, `0x5b3160`, `0x5b36f0`, `0x5b3610`,
+/// `0x5b34a0`): exclusive, so each event fires at its step with the `World` lent, the book written
+/// up to it and the rest of the handler after it. `own` tests the active player at the call
+/// (`0x5b3125`).
+fn on_achievement_packet(In(ev): In<SessionEvent>, world: &mut World) {
+    let active_player = world.get_resource::<SelfGuid>().and_then(|g| g.0);
     let now = unix_now();
     let update = match ev {
         SessionEvent::AllAchievementData(d) => {
@@ -169,7 +169,7 @@ fn on_achievement_packet(
                 id: e.achievement,
                 date: e.date,
                 silent: e.silent,
-                own: self_guid.0 == Some(e.player),
+                own: active_player == Some(e.player),
             }
         }
         SessionEvent::CriteriaUpdate(c) => AchievementUpdate::Criteria {
@@ -189,85 +189,178 @@ fn on_achievement_packet(
         }
         _ => return,
     };
-    if let Some(db) = db {
-        // The tracked list lives in the VM; the app's copy only needs the lists.
-        let mut tracked = Vec::new();
-        held.book.apply(&db.0, update.clone(), &mut tracked);
-    }
-    held.pending.push(update);
+    apply_update(world, update);
 }
 
+/// Run one packet's handler steps over the world's book.
+pub(crate) fn apply_update(world: &mut World, update: AchievementUpdate) {
+    // No tables, no lists: the game start indexes nothing to update (`0x5b6df0`).
+    let Some(db) = world.get_resource::<Achievements>().map(|a| a.0.clone()) else {
+        return;
+    };
+    world.init_resource::<PlayerAchievements>();
+    handle_achievement_packet(&db, update, &mut WorldHost { world });
+}
+
+/// The handler's host: the book is the world's, and each raise fires with the `World` lent.
+struct WorldHost<'w> {
+    world: &'w mut World,
+}
+
+impl AchievementHost for WorldHost<'_> {
+    fn book(&mut self) -> &mut AchievementBook {
+        &mut self
+            .world
+            .resource_mut::<PlayerAchievements>()
+            .into_inner()
+            .0
+    }
+
+    fn raise(&mut self, (event, args): AchievementEvent) {
+        crate::ui_script::live::with_live_world(self.world, |s| s.fire_event(event, args));
+    }
+}
+
+/// The game shutdown's clear (`0x5b4f00`), after the UI shutdown has saved the tracked list.
 fn end_session(mut held: ResMut<PlayerAchievements>) {
     *held = PlayerAchievements::default();
 }
 
-/// What the feed last pushed, so a frame with nothing new does no work.
-#[derive(Default)]
-struct FeedMemory {
-    names_generation: u64,
-    /// The guids whose names the VM reads: the player, the criteria owners and the tooltips'
-    /// asks.
-    named: BTreeSet<u64>,
-    /// The tooltips' asks, kept so a later cache answer reaches the VM.
-    asked: BTreeSet<u64>,
+/// A player name's answer: the achievement tooltips waiting on it run their callback, which
+/// rebuilds only on a name (`0x61de50`).
+pub(crate) fn name_landed(world: &mut World, guid: u64, named: bool) {
+    crate::ui_script::live::with_live_world(world, |s| s.achievement_name_landed(guid, named));
 }
 
-#[allow(clippy::too_many_arguments)]
-fn feed_achievements(
-    mut script: crate::ui_script::InTurn,
-    db: Option<Res<Achievements>>,
-    mut held: ResMut<PlayerAchievements>,
-    self_guid: Res<SelfGuid>,
-    names: Res<NameCache>,
-    commands: Res<NetCommands>,
-    mut memory: Local<crate::ui_script::VmMemo<FeedMemory>>,
-) {
-    let Some(mut script) = script.turn() else {
-        return;
+/// What the achievement bindings read and write at the call.
+#[derive(SystemParam)]
+pub(crate) struct AchievementLive<'w> {
+    db: Option<Res<'w, Achievements>>,
+    book: Option<ResMut<'w, PlayerAchievements>>,
+    names: Option<Res<'w, NameCache>>,
+    commands: Option<Res<'w, NetCommands>>,
+}
+
+impl AchievementLive<'_> {
+    pub(crate) fn db(&self) -> Option<Arc<AchievementDb>> {
+        self.db.as_ref().map(|d| d.0.clone())
+    }
+
+    pub(crate) fn book(&self) -> Option<&AchievementBook> {
+        self.book.as_deref().map(|b| &b.0)
+    }
+
+    pub(crate) fn book_mut(&mut self) -> Option<&mut AchievementBook> {
+        self.book.as_deref_mut().map(|b| &mut b.0)
+    }
+
+    /// The name cache's record with no callback: no query (`0x5b58b0`).
+    pub(crate) fn cached_name(&self, guid: u64) -> Option<String> {
+        self.names.as_ref()?.peek(guid).map(str::to_owned)
+    }
+
+    /// The name cache's record with a callback: a miss asks (`0x627220`).
+    pub(crate) fn name_or_ask(&self, guid: u64) -> Option<String> {
+        let (names, commands) = (self.names.as_ref()?, self.commands.as_ref()?);
+        names.resolve(guid, commands).map(str::to_owned)
+    }
+
+    /// `CMSG_QUERY_INSPECT_ACHIEVEMENTS` (`0x5b1ab0`).
+    pub(crate) fn query_inspect(&self, guid: u64) {
+        if let Some(commands) = &self.commands {
+            let _ = commands
+                .0
+                .send(ClientCommand::QueryInspectAchievements { target: guid });
+        }
+    }
+}
+
+/// A view lending only the tables and the lists, for the stock-UI tests whose other state the VM
+/// seeds itself.
+#[cfg(test)]
+pub(crate) mod book_view {
+    use std::sync::Arc;
+
+    use benilla_ui::script::{
+        handle_achievement_packet, AchievementBook, AchievementDb, AchievementEvent,
+        AchievementHost, AchievementUpdate, LiveState, UiScript,
     };
-    let Some(db) = db else { return };
-    let (memory, vm_reset) = memory.get_reset(&script);
-    let player = self_guid.0.unwrap_or(0);
-    script.set_achievement_player(player);
-    if vm_reset {
-        script.set_achievement_db(db.0.clone());
-        script.set_achievement_book(held.book.clone());
-        held.pending.clear();
-        memory.names_generation = u64::MAX;
-    } else if !held.pending.is_empty() {
-        for update in std::mem::take(&mut held.pending) {
-            script.apply_achievement(update);
+
+    pub(crate) struct BookView {
+        pub(crate) db: Arc<AchievementDb>,
+        pub(crate) book: AchievementBook,
+    }
+
+    impl BookView {
+        pub(crate) fn new(db: Arc<AchievementDb>) -> Self {
+            Self {
+                db,
+                book: AchievementBook::default(),
+            }
+        }
+
+        /// `f` on `s` with this view lent.
+        pub(crate) fn lend<R>(
+            &mut self,
+            s: &mut UiScript,
+            f: impl FnOnce(&mut UiScript) -> R,
+        ) -> R {
+            s.with_live(self, f)
+        }
+
+        /// One packet through the handler's steps, each raise with this view lent.
+        pub(crate) fn apply(&mut self, s: &mut UiScript, update: AchievementUpdate) {
+            let db = self.db.clone();
+            handle_achievement_packet(&db, update, &mut Host { view: self, s });
         }
     }
 
-    for guid in script.take_inspect_achievement_queries() {
-        let _ = commands
-            .0
-            .send(ClientCommand::QueryInspectAchievements { target: guid });
+    struct Host<'a> {
+        view: &'a mut BookView,
+        s: &'a mut UiScript,
     }
-    let wants = script.take_achievement_name_wants();
-    let asked = !wants.is_empty();
-    for guid in wants {
-        names.resolve(guid, &commands);
-        memory.asked.insert(guid);
+
+    impl AchievementHost for Host<'_> {
+        fn book(&mut self) -> &mut AchievementBook {
+            &mut self.view.book
+        }
+
+        fn raise(&mut self, (event, args): AchievementEvent) {
+            self.s.with_live(self.view, |s| s.fire_event(event, args));
+        }
     }
-    if !asked && !held.is_changed() && names.generation() == memory.names_generation {
-        return;
-    }
-    let named: BTreeSet<u64> = held
-        .book
-        .criteria_players()
-        .chain([player])
-        .chain(memory.asked.iter().copied())
-        .filter(|&g| g != 0)
-        .collect();
-    if named != memory.named || names.generation() != memory.names_generation {
-        let map: HashMap<u64, String> = named
-            .iter()
-            .filter_map(|&g| names.peek(g).map(|n| (g, n.to_string())))
-            .collect();
-        script.set_achievement_names(map);
-        memory.names_generation = names.generation();
-        memory.named = named;
+
+    impl LiveState for BookView {
+        fn unit_flags(&self, _guid: u64) -> Option<u32> {
+            None
+        }
+
+        fn unit_health(&self, _guid: u64) -> Option<u32> {
+            None
+        }
+
+        fn active_player(&self) -> Option<u64> {
+            None
+        }
+
+        fn has_control(&self) -> bool {
+            true
+        }
+
+        fn far_sight(&self) -> bool {
+            false
+        }
+
+        fn achievement_db(&self) -> Option<Arc<AchievementDb>> {
+            Some(self.db.clone())
+        }
+
+        fn achievement_book(&self) -> Option<&AchievementBook> {
+            Some(&self.book)
+        }
+
+        fn achievement_book_mut(&mut self) -> Option<&mut AchievementBook> {
+            Some(&mut self.book)
+        }
     }
 }

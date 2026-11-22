@@ -35,6 +35,8 @@ pub(crate) struct LiveView<'w, 's> {
     quest_rows: crate::ui_quest_log::rows::QuestRowLive<'w, 's>,
     net: Option<Res<'w, crate::net::NetCommands>>,
     bank_prices: Option<Res<'w, crate::ui_bank::BankPrices>>,
+    /// The achievement tables and lists, and the name cache the criteria and links read.
+    achievements: crate::ui_achievement::AchievementLive<'w>,
     /// The trade's network cells (`0xca0b68`-`0xca0ff8`), the trade verbs' wire reads.
     trade_cells: Option<Res<'w, crate::ui_trade::TradeSession>>,
     item_tables: Option<Res<'w, crate::ui_items::feed::ItemTablesLive>>,
@@ -1916,6 +1918,30 @@ impl LiveState for LiveView<'_, '_> {
 
     fn master_loot_candidate(&mut self, index: u32) -> Option<Option<String>> {
         Some(self.loot.as_mut()?.master_candidate(index))
+    }
+
+    fn achievement_db(&self) -> Option<std::sync::Arc<benilla_ui::script::AchievementDb>> {
+        self.achievements.db()
+    }
+
+    fn achievement_book(&self) -> Option<&benilla_ui::script::AchievementBook> {
+        self.achievements.book()
+    }
+
+    fn achievement_book_mut(&mut self) -> Option<&mut benilla_ui::script::AchievementBook> {
+        self.achievements.book_mut()
+    }
+
+    fn cached_player_name(&self, guid: u64) -> Option<String> {
+        self.achievements.cached_name(guid)
+    }
+
+    fn player_name_or_ask(&mut self, guid: u64) -> Option<String> {
+        self.achievements.name_or_ask(guid)
+    }
+
+    fn query_inspect_achievements(&mut self, guid: u64) {
+        self.achievements.query_inspect(guid);
     }
 
     fn trade_cells(&self) -> Option<benilla_ui::script::TradeCells> {

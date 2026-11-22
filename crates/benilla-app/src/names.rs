@@ -499,6 +499,7 @@ pub(crate) mod net {
             // The record's callbacks run once it is cached (`0x5a47d0`).
             ui.world(move |world| crate::ui_guild_bank::name_landed(world, guid));
             ui.world(move |world| crate::ui_item_text::name_landed(world, guid));
+            ui.world(move |world| crate::ui_achievement::name_landed(world, guid, true));
         }
     }
 
@@ -514,6 +515,7 @@ pub(crate) mod net {
             if miss != benilla_protocol::messages::NameQueryMiss::Retry {
                 ui.world(move |world| crate::ui_guild_bank::name_landed(world, guid));
                 ui.world(move |world| crate::ui_item_text::name_landed(world, guid));
+                ui.world(move |world| crate::ui_achievement::name_landed(world, guid, false));
             }
         }
     }
