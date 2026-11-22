@@ -309,10 +309,11 @@ fn pet_cast_end(world: &mut World, spell_id: u32, cast_count: u8, reason: u8, wi
     });
 }
 
-/// What the pet's end-cast reaches (`0x806c30`): the charm, else the summon.
+/// What the pet's end-cast reaches: the record's caster (`0x80581c`), else the charm, else the summon (`0x806c5b`, `0x80521e`).
 #[derive(bevy::ecs::system::SystemParam)]
 struct PetCastEnd<'w, 's> {
     commands: Commands<'w, 's>,
+    pending: Option<Res<'w, crate::spell::PendingCast>>,
     player: Query<'w, 's, &'static crate::net::ObjectStore, With<crate::net::SelfPlayer>>,
     index: Res<'w, GuidIndex>,
     casting: Query<'w, 's, &'static crate::creature_anim::Casting>,
@@ -323,14 +324,21 @@ struct PetCastEnd<'w, 's> {
 }
 
 impl PetCastEnd<'_, '_> {
-    /// The pet's running cast of this spell and count ends (`0x7fed81`); any other cast's end
-    /// still drops a held model of its count (`0x7feeb0`). The pet's guid, when it is streamed.
+    /// The caster's running cast of this spell and count ends (`0x7fed81`); any other cast's end still drops a held model of its count (`0x7feeb0`). The caster's guid, when it is streamed.
     fn end(&mut self, spell_id: u32, cast_count: u8, wire_reason: u8) -> Option<u64> {
-        let pet = self
-            .player
-            .iter()
-            .next()
-            .and_then(|s| s.0.unit_pet_guid())?;
+        // The display's tail ends the record's own caster (`0x80581f`-`0x805833`); with no record the handler's stand-in carries the pet (`0x80521e`).
+        let recorded = self
+            .pending
+            .as_deref()
+            .and_then(|p| p.find(spell_id, cast_count))
+            .map(|r| r.caster)
+            .filter(|&c| c != 0);
+        let pet = recorded.or_else(|| {
+            self.player
+                .iter()
+                .next()
+                .and_then(|s| s.0.unit_pet_guid())
+        })?;
         let &entity = self.index.0.get(&pet)?;
         let seq = self.play_seq.next();
         let running = self
@@ -1056,6 +1064,54 @@ mod tests {
             .resource::<crate::spell::PendingCast>()
             .find(GROWL, 3)
             .is_none());
+    }
+
+    /// The display's tail ends the pending record's own caster (`0x80581f`-`0x805833`), not whatever the player's pet fields name now.
+    #[test]
+    fn a_pets_failure_ends_the_records_caster() {
+        const PET: u64 = 0xF140_0000_0000_0042;
+        const CHARMED: u64 = 0xF130_0000_0000_0077;
+        const GROWL: u32 = 2649;
+        let mut world = World::new();
+        world.init_resource::<crate::ui_script::live::UiEvents>();
+        world.init_resource::<GuidIndex>();
+        world.init_resource::<crate::creature_anim::PlaySeq>();
+        world.init_resource::<Messages<crate::creature_anim::CastEvent>>();
+        world.init_resource::<Messages<crate::creature_anim::MissileRelease>>();
+        world.spawn((
+            crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (benilla_protocol::field::FIELD_UNIT_SUMMON, PET as u32),
+                (
+                    benilla_protocol::field::FIELD_UNIT_SUMMON + 1,
+                    (PET >> 32) as u32,
+                ),
+            ])),
+            crate::net::SelfPlayer,
+        ));
+        for guid in [PET, CHARMED] {
+            let e = world.spawn_empty().id();
+            world.resource_mut::<GuidIndex>().0.insert(guid, e);
+        }
+        let mut pending = crate::spell::PendingCast::default();
+        pending.file(crate::spell::PendingRecord {
+            pet: true,
+            ..crate::spell::PendingRecord::player(GROWL, 3, CHARMED)
+        });
+        world.insert_resource(pending);
+        pet_cast_end(&mut world, GROWL, 3, 0x5F, 0x5F);
+        let edges = world
+            .resource::<crate::ui_script::live::UiEvents>()
+            .cast_edges();
+        assert!(
+            matches!(
+                edges.as_slice(),
+                [crate::ui_cast::CastBarEdge::Failed {
+                    caster: CHARMED,
+                    ..
+                }]
+            ),
+            "{edges:?}"
+        );
     }
 
     #[test]
