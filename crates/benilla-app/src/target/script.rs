@@ -280,7 +280,6 @@ mod tests {
         world.init_resource::<crate::names::NameCache>();
         world.init_resource::<scan::TabHistory>();
         world.init_resource::<Time>();
-        world.init_resource::<crate::ui_action::UiErrorKeys>();
         world.insert_non_send_resource(UiScript::new().expect("a bare VM"));
         world
     }

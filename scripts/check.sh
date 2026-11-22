@@ -10,10 +10,10 @@
 # path the whole workspace), the player tests to when `benilla-app` or `benilla-formats` is in
 # scope, and the engine boot to when `benilla-worldview` is. CHECK_FULL=1 checks the whole
 # workspace even with no changes.
-# Where the install (WOW_DATA, or the resolver's own ladder) and the addon corpus
-# (BENILLA_ADDON_CORPUS, or the `wow-addons-vanilla` link) both resolve, BENILLA_REQUIRE_DATA=1
-# turns a data-gated skip into a failure. The no-install rungs run only where some data was found:
-# elsewhere the first run already had none.
+# Where the install resolves (WOW_DATA, or the resolver's own ladder), BENILLA_REQUIRE_DATA=1 turns
+# an install-gated skip into a failure; where the addon corpus does (BENILLA_ADDON_CORPUS, or the
+# `wow-addons-vanilla` link), BENILLA_REQUIRE_CORPUS=1 does the same for a corpus-gated one. The
+# no-install rungs run only where some data was found: elsewhere the first run already had none.
 #
 #   scripts/check.sh
 set -uo pipefail
@@ -159,22 +159,38 @@ fi
 corpus="${BENILLA_ADDON_CORPUS-}"
 [ -z "${BENILLA_ADDON_CORPUS+set}" ] && [ -d "$root/wow-addons-vanilla" ] && corpus="$root/wow-addons-vanilla"
 [ -n "$corpus" ] && [ ! -d "$corpus" ] && corpus=""
+# Each switch follows its own data: a machine with the install and no corpus still requires every
+# install-gated test, which is most of them.
 require_data=""
-if [ -n "$wow_data" ] && [ -n "$corpus" ]; then
+require_corpus=""
+if [ -n "$wow_data" ]; then
     require_data=1
 else
-    echo "check: NOTE — install or addon corpus not found here (install='${wow_data:-none}'," \
-         "corpus='${corpus:-none}'): data-gated tests skip on this machine"
+    echo "check: NOTE — no WoW install found (set WOW_DATA): install-gated tests skip on this machine"
 fi
+if [ -n "$corpus" ]; then
+    require_corpus=1
+else
+    echo "check: NOTE — no addon corpus found (set BENILLA_ADDON_CORPUS): corpus-gated tests skip"
+fi
+# The data the check found, handed to every test so each reads the same install and corpus.
+with_data() {
+    env ${wow_data:+WOW_DATA="$wow_data"} ${corpus:+BENILLA_ADDON_CORPUS="$corpus"} \
+        ${require_data:+BENILLA_REQUIRE_DATA=1} ${require_corpus:+BENILLA_REQUIRE_CORPUS=1} \
+        BENILLA_SKIP_LOG="$skips" "$@"
+}
 
-run test env ${require_data:+BENILLA_REQUIRE_DATA=1} BENILLA_SKIP_LOG="$skips" cargo test $pflags
+run test with_data cargo test $pflags
 report_skips test
 
 # The no-install rungs, as gates.sh runs them: `WOW_DATA=` is the resolver's "no install" even where
 # a `WoW` link is, so a test that reads the install without `wow_data_or_skip!` fails here.
 had_data=""
 if [ -n "$wow_data" ] || [ -n "$corpus" ]; then had_data=1; fi
-no_data() { env -u BENILLA_REQUIRE_DATA -u BENILLA_SKIP_LOG WOW_DATA= BENILLA_ADDON_CORPUS= "$@"; }
+no_data() {
+    env -u BENILLA_REQUIRE_DATA -u BENILLA_REQUIRE_CORPUS -u BENILLA_SKIP_LOG WOW_DATA= \
+        BENILLA_ADDON_CORPUS= "$@"
+}
 if [ -n "$had_data" ]; then
     run test-no-install no_data cargo test $pflags
 fi
@@ -189,8 +205,7 @@ fi
 # folder sits beside the binary), which no other gate runs, with the data for the shipped-UI tests
 # that read FrameXML off the install. Without `dev` only $BENILLA_ADDON_CORPUS finds the corpus.
 if in_scope benilla-app || in_scope benilla-formats; then
-    run player-tests env ${wow_data:+WOW_DATA="$wow_data"} ${corpus:+BENILLA_ADDON_CORPUS="$corpus"} \
-        ${require_data:+BENILLA_REQUIRE_DATA=1} BENILLA_SKIP_LOG="$skips" \
+    run player-tests with_data \
         cargo test -p benilla-formats -p benilla-app --no-default-features --lib
     report_skips player-tests
     run player-build cargo check -p benilla --no-default-features

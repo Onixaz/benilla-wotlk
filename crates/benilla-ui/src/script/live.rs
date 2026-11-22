@@ -115,6 +115,37 @@ pub trait LiveState {
         0
     }
 
+    /// `UnitAura`'s walk over `guid`'s auras at the call (`0x6147c0`): a held unit's listed auras
+    /// in display order behind its unit gate, else its roster record's block; `pick` sees each in
+    /// order, the first it takes is built with its times on `ui_now`'s clock, and `raid` decides
+    /// each one's second-list membership. `Some(None)` for no aura taken.
+    fn find_unit_aura(
+        &self,
+        _guid: u64,
+        _ui_now: f64,
+        _raid: bool,
+        _pick: &mut dyn FnMut(&super::AuraFacts<'_>) -> bool,
+    ) -> Option<Option<super::AuraState>> {
+        None
+    }
+
+    /// `guid`'s raw aura slots at the call, unfiltered, times on `ui_now`'s clock; `Some(None)` for
+    /// a unit neither held nor on the roster.
+    fn unit_aura_slots(&self, _guid: u64, _ui_now: f64) -> Option<Option<super::UnitAuraSlots>> {
+        None
+    }
+
+    /// The minimap's tracking spell (`0xbeba68`), a session global the aura handler writes.
+    fn tracking_spell(&self) -> Option<u32> {
+        None
+    }
+
+    /// Write the tracking spell inside the call, as `SetTracking()` zeroes it (`0x57f4c2`); false
+    /// where no view is lent.
+    fn set_tracking_spell(&mut self, _spell_id: u32) -> bool {
+        false
+    }
+
     /// An item spell's range check from us toward `target` at the call (`0x809610`): `Some(None)` with no answer, `None` where no view lends the check.
     fn item_spell_in_range(&self, _spell_id: u32, _target: u64) -> Option<Option<bool>> {
         None
@@ -685,6 +716,15 @@ pub trait LiveState {
         None
     }
 
+    /// A macro verb's binding change (`0x565c40` -> `0x5650c0`, `0x566d50`), stored for the bar; every binding returned by index. `None` without a view.
+    fn macros_changed(
+        &mut self,
+        _macros: &super::MacroState,
+        _change: super::MacroChange,
+    ) -> Option<std::collections::HashMap<u32, super::MacroBinding>> {
+        None
+    }
+
     /// `IsUsableItem`'s pair for `item_id` (`0x51c450`); `None` without a view.
     fn item_usable(&self, _item_id: u32) -> Option<(bool, bool)> {
         None
@@ -948,6 +988,31 @@ pub trait LiveState {
 
     /// `AutoEquipCursorItem`'s gate over the held item at `(bag, 1-based slot)` and whether it is ammunition (`0x6dfd45`-`0x6dfe51`); `None` with no active player held.
     fn auto_equip_gate(&self, _bag: i64, _slot: u32) -> Option<(super::SwapGate, bool)> {
+        None
+    }
+
+    /// The trade's network cells at the call: the partner's offered coins (`0xca0b78`) and each window's enchant spell (`0xca0ff0`); `None` where no view lends them.
+    fn trade_cells(&self) -> Option<super::TradeCells> {
+        None
+    }
+
+    /// The open loot window resolved at the call: its coin slot and its 18 rows, each row's record read with no callback (`0x588310`, `0x5884a0`); `Some(None)` with no loot open, `None` where no view lends it.
+    fn loot_window(&self) -> Option<Option<super::LootState>> {
+        None
+    }
+
+    /// The looted object (`[0xbfa8d8]`), 0 with no loot open; `None` where no view lends it.
+    fn loot_source(&self) -> Option<u64> {
+        None
+    }
+
+    /// Whether the last window's loot type (`[0xbfa68c]`) is fishing; `None` where no view lends it.
+    fn loot_fishing(&self) -> Option<bool> {
+        None
+    }
+
+    /// The master-loot candidate at 0-based `index` (`0x6fa770`) named off the name cache, a miss asking with the list's callback (`0x58899d` -> `0x588150`); `Some(None)` for nobody, `None` where no view lends it.
+    fn master_loot_candidate(&mut self, _index: u32) -> Option<Option<String>> {
         None
     }
 

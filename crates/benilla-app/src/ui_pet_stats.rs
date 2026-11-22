@@ -543,7 +543,6 @@ mod tests {
             .init_resource::<crate::target::Selection>()
             .init_resource::<crate::net::SelfGuid>()
             .init_resource::<crate::ui_script::UiClock>()
-            .init_resource::<crate::ui_action::UiErrorKeys>()
             .init_resource::<crate::net::Reputations>()
             .init_resource::<crate::spell::QueuedMeleeSpell>()
             .init_resource::<crate::spell::AutoRepeatActive>()

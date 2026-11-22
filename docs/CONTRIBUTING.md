@@ -95,8 +95,9 @@ out of scope is closed with the reason.
   when it is absent, and a few dozen more read a corpus of addons
   (`BENILLA_ADDON_CORPUS=<a folder of addons>`, or a `wow-addons-vanilla` link at the root),
   third-party content that is not in this repo. `scripts/check.sh` runs them and prints how many
-  skipped and why. Where the data is, `BENILLA_REQUIRE_DATA=1` turns a skip into a failure, and
-  the check sets it itself when the install and the corpus both resolve; it then runs the tests
+  skipped and why. Where the data is, a skip is a failure: the check sets
+  `BENILLA_REQUIRE_DATA=1` when the install resolves and `BENILLA_REQUIRE_CORPUS=1` when the
+  corpus does, and hands what it found to every test (`WOW_DATA`); it then runs the tests
   and the boot again with neither, as `scripts/gates.sh` always runs (`WOW_DATA=`,
   `BENILLA_ADDON_CORPUS=`).
 - **A server to test against.** Any 3.3.5a server; `WOW_HOST` names it (default

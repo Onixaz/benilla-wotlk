@@ -97,13 +97,13 @@ impl TrackingSpell {
 /// The VM's tracking state.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct TrackingModel {
-    /// The active tracking spell, 0 for none.
+    /// A test's tracking spell where no view lends the engine's global, 0 for none.
     pub(crate) spell: u32,
     /// The active town type, an index into [`TOWN_TYPES`].
     pub(crate) town: Option<usize>,
 }
 
-/// The active player's class bit at the call, 0 with no active player (`0x57e999`).
+/// The active player's class bit at the call, 0 with no active player (`0x57e996`).
 fn live_class_mask() -> u32 {
     let class_id = super::read_live(|l| l.player_fields())
         .flatten()
@@ -134,15 +134,30 @@ fn live_spells() -> std::sync::Arc<super::PlayerBook> {
 }
 
 impl TrackingModel {
+    /// The tracking spell global (`0xbeba68`) at the call: the engine's, else a test's.
+    pub(crate) fn spell(&self) -> u32 {
+        super::read_live(|l| l.tracking_spell())
+            .flatten()
+            .unwrap_or(self.spell)
+    }
+
+    /// Write the global inside the call, else a test's copy.
+    fn set_spell(&mut self, spell_id: u32) {
+        if super::write_live(|l| l.set_tracking_spell(spell_id)) != Some(true) {
+            self.spell = spell_id;
+        }
+    }
+
     /// `GetTrackingTexture` (`0x57f4f0`): the town file, else the active spell's icon, else
     /// `Tracking\None`.
     fn texture(&self, spells: &[TrackingSpell]) -> String {
         if let Some(t) = self.town {
             return format!("{TRACKING_DIR}\\{}", TOWN_TYPES[t].file);
         }
+        let spell = self.spell();
         spells
             .iter()
-            .find(|s| s.spell_id == self.spell && self.spell != 0)
+            .find(|s| s.spell_id == spell && spell != 0)
             .and_then(|s| s.shown_icon(true).cloned())
             .unwrap_or_else(|| format!("{TRACKING_DIR}\\None"))
     }
@@ -163,15 +178,13 @@ fn row(spells: &[TrackingSpell], class_mask: u32, index: i64) -> Option<Row<'_>>
 }
 
 /// The tracking-info load (`0x57e070`): the town type into the global and `minimapTrackedInfo`,
-/// then `MINIMAP_UPDATE_TRACKING`.
+/// then `MINIMAP_UPDATE_TRACKING` queued with the frame's unique signals (`0x57e0ed`).
 fn load_town(lua: &Lua, town: Option<usize>) {
-    {
-        let mut model = super::model_mut_of(lua);
-        model.minimap_tracking.town = town;
-        let token = town.map_or("", |t| TOWN_TYPES[t].token);
-        super::cvars::set_from_engine(&mut model, "minimapTrackedInfo", token.to_string());
-    }
-    super::tick::fire_event_into(lua, "MINIMAP_UPDATE_TRACKING", Vec::new());
+    let mut model = super::model_mut_of(lua);
+    model.minimap_tracking.town = town;
+    let token = town.map_or("", |t| TOWN_TYPES[t].token);
+    super::cvars::set_from_engine(&mut model, "minimapTrackedInfo", token.to_string());
+    super::live::unique_signal(&mut model, "MINIMAP_UPDATE_TRACKING");
 }
 
 fn model_of(lua: &Lua) -> mlua::AppDataRef<'_, super::ModelCell> {
@@ -208,7 +221,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 match row(&book.tracking, live_class_mask(), index) {
                     None => return Ok(MultiValue::new()),
                     Some(Row::Spell(s)) => {
-                        let active = t.spell == s.spell_id;
+                        let active = t.spell() == s.spell_id;
                         (
                             s.name.clone(),
                             s.shown_icon(active).cloned(),
@@ -253,16 +266,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, index: Value| {
             let index = index_arg(lua, &index)?;
             let Some(index) = index else {
-                let fired = {
+                {
                     let mut model = super::model_mut_of(lua);
-                    let spell = std::mem::take(&mut model.minimap_tracking.spell);
+                    let spell = model.minimap_tracking.spell();
+                    model.minimap_tracking.set_spell(0);
                     if spell != 0 {
                         model.cancel_aura_requests.push(spell);
+                        // Queued with the frame's unique signals (`0x57f4cc`).
+                        super::live::unique_signal(&mut model, "MINIMAP_UPDATE_TRACKING");
                     }
-                    spell != 0
-                };
-                if fired {
-                    super::tick::fire_event_into(lua, "MINIMAP_UPDATE_TRACKING", Vec::new());
                 }
                 load_town(lua, None);
                 return Ok(());
@@ -290,7 +302,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                         return Ok(());
                     }
                     Ok(i) => {
-                        let spell = model.minimap_tracking.spell;
+                        let spell = model.minimap_tracking.spell();
                         if spell != 0 {
                             model.cancel_aura_requests.push(spell);
                         }
@@ -336,18 +348,26 @@ impl super::UiScript {
             .any(|s| s.spell_id == spell_id)
     }
 
-    /// The tracking-spell setter (`0x57ea30`), from a tracking aura's add or removal on the player:
-    /// a new spell clears the town type, and either way `MINIMAP_UPDATE_TRACKING` fires.
+    /// A test's tracking-spell setter (`0x57ea30`) where no view lends the global: the write, then
+    /// [`tracking_spell_moved`](Self::tracking_spell_moved).
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_tracking_spell(&mut self, spell_id: u32) {
         // Only a known tracking spell moves it (`0x727760` add, `0x722090` removal).
         if spell_id != 0 && !self.is_tracking_spell(spell_id) {
             return;
         }
-        self.model_mut().minimap_tracking.spell = spell_id;
+        self.model_mut().minimap_tracking.set_spell(spell_id);
+        self.tracking_spell_moved(spell_id);
+    }
+
+    /// The tracking-spell setter's tail once the engine wrote the global (`0x57ea3d`): a spell
+    /// clears the town type (`0x57ea41`), and either way `MINIMAP_UPDATE_TRACKING` is queued with
+    /// the frame's unique signals (`0x57e0ed`, `0x57ea50`).
+    pub fn tracking_spell_moved(&mut self, spell_id: u32) {
         if spell_id != 0 {
             load_town(&self.lua, None);
         } else {
-            self.fire_event("MINIMAP_UPDATE_TRACKING", vec![]);
+            super::live::unique_signal(&mut self.model_mut(), "MINIMAP_UPDATE_TRACKING");
         }
     }
 
@@ -382,7 +402,7 @@ impl super::UiScript {
     pub fn track_in_form(&mut self, allowed: impl Fn(u32) -> bool) {
         let pick = {
             let t = &self.model_ref().minimap_tracking;
-            if t.spell != 0 || t.town.is_some() {
+            if t.spell() != 0 || t.town.is_some() {
                 return;
             }
             live_spells()
@@ -409,14 +429,9 @@ impl super::UiScript {
             .is_some_and(|t| t.kind == TownKind::TrivialQuests)
     }
 
-    /// The active tracking spell, 0 for none.
+    /// The active tracking spell at the call, 0 for none.
     pub fn tracking_spell(&self) -> u32 {
-        self.model_ref().minimap_tracking.spell
-    }
-
-    /// Drop the session's tracking spell; the town type lives on in its CVar.
-    pub fn clear_tracking(&mut self) {
-        self.model_mut().minimap_tracking.spell = 0;
+        self.model_ref().minimap_tracking.spell()
     }
 }
 

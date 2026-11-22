@@ -15,8 +15,8 @@ This project does not distribute Blizzard's original client code or game assets.
 ## Status
 
 > [!IMPORTANT]
-> The 3.3.5a port is in progress. The client can authenticate, enter the world, and run the stock
-> 3.3.5a interface, but parts of the data and gameplay layers still use 1.12.1 layouts or behavior.
+> Benilla-WotLK is fully playable on 3.3.5a servers. Bugs are still expected; known problems are
+> tracked in [GitHub Issues](https://github.com/Onixaz/benilla-wotlk/issues).
 
 
 ## Highlights
@@ -42,7 +42,7 @@ subsystems, instruments, and scripts.
 
 ## Requirements
 
-- An English World of Warcraft 3.3.5a client installation (build 12340).
+- A Windows World of Warcraft 3.3.5a client installation (build 12340), in any locale.
 - A 3.3.5a server. Development uses
   [AzerothCore](https://github.com/azerothcore/azerothcore-wotlk).
 - Stable Rust and a C compiler because the vendored Lua runtime is built from source.
@@ -145,4 +145,5 @@ from the game.
 
 World of Warcraft is a trademark of Blizzard Entertainment, Inc. Benilla-Wotlk code is available under
 your choice of the [MIT](LICENSE-MIT) or [Apache 2.0](LICENSE-APACHE) license. Vendored components
-under `third_party/`, including the Kira audio engine and Lua 5.1, retain their own licenses.
+under `third_party/`, including parts of the Bevy engine and wgpu, the Kira audio engine and Lua 5.1,
+retain their own licenses.

@@ -343,7 +343,8 @@ impl CastLadder<'_, '_> {
         let send = SendCommit {
             cancel_auras,
             packet: SendPacket::Cursor { commit, bound },
-            sent: (!commit.is_item()).then_some(target),
+            // The item send joins the shared tail that raises `SENT` for the active player (`0x80b2dc` -> `0x80b348`, `0x80b514`).
+            sent: Some(target),
             // The cursor's record goes on the list with the send (`0x80cda4`).
             record: match commit {
                 CastCommit::Item {
@@ -365,7 +366,7 @@ impl CastLadder<'_, '_> {
                 attempt: false,
                 count,
             },
-            tail_at_step: !commit.is_item(),
+            tail_at_step: true,
         };
         // The form drop's listeners run before the send (`0x80af88` -> `0x721d89`, `0x80b4ee`).
         if send.waits_for_the_drop() {
@@ -1372,7 +1373,8 @@ fn send_spell_cast(
         CastCommit::Pet { caster } => Some(caster),
         _ => None,
     };
-    let spell_commit = matches!(commit, CastCommit::Spell);
+    // Spell and item sends join the tail raising `SENT` for the active player, not the pet (`0x80b2dc` -> `0x80b348`, `0x80b514`).
+    let player_commit = !matches!(commit, CastCommit::Pet { .. });
     let send = SendCommit {
         cancel_auras,
         packet: SendPacket::Attempt {
@@ -1381,7 +1383,7 @@ fn send_spell_cast(
             item_target,
             target,
         },
-        sent: spell_commit.then_some(target),
+        sent: player_commit.then_some(target),
         record,
         on_next_swing,
         tail: SendTail {
@@ -1393,7 +1395,7 @@ fn send_spell_cast(
             attempt: false,
             count,
         },
-        tail_at_step: spell_commit,
+        tail_at_step: player_commit,
     };
     pending.mark_went(count);
     // The form drop's listeners run before the send (`0x80af88` -> `0x721d89`, `0x80b4ee`).
@@ -3257,6 +3259,31 @@ mod tests {
             world.resource::<AutoRepeatActive>().0,
             None,
             "Auto Shot's ring goes dark"
+        );
+    }
+
+    /// An item use raises `UNIT_SPELLCAST_SENT` first, on the send's shared tail (`0x80b2dc` -> `0x80b348`, `0x80b514`, `0x80b556`).
+    #[test]
+    fn an_item_use_raises_sent_ahead_of_its_tail() {
+        let (mut world, _rx) = world();
+        world
+            .run_system_once(|mut ladder: CastLadder| {
+                ladder.send(HEARTHSTONE, &ctx(), HEARTH_COMMIT);
+            })
+            .expect("the ladder runs as a one-shot system");
+        let edges = world
+            .resource::<crate::ui_cast::PressEdges>()
+            .waiting()
+            .to_vec();
+        assert!(
+            matches!(
+                edges.first(),
+                Some(crate::ui_cast::CastBarEdge::Sent {
+                    spell_id: HEARTHSTONE,
+                    ..
+                })
+            ),
+            "{edges:?}"
         );
     }
 

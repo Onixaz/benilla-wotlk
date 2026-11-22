@@ -202,16 +202,29 @@ fn role_token(roles: u32) -> &'static str {
     }
 }
 
-/// An aura check for a unit token: nothing for nobody or a unit with no aura list.
+/// An aura check for a unit token (`0x555760`): a held unit's slots, else every slot of its
+/// member record, whatever its online bit; nothing for nobody, or a unit neither held nor a member.
 fn unit_has_aura(model: &Model, token: &str, spell: u32) -> Option<bool> {
-    model.token_guid(token).filter(|&g| g != 0)?;
-    crate::script::aura::auras_of(model, token).map(|list| list.iter().any(|a| a.spell_id == spell))
+    use crate::script::aura::UnitAuraSlots;
+    let guid = model.token_guid(token).filter(|&g| g != 0)?;
+    match crate::script::aura::slots_of(model, guid)? {
+        UnitAuraSlots::Held(slots) => Some(slots.iter().any(|&(s, _)| s == spell)),
+        UnitAuraSlots::Member { slots, .. } => Some(slots.iter().any(|&(_, s)| s == spell)),
+        UnitAuraSlots::Pet(_) => None,
+    }
 }
 
+/// The player's first slot holding `spell` (`0x7289c0`), its expiry on the `GetTime()` clock
+/// (`0x558060`); nothing without it.
 fn player_aura_end(model: &Model, spell: u32) -> MultiValue {
-    match model.player_auras.iter().find(|a| a.spell_id == spell) {
-        Some(a) => values(vec![num(a.expiration_time)]),
-        None => MultiValue::new(),
+    use crate::script::aura::UnitAuraSlots;
+    let slots = crate::script::aura::slots_of(model, model.player_guid());
+    match slots {
+        Some(UnitAuraSlots::Held(slots)) => match slots.iter().find(|&&(s, _)| s == spell) {
+            Some(&(_, end)) => values(vec![num(end)]),
+            None => MultiValue::new(),
+        },
+        _ => MultiValue::new(),
     }
 }
 

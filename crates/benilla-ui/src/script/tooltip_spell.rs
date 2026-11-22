@@ -716,10 +716,11 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let (town, spell) = {
                 let model = crate::script::model_mut_of(lua);
                 let t = &model.minimap_tracking;
+                let active = t.spell();
                 let spell = super::spellbook::live_book()
                     .tracking
                     .iter()
-                    .find(|s| s.spell_id == t.spell && t.spell != 0)
+                    .find(|s| s.spell_id == active && active != 0)
                     .map(|s| (s.spell_id, s.name.clone()));
                 (t.town.map(|i| super::TOWN_TYPES[i].token), spell)
             };

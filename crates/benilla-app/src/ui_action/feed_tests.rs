@@ -5,11 +5,12 @@ use std::collections::HashMap;
 
 use benilla_formats::{ItemDisplay, ItemDisplayCatalog};
 use benilla_protocol::messages::{ActionButton, ItemSpellEntry, ACTION_KIND_ITEM};
+use benilla_ui::messages::MsgKind;
 use benilla_ui::script::UiScript;
 use bevy::prelude::*;
 
 use super::feed::feed_actions;
-use super::{CastFail, PlayerActions, UiErrorKeys, UiErrorTexts};
+use super::{CastFail, PlayerActions, TextSink};
 use crate::entities::ItemDisplays;
 use crate::items::{test_template, Items};
 use crate::net::{ClientCommand, NetCommands};
@@ -51,8 +52,6 @@ fn app_with_food_on_the_bar() -> (App, crossbeam_channel::Receiver<ClientCommand
         .init_resource::<PlayerActions>()
         .init_resource::<Items>()
         .init_resource::<crate::net::GuidIndex>()
-        .init_resource::<UiErrorKeys>()
-        .init_resource::<UiErrorTexts>()
         .init_resource::<crate::ui_chat::ChatLog>()
         .init_resource::<crate::sound::MessageSounds>()
         .insert_resource(ItemDisplays::icons_for_tests(
@@ -108,8 +107,7 @@ fn is_consumable_is_ammo_thrown_or_a_negative_charge_use_block() {
     assert!(!proc_item.is_consumable());
 }
 
-/// `UiErrorTexts` end to end into the stock `UIErrorsFrame`: an `SMSG_NOTIFICATION` draws red,
-/// an `SMSG_AREA_TRIGGER_MESSAGE` yellow.
+/// A resolved line ([`TextSink`]) end to end into the stock `UIErrorsFrame`, in the handler's turn: an `SMSG_NOTIFICATION` draws red, an `SMSG_AREA_TRIGGER_MESSAGE` yellow.
 #[test]
 fn pre_resolved_lines_land_on_the_errors_frame_in_the_arms_colour() {
     benilla_formats::wow_data_or_skip!();
@@ -126,16 +124,15 @@ fn pre_resolved_lines_land_on_the_errors_frame_in_the_arms_colour() {
         }
     }
 
-    // What the net drain queues for one `.gm on`, plus a refused portal.
-    let mut texts = app.world_mut().resource_mut::<UiErrorTexts>();
-    texts.error("GM mode is ON".to_string());
-    texts.info("You must be at least level 58 to enter.".to_string());
-    app.update();
-
-    assert!(
-        app.world().resource::<UiErrorTexts>().0.is_empty(),
-        "the feed drains the queue"
+    // What the handlers show for one `.gm on`, plus a refused portal, fired in their turn.
+    let mut ui = crate::ui_script::live::UiEvents::default();
+    ui.text_line(MsgKind::Error, "GM mode is ON".to_string());
+    ui.text_line(
+        MsgKind::Info,
+        "You must be at least level 58 to enter.".to_string(),
     );
+    app.insert_resource(ui);
+    crate::ui_script::live::fire_handler_events(app.world_mut());
 
     let mut script = app.world_mut().non_send_resource_mut::<UiScript>();
     assert!(
@@ -207,8 +204,6 @@ fn a_pets_refused_cast_writes_no_combat_log_line() {
         })
         .init_resource::<Items>()
         .init_resource::<crate::net::GuidIndex>()
-        .init_resource::<UiErrorKeys>()
-        .init_resource::<UiErrorTexts>()
         .init_resource::<crate::ui_chat::ChatLog>()
         .init_resource::<crate::sound::MessageSounds>()
         .add_message::<crate::combat_log::SpellCastFailedLog>()
@@ -255,8 +250,6 @@ fn a_custom_refusal_shows_its_row_and_is_not_logged() {
         .insert_resource(Spells::empty_for_tests())
         .init_resource::<Items>()
         .init_resource::<crate::net::GuidIndex>()
-        .init_resource::<UiErrorKeys>()
-        .init_resource::<UiErrorTexts>()
         .init_resource::<crate::ui_chat::ChatLog>()
         .init_resource::<crate::sound::MessageSounds>()
         .add_message::<crate::combat_log::SpellCastFailedLog>()
@@ -312,6 +305,7 @@ fn need_more_items_and_min_skill_fill_both_argument_words() {
         arg2: Some(arg2),
         caster,
         redisplay: false,
+        item: None,
     };
     let errors = [
         fail(0x97, COPPER_ORE, 5, Caster::Player),
@@ -340,8 +334,6 @@ fn need_more_items_and_min_skill_fill_both_argument_words() {
             catalog: std::sync::Arc::new(lines),
         })
         .init_resource::<crate::net::GuidIndex>()
-        .init_resource::<UiErrorKeys>()
-        .init_resource::<UiErrorTexts>()
         .init_resource::<crate::ui_chat::ChatLog>()
         .init_resource::<crate::sound::MessageSounds>()
         .add_message::<crate::combat_log::SpellCastFailedLog>()
@@ -503,6 +495,272 @@ fn a_tame_failure_composes_the_reason_string_into_err_tame_failed() {
         Some("PETTAME_INVALIDCREATURE."),
         "an unloaded reason string shows its key"
     );
+}
+
+/// 12340's arms read the wire's words, not our bags: 100 names the item its word names and its word `-2` shows message 0 (`0x80869a`, `0x8086b2`); 129 names its `ItemLimitCategory.dbc` row on message `0x272` (`0x8080b1`, `0x808a86`); 176 names the casting item off the record's caster (`0x808a0a`-`0x808a66`). Each logs the shown line.
+#[test]
+fn the_reagent_limit_and_glyph_arms_name_what_12340_names() {
+    use crate::ui_action::Spells;
+    use benilla_formats::{
+        ItemLimitCategory, ItemLimitCategoryCatalog, SpellCatalog, SpellDisplay,
+    };
+
+    const SMELT_COPPER: u32 = 2657;
+    const COPPER_ORE: u32 = 2770;
+    const TIN_ORE: u32 = 2771;
+    const GLYPH_SPELL: u32 = 56368;
+    const GLYPH_ITEM: u32 = 42739;
+    const GLYPH_GUID: u64 = 0x4000_0000_0000_0042;
+    const MANA_GEMS: u32 = 4;
+
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let mut app = App::new();
+    let mut reagents = [(0, 0); 8];
+    reagents[0] = (COPPER_ORE, 1);
+    let mut items = Items::default();
+    items.insert_template(COPPER_ORE, Some(test_template("Copper Ore")));
+    items.insert_template(TIN_ORE, Some(test_template("Tin Ore")));
+    items.insert_template(GLYPH_ITEM, Some(test_template("Glyph of Fireball")));
+    app.insert_resource(Spells {
+        catalog: SpellCatalog::from_displays(HashMap::from([
+            (
+                SMELT_COPPER,
+                SpellDisplay {
+                    name: "Smelt Copper".into(),
+                    reagents,
+                    ..Default::default()
+                },
+            ),
+            (
+                GLYPH_SPELL,
+                SpellDisplay {
+                    name: "Glyph of Fire".into(),
+                    ..Default::default()
+                },
+            ),
+        ])),
+        ..Spells::empty_for_tests()
+    })
+    .insert_resource(items)
+    .insert_resource(crate::ui_trade::ItemLimitCategories(
+        ItemLimitCategoryCatalog::from_rows([ItemLimitCategory {
+            id: MANA_GEMS,
+            name: "Mana Gem".into(),
+            quantity: 3,
+            flags: 0,
+        }]),
+    ))
+    .init_resource::<crate::net::GuidIndex>()
+    .init_resource::<crate::ui_chat::ChatLog>()
+    .init_resource::<crate::sound::MessageSounds>()
+    .add_message::<crate::combat_log::SpellCastFailedLog>()
+    .insert_resource(NetCommands(tx));
+    // The glyph's item object: object and item bits, its template entry.
+    let glyph = app
+        .world_mut()
+        .spawn(crate::net::ObjectStore(
+            benilla_protocol::ObjectFields::from_pairs(&[
+                (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x3),
+                (benilla_protocol::field::FIELD_OBJECT_ENTRY, GLYPH_ITEM),
+            ]),
+        ))
+        .id();
+    app.world_mut()
+        .resource_mut::<crate::net::GuidIndex>()
+        .0
+        .insert(GLYPH_GUID, glyph);
+    let script = UiScript::new().unwrap();
+    script
+        .run(
+            r#"SPELL_FAILED_REAGENTS = "Missing reagent: %s"
+               ERR_INV_FULL = "Inventory is full."
+               SPELL_FAILED_TOO_MANY_OF_ITEM = "Too many of that item already"
+               ERR_ITEM_MAX_LIMIT_CATEGORY_COUNT_EXCEEDED_IS = "You can only carry %d %s"
+               SPELL_FAILED_UNIQUE_GLYPH = "%s: That glyph is already inscribed."
+               BENILLA_TEST_LINES = {}
+               local f = CreateFrame("Frame")
+               f:RegisterEvent("UI_ERROR_MESSAGE")
+               f:SetScript("OnEvent", function(_, _, t) table.insert(BENILLA_TEST_LINES, t) end)"#,
+        )
+        .unwrap();
+    app.insert_non_send_resource(script);
+    let wire = |spell_id, reason, arg| CastFail {
+        arg,
+        ..CastFail::local(spell_id, reason)
+    };
+    show_all(
+        &mut app,
+        [
+            wire(SMELT_COPPER, 0x5c, Some(TIN_ORE)),
+            wire(SMELT_COPPER, 0x5c, Some(0xFFFF_FFFE)),
+            wire(SMELT_COPPER, 0x77, Some(MANA_GEMS)),
+            wire(SMELT_COPPER, 0x77, None),
+            CastFail {
+                item: Some(GLYPH_GUID),
+                ..CastFail::local(GLYPH_SPELL, 0xB6)
+            },
+        ],
+    );
+    let shown = app
+        .world()
+        .non_send_resource::<UiScript>()
+        .eval::<String>("return table.concat(BENILLA_TEST_LINES, '|')")
+        .unwrap();
+    assert_eq!(
+        shown,
+        [
+            "Missing reagent: Tin Ore",
+            "Inventory is full.",
+            "You can only carry 3 Mana Gem",
+            "Too many of that item already",
+            "Glyph of Fireball: That glyph is already inscribed.",
+        ]
+        .join("|")
+    );
+    let logged: Vec<String> = app
+        .world_mut()
+        .resource_mut::<Messages<crate::combat_log::SpellCastFailedLog>>()
+        .drain()
+        .map(|f| f.reason)
+        .collect();
+    assert_eq!(
+        logged[1..3],
+        ["Inventory is full.", "You can only carry 3 Mana Gem"]
+    );
+}
+
+/// 29-31 name the class and mask the wire's two words carry, not the spell's (`0x8085dd`-`0x808613`); 54 the first class-6 subclass under `1 << word` (`0x80865d` -> `0x7fea30`).
+#[test]
+fn the_equipped_item_arms_name_the_wire_words() {
+    use crate::ui_action::Spells;
+    use benilla_formats::{SpellCatalog, SpellDisplay};
+
+    const SHOOT: u32 = 5019;
+    let data = benilla_formats::wow_data_or_skip!();
+    let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+    let subs = benilla_formats::load_item_sub_classes(&mut chain).expect("ItemSubClass.dbc");
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let mut app = App::new();
+    app.insert_resource(Spells {
+        catalog: SpellCatalog::from_displays(HashMap::from([(
+            SHOOT,
+            SpellDisplay {
+                equipped_item_class: 2,
+                equipped_item_subclass_mask: 1 << 19,
+                ..Default::default()
+            },
+        )])),
+        ..Spells::empty_for_tests()
+    })
+    .insert_resource(crate::ui_items::ItemSubClasses(subs))
+    .init_resource::<Items>()
+    .init_resource::<crate::net::GuidIndex>()
+    .init_resource::<crate::ui_chat::ChatLog>()
+    .init_resource::<crate::sound::MessageSounds>()
+    .add_message::<crate::combat_log::SpellCastFailedLog>()
+    .insert_resource(NetCommands(tx));
+    let script = UiScript::new().unwrap();
+    script
+        .run(
+            r#"SPELL_FAILED_EQUIPPED_ITEM_CLASS = "Must have a %s equipped"
+               SPELL_FAILED_NEED_EXOTIC_AMMO = "Requires exotic ammo: %s"
+               BENILLA_TEST_LINES = {}
+               local f = CreateFrame("Frame")
+               f:RegisterEvent("UI_ERROR_MESSAGE")
+               f:SetScript("OnEvent", function(_, _, t) table.insert(BENILLA_TEST_LINES, t) end)"#,
+        )
+        .unwrap();
+    app.insert_non_send_resource(script);
+    show_all(
+        &mut app,
+        [
+            CastFail::local(SHOOT, 0x19),
+            CastFail {
+                arg: Some(2),
+                arg2: Some(1 << 15),
+                ..CastFail::local(SHOOT, 0x19)
+            },
+            CastFail {
+                arg: Some(2),
+                ..CastFail::local(SHOOT, 0x31)
+            },
+        ],
+    );
+    let shown = app
+        .world()
+        .non_send_resource::<UiScript>()
+        .eval::<String>("return table.concat(BENILLA_TEST_LINES, '|')")
+        .unwrap();
+    assert_eq!(
+        shown,
+        "Must have a Wand equipped|Must have a Dagger equipped|Requires exotic ammo: Arrow"
+    );
+}
+
+/// The silent exit (`0x8086ff`): arm 4 with no player and a reagent not yet cached show no line and end the cast on `DONT_REPORT` (`0x808705` -> `0x8055c0`), `UNIT_SPELLCAST_FAILED_QUIET`; a shown line ends it on the wire's reason (`0x808b6c`).
+#[test]
+fn a_silent_exit_ends_the_cast_quietly() {
+    use crate::ui_action::Spells;
+    use crate::ui_cast::CastBarEdge;
+    use benilla_formats::{SpellCatalog, SpellDisplay};
+
+    const SMELT_COPPER: u32 = 2657;
+    const COPPER_ORE: u32 = 2770;
+    const ME: u64 = 0x11;
+
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let mut app = App::new();
+    let mut reagents = [(0, 0); 8];
+    reagents[0] = (COPPER_ORE, 1);
+    app.insert_resource(Spells {
+        catalog: SpellCatalog::from_displays(HashMap::from([(
+            SMELT_COPPER,
+            SpellDisplay {
+                reagents,
+                ..Default::default()
+            },
+        )])),
+        ..Spells::empty_for_tests()
+    })
+    .init_resource::<Items>()
+    .init_resource::<crate::net::GuidIndex>()
+    .init_resource::<crate::ui_chat::ChatLog>()
+    .init_resource::<crate::sound::MessageSounds>()
+    .init_resource::<crate::ui_script::live::UiEvents>()
+    .add_message::<crate::combat_log::SpellCastFailedLog>()
+    .insert_resource(NetCommands(tx));
+    let script = UiScript::new().unwrap();
+    script
+        .run(
+            r#"ERR_SPELL_FAILED_ALREADY_AT_FULL_POWER_S = "You are already at full %s."
+               SPELL_FAILED_REAGENTS = "Missing reagent: %s"
+               SPELL_FAILED_ROOTED = "You are unable to move""#,
+        )
+        .unwrap();
+    app.insert_non_send_resource(script);
+    app.insert_non_send_resource(crate::items::RecordWaits::default());
+    let reasons: Vec<u8> = [0x02, 0x5c, 0x5F]
+        .into_iter()
+        .map(|reason| {
+            let fail = CastFail {
+                arg: (reason == 0x5c).then_some(COPPER_ORE),
+                ..CastFail::local(SMELT_COPPER, reason)
+            };
+            super::refuse_then_end(app.world_mut(), fail, ME, 1);
+            let edges = app
+                .world()
+                .resource::<crate::ui_script::live::UiEvents>()
+                .cast_edges();
+            app.world_mut()
+                .resource_mut::<crate::ui_script::live::UiEvents>()
+                .set_aside();
+            match edges.as_slice() {
+                [CastBarEdge::Failed { reason, .. }] => *reason,
+                other => panic!("one end, got {other:?}"),
+            }
+        })
+        .collect();
+    assert_eq!(reasons, [0x17, 0x17, 0x5F]);
 }
 
 /// Show each refusal as a press or a handler does, in order.

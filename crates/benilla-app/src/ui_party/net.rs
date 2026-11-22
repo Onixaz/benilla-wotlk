@@ -13,8 +13,10 @@ use super::{GroupNotices, GroupState, TargetIconNotice, GROUPTYPE_RAID};
 use crate::names::NameCache;
 use crate::net::{ClientCommand, GuidIndex, NetCommands, NetHandlerApp, ObjectStore, SelfGuid};
 use crate::sound::MessageSounds;
-use crate::ui_action::{UiError, UiErrorKeys};
+use crate::ui_action::signals::SignalSink;
+use crate::ui_action::UiError;
 use crate::ui_quest::QuestStatuses;
+use crate::ui_script::live::UiEvents;
 use crate::unit_auras::UnitAuras;
 use benilla_protocol::messages::{party_operation, party_result};
 
@@ -22,7 +24,7 @@ use benilla_protocol::messages::{party_operation, party_result};
 const INVITE_ACCEPT_SOUND: &str = "igPlayerInviteAccept";
 
 /// One handler per group kind, plus the session-end listener.
-pub(super) fn register(app: &mut App) {
+pub(crate) fn register(app: &mut App) {
     use SessionEventKind as K;
     app.net_handler(K::GroupInvite, on_invite)
         .net_handler(K::GroupDecline, on_decline)
@@ -66,7 +68,7 @@ impl CurrentRaidMap<'_> {
 fn on_difficulty(
     In(ev): In<SessionEvent>,
     mut group: ResMut<GroupState>,
-    mut errors: ResMut<UiErrorKeys>,
+    mut ui: ResMut<UiEvents>,
     map: CurrentRaidMap,
 ) {
     let lines = match ev {
@@ -74,30 +76,22 @@ fn on_difficulty(
         SessionEvent::RaidDifficulty(set) => group.apply_raid_difficulty(set, map.kind()),
         _ => return,
     };
-    push_group_lines(&mut errors, lines);
+    push_group_lines(&mut *ui, lines);
 }
 
-fn on_invite(
-    In(ev): In<SessionEvent>,
-    mut group: ResMut<GroupState>,
-    mut errors: ResMut<UiErrorKeys>,
-) {
+fn on_invite(In(ev): In<SessionEvent>, mut group: ResMut<GroupState>, mut ui: ResMut<UiEvents>) {
     if let SessionEvent::GroupInvite {
         can_accept,
         inviter,
     } = ev
     {
-        invited(&mut group, &mut errors, can_accept, &inviter);
+        invited(&mut group, &mut *ui, can_accept, &inviter);
     }
 }
 
-fn on_decline(
-    In(ev): In<SessionEvent>,
-    mut group: ResMut<GroupState>,
-    mut errors: ResMut<UiErrorKeys>,
-) {
+fn on_decline(In(ev): In<SessionEvent>, mut group: ResMut<GroupState>, mut ui: ResMut<UiEvents>) {
     if let SessionEvent::GroupDecline { name } = ev {
-        declined(&mut group, &mut errors, &name);
+        declined(&mut group, &mut *ui, &name);
     }
 }
 
@@ -111,7 +105,7 @@ fn on_cancel(In(ev): In<SessionEvent>, mut group: ResMut<GroupState>) {
 
 /// The notices that read at most a flag and show one line: the throttles `0x6cbe80` and
 /// `0x5725a0`, and our own silencing, `0x5725c0` (nonzero silenced).
-fn on_keyed_notice(In(ev): In<SessionEvent>, mut errors: ResMut<UiErrorKeys>) {
+fn on_keyed_notice(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
     let key = match ev {
         SessionEvent::GroupActionThrottled => "ERR_GROUP_ACTION_THROTTLED",
         SessionEvent::ReadyCheckError => "ERR_READY_CHECK_THROTTLED",
@@ -119,16 +113,12 @@ fn on_keyed_notice(In(ev): In<SessionEvent>, mut errors: ResMut<UiErrorKeys>) {
         SessionEvent::PartySquelch { silenced: false } => "ERR_PLAYER_UNSILENCED",
         _ => return,
     };
-    errors.0.push(UiError::key(key));
+    ui.line(UiError::key(key));
 }
 
 /// `SMSG_ECHO_PARTY_SQUELCH` (`0x572610`): the member's cached name, never queried (`0x57264c`),
 /// fills the echo; with none cached nothing shows.
-fn on_echo_squelch(
-    In(ev): In<SessionEvent>,
-    mut errors: ResMut<UiErrorKeys>,
-    names: Res<NameCache>,
-) {
+fn on_echo_squelch(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>, names: Res<NameCache>) {
     if let SessionEvent::EchoPartySquelch { guid, silenced } = ev {
         let Some(name) = names.peek(guid) else {
             return;
@@ -138,7 +128,7 @@ fn on_echo_squelch(
         } else {
             "ERR_PLAYER_UNSILENCED_ECHO"
         };
-        errors.0.push(UiError::s(key, name));
+        ui.line(UiError::s(key, name));
     }
 }
 
@@ -146,15 +136,14 @@ fn on_echo_squelch(
 fn on_uninvited(
     In(ev): In<SessionEvent>,
     mut group: ResMut<GroupState>,
-    mut errors: ResMut<UiErrorKeys>,
-    mut ui: ResMut<crate::ui_script::live::UiEvents>,
+    mut ui: ResMut<UiEvents>,
     map: CurrentRaidMap,
 ) {
     if let SessionEvent::GroupUninvited = ev {
-        let before = removal_start(&group);
+        let (before, kind) = (removal_start(&group), map.kind());
         let lines = group.apply_uninvited();
-        removal_end(&mut group, &mut errors, before, map.kind());
-        push_group_lines(&mut errors, lines);
+        removal_end(&mut group, &mut *ui, before, kind);
+        push_group_lines(&mut *ui, lines);
         crate::ui_summon::cancel(&mut ui);
     }
 }
@@ -171,7 +160,7 @@ fn removal_start(group: &GroupState) -> (u32, u32) {
 /// difficulty the emptied party changed (`0x52d87b`).
 fn removal_end(
     group: &mut GroupState,
-    errors: &mut UiErrorKeys,
+    errors: &mut impl SignalSink,
     (dungeon, raid): (u32, u32),
     map: RaidMap,
 ) {
@@ -183,20 +172,13 @@ fn removal_end(
 fn on_leader_changed(
     In(ev): In<SessionEvent>,
     mut group: ResMut<GroupState>,
-    mut errors: ResMut<UiErrorKeys>,
+    mut ui: ResMut<UiEvents>,
     self_guid: Res<SelfGuid>,
     names: Res<NameCache>,
     commands: Res<NetCommands>,
 ) {
     if let SessionEvent::GroupLeaderChanged { name } = ev {
-        leader_changed(
-            &mut group,
-            &mut errors,
-            &name,
-            &self_guid,
-            &names,
-            &commands,
-        );
+        leader_changed(&mut group, &mut *ui, &name, &self_guid, &names, &commands);
     }
 }
 
@@ -204,14 +186,13 @@ fn on_leader_changed(
 fn on_destroyed(
     In(ev): In<SessionEvent>,
     mut group: ResMut<GroupState>,
-    mut errors: ResMut<UiErrorKeys>,
-    mut ui: ResMut<crate::ui_script::live::UiEvents>,
+    mut ui: ResMut<UiEvents>,
     map: CurrentRaidMap,
 ) {
     if let SessionEvent::GroupDestroyed = ev {
         let before = removal_start(&group);
-        destroyed(&mut group, &mut errors);
-        removal_end(&mut group, &mut errors, before, map.kind());
+        destroyed(&mut group, &mut *ui);
+        removal_end(&mut group, &mut *ui, before, map.kind());
         crate::ui_summon::cancel(&mut ui);
     }
 }
@@ -219,7 +200,7 @@ fn on_destroyed(
 fn on_list(
     In(ev): In<SessionEvent>,
     mut group: ResMut<GroupState>,
-    mut errors: ResMut<UiErrorKeys>,
+    mut ui: ResMut<UiEvents>,
     mut sounds: ResMut<MessageSounds>,
     mut quest: ResMut<QuestStatuses>,
     self_guid: Res<SelfGuid>,
@@ -228,7 +209,6 @@ fn on_list(
     commands: Res<NetCommands>,
     // Real: the stale window is wall-clock seconds (`0x6d8945`).
     clock: Res<Time<Real>>,
-    mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     if let SessionEvent::GroupList {
         group_type,
@@ -255,7 +235,7 @@ fn on_list(
         let list_leader = leader;
         list(
             &mut group,
-            &mut errors,
+            &mut *ui,
             &mut sounds,
             &mut quest,
             group_type,
@@ -294,8 +274,7 @@ fn on_real_group_update(In(ev): In<SessionEvent>, mut group: ResMut<GroupState>)
 fn on_command_result(
     In(ev): In<SessionEvent>,
     mut group: ResMut<GroupState>,
-    mut errors: ResMut<UiErrorKeys>,
-    mut ui: ResMut<crate::ui_script::live::UiEvents>,
+    mut ui: ResMut<UiEvents>,
     map: CurrentRaidMap,
 ) {
     if let SessionEvent::PartyCommandResult {
@@ -305,20 +284,45 @@ fn on_command_result(
         value,
     } = ev
     {
-        let before = removal_start(&group);
+        let (before, kind) = (removal_start(&group), map.kind());
         let line = group.apply_command_result(operation, &member, result, value);
-        if operation == party_operation::LEAVE && result == party_result::OK {
-            removal_end(&mut group, &mut errors, before, map.kind());
-            crate::ui_summon::cancel(&mut ui);
+        let left = operation == party_operation::LEAVE && result == party_result::OK;
+        if left {
+            removal_end(&mut group, &mut *ui, before, kind);
         }
         // By key, so the catalog row picks the surface; `None` is the reference's silence.
-        errors.0.extend(line);
+        if let Some(line) = line {
+            ui.line(line);
+        }
+        if left {
+            crate::ui_summon::cancel(&mut ui);
+        }
     }
 }
 
-fn on_member_stats(In(ev): In<SessionEvent>, mut group: ResMut<GroupState>) {
+/// `SMSG_PARTY_MEMBER_STATS` and `_FULL` (`0x6cf9b0`): the record patched, then `UNIT_AURA` queued
+/// for the member when its aura block moved (`0x6cf808`) and, with a pet named, for the pet when
+/// the pet's block moved (`0x6cf941`), each fired at the frame's flush.
+fn on_member_stats(
+    In(ev): In<SessionEvent>,
+    mut group: ResMut<GroupState>,
+    signals: Option<NonSendMut<crate::ui_script::live::UniqueSignals>>,
+) {
     if let SessionEvent::PartyMemberStats { guid, full, info } = ev {
+        // Only a full packet or one carrying a block can move one.
+        let moves = full || info.auras.is_some() || info.pet_auras.is_some();
+        let before = moves.then(|| group.aura_blocks(guid));
         group.apply_stats(guid, full, *info);
+        let (Some(before), Some(mut signals)) = (before, signals) else {
+            return;
+        };
+        let after = group.aura_blocks(guid);
+        if before.0 != after.0 {
+            signals.unique_unit_signal(guid, "UNIT_AURA");
+        }
+        if after.2 != 0 && before.1 != after.1 {
+            signals.unique_unit_signal(after.2, "UNIT_AURA");
+        }
     }
 }
 
@@ -386,28 +390,30 @@ fn on_session_end(In(_): In<SessionEvent>, mut group: ResMut<GroupState>) {
     group.clear_session();
 }
 
-/// Queue the messages an `apply_*` named; `ui_action::feed_actions` resolves and shows them.
-fn push_group_lines(errors: &mut UiErrorKeys, lines: Vec<UiError>) {
-    errors.0.extend(lines);
+/// Show the messages an `apply_*` named, each at the display (`0x5216f0`) in the handler's turn.
+fn push_group_lines(errors: &mut impl SignalSink, lines: Vec<UiError>) {
+    for line in lines {
+        errors.line(line);
+    }
 }
 
 /// We lead when our guid is the leader's, the reference's test.
-fn invited(group: &mut GroupState, errors: &mut UiErrorKeys, can_accept: bool, inviter: &str) {
+fn invited(group: &mut GroupState, errors: &mut impl SignalSink, can_accept: bool, inviter: &str) {
     push_group_lines(errors, group.apply_invited(can_accept, inviter));
 }
 
-fn declined(group: &mut GroupState, errors: &mut UiErrorKeys, name: &str) {
+fn declined(group: &mut GroupState, errors: &mut impl SignalSink, name: &str) {
     push_group_lines(errors, group.apply_declined(name));
 }
 
-fn destroyed(group: &mut GroupState, errors: &mut UiErrorKeys) {
+fn destroyed(group: &mut GroupState, errors: &mut impl SignalSink) {
     push_group_lines(errors, group.apply_destroyed());
 }
 
 /// Our own name, cached from login (`session::connected`), picks the line; this never queries.
 fn leader_changed(
     group: &mut GroupState,
-    errors: &mut UiErrorKeys,
+    errors: &mut impl SignalSink,
     name: &str,
     self_guid: &SelfGuid,
     names: &NameCache,
@@ -426,7 +432,7 @@ fn leader_changed(
 /// signals `RAID_ROSTER_UPDATE` only with none.
 fn list(
     group: &mut GroupState,
-    errors: &mut UiErrorKeys,
+    errors: &mut impl SignalSink,
     sounds: &mut MessageSounds,
     quest: &mut QuestStatuses,
     group_type: u8,
@@ -593,7 +599,7 @@ mod tests {
         let net = NetCommands(tx);
         let (mut group, mut errors, mut quest) = (
             GroupState::default(),
-            UiErrorKeys::default(),
+            crate::ui_action::signals::LinesSeen::default(),
             QuestStatuses::default(),
         );
         let mut names = NameCache::default();
@@ -663,7 +669,7 @@ mod tests {
         let net = NetCommands(tx);
         let (mut group, mut errors, mut quest) = (
             GroupState::default(),
-            UiErrorKeys::default(),
+            crate::ui_action::signals::LinesSeen::default(),
             QuestStatuses::default(),
         );
         let mut names = NameCache::default();
@@ -724,7 +730,7 @@ mod tests {
         let net = NetCommands(tx);
         let (mut group, mut errors, mut sounds, mut quest) = (
             GroupState::default(),
-            UiErrorKeys::default(),
+            crate::ui_action::signals::LinesSeen::default(),
             MessageSounds::default(),
             QuestStatuses::default(),
         );
@@ -924,7 +930,7 @@ mod tests {
         let net = NetCommands(tx);
         let (mut group, mut errors, mut quest) = (
             GroupState::default(),
-            UiErrorKeys::default(),
+            crate::ui_action::signals::LinesSeen::default(),
             QuestStatuses::default(),
         );
         let names = NameCache::default();
@@ -999,7 +1005,7 @@ mod tests {
         let net = NetCommands(tx);
         let (mut group, mut errors, mut quest) = (
             GroupState::default(),
-            UiErrorKeys::default(),
+            crate::ui_action::signals::LinesSeen::default(),
             QuestStatuses::default(),
         );
         let names = NameCache::default();
@@ -1059,7 +1065,6 @@ mod tests {
         let mut world = bevy::ecs::world::World::new();
         world.init_resource::<GroupState>();
         world.init_resource::<GroupNotices>();
-        world.init_resource::<UiErrorKeys>();
         world.init_resource::<crate::ui_script::live::UiEvents>();
         world.init_resource::<NameCache>();
         world.init_resource::<GuidIndex>();
@@ -1103,7 +1108,8 @@ mod tests {
                 .unwrap();
         }
         let fired = world.resource::<crate::ui_script::live::UiEvents>().names();
-        assert_eq!(fired, ["CANCEL_SUMMON"; 3]);
+        let summons = fired.iter().filter(|e| **e == "CANCEL_SUMMON").count();
+        assert_eq!(summons, 3);
     }
 
     /// `0x6cbf14`: our leave's ack runs the party clear-all, whose difficulty line comes first, and
@@ -1118,18 +1124,22 @@ mod tests {
             g.difficulties.dungeon = 1;
         }
         let leave = command_result(party_operation::LEAVE, party_result::OK);
+        crate::ui_action::take_lines_in_turn();
         world
             .run_system_once_with(on_command_result, leave)
             .unwrap();
-        let keys: Vec<&str> = world
-            .resource::<UiErrorKeys>()
-            .0
+        let keys: Vec<&str> = crate::ui_action::take_lines_in_turn()
             .iter()
             .map(|e| e.key)
             .collect();
         assert_eq!(
             keys,
             ["ERR_DUNGEON_DIFFICULTY_CHANGED_S", "ERR_LEFT_GROUP_YOU"]
+        );
+        // Each line at the display in the handler's turn (`0x6cbf1d`), then `CANCEL_SUMMON` (`0x6cbf2e`).
+        assert_eq!(
+            world.resource::<crate::ui_script::live::UiEvents>().names(),
+            ["<world>", "<world>", "CANCEL_SUMMON"]
         );
     }
 
@@ -1197,6 +1207,7 @@ mod tests {
     fn the_notices_show_their_lines_and_the_echo_needs_a_cached_name() {
         use bevy::ecs::system::RunSystemOnce;
         let mut world = handler_world();
+        crate::ui_action::take_lines_in_turn();
         let member = player_guid(7);
         world
             .resource_mut::<NameCache>()
@@ -1214,7 +1225,7 @@ mod tests {
             world.run_system_once_with(on_echo_squelch, ev).unwrap();
         }
         assert_eq!(
-            world.resource::<UiErrorKeys>().0,
+            crate::ui_action::take_lines_in_turn(),
             vec![
                 UiError::key("ERR_GROUP_ACTION_THROTTLED"),
                 UiError::key("ERR_READY_CHECK_THROTTLED"),
@@ -1234,7 +1245,7 @@ mod tests {
         let net = NetCommands(tx);
         let (mut group, mut errors, mut quest) = (
             GroupState::default(),
-            UiErrorKeys::default(),
+            crate::ui_action::signals::LinesSeen::default(),
             QuestStatuses::default(),
         );
         let names = NameCache::default();

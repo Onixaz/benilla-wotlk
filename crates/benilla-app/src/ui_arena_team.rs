@@ -417,7 +417,6 @@ mod net {
     fn on_packet(
         In(ev): In<SessionEvent>,
         mut teams: ResMut<ArenaTeams>,
-        mut throttle: ResMut<RosterThrottle>,
         names: Res<NameCache>,
         me: Res<SelfGuid>,
         target: Res<crate::ui_inspect::InspectGuid>,
@@ -461,9 +460,16 @@ mod net {
                 let mine = me.0.and_then(|g| names.peek(g)).map(str::to_string);
                 let (key, args) = event_line(e, mine.as_deref());
                 show_line(&mut ui, key, args);
-                throttle.0 = Default::default();
-                for _ in 0..3 {
-                    ui.fire("ARENA_TEAM_ROSTER_UPDATE", vec![ScriptValue::Int(1)]);
+                // Each slot's forced update after the line's listeners: its throttle cleared, then its event (`0x5a28fd`, `0x5a2908`).
+                for slot in 0..3 {
+                    ui.world(move |world| {
+                        if let Some(mut throttle) = world.get_resource_mut::<RosterThrottle>() {
+                            throttle.0[slot] = None;
+                        }
+                        if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
+                            ui.fire("ARENA_TEAM_ROSTER_UPDATE", vec![ScriptValue::Int(1)]);
+                        }
+                    });
                 }
             }
             // `SMSG_ARENA_TEAM_INVITE` (`0x6cc94f`): the popup's event and the chat line.

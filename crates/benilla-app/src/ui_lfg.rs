@@ -29,7 +29,7 @@ use crate::names::NameCache;
 use crate::net::WorldEnterCascadeMessage;
 use crate::net::{ClientCommand, NetCommands, NetHandlerApp, ObjectStore, SelfGuid, SelfPlayer};
 use crate::sound::MessageSounds;
-use crate::ui_action::{FillArg, UiError, UiErrorKeys};
+use crate::ui_action::{FillArg, UiError};
 use crate::ui_party::GroupState;
 use crate::ui_script::{UiFeed, VmMemo};
 
@@ -342,7 +342,6 @@ fn feed_lfg(
     classes: Option<Res<ChrClassTable>>,
     displays: Option<Res<ItemDisplays>>,
     commands: Res<NetCommands>,
-    mut sinks: LfgSinks,
     areas: Option<Res<crate::area::AreaTableRes>>,
     mut memory: Local<VmMemo<FeedMemory>>,
 ) {
@@ -366,17 +365,26 @@ fn feed_lfg(
 
     let me = self_guid.0.unwrap_or(0);
     let name_of = |guid: u64| names.resolve(guid, &commands).map(str::to_string);
+    let mut shown = false;
     for item in std::mem::take(&mut feed.pending) {
-        // Once one has raised, the next applies as a step after its listeners, which read the
-        // model as of their raise.
-        if script.has_raised() {
+        // Once one has raised or shown a line, the next applies as a step after its listeners, which read the model as of their raise.
+        if script.has_raised() || shown {
             if let Some(ui) = script.queue() {
                 ui.world(move |world| apply_pending_step(world, item, me));
                 continue;
             }
         }
         let lines = apply_pending(&mut script, item, me, &name_of);
-        show(&script, lines, &mut sinks);
+        if lines.is_empty() {
+            continue;
+        }
+        match script.queue() {
+            Some(ui) => {
+                ui.world(move |world| show(world, lines));
+                shown = true;
+            }
+            None => debug!("ui_lfg: no event queue, {} lines not shown", lines.len()),
+        }
     }
 
     for request in script.take_lfg_requests() {
@@ -490,20 +498,7 @@ fn apply_pending_step(world: &mut World, item: Pending, me: u64) {
         apply_pending(script, item, me, &name_of)
     })
     .unwrap_or_default();
-    if let Err(e) = world.run_system_cached_with(show_step, lines) {
-        warn!("ui_lfg: a waiting item's lines did not show: {e}");
-    }
-}
-
-fn show_step(In(lines): In<Vec<LfgLine>>, script: NonSend<UiScript>, mut sinks: LfgSinks) {
-    show(&script, lines, &mut sinks);
-}
-
-/// Where an item's lines show: the frame's message lines and its sound kits.
-#[derive(bevy::ecs::system::SystemParam)]
-struct LfgSinks<'w> {
-    errors: ResMut<'w, UiErrorKeys>,
-    sounds: ResMut<'w, MessageSounds>,
+    show(world, lines);
 }
 
 /// One server message into the VM; what it shows comes back.
@@ -759,21 +754,33 @@ fn reward(r: LfgCompletionReward) -> LfgCompletionRewardView {
 }
 
 /// The engine's lines through the error display's queue, its kits through the UI sound path.
-fn show(script: &UiScript, lines: Vec<LfgLine>, sinks: &mut LfgSinks) {
-    let LfgSinks { errors, sounds } = sinks;
+fn show(world: &mut World, lines: Vec<LfgLine>) {
     for line in lines {
-        match line {
-            LfgLine::Key(key) => errors.0.push(UiError::key(key)),
-            LfgLine::Str(key, s) => errors.0.push(UiError::s(key, s)),
-            LfgLine::Int(key, n) => errors.0.push(UiError::args(key, vec![FillArg::D(n)])),
+        let line = match line {
+            LfgLine::Key(key) => UiError::key(key),
+            LfgLine::Str(key, s) => UiError::s(key, s),
+            LfgLine::Int(key, n) => UiError::args(key, vec![FillArg::D(n)]),
             LfgLine::Money(key, copper) => {
-                let get =
-                    |k: &str| benilla_ui::strings::global(script.lua(), k).unwrap_or_default();
-                let text = crate::ui_quest::coin_text(copper.max(0) as u32, &get);
-                errors.0.push(UiError::s(key, text));
+                let text = world
+                    .get_non_send_resource::<UiScript>()
+                    .map(|script| {
+                        let get = |k: &str| {
+                            benilla_ui::strings::global(script.lua(), k).unwrap_or_default()
+                        };
+                        crate::ui_quest::coin_text(copper.max(0) as u32, &get)
+                    })
+                    .unwrap_or_default();
+                UiError::s(key, text)
             }
-            LfgLine::Sound(kit) => sounds.push_kit(kit),
-        }
+            LfgLine::Sound(kit) => {
+                if let Some(mut sounds) = world.get_resource_mut::<MessageSounds>() {
+                    sounds.push_kit(kit);
+                }
+                continue;
+            }
+        };
+        // Each line at the display (`0x5216f0`) in the item's turn, in order with its sounds.
+        crate::ui_action::show_line_in_world(world, "ui_lfg", line);
     }
 }
 
@@ -791,7 +798,7 @@ mod tests {
             .init_resource::<LfgFeed>()
             .init_resource::<SelfGuid>()
             .init_resource::<NameCache>()
-            .init_resource::<UiErrorKeys>()
+            .init_resource::<crate::ui_chat::ChatLog>()
             .init_resource::<MessageSounds>()
             .init_resource::<crate::ui_script::live::UiEvents>()
             .add_systems(Update, feed_lfg);

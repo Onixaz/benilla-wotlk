@@ -38,31 +38,56 @@ impl super::UiScript {
 
     /// The message display (`0x5216f0`) for a line the app resolved, `key` naming its catalog
     /// record: an error or info line's sound goes to the app and its event fires now with a
-    /// non-empty text; a chat line goes to the app whole ([`Self::take_chat_lines`]).
+    /// non-empty text; a chat line is added in the caller's turn ([`Self::add_chat_text`]).
     pub fn show_text(&mut self, key: &'static str, text: String) {
         #[cfg(any(test, feature = "fixtures"))]
         crate::script::model_mut_of(self.lua())
             .shown_lines
             .push((key, None));
-        let event = match crate::messages::kind_of(key) {
-            crate::messages::MsgKind::Error => "UI_ERROR_MESSAGE",
-            crate::messages::MsgKind::Info => "UI_INFO_MESSAGE",
-            crate::messages::MsgKind::Chat => {
-                if !text.is_empty() {
-                    crate::script::model_mut_of(self.lua())
-                        .chat_lines
-                        .push((key, text));
-                }
-                return;
-            }
-        };
+        // Every row's sound goes first, a chat row's too (`0x52172d`, `0x521765`).
         if crate::messages::by_key(key).is_some() {
             crate::script::model_mut_of(self.lua())
                 .message_sounds
                 .push(key);
         }
+        let event = match crate::messages::kind_of(key) {
+            crate::messages::MsgKind::Error => "UI_ERROR_MESSAGE",
+            crate::messages::MsgKind::Info => "UI_INFO_MESSAGE",
+            crate::messages::MsgKind::Chat => {
+                if !text.is_empty() {
+                    let chat_type = crate::messages::by_key(key).map_or(0, |r| r.chat_type);
+                    if let Some(text) = self.add_chat_text(chat_type, text) {
+                        crate::script::model_mut_of(self.lua())
+                            .chat_lines
+                            .push((chat_type, text));
+                    }
+                }
+                return;
+            }
+        };
         if !text.is_empty() {
             self.fire_event(event, vec![super::ScriptValue::Str(text)]);
+        }
+    }
+
+    /// The display's chat arm for a resolved line (`0x521814` -> `0x509dd0`): added to the chat log on `chat_type` in the caller's turn, its event fired with the `World` lent (`0x50a8a5`, `0x4fdd5c`); inside a host step's turn it is added at that step's raise. With no chat log lent the text comes back for the app's chat feed.
+    pub fn add_chat_text(&mut self, chat_type: u8, text: String) -> Option<String> {
+        if super::world_loan::in_turn(self.lua()) {
+            super::world_loan::in_turn_or_now(self, move |s| {
+                if let Some(text) = s.add_chat_text(chat_type, text) {
+                    crate::script::model_mut_of(s.lua())
+                        .chat_lines
+                        .push((chat_type, text));
+                }
+            });
+            return None;
+        }
+        match super::write_live(|l| l.add_chat_line(chat_type, &text)) {
+            Some(Some((event, args))) => {
+                self.fire_event(event, args);
+                None
+            }
+            _ => Some(text),
         }
     }
 
@@ -75,8 +100,8 @@ impl super::UiScript {
             .collect()
     }
 
-    /// The chat-kind lines [`Self::show_text`] handed over, taken.
-    pub fn take_chat_lines(&mut self) -> Vec<(&'static str, String)> {
+    /// The chat-kind lines [`Self::show_text`] could not add with nothing lent, by chat type, taken.
+    pub fn take_chat_lines(&mut self) -> Vec<(u8, String)> {
         std::mem::take(&mut crate::script::model_mut_of(self.lua()).chat_lines)
     }
 }
@@ -115,6 +140,10 @@ fn show(lua: &Lua, key: &'static str, arg: Option<String>) {
     crate::script::model_mut_of(lua)
         .shown_lines
         .push((key, arg.clone()));
+    // Every row's sound goes first, a chat row's too (`0x52172d`, `0x521765`).
+    if crate::messages::by_key(key).is_some() {
+        crate::script::model_mut_of(lua).message_sounds.push(key);
+    }
     let event = match crate::messages::kind_of(key) {
         crate::messages::MsgKind::Error => "UI_ERROR_MESSAGE",
         crate::messages::MsgKind::Info => "UI_INFO_MESSAGE",
@@ -127,9 +156,6 @@ fn show(lua: &Lua, key: &'static str, arg: Option<String>) {
             return add_chat_line(lua, key, &args);
         }
     };
-    if crate::messages::by_key(key).is_some() {
-        crate::script::model_mut_of(lua).message_sounds.push(key);
-    }
     let Some(text) = lua.globals().get::<Option<String>>(key).ok().flatten() else {
         return;
     };
@@ -167,14 +193,15 @@ pub(crate) fn show_now_arg(lua: &Lua, key: &'static str, arg: &super::PetitionAr
         PetitionArg::S(s) => crate::strings::Arg::S(s),
         PetitionArg::D(d) => crate::strings::Arg::D(*d),
     };
+    // Every row's sound goes first, a chat row's too (`0x52172d`, `0x521765`).
+    if crate::messages::by_key(key).is_some() {
+        crate::script::model_mut_of(lua).message_sounds.push(key);
+    }
     let event = match crate::messages::kind_of(key) {
         crate::messages::MsgKind::Error => "UI_ERROR_MESSAGE",
         crate::messages::MsgKind::Info => "UI_INFO_MESSAGE",
         crate::messages::MsgKind::Chat => return add_chat_line(lua, key, &[text_arg]),
     };
-    if crate::messages::by_key(key).is_some() {
-        crate::script::model_mut_of(lua).message_sounds.push(key);
-    }
     let Some(text) = lua.globals().get::<Option<String>>(key).ok().flatten() else {
         return;
     };
@@ -291,6 +318,22 @@ mod show_now_tests {
         assert_eq!(
             view.chat_lines,
             [(0, "Ann has signed your charter.".into())]
+        );
+    }
+
+    /// A chat row sounds as a red or yellow one does, its sound queued before its line is added (`0x52172d`, `0x521765` ahead of `0x521814`), from a verb and from an app handler alike.
+    #[test]
+    fn a_chat_rows_sound_goes_first() {
+        let mut s = crate::script::UiScript::new().unwrap();
+        s.lua()
+            .globals()
+            .set("ERR_RECEIVE_ITEM_S", "You receive item: %s.")
+            .unwrap();
+        super::show_now_s(s.lua(), "ERR_RECEIVE_ITEM_S", "Linen".into());
+        s.show_text("ERR_RECEIVE_ITEM_S", "You receive item: Linen.".into());
+        assert_eq!(
+            s.take_message_sounds(),
+            ["ERR_RECEIVE_ITEM_S", "ERR_RECEIVE_ITEM_S"]
         );
     }
 

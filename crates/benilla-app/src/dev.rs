@@ -48,6 +48,16 @@ pub(crate) fn set_fixture_units(
     _script.set_unit_guids(&_guids);
 }
 
+/// A harness's stand-in player aura list (`UiScript::set_player_auras`) for a VM with no game
+/// behind it, which the player build compiles out with the fixtures.
+pub(crate) fn set_fixture_player_auras(
+    _script: &mut benilla_ui::script::UiScript,
+    _auras: Vec<benilla_ui::script::AuraState>,
+) {
+    #[cfg(any(feature = "dev", test))]
+    _script.set_player_auras(_auras);
+}
+
 /// A fixture's stand-in action slot (`UiScript::set_action`), compiled out of the player build with
 /// the fixtures. These four are live in every test build too, where the dev-dependencies turn the
 /// fixtures on: the addon harness's tests seat a session through them.
@@ -58,6 +68,16 @@ pub(crate) fn set_fixture_action(
 ) {
     #[cfg(any(feature = "dev", test))]
     _script.set_action(_action, _slot);
+}
+
+/// A fixture's stand-in action state (`UiScript::set_action_state`), out of the player build.
+pub(crate) fn set_fixture_action_state(
+    _script: &mut benilla_ui::script::UiScript,
+    _action: u32,
+    _state: Option<benilla_ui::script::ActionState>,
+) {
+    #[cfg(any(feature = "dev", test))]
+    _script.set_action_state(_action, _state);
 }
 
 /// A fixture's stand-in spellbook (`UiScript::set_spellbook`), compiled out of the player build.

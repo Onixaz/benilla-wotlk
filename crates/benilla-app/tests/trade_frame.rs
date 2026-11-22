@@ -1,10 +1,11 @@
-//! Drives the stock `TradeFrame.xml` through the engine: pushes a synthetic two-sided offer, opens
-//! the window with `TRADE_SHOW`, and asserts the Lua paints both columns, the money and the accept
-//! glows that follow `TRADE_ACCEPT_UPDATE(my, his)`.
+//! Drives the stock `TradeFrame.xml` through the engine: opens the window through the partner
+//! setter, offers a bag item through `ClickTradeButton` and the partner's through the offer update,
+//! and asserts the Lua paints both columns, the money and the accept glows that follow
+//! `TRADE_ACCEPT_UPDATE(my, his)`.
 
 mod common;
 
-use benilla_ui::script::{ScriptValue, TradeSideState, TradeSlotItem, TradeState, UiScript};
+use benilla_ui::script::{ScriptValue, TradeCells, TradeTargetItem, UiScript, TRADE_SLOTS};
 
 /// The trade window's load prefix, in the production order.
 const FILES: &[&str] = &[
@@ -33,31 +34,66 @@ fn load_ui(script: &UiScript) {
     }
 }
 
-fn item(item_id: u32, name: &str, count: u32, quality: u32) -> TradeSlotItem {
-    TradeSlotItem {
-        item_id,
-        name: Some(name.to_string()),
-        texture: Some("Interface\\Icons\\INV_Fabric_Linen_01".to_string()),
-        count,
-        quality: Some(quality),
-        enchantment: None,
-        link: Some(format!("|cffffffff|Hitem:{item_id}:0:0:0|h[{name}]|h|r")),
+/// The partner's guid.
+const PARTNER: u64 = 0x7;
+
+/// A backpack holding Linen Cloth ×5 in slot 1 and a Copper Rod in slot 2.
+fn pack(s: &mut UiScript) {
+    use benilla_ui::script::{ContainerSlot, ContainerState};
+    let mut slots = std::collections::HashMap::new();
+    for (slot, item_id, name, count) in [(1, 2589, "Linen Cloth", 5), (2, 6217, "Copper Rod", 1)] {
+        slots.insert(
+            slot,
+            ContainerSlot {
+                guid: 0x4000_0000_0000_0000 + u64::from(slot),
+                item_id,
+                count,
+                texture: Some("Interface\\Icons\\INV_Fabric_Linen_01".to_string()),
+                link: Some(format!("|cffffffff|Hitem:{item_id}:0:0:0|h[{name}]|h|r")),
+                ..Default::default()
+            },
+        );
     }
+    s.set_container(
+        0,
+        Some(ContainerState {
+            bag_family: 0,
+            name: Some("Backpack".into()),
+            num_slots: 16,
+            slots,
+        }),
+    );
 }
 
 /// We offer Linen Cloth ×5 and 1g 23s 45c; the partner offers Silk Cloth and 5s.
-fn state() -> TradeState {
-    let mut player = TradeSideState {
-        gold: 12_345,
+fn open(s: &mut UiScript) {
+    pack(s);
+    s.set_money(1_000_000);
+    s.open_trade_partner(PARTNER, false);
+    s.run("PickupContainerItem(0, 1) ClickTradeButton(1)")
+        .unwrap();
+    s.set_trade_offer_gold(12_345);
+    s.set_item_template(
+        4306,
+        benilla_ui::script::ItemTemplateView {
+            name: "Silk Cloth".into(),
+            quality: 2,
+            icon: Some("Interface\\Icons\\INV_Fabric_Silk_01".into()),
+            ..Default::default()
+        },
+    );
+    let mut target = [TradeTargetItem::default(); TRADE_SLOTS];
+    target[0] = TradeTargetItem {
+        item_id: 4306,
+        count: 1,
         ..Default::default()
     };
-    player.slots[0] = Some(item(2589, "Linen Cloth", 5, 1));
-    let mut target = TradeSideState {
-        gold: 500,
+    let cells = TradeCells {
+        target_gold: 500,
         ..Default::default()
     };
-    target.slots[0] = Some(item(4306, "Silk Cloth", 1, 2));
-    TradeState { player, target }
+    s.set_trade_cells(cells);
+    s.trade_updated(target, cells);
 }
 
 #[test]
@@ -96,7 +132,7 @@ fn trade_show_opens_and_both_columns_populate() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     load_ui(&s);
-    s.set_trade(Some(state()));
+    open(&mut s);
     // The stock header reads `UnitName("NPC")` (`TradeFrame.lua:43`); the app points the "npc"
     // unit at the partner.
     s.set_unit(
@@ -172,10 +208,10 @@ fn enchant_slot_shows_the_not_traded_note() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     load_ui(&s);
-    let mut st = state();
+    open(&mut s);
     // Our enchant slot: index 6, slot 7.
-    st.player.slots[6] = Some(item(6217, "Copper Rod", 1, 1));
-    s.set_trade(Some(st));
+    s.run("PickupContainerItem(0, 2) ClickTradeButton(7)")
+        .unwrap();
     s.fire_event("TRADE_SHOW", vec![]);
     assert_eq!(
         s.eval::<String>("return TradePlayerItem7Name:GetText()")
@@ -192,7 +228,7 @@ fn accept_update_drives_the_column_glows() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     load_ui(&s);
-    s.set_trade(Some(state()));
+    open(&mut s);
     s.fire_event("TRADE_SHOW", vec![]);
     // `TradeFrame_Update` hides all four highlights.
     assert!(!s
@@ -234,7 +270,7 @@ fn closing_the_window_queues_the_cancel() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     load_ui(&s);
-    s.set_trade(Some(state()));
+    open(&mut s);
     s.fire_event("TRADE_SHOW", vec![]);
     let _ = s.take_trade_close();
 
@@ -257,7 +293,7 @@ fn trade_button_click_queues_accept() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     load_ui(&s);
-    s.set_trade(Some(state()));
+    open(&mut s);
     s.fire_event("TRADE_SHOW", vec![]);
     let _ = s.take_trade_accept_sends();
 
@@ -279,10 +315,8 @@ fn trade_button_click_queues_accept() {
 fn player_money_input_reflects_then_offers() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
-    s.set_money(1_000_000); // SetTradeMoney is purse-gated
     load_ui(&s);
-    s.set_trade(Some(state()));
-    s.set_trade_offer_gold(12_345); // 1g 23s 45c
+    open(&mut s); // 1g 23s 45c, purse-gated
     s.fire_event("TRADE_SHOW", vec![]);
 
     // The three numeric boxes exist and start empty.
@@ -336,7 +370,7 @@ fn slot_click_routes_player_to_clear_and_recipient_to_inert() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     load_ui(&s);
-    s.set_trade(Some(state())); // both slot 1s are filled
+    open(&mut s); // both slot 1s are filled
     s.fire_event("TRADE_SHOW", vec![]);
     let _ = s.take_trade_clear_items();
 

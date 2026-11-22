@@ -564,23 +564,18 @@ impl ScriptItemUse<'_, '_> {
                 c.guid
             );
             // The item open (`0x6dcd70`): the open loot closes and the auto-loot flag is set first.
-            let closed =
-                crate::ui_loot::close_interaction(loot, loot_latch, &ladder.commands, true);
+            let closed = crate::ui_loot::close_interaction(
+                loot,
+                loot_latch,
+                &ladder.commands,
+                true,
+                &mut *script,
+            );
             if let Some(g) =
                 closed.filter(|&g| crate::ui_loot::dead_unit_source(&ladder.objects, g))
             {
                 deselect.write(crate::target::DeselectGuid(g));
             }
-            // Each unlock signals at the item's place as it clears (`0x707020`).
-            let unlocks: Vec<LockStep> = loot
-                .take_unlocks()
-                .into_iter()
-                .map(|guid| LockStep {
-                    guid,
-                    locked: false,
-                    args: super::watch::lock_args(&ladder.objects, guid),
-                })
-                .collect();
             let (guid, _) = self_q
                 .iter()
                 .next()
@@ -592,12 +587,9 @@ impl ScriptItemUse<'_, '_> {
                 args: Some(item_lock_args(bag, slot)),
             };
             let item = c.guid;
-            // The unlocks, the auto-loot flag and latch, the grey lock (`0x6dcded`) and the send
-            // (`0x6dce3b`), in order in the applier's turn.
+            // After the close's unlock in turn: the auto-loot flag and latch, the grey lock
+            // (`0x6dcded`) and the send (`0x6dce3b`), in order in the applier's turn.
             super::watch::world_in_turn(script, move |w| {
-                for unlock in unlocks {
-                    super::watch::lock_now(w, unlock);
-                }
                 arm_item_loot(w, item);
                 super::watch::lock_now(w, lock);
                 super::watch::send_now(
@@ -653,14 +645,22 @@ fn arm_item_loot(world: &mut World, item: u64) {
         .is_some_and(|cfg| {
             crate::ui_loot::is_auto_looting(cfg, world.get_non_send_resource::<UiScript>())
         });
-    world.try_resource_scope(|w, mut loot: Mut<crate::ui_loot::LootState>| {
-        if let (Some(latch), Some(commands)) = (
-            w.get_resource::<crate::ui_loot::LootLatch>(),
-            w.get_resource::<NetCommands>(),
-        ) {
-            loot.set_auto_loot(auto, latch, commands);
-        }
-    });
+    // The open loot closed ahead of this, so the setter's sweep finds no window and raises nothing.
+    let _ = bevy::ecs::system::RunSystemOnce::run_system_once(
+        &mut *world,
+        move |mut loot: ResMut<crate::ui_loot::LootState>,
+              mut latch: ResMut<crate::ui_loot::LootLatch>,
+              commands: Res<NetCommands>,
+              ui: Option<ResMut<crate::ui_script::live::UiEvents>>| {
+            let mut nobody = Vec::new();
+            let mut ui = ui;
+            let sink: &mut dyn crate::ui_action::signals::SignalSink = match ui.as_deref_mut() {
+                Some(ui) => ui,
+                None => &mut nobody,
+            };
+            loot.set_auto_loot(auto, &mut latch, &commands, sink);
+        },
+    );
     if let Some(mut latch) = world.get_resource_mut::<crate::ui_loot::LootLatch>() {
         latch.0 = Some(item);
     }
@@ -1124,7 +1124,6 @@ mod tests {
             .init_resource::<crate::spell::Cooldowns>()
             .init_resource::<crate::spell::SpellModifiers>()
             .init_resource::<crate::ui_action::RefusalsSeen>()
-            .init_resource::<crate::ui_action::UiErrorKeys>()
             .init_resource::<crate::ui_chat::ChatLog>()
             .init_resource::<crate::sound::MessageSounds>()
             .init_resource::<crate::spell::AutoRepeatActive>()
@@ -2735,7 +2734,6 @@ mod bind_confirm_tests {
             .init_resource::<crate::spell::Cooldowns>()
             .init_resource::<crate::spell::SpellModifiers>()
             .init_resource::<crate::ui_action::RefusalsSeen>()
-            .init_resource::<crate::ui_action::UiErrorKeys>()
             .init_resource::<crate::ui_chat::ChatLog>()
             .init_resource::<crate::sound::MessageSounds>()
             .init_resource::<crate::spell::AutoRepeatActive>()

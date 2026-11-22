@@ -1091,7 +1091,8 @@ pub(crate) struct PartyDrain<'w, 's> {
     self_q: Query<'w, 's, &'static Guid, With<SelfPlayer>>,
     commands: Res<'w, NetCommands>,
     tutorials: Option<MessageWriter<'w, crate::tutorial::TutorialEvent>>,
-    ui_errors: ResMut<'w, crate::ui_action::UiErrorKeys>,
+    /// Its refusals and lines, shown at the display (`0x5216f0`) once the drain's sends are made.
+    ui_errors: crate::ui_action::signals::QueuedSignals<'w>,
     raid_map: super::net::CurrentRaidMap<'w>,
 }
 
@@ -1108,10 +1109,12 @@ pub(crate) fn drain_party(mut script: crate::ui_script::InTurn, mut deferred: Co
         let mut state = bevy::ecs::system::SystemState::<PartyDrain>::new(world);
         apply_party_requests(state.get_mut(world), requests);
         state.apply(world);
+        crate::ui_script::live::fire_handler_events(world);
     });
 }
 
 fn apply_party_requests(p: PartyDrain, requests: Vec<PartyRequest>) {
+    use crate::ui_action::signals::SignalSink;
     let PartyDrain {
         mut group,
         selection,
@@ -1159,9 +1162,7 @@ fn apply_party_requests(p: PartyDrain, requests: Vec<PartyRequest>) {
                     .as_deref()
                     .is_some_and(|me| me.eq_ignore_ascii_case(&name))
                 {
-                    ui_errors
-                        .0
-                        .push(crate::ui_action::UiError::key("ERR_INVITE_SELF"));
+                    ui_errors.line(crate::ui_action::UiError::key("ERR_INVITE_SELF"));
                     continue;
                 }
                 let _ = commands.0.send(ClientCommand::GroupInvite { name, flags });
@@ -1357,7 +1358,9 @@ fn apply_party_requests(p: PartyDrain, requests: Vec<PartyRequest>) {
                     set_player: true,
                     set_group: true,
                 };
-                ui_errors.0.extend(group.apply_dungeon_difficulty(set));
+                for line in group.apply_dungeon_difficulty(set) {
+                    ui_errors.line(line);
+                }
                 let _ = commands
                     .0
                     .send(ClientCommand::SetDungeonDifficulty { difficulty });
@@ -1369,9 +1372,9 @@ fn apply_party_requests(p: PartyDrain, requests: Vec<PartyRequest>) {
                     set_player: true,
                     set_group: true,
                 };
-                ui_errors
-                    .0
-                    .extend(group.apply_raid_difficulty(set, raid_map.kind()));
+                for line in group.apply_raid_difficulty(set, raid_map.kind()) {
+                    ui_errors.line(line);
+                }
                 let _ = commands
                     .0
                     .send(ClientCommand::SetRaidDifficulty { difficulty });
@@ -2772,7 +2775,9 @@ mod tests {
         app.init_resource::<GroupState>()
             .init_resource::<NameCache>()
             .init_resource::<Selection>()
-            .init_resource::<crate::ui_action::UiErrorKeys>();
+            .init_resource::<crate::ui_script::live::UiEvents>()
+            .init_resource::<crate::ui_chat::ChatLog>()
+            .init_resource::<crate::sound::MessageSounds>();
         let (tx, rx) = crossbeam_channel::unbounded();
         app.insert_resource(NetCommands(tx));
         app.world_mut().spawn((Guid(ME), SelfPlayer));
@@ -2793,7 +2798,16 @@ mod tests {
         app.world_mut()
             .resource_mut::<GroupState>()
             .apply_list(0, 0, list, ME, None, Some(ME));
-        app.insert_non_send_resource(UiScript::new().unwrap());
+        let script = UiScript::new().unwrap();
+        script
+            .run(
+                r#"ERR_INVITE_SELF = "self" Lines = {}
+                   local f = CreateFrame("Frame")
+                   f:RegisterEvent("UI_ERROR_MESSAGE")
+                   f:SetScript("OnEvent", function(_, _, text) Lines[#Lines + 1] = text end)"#,
+            )
+            .unwrap();
+        app.insert_non_send_resource(script);
         app.add_systems(Update, drain_party);
         app.world_mut()
             .non_send_resource_mut::<UiScript>()
@@ -2831,11 +2845,14 @@ mod tests {
                 format!("{:?}", ClientCommand::GroupSetLeader { guid: member(2) }),
             ]
         );
-        let errors = &app.world().resource::<crate::ui_action::UiErrorKeys>().0;
+        let shown = app
+            .world()
+            .non_send_resource::<UiScript>()
+            .eval::<String>("return table.concat(Lines, '|')")
+            .unwrap();
         assert_eq!(
-            errors,
-            &vec![crate::ui_action::UiError::key("ERR_INVITE_SELF")],
-            "our own name is refused before the send"
+            shown, "self",
+            "our own name is refused before the send, shown at the drain (`0x5216f0`)"
         );
     }
 

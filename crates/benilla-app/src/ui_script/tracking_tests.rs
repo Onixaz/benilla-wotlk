@@ -46,6 +46,9 @@ fn the_button_shows_none_and_follows_the_town_type() {
     );
 
     s.run("SetTracking(2)").unwrap();
+    // The button redraws on `MINIMAP_UPDATE_TRACKING`, a unique signal (`0x57e0ed`) that a bare
+    // VM fires at its next tick.
+    s.tick(0.0);
     assert_eq!(icon(&s), r"interface\minimap\tracking\repair");
     assert_eq!(
         s.cvar("minimapTrackedInfo").unwrap(),

@@ -77,17 +77,16 @@ pub(super) fn emote_target(
 
 /// `/partytest raid`'s writes, applied off the VM's systems so the lent view reads the group and the name cache: the 25 synthetic rows, each member's name record, and the roster lines.
 fn party_test_raid(world: &mut World, me: Option<u64>) {
-    world.resource_scope(|world, mut names: Mut<crate::names::NameCache>| {
-        let lines = crate::ui_party::synthetic_raid(
+    let lines = world.resource_scope(|world, mut names: Mut<crate::names::NameCache>| {
+        crate::ui_party::synthetic_raid(
             &mut world.resource_mut::<crate::ui_party::GroupState>(),
             &mut names,
             me,
-        );
-        world
-            .resource_mut::<crate::ui_action::UiErrorKeys>()
-            .0
-            .extend(lines);
+        )
     });
+    for line in lines {
+        crate::ui_action::show_line_in_world(world, "partytest", line);
+    }
 }
 
 /// The inputs of `/shot`, `/liquid` and `/reaction`, bundled because [`drain_chat_input`] is at
@@ -142,9 +141,6 @@ pub(super) struct ChatOut<'w, 's> {
     roster: Option<Res<'w, crate::spell::group_relation::GroupRoster>>,
     /// `/partytest ping` seats a group member's ping through the wire arm's `seat`.
     ping: ResMut<'w, crate::minimap::MinimapPing>,
-    /// The red error line by GlobalStrings key. The system's only `UiErrorKeys` access: a second
-    /// one panics on the first frame.
-    ui_errors: ResMut<'w, crate::ui_action::UiErrorKeys>,
 }
 
 /// The verbs the stock `ChatFrame.lua` handlers call once they have parsed a line (`DoEmote`,
@@ -571,10 +567,9 @@ fn chat_arm(
                         // An unmatched leader guid reads as `leader_index` 0, which shows the leader-only rows.
                         group.leader = 0xF000;
                     }
-                    world
-                        .resource_mut::<crate::ui_action::UiErrorKeys>()
-                        .0
-                        .extend(lines);
+                    for line in lines {
+                        crate::ui_action::show_line_in_world(world, "partytest", line);
+                    }
                 });
             }
         },
@@ -717,10 +712,14 @@ fn chat_arm(
                     .is_ok_and(|s| crate::player::self_controlled(s.0.unit_flags()));
                 if controlled {
                     debug!("chat: emote {text_id} refused — moving (ERR_NOEMOTEWHILERUNNING)");
-                    chat_out
-                        .ui_errors
-                        .0
-                        .push(crate::ui_action::UiError::key("ERR_NOEMOTEWHILERUNNING"));
+                    // The line at the display (`0x5216f0`) once the drain's commands apply.
+                    chat_out.console.queue(|world: &mut World| {
+                        crate::ui_action::show_line_in_world(
+                            world,
+                            "chat",
+                            crate::ui_action::UiError::key("ERR_NOEMOTEWHILERUNNING"),
+                        );
+                    });
                     return;
                 }
             }
@@ -1476,7 +1475,6 @@ mod party_test_raid_tests {
         let mut world = World::new();
         world.init_resource::<crate::ui_party::GroupState>();
         world.init_resource::<crate::names::NameCache>();
-        world.init_resource::<crate::ui_action::UiErrorKeys>();
         party_test_raid(&mut world, Some(0x19));
         let (tx, _rx) = crossbeam_channel::unbounded();
         let commands = crate::net::NetCommands(tx);

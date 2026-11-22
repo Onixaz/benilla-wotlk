@@ -148,12 +148,16 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         } => match outcome {
             CastOutcome::Ok => Vec::new(),
             CastOutcome::Failed {
-                reason, arg, wire, ..
+                reason,
+                arg,
+                arg2,
+                wire,
             } => vec![SessionEvent::PetCastFailed {
                 cast_count,
                 spell_id,
                 reason,
                 arg,
+                arg2,
                 wire_reason: wire,
             }],
         },

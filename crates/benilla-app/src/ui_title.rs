@@ -13,7 +13,6 @@ use crate::names::NameCache;
 use crate::net::{
     ClientCommand, FieldChanged, NetCommands, NetHandlerApp, ObjectStore, SelfPlayer,
 };
-use crate::ui_chat::ChatLog;
 use crate::ui_quest::rewards::QuestRewardTablesRes;
 use crate::ui_script::{UiDrain, VmMemo};
 use crate::ui_unit::UnitFeed;
@@ -128,31 +127,12 @@ fn drain_title_sets(mut script: crate::ui_script::InTurn, commands: Res<NetComma
     }
 }
 
-/// `SMSG_TITLE_EARNED` (`0x50c520`): `NEW_TITLE_EARNED` or
-/// `OLD_TITLE_LOST` around the title filled with the player's name, as a system line. Nothing
-/// for a mask no row has or with no player. The earn effect plays in `creature_anim`.
-fn on_title_earned(
-    In(ev): In<SessionEvent>,
-    mut script: crate::ui_script::InTurn,
-    tables: Option<Res<QuestRewardTablesRes>>,
-    names: Res<NameCache>,
-    self_q: Query<(&crate::net::Guid, &ObjectStore), With<SelfPlayer>>,
-    mut chat: ResMut<ChatLog>,
-) {
+/// `SMSG_TITLE_EARNED` (`0x50c520`): `NEW_TITLE_EARNED` or `OLD_TITLE_LOST` around the title filled with the player's name, added to the chat log in the handler (`0x50c70c` -> `0x509dd0`). Nothing for a mask no row has or with no player. The earn effect plays in `creature_anim`.
+fn on_title_earned(In(ev): In<SessionEvent>, world: &mut World) {
     let SessionEvent::TitleEarned { mask_id, earned } = ev else {
         return;
     };
-    let (Some(script), Some(tables), Some((guid, store))) =
-        (script.turn(), tables, self_q.iter().next())
-    else {
-        return;
-    };
-    let rows = title_rows(&tables);
-    let name = names.peek(guid.0).unwrap_or_default();
-    let female = store.0.player_gender_byte() == Some(1);
-    let Some(title) =
-        benilla_ui::script::chosen_title_name(&rows, mask_id as i32, female, 0, name, |_| None)
-    else {
+    let Ok(Some(title)) = world.run_system_cached_with(earned_title, mask_id) else {
         return;
     };
     let key = if earned {
@@ -160,8 +140,27 @@ fn on_title_earned(
     } else {
         "OLD_TITLE_LOST"
     };
-    let template = crate::ui_chat::combat::global_string(&script, key).unwrap_or_default();
-    crate::ui_chat::away::push_system(&mut chat, template.replacen("%s", &title, 1));
+    let Some(template) = crate::ui_script::live::with_live_world(world, |s| {
+        crate::ui_chat::combat::global_string(s, key).unwrap_or_default()
+    }) else {
+        return;
+    };
+    crate::ui_chat::add_chat_line_now(world, 0, template.replacen("%s", &title, 1));
+}
+
+/// The title `mask_id` names for our player, filled with our name (`0x50c567`, `0x72a000`).
+fn earned_title(
+    In(mask_id): In<u32>,
+    tables: Option<Res<QuestRewardTablesRes>>,
+    names: Res<NameCache>,
+    self_q: Query<(&crate::net::Guid, &ObjectStore), With<SelfPlayer>>,
+) -> Option<String> {
+    let tables = tables?;
+    let (guid, store) = self_q.iter().next()?;
+    let rows = title_rows(&tables);
+    let name = names.peek(guid.0).unwrap_or_default();
+    let female = store.0.player_gender_byte() == Some(1);
+    benilla_ui::script::chosen_title_name(&rows, mask_id as i32, female, 0, name, |_| None)
 }
 
 #[cfg(test)]
