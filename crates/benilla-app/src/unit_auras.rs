@@ -264,21 +264,30 @@ fn table_for_test(spells: &[u32]) -> UnitAuras {
     UnitAuras::of(0, &slots)
 }
 
-/// Registers the feed's handler.
+/// Registers the feed's handler and the minimap's tracking spell.
 pub(crate) struct UnitAurasPlugin;
 
 impl Plugin for UnitAurasPlugin {
     fn build(&self, app: &mut App) {
-        app.net_handler(SessionEventKind::AuraUpdate, on_aura_update);
+        app.init_resource::<TrackingSpell>()
+            .net_handler(SessionEventKind::AuraUpdate, on_aura_update);
     }
 }
 
-/// What our own auras' effect watch reads: our guid, the catalog, the stance bar and the queue it
-/// fires into.
+/// The minimap's tracking spell (`0xbeba68`), 0 for none: a session global our tracking aura's
+/// add and removal write whether or not a UI stands, which a reload keeps; zeroed at the session's
+/// start (`0x58383f`) and `SetTracking()` (`0x57f4c2`).
+#[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TrackingSpell(pub(crate) u32);
+
+/// What our own auras' effect watch reads: our guid, the catalog, the stance bar, the book's
+/// tracking spells, the tracking global and the queue it fires into.
 type OwnAuraWatch<'w> = (
     Option<Res<'w, crate::net::SelfGuid>>,
     Option<Res<'w, crate::ui_action::Spells>>,
     Option<Res<'w, crate::ui_action::usable_cache::UsableCaches>>,
+    Option<Res<'w, crate::ui_spellbook::SpellBook>>,
+    Option<ResMut<'w, TrackingSpell>>,
     Option<ResMut<'w, crate::ui_script::live::UiEvents>>,
 );
 
@@ -315,17 +324,27 @@ fn on_aura_update(
     if !store.is_unit() {
         return; // the lookup is unit-typed (`0x4d4db0`, mask 8)
     }
-    let (me, spells, caches, mut ui) = own;
+    let (me, spells, caches, book, mut tracking, mut ui) = own;
     let mine = me.is_some_and(|m| m.0 == Some(update.unit));
     // Whether the packet adds or removes an aura, the reader's `changed` (`0x72fb6e`).
     let all_moves = own_aura_moves(auras.as_deref(), &update);
     let changed = !all_moves.is_empty();
     let moves = mine.then_some(all_moves);
+    let dump = mine && std::env::var_os("BENILLA_AURA_DUMP").is_some();
+    let catalog = spells.as_deref().map(|s| &s.catalog);
     match auras {
-        Some(mut auras) => auras.apply(&update, now),
+        Some(mut auras) => {
+            auras.apply(&update, now);
+            if dump {
+                dump_auras(&auras, catalog);
+            }
+        }
         None => {
             let mut auras = UnitAuras::default();
             auras.apply(&update, now);
+            if dump {
+                dump_auras(&auras, catalog);
+            }
             commands.entity(entity).insert(auras);
         }
     }
@@ -333,57 +352,81 @@ fn on_aura_update(
     // `0x71ea1e`, `0x72fbfb`), then its not-interruptible re-read for a watched caster
     // (`0x72fd30`), after the apply.
     let unit = update.unit;
-    if let Some(ui) = ui.as_mut() {
-        // Each aura of ours that came or went: its effect's usable update, then the bar's aura
-        // update (`0x7220ff`, `0x7277e6`); a whole table's packet runs the bar's for every live
-        // aura (`0x72f9a2`).
-        let live: Vec<u32> = if update.all && mine {
-            update
-                .slots
-                .iter()
-                .filter_map(|(_, r)| r.map(|r| r.spell_id))
-                .collect()
-        } else {
-            Vec::new()
-        };
-        for &(spell, removed) in moves.iter().flatten() {
-            let moves_usability = spells
-                .as_ref()
-                .and_then(|s| s.catalog.get(spell))
-                .is_some_and(crate::ui_action::usable_cache::moves_usability);
-            if moves_usability {
-                ui.world(crate::ui_action::usable_cache::step(
-                    crate::ui_action::usable_cache::Pass::Full,
-                ));
-            }
-            if !update.all || removed {
-                ui.world(move |world| crate::ui_action::slots::aura_changed(world, spell));
-            }
-            if !update.all {
-                tracking_moved(ui, spell, removed);
-                // A stance-bar spell with no shapeshift effect (aura 36): its add or removal moves
-                // no form byte, so it signals the form itself (`0x727835`, `0x722144`).
-                let on_stance_bar = caches
-                    .as_ref()
-                    .is_some_and(|c| c.stances.iter().any(|s| s.spell == spell));
-                let shapeshifts = spells
-                    .as_ref()
-                    .and_then(|s| s.catalog.get(spell))
-                    .is_some_and(|d| d.effect_apply_aura.contains(&SPELL_AURA_MOD_SHAPESHIFT));
-                if on_stance_bar && !shapeshifts {
-                    ui.fire("UPDATE_SHAPESHIFT_FORM", Vec::new());
-                }
-            }
+    // Each aura of ours that came or went: its effect's usable update, then the removal's
+    // (`0x722090`) or the add's (`0x727760`) bar update, tracking and form; an `ALL` packet runs
+    // the removal for each aura it drops and the bar update and tracking for every live one
+    // (`0x72f9a2`, `0x72f9b5`).
+    let live: Vec<u32> = if update.all && mine {
+        update
+            .slots
+            .iter()
+            .filter_map(|(_, r)| r.map(|r| r.spell_id))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    // A known tracking spell (`0x53bd10`), off the book's list.
+    let is_tracking = |spell: u32| {
+        book.as_ref()
+            .is_some_and(|b| b.live.tracking.iter().any(|s| s.spell_id == spell))
+    };
+    for &(spell, removed) in moves.iter().flatten() {
+        let moves_usability = spells
+            .as_ref()
+            .and_then(|s| s.catalog.get(spell))
+            .is_some_and(crate::ui_action::usable_cache::moves_usability);
+        if let (true, Some(ui)) = (moves_usability, ui.as_mut()) {
+            ui.world(crate::ui_action::usable_cache::step(
+                crate::ui_action::usable_cache::Pass::Full,
+            ));
         }
-        for spell in live {
+        if update.all && !removed {
+            continue;
+        }
+        if let Some(ui) = ui.as_mut() {
             ui.world(move |world| crate::ui_action::slots::aura_changed(world, spell));
-            // An `ALL` packet's live tracking aura sets the spell whatever it was (`0x72f9b5`).
-            ui.write(move |script| {
-                if script.is_tracking_spell(spell) {
-                    script.set_tracking_spell(spell);
-                }
-            });
         }
+        // A tracking aura's removal clears the spell (`0x722113`), one added that is not already
+        // the spell sets it (`0x727804`).
+        if let (true, Some(t)) = (is_tracking(spell), tracking.as_mut()) {
+            let to = if removed {
+                Some(0)
+            } else {
+                (t.0 != spell).then_some(spell)
+            };
+            if let Some(to) = to {
+                t.0 = to;
+                if let Some(ui) = ui.as_mut() {
+                    ui.write(move |script| script.tracking_spell_moved(to));
+                }
+            }
+        }
+        // A stance-bar spell with no shapeshift effect (aura 36): its add or removal moves no
+        // form byte, so it signals the form itself (`0x727835`, `0x722144`).
+        let on_stance_bar = caches
+            .as_ref()
+            .is_some_and(|c| c.stances.iter().any(|s| s.spell == spell));
+        let shapeshifts = spells
+            .as_ref()
+            .and_then(|s| s.catalog.get(spell))
+            .is_some_and(|d| d.effect_apply_aura.contains(&SPELL_AURA_MOD_SHAPESHIFT));
+        if let (true, Some(ui)) = (on_stance_bar && !shapeshifts, ui.as_mut()) {
+            ui.fire("UPDATE_SHAPESHIFT_FORM", Vec::new());
+        }
+    }
+    for spell in live {
+        if let Some(ui) = ui.as_mut() {
+            ui.world(move |world| crate::ui_action::slots::aura_changed(world, spell));
+        }
+        // An `ALL` packet's live tracking aura sets the spell whatever it was (`0x72f9b5`).
+        if let (true, Some(t)) = (is_tracking(spell), tracking.as_mut()) {
+            t.0 = spell;
+            if let Some(ui) = ui.as_mut() {
+                ui.write(move |script| script.tracking_spell_moved(spell));
+            }
+        }
+    }
+    if let Some(ui) = ui.as_mut() {
         ui.world(move |world| crate::ui_action::usable_cache::aura_read(world, unit, changed));
         ui.world(move |world| crate::ui_cast::auras_changed(world, unit, changed));
     }
@@ -415,19 +458,23 @@ fn on_aura_update(
 /// `SPELL_AURA_MOD_SHAPESHIFT`, the effect `0x7fde50` tests for (`0x727822`, `0x722131`).
 const SPELL_AURA_MOD_SHAPESHIFT: u32 = 36;
 
-/// The minimap's tracking spell at one of our aura's add or removal: a tracking aura's removal
-/// clears it (`0x722113`), one added that is not already the spell sets it (`0x727804`).
-fn tracking_moved(ui: &mut crate::ui_script::live::UiEvents, spell: u32, removed: bool) {
-    ui.write(move |script| {
-        if !script.is_tracking_spell(spell) {
-            return;
-        }
-        if removed {
-            script.set_tracking_spell(0);
-        } else if spell != script.tracking_spell() {
-            script.set_tracking_spell(spell);
-        }
-    });
+/// `BENILLA_AURA_DUMP`: our table after each of our aura packets, slot by slot.
+fn dump_auras(table: &UnitAuras, catalog: Option<&benilla_formats::SpellCatalog>) {
+    info!("aura dump: {} aura(s) on the player", table.iter().count());
+    for a in table.iter() {
+        let name = catalog
+            .and_then(|c| c.get(a.spell_id))
+            .map_or("<unknown spell>", |d| d.name.as_str());
+        info!(
+            "  slot {:>3}  spell {:>5}  {:<26}  {:<6}  flags {:#04x}  caster {:#x}",
+            a.slot,
+            a.spell_id,
+            name,
+            if a.is_harmful() { "debuff" } else { "buff" },
+            a.flags,
+            a.caster,
+        );
+    }
 }
 
 /// One packet's removed then applied spells, flagged removed, read off the table before it applies (`0x72f803`, `0x72f904`, `0x72f9dc`).

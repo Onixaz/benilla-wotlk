@@ -22,6 +22,7 @@ const MEMBER: u64 = 0x1234;
 const MEMBER_PET: u64 = 0xF140_0000_0000_0077;
 const HARM: u8 = AURA_UPDATE_FLAG_HARMFUL | 1;
 const FIND_MINERALS: u32 = 2580;
+const DEVOTION_AURA: u32 = 465;
 
 /// Us, a held mob and a party of one, `MEMBER`, out of range: the aura handler, the stats handler
 /// and an observer recording each `UNIT_AURA` with the debuffs its handler reads.
@@ -267,23 +268,47 @@ fn the_record_walk_ends_at_the_first_empty_slot() {
     assert_eq!(debuffs(&mut app, "party1"), [589, 11976, 770]);
 }
 
+/// A book knowing Find Minerals, with its icon.
+fn knows_find_minerals(app: &mut App) {
+    app.insert_resource(crate::ui_spellbook::SpellBook::with_tracking(vec![
+        TrackingSpell {
+            spell_id: FIND_MINERALS,
+            name: "Find Minerals".into(),
+            icon: Some("Interface\\Icons\\Spell_Nature_Earthquake".into()),
+            active_icon: None,
+        },
+    ]));
+}
+
+/// Devotion Aura on the stance bar.
+fn devotion_on_the_stance_bar(app: &mut App) {
+    use crate::ui_action::usable_cache::{SpellUsable, Usable, UsableCaches};
+    let mut caches = UsableCaches::default();
+    caches.stances.push(SpellUsable {
+        spell: DEVOTION_AURA,
+        usable: Usable::default(),
+    });
+    app.insert_resource(caches);
+    app.world_mut()
+        .non_send_resource::<UiScript>()
+        .run(
+            r#"local f = CreateFrame("Frame") f:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
+                f:SetScript("OnEvent", function(self, event) table.insert(SEEN, event) end)"#,
+        )
+        .unwrap();
+}
+
+/// The engine's tracking global (`0xbeba68`).
+fn tracking(app: &mut App) -> u32 {
+    app.world().resource::<crate::unit_auras::TrackingSpell>().0
+}
+
 /// A tracking aura's add sets the tracking spell in the handler and its removal clears it, each
 /// queueing `MINIMAP_UPDATE_TRACKING` for the flush ahead of the packet's `UNIT_AURA`.
 #[test]
 fn a_tracking_aura_sets_and_clears_the_tracking_spell() {
     let mut app = app();
-    app.world_mut()
-        .non_send_resource_mut::<UiScript>()
-        .set_tracking_spells(
-            vec![TrackingSpell {
-                spell_id: FIND_MINERALS,
-                name: "Find Minerals".into(),
-                icon: None,
-                active_icon: None,
-            }],
-            3,
-        );
-    let tracking = |app: &mut App| app.world().non_send_resource::<UiScript>().tracking_spell();
+    knows_find_minerals(&mut app);
     packets(&mut app, vec![auras(ME, vec![(5, aura(FIND_MINERALS, 1))])]);
     assert_eq!(tracking(&mut app), FIND_MINERALS);
     flush(&mut app);
@@ -299,22 +324,8 @@ fn a_tracking_aura_sets_and_clears_the_tracking_spell() {
 /// aura off the stance bar fires nothing.
 #[test]
 fn a_stance_aura_signals_the_form_where_it_is_added_and_removed() {
-    use crate::ui_action::usable_cache::{SpellUsable, Usable, UsableCaches};
-    const DEVOTION_AURA: u32 = 465;
     let mut app = app();
-    let mut caches = UsableCaches::default();
-    caches.stances.push(SpellUsable {
-        spell: DEVOTION_AURA,
-        usable: Usable::default(),
-    });
-    app.insert_resource(caches);
-    app.world_mut()
-        .non_send_resource::<UiScript>()
-        .run(
-            r#"local f = CreateFrame("Frame") f:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
-                f:SetScript("OnEvent", function(self, event) table.insert(SEEN, event) end)"#,
-        )
-        .unwrap();
+    devotion_on_the_stance_bar(&mut app);
     packets(&mut app, vec![auras(ME, vec![(3, aura(DEVOTION_AURA, 1))])]);
     assert_eq!(
         seen(&mut app),
@@ -329,4 +340,144 @@ fn a_stance_aura_signals_the_form_where_it_is_added_and_removed() {
     let _ = seen(&mut app);
     packets(&mut app, vec![auras(ME, vec![(4, aura(6673, 1))])]);
     assert!(seen(&mut app).is_empty(), "off the stance bar");
+}
+
+/// An `ALL` packet that drops our tracking and stance auras runs the removal for each
+/// (`0x722090`): the tracking spell cleared (`0x722113`) and the form signalled (`0x722144`), as an
+/// update packet's removal does; one that keeps them re-sets the spell (`0x72f9b5`) and signals no
+/// form.
+#[test]
+fn an_all_packet_that_drops_a_tracking_or_stance_aura_runs_their_removal() {
+    let mut app = app();
+    knows_find_minerals(&mut app);
+    devotion_on_the_stance_bar(&mut app);
+    let all = |slots| {
+        SessionEvent::AuraUpdate(AuraUpdate {
+            unit: ME,
+            all: true,
+            slots,
+        })
+    };
+    packets(
+        &mut app,
+        vec![all(vec![
+            (3, aura(DEVOTION_AURA, 1)),
+            (5, aura(FIND_MINERALS, 1)),
+        ])],
+    );
+    assert_eq!(
+        tracking(&mut app),
+        FIND_MINERALS,
+        "a live tracking aura sets it"
+    );
+    assert!(
+        seen(&mut app).is_empty(),
+        "an ALL packet adds through no add site"
+    );
+    flush(&mut app);
+    let _ = seen(&mut app);
+    packets(&mut app, vec![all(vec![(7, aura(6673, 1))])]);
+    assert_eq!(tracking(&mut app), 0, "the dropped tracking aura clears it");
+    assert_eq!(
+        seen(&mut app),
+        ["UPDATE_SHAPESHIFT_FORM"],
+        "the dropped stance aura"
+    );
+    flush(&mut app);
+    assert_eq!(seen(&mut app), ["MINIMAP_UPDATE_TRACKING", "player=0"]);
+}
+
+/// The tracking spell is the engine's: an aura packet before any UI stands sets it, and a new UI,
+/// a login's or a reload's, reads it at the call (`0xbeba68`).
+#[test]
+fn the_tracking_spell_outlives_the_ui_and_a_new_one_reads_it() {
+    let mut app = app();
+    knows_find_minerals(&mut app);
+    app.world_mut().remove_non_send_resource::<UiScript>();
+    packets(&mut app, vec![auras(ME, vec![(5, aura(FIND_MINERALS, 1))])]);
+    assert_eq!(tracking(&mut app), FIND_MINERALS);
+    app.insert_non_send_resource(UiScript::new().unwrap());
+    let texture = with_live_world(app.world_mut(), |s| {
+        s.eval::<String>("return GetTrackingTexture()").unwrap()
+    });
+    assert_eq!(
+        texture.as_deref(),
+        Some("Interface\\Icons\\Spell_Nature_Earthquake")
+    );
+    assert_eq!(
+        with_live_world(app.world_mut(), |s| s.tracking_spell()),
+        Some(FIND_MINERALS)
+    );
+}
+
+/// A `RAID` debuff read lists what the book update registered the dispel types for, read through
+/// the live view: a Magic debuff for Dispel Magic, not a poison; an unlearn keeps the type, as
+/// 12340 only appends at learn (`0x542170`), until the clear at our object's init (`0x6e7f9d`).
+#[test]
+fn a_raid_debuff_read_follows_the_dispel_types_the_book_registered() {
+    let Some(spells) = crate::ui_action::real_spells() else {
+        return;
+    };
+    const DISPEL_MAGIC: u32 = 527;
+    const FROSTBOLT: u32 = 42842;
+    const DEADLY_POISON: u32 = 57970;
+    let mut app = app();
+    let update = |app: &mut App, known: &[u32]| {
+        let known: std::collections::BTreeSet<u32> = known.iter().copied().collect();
+        let spells = app.world().resource::<crate::ui_action::Spells>().clone();
+        let mut book = app
+            .world_mut()
+            .remove_resource::<crate::ui_spellbook::SpellBook>()
+            .unwrap_or_default();
+        book.update(
+            &crate::ui_spellbook::BookInputs {
+                known: &known,
+                spells: Some(&spells),
+                summons: &Default::default(),
+                skill_lines: None,
+            },
+            &mut Default::default(),
+            &mut Default::default(),
+        );
+        app.insert_resource(book);
+        app.world_mut()
+            .resource_mut::<crate::ui_action::PlayerActions>()
+            .spells = known;
+    };
+    app.insert_resource(spells)
+        .init_resource::<crate::ui_action::PlayerActions>();
+    target(&mut app, MOB);
+    packets(
+        &mut app,
+        vec![auras(
+            MOB,
+            vec![(1, aura(FROSTBOLT, HARM)), (2, aura(DEADLY_POISON, HARM))],
+        )],
+    );
+    let raid = |app: &mut App| -> Vec<u32> {
+        with_live_world(app.world_mut(), |s| {
+            s.eval::<Vec<u32>>(
+                "local t = {} local i = 1 while true do \
+                 local id = select(11, UnitDebuff('target', i, 'RAID')) \
+                 if not id then return t end t[#t + 1] = id i = i + 1 end",
+            )
+            .unwrap()
+        })
+        .expect("a VM")
+    };
+    // Display order, as the index rebuild sorts them (`0x72c510`).
+    assert_eq!(debuffs(&mut app, "target"), [DEADLY_POISON, FROSTBOLT]);
+    assert!(
+        raid(&mut app).is_empty(),
+        "nothing registered, nothing listed"
+    );
+    update(&mut app, &[DISPEL_MAGIC]);
+    assert_eq!(raid(&mut app), [FROSTBOLT], "Magic, not the poison");
+    update(&mut app, &[]);
+    assert_eq!(raid(&mut app), [FROSTBOLT], "an unlearn keeps the type");
+    app.world_mut()
+        .resource_mut::<crate::ui_spellbook::SpellBook>()
+        .clear_registered();
+    update(&mut app, &[]);
+    assert!(raid(&mut app).is_empty(), "the init's clear drops it");
 }

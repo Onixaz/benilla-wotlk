@@ -325,12 +325,14 @@ fn on_member_stats(
     signals: Option<NonSendMut<crate::ui_script::live::UniqueSignals>>,
 ) {
     if let SessionEvent::PartyMemberStats { guid, full, info } = ev {
-        let before = group.aura_blocks(guid);
+        // Only a full packet or one carrying a block can move one.
+        let moves = full || info.auras.is_some() || info.pet_auras.is_some();
+        let before = moves.then(|| group.aura_blocks(guid));
         group.apply_stats(guid, full, *info);
-        let after = group.aura_blocks(guid);
-        let Some(mut signals) = signals else {
+        let (Some(before), Some(mut signals)) = (before, signals) else {
             return;
         };
+        let after = group.aura_blocks(guid);
         if before.0 != after.0 {
             signals.unique_unit_signal(guid, "UNIT_AURA");
         }

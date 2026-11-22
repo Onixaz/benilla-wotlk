@@ -135,6 +135,17 @@ pub trait LiveState {
         None
     }
 
+    /// The minimap's tracking spell (`0xbeba68`), a session global the aura handler writes.
+    fn tracking_spell(&self) -> Option<u32> {
+        None
+    }
+
+    /// Write the tracking spell inside the call, as `SetTracking()` zeroes it (`0x57f4c2`); false
+    /// where no view is lent.
+    fn set_tracking_spell(&mut self, _spell_id: u32) -> bool {
+        false
+    }
+
     /// An item spell's range check from us toward `target` at the call (`0x809610`): `Some(None)` with no answer, `None` where no view lends the check.
     fn item_spell_in_range(&self, _spell_id: u32, _target: u64) -> Option<Option<bool>> {
         None

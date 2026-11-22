@@ -27,10 +27,7 @@ impl Plugin for UiAuraPlugin {
             Update,
             crate::ui_script::raises::then_fire(drain_aura_cancels).in_set(UiDrain),
         )
-        .add_systems(
-            OnExit(ClientState::InWorld),
-            crate::ui_script::raises::then_fire(end_session_tracking),
-        );
+        .add_systems(OnExit(ClientState::InWorld), end_session_tracking);
     }
 }
 
@@ -69,6 +66,8 @@ struct ListCtx<'a> {
     clock_offset: f64,
     /// What the `RAID` list reads off the book; `None` lists nothing there.
     raid: Option<RaidBook<'a>>,
+    /// The book's steal mask where we can attack the unit walked, else 0 (`0x53d683`, `0x53d6b5`).
+    steal_mask: u32,
 }
 
 /// The book's side of the finder's second list (`0x72c510`): the player's spells and its pet's,
@@ -82,7 +81,10 @@ struct RaidBook<'a> {
 
 /// The dispel types the book registers at learn (`0x542170`): each `SPELL_EFFECT_DISPEL` (38)
 /// effect not aimed at an enemy (implicit target 6) names its misc value once.
-fn dispel_types(known: &std::collections::BTreeSet<u32>, catalog: &SpellCatalog) -> Vec<i32> {
+pub(crate) fn dispel_types(
+    known: &std::collections::BTreeSet<u32>,
+    catalog: &SpellCatalog,
+) -> Vec<i32> {
     let mut out = Vec::new();
     for d in known.iter().filter_map(|&id| catalog.get(id)) {
         for i in 0..3 {
@@ -93,6 +95,40 @@ fn dispel_types(known: &std::collections::BTreeSet<u32>, catalog: &SpellCatalog)
         }
     }
     out
+}
+
+/// The steal mask a known spell registers at learn (`0x542222`-`0x542270`): its first effect steals
+/// a buff (126) from an enemy (implicit target 6), naming the class mask of its misc value.
+pub(crate) fn steal_mask(
+    known: &std::collections::BTreeSet<u32>,
+    catalog: &SpellCatalog,
+) -> Option<u32> {
+    known
+        .iter()
+        .filter_map(|&id| catalog.get(id))
+        .filter(|d| d.effects[0] == 126 && d.effect_implicit_target_a[0] == 6)
+        .map(|d| catalog.dispel_mask(d.effect_misc_value[0] as u32))
+        .last()
+}
+
+/// The area-aura effects (`0x76bed0`'s table): persistent area aura and the area auras.
+const AREA_AURA_EFFECTS: [u32; 7] = [27, 35, 65, 119, 128, 129, 143];
+
+/// `isStealable` (`0x53d680`, from `0x614999`): a buff, on a unit we can attack, with the book's
+/// steal mask naming its dispel class; never a passive (`Attributes & 0x40`), a channeled
+/// (`AttributesEx & 0x44`) or a not-stealable one (`AttributesEx4 & 0x40`), nor one with an area
+/// aura among the effects it holds (the flag's effect bits).
+fn can_steal(mask: u32, d: Option<&SpellDisplay>, flags: u8) -> bool {
+    let Some(d) = d else {
+        return false;
+    };
+    mask != 0
+        && flags & AURA_UPDATE_FLAG_HARMFUL == 0
+        && d.attributes & 0x40 == 0
+        && !(0..3).any(|i| flags & (1 << i) != 0 && AREA_AURA_EFFECTS.contains(&d.effects[i]))
+        && d.attributes_ex & 0x44 == 0
+        && d.attributes_ex4 & 0x40 == 0
+        && 1u32.wrapping_shl(d.dispel) & mask != 0
 }
 
 /// Whether the finder's second list holds this aura (`0x72c510`): a buff whose exact spell the
@@ -173,7 +209,7 @@ fn aura_state(ctx: ListCtx, a: &AuraInput) -> AuraState {
             a.spell_id,
             a.flags & AURA_UPDATE_FLAG_HARMFUL != 0,
         ),
-        // Not built: the steal test (`0x53d680`).
+        stealable: can_steal(ctx.steal_mask, display, a.flags),
         ..Default::default()
     }
 }
@@ -309,9 +345,12 @@ fn shown_in_aura_ui(ctx: ListCtx, spell_id: u32, flags: u8, caster: u64) -> bool
             || u32::from(viewer.vision) & 1u32.wrapping_shl(d.required_aura_vision - 1) != 0)
 }
 
-/// What a walk reads off the book: the player's known spells and its pet's guid and spells.
+/// What a walk reads off the book: the player's known spells and the dispel types the book update
+/// registered, and its pet's guid and spells.
 pub(crate) struct AuraBook<'a> {
     pub(crate) known: Option<&'a std::collections::BTreeSet<u32>>,
+    pub(crate) dispel_types: &'a [i32],
+    pub(crate) steal_mask: u32,
     pub(crate) pet: u64,
     pub(crate) pet_spells: &'a [benilla_protocol::messages::PetActionEntry],
 }
@@ -361,10 +400,27 @@ impl AuraLive<'_, '_> {
         let me = self.me.as_ref().and_then(|m| m.0).unwrap_or(0);
         let my_store = self.held(me).map(|(_, s)| s);
         let empty = std::collections::BTreeSet::new();
-        // The book's dispel types (`0x542170`), read only by a `RAID` walk.
-        let types = match (raid, catalog) {
-            (true, Some(catalog)) => dispel_types(book.known.unwrap_or(&empty), catalog),
-            _ => Vec::new(),
+        // No reputation store reads as one with no standings, as a fresh session's.
+        let none = Reputations::default();
+        let reputations = self.reputations.as_deref().unwrap_or(&none);
+        let party = crate::target::party_of(self.group.as_deref());
+        let held = self.held(guid);
+        // The steal test asks for a held unit only, with a mask registered and the unit one we can
+        // attack (`0x53d683`, `0x53d6b5`).
+        let steal_mask = match held {
+            Some((_, store))
+                if book.steal_mask != 0
+                    && crate::target::can_attack(
+                        Some(store),
+                        self.factions.as_deref(),
+                        reputations,
+                        party,
+                        my_store,
+                    ) =>
+            {
+                book.steal_mask
+            }
+            _ => 0,
         };
         let ctx = ListCtx {
             catalog,
@@ -378,11 +434,12 @@ impl AuraLive<'_, '_> {
             raid: raid.then_some(RaidBook {
                 known: book.known.unwrap_or(&empty),
                 pet: book.pet_spells,
-                dispel_types: &types,
+                dispel_types: book.dispel_types,
             }),
+            steal_mask,
         };
         let mut take = |a: &AuraInput| pick(&aura_facts(ctx, a));
-        let found = match self.held(guid) {
+        let found = match held {
             Some((entity, store)) => {
                 // A unit no aura packet has reached lists nothing.
                 let table = self.tables.get(entity).ok()?;
@@ -390,8 +447,8 @@ impl AuraLive<'_, '_> {
                     is_friendly(
                         unit,
                         self.factions.as_deref(),
-                        self.reputations.as_deref()?,
-                        crate::target::party_of(self.group.as_deref()),
+                        reputations,
+                        party,
                         my_store,
                         self.names.as_deref(),
                     )
@@ -434,13 +491,13 @@ impl AuraLive<'_, '_> {
     }
 }
 
-/// The aura vision bits a spell's aura answers to (`0x7fe3e0`): its required vision's bit, `0x20`
-/// for a stealth-detect effect (aura 17), `0x40` for an invisibility-detect one (aura 19) of misc
-/// value 0 or 10.
-fn vision_mask(d: &SpellDisplay) -> u8 {
+/// The aura vision bits a spell's aura answers to (`0x7fe3e0`): its required vision's bit, a
+/// 32-bit shift as the display filter's (`0x7fe3f8`), `0x20` for a stealth-detect effect (aura
+/// 17), `0x40` for an invisibility-detect one (aura 19) of misc value 0 or 10.
+fn vision_mask(d: &SpellDisplay) -> u32 {
     let mut mask = match d.required_aura_vision {
         0 => 0,
-        v => 1u8.wrapping_shl(v - 1),
+        v => 1u32.wrapping_shl(v - 1),
     };
     for e in 0..3 {
         match d.effect_apply_aura[e] {
@@ -467,7 +524,7 @@ pub(crate) fn aura_vision_moved(world: &mut World, changed: u8) {
                 && table.slot_spells().iter().any(|&(spell, _)| {
                     catalog
                         .get(spell)
-                        .is_some_and(|d| vision_mask(d) & changed != 0)
+                        .is_some_and(|d| vision_mask(d) & u32::from(changed) != 0)
                 })
         })
         .filter_map(|(store, _)| store.0.object_guid())
@@ -477,10 +534,11 @@ pub(crate) fn aura_vision_moved(world: &mut World, changed: u8) {
     }
 }
 
-/// The session's end drops the tracking spell, so nothing reaches the next character's minimap.
-fn end_session_tracking(mut script: crate::ui_script::InTurn) {
-    if let Some(mut script) = script.turn() {
-        script.clear_tracking();
+/// The session's end zeroes the tracking spell, as the next session's start does (`0x58383f`), so
+/// nothing reaches the next character's minimap.
+fn end_session_tracking(tracking: Option<ResMut<crate::unit_auras::TrackingSpell>>) {
+    if let Some(mut tracking) = tracking {
+        tracking.0 = 0;
     }
 }
 
@@ -531,6 +589,7 @@ mod tests {
         },
         clock_offset: 0.0,
         raid: None,
+        steal_mask: 0,
     };
 
     /// The auras `inputs` build, in order.
@@ -809,6 +868,50 @@ mod tests {
         assert!(!auras_hidden_on(&unit, &unapplied, Some(&catalog), |_| {
             false
         }));
+    }
+
+    /// Spellsteal registers Magic's class mask (`0x542222`), and the steal test (`0x53d680`) passes
+    /// a Magic buff with that mask, never a debuff, nothing with no mask, nor a class the mask lacks.
+    #[test]
+    fn a_magic_buff_is_stealable_with_the_mask_spellsteal_registers() {
+        let Some(spells) = crate::ui_action::real_spells() else {
+            return;
+        };
+        const SPELLSTEAL: u32 = 30449;
+        const ARCANE_INTELLECT: u32 = 42995;
+        let catalog = &spells.catalog;
+        let magic = catalog.dispel_mask(1);
+        let known = [SPELLSTEAL].into_iter().collect();
+        assert_eq!(steal_mask(&known, catalog), Some(magic));
+        assert_eq!(steal_mask(&Default::default(), catalog), None);
+        let stealable = |mask: u32, flags: u8| {
+            aura_state(
+                ListCtx {
+                    catalog: Some(catalog),
+                    steal_mask: mask,
+                    ..NO_SPELLS
+                },
+                &AuraInput {
+                    spell_id: ARCANE_INTELLECT,
+                    stacks: 1,
+                    flags,
+                    caster: 0,
+                    duration_ms: 0,
+                    expires_at: 0.0,
+                },
+            )
+            .stealable
+        };
+        assert!(stealable(magic, 0x1), "a Magic buff");
+        assert!(
+            !stealable(magic, 0x1 | AURA_UPDATE_FLAG_HARMFUL),
+            "a debuff"
+        );
+        assert!(
+            !stealable(0, 0x1),
+            "no mask: no steal spell, or a unit we cannot attack"
+        );
+        assert!(!stealable(catalog.dispel_mask(2), 0x1), "a Curse mask");
     }
 
     /// The vision bits an aura answers to (`0x7fe3e0`): the required vision's bit, then the
