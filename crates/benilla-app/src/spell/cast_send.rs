@@ -1718,10 +1718,14 @@ pub(crate) fn attack_pick_step(world: &mut World, rest: LadderRest) {
     let Some(held) = rest.hold else {
         return;
     };
-    let picked = world
-        .run_system_cached_with(run_attack_pick, held)
-        .ok()
-        .flatten();
+    let picked = world.run_system_cached_with(run_attack_pick, held);
+    let picked = match picked {
+        Ok(picked) => picked,
+        Err(e) => {
+            crate::ui_cast::step_ran(Err(e), "a cast attempt's attack pick");
+            None
+        }
+    };
     crate::ui_unit::target_set_tail(world);
     if let Some(unit) = picked {
         // The rest goes on at the unit the pick bound into the attempt's guid argument

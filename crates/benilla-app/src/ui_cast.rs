@@ -102,6 +102,19 @@ pub(crate) enum CastBarEdge {
 }
 
 impl CastBarEdge {
+    /// An edge that runs with the `World` lent ([`apply_edge`]): a press's rest, the form drop, the bail's kit.
+    fn needs_world(&self) -> bool {
+        matches!(
+            self,
+            Self::SendTail(_)
+                | Self::LadderRest(_)
+                | Self::AttackPick(_)
+                | Self::SendCommit(_)
+                | Self::FormCancel(_)
+                | Self::PendingBail
+        )
+    }
+
     /// A press's rest that runs as a step of its own after the listeners before it.
     #[cfg(test)]
     pub(crate) fn is_step(&self) -> bool {
@@ -396,6 +409,12 @@ impl PressSignals<'_, '_> {
     }
 
     fn fire_edges(&mut self, script: &mut UiScript, edges: Vec<CastBarEdge>) {
+        if let Some(step) = edges.iter().find(|e| e.needs_world()) {
+            if cfg!(debug_assertions) {
+                panic!("ui_cast: {step:?} fired with no `World` lent loses its press's rest");
+            }
+            warn!("ui_cast: {step:?} fired with no `World` lent loses its press's rest");
+        }
         let (Some(sent), Some(index), Some(casts)) = (
             self.sent.as_ref(),
             self.index.as_deref(),
@@ -435,8 +454,23 @@ impl PressSignals<'_, '_> {
                         crate::ui_action::signals::Tail::None,
                     );
                 }
-                // A press makes no other edge.
-                _ => {}
+                // Refused above when no `World` is lent.
+                CastBarEdge::SendTail(_)
+                | CastBarEdge::LadderRest(_)
+                | CastBarEdge::AttackPick(_)
+                | CastBarEdge::SendCommit(_)
+                | CastBarEdge::FormCancel(_)
+                | CastBarEdge::PendingBail => {}
+                // Shown in place by `fire`.
+                CastBarEdge::Refused(_) | CastBarEdge::Line(_) => {}
+                // The packet handlers' edges: a press makes none.
+                CastBarEdge::Start { .. }
+                | CastBarEdge::Go { .. }
+                | CastBarEdge::Failed { .. }
+                | CastBarEdge::Delayed { .. }
+                | CastBarEdge::ChannelStart { .. }
+                | CastBarEdge::ChannelUpdate { .. }
+                | CastBarEdge::Resume { .. } => {}
             }
         }
     }
@@ -777,15 +811,13 @@ pub(crate) fn apply_edge(world: &mut World, edge: CastBarEdge) {
         _ => {}
     }
     if let CastBarEdge::SendTail(tail) = edge {
-        if let Err(e) = world.run_system_cached_with(crate::spell::run_send_tail, tail) {
-            warn!("ui_cast: a cast send's tail did not run: {e}");
-        }
+        let ran = world.run_system_cached_with(crate::spell::run_send_tail, tail);
+        step_ran(ran, "a cast send's tail");
         return;
     }
     if let CastBarEdge::LadderRest(rest) = edge {
-        if let Err(e) = world.run_system_cached_with(crate::spell::run_ladder_rest, rest) {
-            warn!("ui_cast: a cast attempt's rest did not run: {e}");
-        }
+        let ran = world.run_system_cached_with(crate::spell::run_ladder_rest, rest);
+        step_ran(ran, "a cast attempt's rest");
         return;
     }
     if let CastBarEdge::AttackPick(rest) = edge {
@@ -793,9 +825,8 @@ pub(crate) fn apply_edge(world: &mut World, edge: CastBarEdge) {
         return;
     }
     if let CastBarEdge::SendCommit(commit) = edge {
-        if let Err(e) = world.run_system_cached_with(crate::spell::run_send_commit, commit) {
-            warn!("ui_cast: a cast send's commit did not run: {e}");
-        }
+        let ran = world.run_system_cached_with(crate::spell::run_send_commit, commit);
+        step_ran(ran, "a cast send's commit");
         return;
     }
     if let CastBarEdge::FormCancel(spell_id) = edge {
@@ -827,6 +858,16 @@ pub(crate) fn apply_edge(world: &mut World, edge: CastBarEdge) {
     let focus = focus_of(world);
     if let Err(e) = world.run_system_cached_with(edge_system, (edge, focus)) {
         warn!("ui_cast: a cast edge did not apply: {e}");
+    }
+}
+
+/// A press step that did not run loses the rest of its press (the GCD arm, the send): a hard failure in a debug build.
+pub(crate) fn step_ran<E: std::fmt::Display>(ran: Result<(), E>, what: &str) {
+    if let Err(e) = ran {
+        if cfg!(debug_assertions) {
+            panic!("ui_cast: {what} did not run: {e}");
+        }
+        warn!("ui_cast: {what} did not run: {e}");
     }
 }
 
@@ -1984,6 +2025,23 @@ mod tests {
             .unwrap();
         assert_eq!(after, "INTERRUPTED=Lesser Heal STOP=nil");
         assert!(!app.world().resource::<UnitCasts>().casting(ME));
+    }
+
+    /// A press's form drop fired into a VM with no `World` lent fails the debug build instead of dropping its send (`0x80324d`, `0x803458`).
+    #[test]
+    #[should_panic(expected = "fired with no `World` lent")]
+    fn a_step_edge_fired_without_the_world_fails_loudly() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut app = feed_app();
+        app.init_resource::<PressEdges>();
+        app.world_mut()
+            .run_system_once(
+                |mut press: PressSignals, mut script: NonSendMut<UiScript>| {
+                    press.form_cancel(HEAL);
+                    press.fire(&mut script, &mut ());
+                },
+            )
+            .unwrap();
     }
 
     /// Records the signals and the error line the next tests fire, in order.

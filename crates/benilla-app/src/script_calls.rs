@@ -115,9 +115,12 @@ where
     let earlier = world.get_resource_or_init::<UiEvents>().set_aside();
     let (out, raised) = match &lua {
         Some(lua) => benilla_ui::script::world_loan::raises_in_turn(lua, || {
-            world.run_system_cached_with(system, input).ok()
+            step_ran(world.run_system_cached_with(system, input))
         }),
-        None => (world.run_system_cached_with(system, input).ok(), Vec::new()),
+        None => (
+            step_ran(world.run_system_cached_with(system, input)),
+            Vec::new(),
+        ),
     };
     if !raised.is_empty() {
         crate::ui_script::safe_world::lend(world, |script| {
@@ -129,6 +132,18 @@ where
     crate::ui_script::live::fire_handler_events(world);
     world.resource_mut::<UiEvents>().put_back(earlier);
     out
+}
+
+/// A press that did not run drops its whole press silently: a hard failure in a debug build.
+fn step_ran<O, E: std::fmt::Display>(ran: Result<O, E>) -> Option<O> {
+    match ran {
+        Ok(out) => Some(out),
+        Err(e) if cfg!(debug_assertions) => panic!("script_calls: a press step did not run: {e}"),
+        Err(e) => {
+            warn!("script_calls: a press step did not run: {e}");
+            None
+        }
+    }
 }
 
 /// Apply the calls that waited where no `World` was lent, in call order, in the press pass after
@@ -422,6 +437,16 @@ mod tests {
     const OURS: u32 = 1;
     const FRIEND: u32 = 2;
     const FOE: u32 = 3;
+
+    /// A press step whose system cannot run loses its whole press (its send, its GCD arm): a debug build fails on it.
+    #[test]
+    #[should_panic(expected = "a press step did not run")]
+    fn a_press_step_that_cannot_run_fails_loudly() {
+        #[derive(Resource)]
+        struct Absent;
+        let mut world = World::new();
+        press_step(&mut world, |_: In<()>, _: Res<Absent>| {}, ());
+    }
 
     struct Frame {
         app: App,
