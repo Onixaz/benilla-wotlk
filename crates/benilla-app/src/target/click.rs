@@ -424,17 +424,44 @@ impl Dispatch<'_, '_> {
             .is_some_and(|s| self.checks.unshift(s, flags))
     }
 
-    /// Leaves the form: `CMSG_CANCEL_AURA` for each aura holding it, the early form drop queued
-    /// ahead of the frame's raises (`0x80324d`).
-    fn cancel_shapeshift(&mut self) {
+    /// The cancelable auras holding our form, which the auto-unshift cancels.
+    fn form_cancels(&self) -> Vec<u32> {
         let form = self.form_state().0;
-        let (Some(spells), Some(auras)) = (
+        match (
             self.go_inputs.spells.as_deref(),
             self.self_auras.iter().next(),
-        ) else {
+        ) {
+            (Some(spells), Some(auras)) => {
+                crate::ui_shapeshift::form_auras(form, auras, &spells.catalog)
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Leaves the form: each aura cancel's drop and its listeners, its send, then `then` (`0x80324d`, `0x803458`).
+    fn cancel_shapeshift_then(&mut self, then: Option<ClientCommand>) {
+        let cancels = self.form_cancels();
+        if cancels.is_empty() {
+            if let Some(then) = then {
+                let _ = self.seam.net.0.send(then);
+            }
             return;
-        };
-        for spell_id in crate::ui_shapeshift::form_auras(form, auras, &spells.catalog) {
+        }
+        debug!("leaves the form first ({cancels:?})");
+        self.feedback.queue.queue(move |w: &mut World| {
+            for spell_id in cancels {
+                crate::ui_shapeshift::cancel_aura_step(w, spell_id);
+            }
+            if let Some(then) = then {
+                crate::ui_shapeshift::send_after_raises(w, then);
+            }
+            crate::ui_script::live::fire_handler_events(w);
+        });
+    }
+
+    /// Leaves the form ahead of an NPC talk: the drop queued for the click's return, the cancels sent now (#1396).
+    fn cancel_shapeshift(&mut self) {
+        for spell_id in self.form_cancels() {
             debug!("leaves the form first ({spell_id})");
             self.feedback.queue.queue(move |w: &mut World| {
                 crate::ui_shapeshift::preempt_form_cancel(w, spell_id);
@@ -728,10 +755,12 @@ impl Dispatch<'_, '_> {
                 if let Some(own) = self_store.filter(|_| !usable_mounted) {
                     crate::creature_anim::dismount_first(own, &self.seam.net);
                 }
+                let use_go = ClientCommand::GameObjUse { guid };
                 if leaves_form {
-                    self.cancel_shapeshift();
+                    self.cancel_shapeshift_then(Some(use_go));
+                } else {
+                    let _ = self.seam.net.0.send(use_go);
                 }
-                let _ = self.seam.net.0.send(ClientCommand::GameObjUse { guid });
             }
             // Both opener arms queue for the one cast path, as the reference reaches its cast
             // attempt from the use sender like a button press.

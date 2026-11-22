@@ -631,19 +631,30 @@ fn end_session_aura_state(mut script: crate::ui_script::InTurn) {
 
 /// A `CMSG_CANCEL_AURA` per queued `CancelUnitBuff` or `SetTracking`, naming the spell, not the
 /// slot.
-fn drain_aura_cancels(mut script: crate::ui_script::InTurn, net: Res<NetCommands>) {
+pub(crate) fn drain_aura_cancels(mut script: crate::ui_script::InTurn, net: Res<NetCommands>) {
     let Some(mut script) = script.turn() else {
         return;
     };
     for spell_id in script.take_cancel_aura_requests() {
-        // The aura cancel's early form drop at the step, then its send (`0x80324d`, `0x803458`).
-        if let Some(queue) = script.queue() {
-            queue.world(move |w| crate::ui_shapeshift::preempt_form_cancel(w, spell_id));
+        // The aura cancel's form drop at its step, its send after the drop's listeners (`0x80324d`, `0x803458`).
+        match script.queue() {
+            Some(queue) => {
+                queue.world(move |w| crate::ui_shapeshift::cancel_aura_step(w, spell_id))
+            }
+            None => {
+                let _ = net.0.send(ClientCommand::CancelAura { spell_id });
+            }
         }
-        let _ = net.0.send(ClientCommand::CancelAura { spell_id });
     }
     for slot in script.take_temp_enchant_cancels() {
-        let _ = net.0.send(ClientCommand::CancelTempEnchantment { slot });
+        let cmd = ClientCommand::CancelTempEnchantment { slot };
+        // Behind the aura cancels queued before it.
+        match script.queue() {
+            Some(queue) => queue.world(move |w| crate::ui_shapeshift::send_after_raises(w, cmd)),
+            None => {
+                let _ = net.0.send(cmd);
+            }
+        }
     }
 }
 

@@ -1963,6 +1963,162 @@ fn a_casts_form_drop_listener_runs_before_the_send() {
     assert_eq!(wire, ["select", "cancel", "cast"]);
 }
 
+/// Bear Form's spell, holding form 5 on us with its aura up and cancelable.
+const BEAR: u32 = 5487;
+
+/// Us in Bear Form (form 5, its aura up and cancelable), Bear on the first action slot, and an
+/// `UPDATE_SHAPESHIFT_FORM` listener that selects `party1` once.
+fn in_bear_form(rig: &mut Rig) {
+    const FORM: u32 = 5;
+    let world = rig.app.world_mut();
+    let me = world.resource::<GuidIndex>().0[&ME];
+    world.entity_mut(me).insert((
+        ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+            (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+            (benilla_protocol::field::FIELD_UNIT_FLAGS, 0x8),
+            (benilla_protocol::field::FIELD_UNIT_BYTES_2, FORM << 24),
+        ])),
+        crate::unit_auras::UnitAuras::of(
+            ME,
+            &[(
+                0,
+                BEAR,
+                benilla_protocol::messages::AURA_UPDATE_FLAG_CANCELABLE | 1,
+            )],
+        ),
+    ));
+    let mut spells = world.resource_mut::<crate::ui_action::Spells>();
+    let bear = SpellDisplay {
+        name: "Bear Form".into(),
+        shapeshift_form: Some(FORM),
+        effect_apply_aura: [36, 0, 0],
+        ..Default::default()
+    };
+    spells.catalog = SpellCatalog::from_displays(HashMap::from([(BEAR, bear)]));
+    spells
+        .forms
+        .insert(FORM, benilla_formats::ShapeshiftForm::default());
+    world
+        .resource_mut::<crate::ui_action::ActionSlots>()
+        .buttons
+        .insert(
+            0,
+            ActionButton {
+                slot: 0,
+                action: BEAR,
+                kind: ACTION_KIND_SPELL,
+            },
+        );
+    world
+        .resource_mut::<crate::ui_action::PlayerActions>()
+        .spells = [BEAR].into();
+    world.insert_resource(crate::ui_spellbook::SpellBook::of(SpellBookState {
+        tabs: vec![SpellTabView {
+            name: "General".into(),
+            texture: None,
+            offset: 0,
+            num_spells: 1,
+        }],
+        slots: vec![SpellSlotView {
+            spell_id: BEAR,
+            name: "Bear Form".into(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    }));
+    rig.lua(
+        r#"local f = CreateFrame("Frame")
+        f:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
+        f:SetScript("OnEvent", function()
+            if AT_DROP then return end
+            AT_DROP = 1
+            TargetUnit("party1")
+        end)"#,
+    );
+}
+
+/// The selects, our Bear cancels and gameobject uses sent since, in order.
+fn form_leave_wire(rig: &Rig) -> Vec<&'static str> {
+    rig.sent()
+        .into_iter()
+        .filter_map(|c| match c {
+            ClientCommand::SetSelection { guid: NEW } => Some("select"),
+            ClientCommand::CancelAura { spell_id: BEAR } => Some("cancel"),
+            ClientCommand::GameObjUse { .. } => Some("use"),
+            _ => None,
+        })
+        .collect()
+}
+
+/// `CancelShapeshiftForm` (`0x726ce0` -> `0x802f80`): the drop's listeners run before
+/// `CMSG_CANCEL_AURA` (`0x80324d` before `0x803458`), so a select a listener makes goes out first.
+#[test]
+fn a_form_cancels_drop_listener_sends_before_the_cancel() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    in_bear_form(&mut rig);
+    rig.lua(TICK_DO);
+    rig.lua(r#"TICK_DO = function() CancelShapeshiftForm() TICK_DO = nil end"#);
+    rig.frame();
+    assert_eq!(form_leave_wire(&rig), ["select", "cancel"]);
+}
+
+/// The spellbook's press of the active form cancels it (`0x802f80`): the drop's listeners run
+/// before the cancel's send (`0x80324d` before `0x803458`).
+#[test]
+fn a_book_forms_drop_listener_sends_before_the_cancel() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    in_bear_form(&mut rig);
+    rig.lua(TICK_DO);
+    rig.lua(r#"TICK_DO = function() CastSpellByName("Bear Form") TICK_DO = nil end"#);
+    rig.frame();
+    assert_eq!(form_leave_wire(&rig), ["select", "cancel"]);
+}
+
+/// `CancelUnitBuff` on our form's aura (`0x802f80`): its drain sends after the drop's listeners
+/// (`0x80324d` before `0x803458`).
+#[test]
+fn a_buff_cancels_drop_listener_sends_before_the_cancel() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    in_bear_form(&mut rig);
+    rig.vm()
+        .set_player_auras(vec![benilla_ui::script::AuraState {
+            spell_id: BEAR,
+            name: Some("Bear Form".into()),
+            count: 1,
+            helpful: true,
+            cancelable: true,
+            ..Default::default()
+        }]);
+    rig.lua(TICK_DO);
+    rig.lua(r#"TICK_DO = function() CancelUnitBuff("player", 1) TICK_DO = nil end"#);
+    rig.frame();
+    let mut drain = Schedule::default();
+    drain.add_systems(crate::ui_script::raises::then_fire(
+        crate::ui_aura::drain_aura_cancels,
+    ));
+    drain.run(rig.app.world_mut());
+    assert_eq!(form_leave_wire(&rig), ["select", "cancel"]);
+}
+
+/// The world click's and the meeting stone's use leave the form first: each aura cancel's drop
+/// and its listeners, its send, then the use (`0x80324d`, `0x803458`, then `CMSG_GAMEOBJ_USE`).
+#[test]
+fn a_form_leave_then_use_sends_after_the_drops_listeners() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    in_bear_form(&mut rig);
+    let world = rig.app.world_mut();
+    crate::ui_shapeshift::cancel_aura_step(world, BEAR);
+    crate::ui_shapeshift::send_after_raises(world, ClientCommand::GameObjUse { guid: 0xf1 });
+    assert!(
+        rig.sent().is_empty(),
+        "nothing goes out before the listeners"
+    );
+    crate::ui_script::live::fire_handler_events(rig.app.world_mut());
+    assert_eq!(form_leave_wire(&rig), ["select", "cancel", "use"]);
+}
+
 /// A lootable item's lock edge (`0x6dcded` -> `0x706feb`) raises as `UseContainerItem` returns:
 /// its listener's `TargetUnit` applies inside it.
 #[test]

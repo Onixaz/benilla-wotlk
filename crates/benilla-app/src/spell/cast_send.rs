@@ -233,9 +233,17 @@ impl CastLadder<'_, '_> {
         )
     }
 
-    /// Our aura cancel (`0x802f80`): the early form drop at the press's step (`0x80324d`), then
-    /// `CMSG_CANCEL_AURA`.
+    /// Our aura cancel (`0x802f80`): the early form drop at the press's step, `CMSG_CANCEL_AURA` after its listeners (`0x80324d`, `0x803458`).
     pub(crate) fn cancel_aura(&mut self, spell_id: u32) {
+        if self.press.raises_at_step() {
+            self.press.aura_cancel(spell_id);
+        } else {
+            let _ = self.commands.0.send(ClientCommand::CancelAura { spell_id });
+        }
+    }
+
+    /// The item use's form leave: the drop raised as an edge, `CMSG_CANCEL_AURA` sent at once, ahead of the drop's listeners (#1396).
+    pub(crate) fn cancel_aura_now(&mut self, spell_id: u32) {
         self.press.form_cancel(spell_id);
         let _ = self.commands.0.send(ClientCommand::CancelAura { spell_id });
     }
@@ -254,11 +262,12 @@ impl CastLadder<'_, '_> {
         let summons = self.summons.as_ref().map_or(&none, |s| &s.0);
         let sends = crate::ui_companion::dismiss(spell_id, &spells.catalog, summons, store, auras);
         for send in sends {
-            // An aura cancel's early form drop at the step (`0x80324d`).
-            if let ClientCommand::CancelAura { spell_id } = send {
-                self.press.form_cancel(spell_id);
+            match send {
+                ClientCommand::CancelAura { spell_id } => self.cancel_aura(spell_id),
+                send => {
+                    let _ = self.commands.0.send(send);
+                }
             }
-            let _ = self.commands.0.send(send);
         }
     }
 

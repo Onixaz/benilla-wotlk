@@ -99,6 +99,8 @@ pub(crate) enum CastBarEdge {
     PendingBail,
     /// Our aura cancel's early form drop for this spell (`0x80324d` -> `0x721cf0`).
     FormCancel(u32),
+    /// Our aura cancel whole: its form drop, then `CMSG_CANCEL_AURA` after the drop's listeners (`0x80324d`, `0x803458`).
+    AuraCancel(u32),
 }
 
 impl CastBarEdge {
@@ -111,6 +113,7 @@ impl CastBarEdge {
                 | Self::AttackPick(_)
                 | Self::SendCommit(_)
                 | Self::FormCancel(_)
+                | Self::AuraCancel(_)
                 | Self::PendingBail
         )
     }
@@ -282,6 +285,13 @@ impl PressSignals<'_, '_> {
     pub(crate) fn form_cancel(&mut self, spell_id: u32) {
         if let Some(edges) = self.edges.as_mut() {
             edges.0.push(CastBarEdge::FormCancel(spell_id));
+        }
+    }
+
+    /// Our aura cancel of `spell_id` (`0x802f80`): its form drop, then its send after the drop's listeners (`0x80324d`, `0x803458`).
+    pub(crate) fn aura_cancel(&mut self, spell_id: u32) {
+        if let Some(edges) = self.edges.as_mut() {
+            edges.0.push(CastBarEdge::AuraCancel(spell_id));
         }
     }
 
@@ -460,6 +470,7 @@ impl PressSignals<'_, '_> {
                 | CastBarEdge::AttackPick(_)
                 | CastBarEdge::SendCommit(_)
                 | CastBarEdge::FormCancel(_)
+                | CastBarEdge::AuraCancel(_)
                 | CastBarEdge::PendingBail => {}
                 // Shown in place by `fire`.
                 CastBarEdge::Refused(_) | CastBarEdge::Line(_) => {}
@@ -833,6 +844,10 @@ pub(crate) fn apply_edge(world: &mut World, edge: CastBarEdge) {
         crate::ui_shapeshift::preempt_form_cancel(world, spell_id);
         return;
     }
+    if let CastBarEdge::AuraCancel(spell_id) = edge {
+        crate::ui_shapeshift::cancel_aura_step(world, spell_id);
+        return;
+    }
     if let CastBarEdge::PendingBail = edge {
         let speech = world
             .get_resource::<crate::sound::SoundConfig>()
@@ -926,6 +941,7 @@ fn edge_system(
         | CastBarEdge::AttackPick(_)
         | CastBarEdge::SendCommit(_)
         | CastBarEdge::FormCancel(_)
+        | CastBarEdge::AuraCancel(_)
         | CastBarEdge::PendingBail => {}
         CastBarEdge::Selection => crate::ui_action::signals::selection(&mut ui),
         CastBarEdge::Signal(event) => ui.fire(event, Vec::new()),

@@ -65,6 +65,25 @@ pub(crate) fn preempt_form_cancel(world: &mut World, spell_id: u32) {
     }
 }
 
+/// Our aura cancel (`0x802f80`) at a step with the `World` lent: the early form drop, whose listeners run before `CMSG_CANCEL_AURA` (`0x80324d`, `0x803458`).
+pub(crate) fn cancel_aura_step(world: &mut World, spell_id: u32) {
+    preempt_form_cancel(world, spell_id);
+    send_after_raises(world, ClientCommand::CancelAura { spell_id });
+}
+
+/// Send `cmd` once the raises queued before it have reached their listeners; at once with no queue.
+pub(crate) fn send_after_raises(world: &mut World, cmd: ClientCommand) {
+    let send = move |w: &mut World| {
+        if let Some(net) = w.get_resource::<crate::net::NetCommands>() {
+            let _ = net.0.send(cmd);
+        }
+    };
+    match world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
+        Some(mut ui) => ui.world(send),
+        None => send(world),
+    }
+}
+
 /// `CancelShapeshiftForm()` (`0x726ce0`): every cancelable aura of the active form's spell, unless
 /// charmed or the form's row forbids it (`0x802f80`).
 pub(crate) fn cancel_form(cast: &mut crate::spell::ScriptCast) {
