@@ -337,13 +337,45 @@ pub(crate) fn record_answered(
         match name {
             Some(name) if notify => {
                 cx.learn_line(name);
-                cx.update(lists, answered);
-                cx.ui.fire("COMPANION_LEARNED", Vec::new());
+                // The update, `COMPANION_LEARNED` and the later callbacks after the line's listeners (`0x5427be`).
+                let name = name.to_string();
+                cx.ui
+                    .world(move |world| learned_after_line(world, entry, name));
+                return;
             }
             _ if lists.pending.is_empty() => cx.update(lists, answered),
             _ => {}
         }
     }
+}
+
+/// A learn line's tail in the creature-record callback (`0x53ebc0`): the update and `COMPANION_LEARNED`, then the callbacks still filed on `entry`.
+fn learned_after_line(world: &mut World, entry: u32, name: String) {
+    let ran = world.run_system_cached_with(
+        |In((entry, name)): In<(u32, String)>,
+         mut lists: ResMut<CompanionLists>,
+         spells: Option<Res<crate::ui_action::Spells>>,
+         summons: Res<crate::spell::SummonSlots>,
+         names: Res<NameCache>,
+         commands: Res<NetCommands>,
+         mut ui: ResMut<UiEvents>| {
+            let Some(spells) = spells.as_deref() else {
+                return;
+            };
+            let mut cx = CompanionCx {
+                catalog: &spells.catalog,
+                summons: &summons.0,
+                names: &names,
+                commands: &commands,
+                ui: &mut ui,
+            };
+            cx.update(&mut lists, Some((entry, &name)));
+            cx.ui.fire("COMPANION_LEARNED", Vec::new());
+            record_answered(&mut lists, entry, Some(&name), &mut cx);
+        },
+        (entry, name),
+    );
+    crate::ui_cast::step_ran(ran, "a companion learn's tail");
 }
 
 /// One `COMPANION_UPDATE "MOUNT"` per `MOUNTED` effect of `spell_id` as an aura of it comes or goes on us (`0x724a6b`, `0x71e9b2`).

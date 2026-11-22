@@ -158,7 +158,7 @@ fn a_pending_record_holds_the_sort_until_its_answer() {
     assert_eq!(ui.names(), ["COMPANION_UPDATE"]);
 }
 
-/// A live learn with its record cached shows the learn line, then the update's `COMPANION_UPDATE`, then `COMPANION_LEARNED` (`0x5427be`); with the record asked it waits for the answer, which runs the same three (`0x53ebc0`). An unlearn updates and fires `COMPANION_UNLEARNED` (`0x53fad0`).
+/// A live learn with its record cached shows the learn line, then the update's `COMPANION_UPDATE`, then `COMPANION_LEARNED` (`0x5427be`); with the record asked it waits for the answer, which runs the same three, the last two after the line's listeners (`0x53ebc0`). An unlearn updates and fires `COMPANION_UNLEARNED` (`0x53fad0`).
 #[test]
 fn a_live_learn_and_unlearn_fire_from_their_handlers() {
     let (catalog, summons, commands) = (catalog(), summons(), commands());
@@ -185,10 +185,8 @@ fn a_live_learn_and_unlearn_fire_from_their_handlers() {
     let _ = add_known(&mut lists, 10, true, None, &mut cx);
     assert!(cx.ui.is_empty(), "the record is asked first");
     record_answered(&mut lists, 700, Some("Zebra Cat"), &mut cx);
-    assert_eq!(
-        cx.ui.names(),
-        ["<world>", "COMPANION_UPDATE", "COMPANION_LEARNED"]
-    );
+    // The answer's line, then its update and `COMPANION_LEARNED` as a step after the line's listeners (`0x5427be`).
+    assert_eq!(cx.ui.names(), ["<world>", "<world>"]);
     assert_eq!(lists.list(CompanionType::Critter), [11, 10]);
     let mut ui = UiEvents::default();
     cx.ui = &mut ui;

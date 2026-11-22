@@ -44,10 +44,11 @@ fn on_left_world(
     ui: Option<ResMut<crate::ui_script::live::UiEvents>>,
 ) {
     if let SessionEvent::LoggedOut = ev {
-        drop_possess(&mut possess, ui);
+        // The owed entry step is benilla's latch, dropped before the possess zero raises (`0x5d3360`).
         if let Some(mut owed) = owed {
             *owed = Default::default();
         }
+        drop_possess(&mut possess, ui);
     }
 }
 
@@ -62,10 +63,10 @@ fn on_session_end(
 ) {
     bar.clear();
     list.0.clear();
-    drop_possess(&mut possess, ui);
     if let Some(mut owed) = owed {
         *owed = Default::default();
     }
+    drop_possess(&mut possess, ui);
 }
 
 /// The world leave's possess zero (`0x5d3360`), firing `UPDATE_BONUS_ACTIONBAR` when one was held.
@@ -227,12 +228,26 @@ fn on_action_feedback(
             .is_some_and(|d| d.is_helpful());
         debug!("net: pet action feedback {reason}");
         // The line shows in the handler's turn, ahead of the refund (`0x5d4e3c`, `0x5d4e65`).
-        if let Some(key) = pet_feedback_key(reason, helpful) {
-            crate::ui_action::show_in_turn(&mut ui, "ui_pet", UiError::key(key));
-        }
-        // A refused target refunds the spell's start cooldown (`0x5d4e42`, `0x5d4e83`).
+        let Some(key) = pet_feedback_key(reason, helpful) else {
+            if matches!(reason, 2 | 3) {
+                pet_refund_start(&mut bar, spell, &mut ui);
+            }
+            return;
+        };
+        crate::ui_action::show_in_turn(&mut ui, "ui_pet", UiError::key(key));
+        // A refused target refunds the spell's start cooldown after the line's listeners (`0x5d4e42`, `0x5d4e83`).
         if matches!(reason, 2 | 3) {
-            pet_refund_start(&mut bar, spell, &mut ui);
+            ui.world(move |world| {
+                let ran = world.run_system_cached_with(
+                    |In(spell): In<u32>,
+                     mut bar: ResMut<PetBar>,
+                     mut ui: ResMut<crate::ui_script::live::UiEvents>| {
+                        pet_refund_start(&mut bar, spell, &mut ui);
+                    },
+                    spell,
+                );
+                crate::ui_cast::step_ran(ran, "a pet feedback's refund");
+            });
         }
     }
 }
@@ -249,7 +264,6 @@ fn pet_refund_start(bar: &mut PetBar, spell: u32, ui: &mut crate::ui_script::liv
 fn on_cast_failed(
     In(ev): In<SessionEvent>,
     mut bar: ResMut<super::PetBar>,
-    mut ends: PetCastEnd,
     mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     if let SessionEvent::PetCastFailed {
@@ -264,22 +278,35 @@ fn on_cast_failed(
         // The start cooldown the press armed refunds on the pet history, then the pet bar's flush (`0x806d41`, `0x806d46`).
         pet_refund_start(&mut bar, spell_id, &mut ui);
         pet_cast_failed(spell_id, reason, arg, arg2, &mut *ui);
-        // The end and the finish run on the casting unit alone (`0x80583d`).
-        let Some(pet) = ends.end(spell_id, cast_count, wire_reason) else {
-            return;
-        };
-        ui.cast_edge(crate::ui_cast::CastBarEdge::Failed {
-            caster: pet,
-            spell_id,
-            cast_count,
-            reason,
-        });
-        ui.world(move |world| {
-            if let Some(mut pending) = world.get_resource_mut::<crate::spell::PendingCast>() {
-                pending.release(spell_id, cast_count);
-            }
-        });
+        ui.world(move |world| pet_cast_end(world, spell_id, cast_count, reason, wire_reason));
     }
+}
+
+/// The pet display's tail after its line's listeners (`0x80581c`): the end on the casting unit alone (`0x80583d`, `0x80584a`), its `UNIT_SPELLCAST_FAILED`, then the finish's release (`0x805854` -> `0x8055a2`).
+fn pet_cast_end(world: &mut World, spell_id: u32, cast_count: u8, reason: u8, wire_reason: u8) {
+    let ran = world.run_system_cached_with(
+        |In((spell_id, cast_count, wire_reason)): In<(u32, u8, u8)>, mut ends: PetCastEnd| {
+            ends.end(spell_id, cast_count, wire_reason)
+        },
+        (spell_id, cast_count, wire_reason),
+    );
+    let Some(pet) = crate::script_calls::step_ran(ran).flatten() else {
+        return;
+    };
+    let Some(mut ui) = world.get_resource_mut::<crate::ui_script::live::UiEvents>() else {
+        return;
+    };
+    ui.cast_edge(crate::ui_cast::CastBarEdge::Failed {
+        caster: pet,
+        spell_id,
+        cast_count,
+        reason,
+    });
+    ui.world(move |world| {
+        if let Some(mut pending) = world.get_resource_mut::<crate::spell::PendingCast>() {
+            pending.release(spell_id, cast_count);
+        }
+    });
 }
 
 /// What the pet's end-cast reaches (`0x806c30`): the charm, else the summon.
@@ -993,20 +1020,27 @@ mod tests {
             wire_reason: 0x5F,
         };
         world.run_system_once_with(on_cast_failed, failed).unwrap();
+        assert_eq!(
+            world.resource::<crate::ui_script::live::UiEvents>().names(),
+            ["PET_BAR_UPDATE_COOLDOWN", "<cast edge>", "<world>"],
+            "the refund, the line, then the display's tail after the line's listeners"
+        );
+        // The tail: the pet's end edge, then the release, the record standing until then.
+        world
+            .resource_mut::<crate::ui_script::live::UiEvents>()
+            .set_aside();
+        pet_cast_end(&mut world, GROWL, 3, 0x5F, 0x5F);
         let edges = world
             .resource::<crate::ui_script::live::UiEvents>()
             .cast_edges();
         assert!(
             matches!(
                 edges.as_slice(),
-                [
-                    crate::ui_cast::CastBarEdge::Refused(_),
-                    crate::ui_cast::CastBarEdge::Failed {
-                        caster: PET,
-                        cast_count: 3,
-                        ..
-                    },
-                ]
+                [crate::ui_cast::CastBarEdge::Failed {
+                    caster: PET,
+                    cast_count: 3,
+                    ..
+                }]
             ),
             "{edges:?}"
         );

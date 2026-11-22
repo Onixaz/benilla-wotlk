@@ -1134,17 +1134,29 @@ mod net {
             .as_deref()
             .and_then(|a| a.0.get(here))
             .map_or(0, |r| r.zone_id);
-        if matches!(
+        let cleared_afk = matches!(
             notice,
             benilla_protocol::messages::BattlefieldMgrNotice::Entered {
                 cleared_afk: true,
                 ..
             }
-        ) {
-            ui.system_line("CLEARED_AFK", Vec::new());
+        );
+        if !cleared_afk {
+            let (event, args) = world_pvp.0.apply(notice, (here, parent));
+            ui.fire(event, args);
+            return;
         }
-        let (event, args) = world_pvp.0.apply(notice, (here, parent));
-        ui.fire(event, args);
+        ui.system_line("CLEARED_AFK", Vec::new());
+        // The entry's write and event after the line's add (`0x54992b` before `0x549988`).
+        ui.world(move |world| {
+            let Some(mut world_pvp) = world.get_resource_mut::<WorldPvp>() else {
+                return;
+            };
+            let (event, args) = world_pvp.0.apply(notice, (here, parent));
+            if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
+                ui.fire(event, args);
+            }
+        });
     }
 }
 

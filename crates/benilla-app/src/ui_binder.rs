@@ -206,7 +206,7 @@ pub(crate) mod net {
     ) {
         if let SessionEvent::PlayerBound { binder: npc, area } = ev {
             debug!("net: bound to area {area} by {npc:#x}");
-            bound(area, &mut *ui, areas.as_deref(), &mut sounds);
+            bound(area, &mut sounds, areas.as_deref(), &mut *ui);
         }
     }
 
@@ -215,9 +215,9 @@ pub(crate) mod net {
     /// the area, in its turn. The latch stays; the hearthstone moves on `SMSG_BINDPOINTUPDATE`.
     pub(crate) fn bound(
         area: u32,
-        errors: &mut impl crate::ui_action::signals::SignalSink,
-        areas: Option<&AreaTableRes>,
         sounds: &mut MessageWriter<ServerSoundMessage>,
+        areas: Option<&AreaTableRes>,
+        errors: &mut impl crate::ui_action::signals::SignalSink,
     ) {
         sounds.write(ServerSoundMessage {
             kind: ServerSoundKind::Sound2d,

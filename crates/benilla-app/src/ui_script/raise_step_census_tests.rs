@@ -13,28 +13,16 @@ use crate::test_support::{fn_items, rel_path, rust_files, src_dir};
 
 /// The handlers that raise before a later write: (file, handler, the #1245 part or issue that converts it).
 const RAISES_BEFORE_A_WRITE: &[(&str, &str, u16)] = &[
-    ("death/net.rs", "on_death_refresh", 1274),
     ("spell/net.rs", "on_spell_go", 1414),
     ("spell/net.rs", "on_spell_learned", 1414),
     ("spell/net.rs", "on_spell_removed", 1414),
     ("spell/net.rs", "on_spell_superceded", 1414),
-    ("ui_arena_team.rs", "on_packet", 1275),
-    ("ui_barber.rs", "on_enable", 1279),
-    ("ui_battlefield.rs", "on_mgr", 1275),
-    ("ui_battlefield.rs", "on_player", 1275),
-    ("ui_battlefield.rs", "on_status", 1275),
-    ("ui_battlefield_score.rs", "on_pvp_log_data", 1275),
-    ("ui_companion.rs", "on_creature_answer", 1277),
     ("ui_loot/net.rs", "on_error", 1280),
     ("ui_loot/net.rs", "on_release_response", 1280),
     ("ui_loot/net.rs", "on_response", 1280),
-    ("ui_pet/net.rs", "on_action_feedback", 1277),
-    ("ui_pet/net.rs", "on_cast_failed", 1277),
-    ("ui_pet/net.rs", "on_left_world", 1277),
-    ("ui_pet/net.rs", "on_session_end", 1277),
-    ("ui_quest_watch.rs", "on_quest_poi", 1276),
-    ("ui_stable/net.rs", "on_session_end", 1277),
-    ("ui_tabard.rs", "on_save_result", 1279),
+    // Raised in turn since #1354: the disband's line ahead of its clear-all (0x6cbe4b before 0x6cbe55), and the list's lines among its writes (0x6d8870).
+    ("ui_party/net.rs", "on_destroyed", 1284),
+    ("ui_party/net.rs", "on_list", 1284),
     ("ui_trade/net.rs", "on_trade_status_extended", 1280),
     ("ui_transfer.rs", "on_transfer_pending", 1286),
 ];
@@ -46,6 +34,11 @@ const READ_AT_THEIR_STEP: &[(&str, &str, &str)] = &[
         "creature_anim/net.rs",
         "on_attack_stop",
         "the helper writes, then raises PLAYER_LEAVE_COMBAT last",
+    ),
+    (
+        "death/net.rs",
+        "on_death_refresh",
+        "each packet is its own arm: the forced update derives the release timer before its refresh (0x6e3f13, 0x6e3f18); the walker reads the arms as one",
     ),
     (
         "spell/net.rs",
@@ -60,12 +53,37 @@ const READ_AT_THEIR_STEP: &[(&str, &str, &str)] = &[
     (
         "spell/net.rs",
         "on_spell_failed",
-        "the end's state clear applies before the signals (0x7fed9f before 0x7fee2c), the cast          event is the animation's, and the pending release is the finish's step (0x8055a2)",
+        "the end's state clear applies before the signals (0x7fed9f before 0x7fee2c), the cast event is the animation's, and the pending release is the finish's step (0x8055a2)",
     ),
     (
         "spell/net.rs",
         "on_spell_start",
-        "the cast state's insert applies before the start edge fires, as 0x8053ea precedes the          signal 0x8054b8",
+        "the cast state's insert applies before the start edge fires, as 0x8053ea precedes the signal 0x8054b8",
+    ),
+    (
+        "ui_battlefield.rs",
+        "on_player",
+        "a cached name shows the line, else the name's callback is filed (0x54b551); the walker reads the two arms as one",
+    ),
+    (
+        "ui_battlefield.rs",
+        "on_status",
+        "its raises before the tutorial writes are VM writes, and its one event fires last (0x54b1a9)",
+    ),
+    (
+        "ui_battlefield_score.rs",
+        "on_pvp_log_data",
+        "every state write precedes the log's VM write and the rebuild's (0x54d469 before 0x54d495)",
+    ),
+    (
+        "ui_companion.rs",
+        "on_creature_answer",
+        "the callback takes its pending entry before the line, and the update after it is a step (0x5427be)",
+    ),
+    (
+        "ui_quest_watch.rs",
+        "on_quest_poi",
+        "the store's VM write is the raise; QUEST_POI_UPDATE waits for the frame's flush (0x5e7628 -> 0x614760)",
     ),
 ];
 

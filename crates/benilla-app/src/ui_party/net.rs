@@ -140,9 +140,9 @@ fn on_uninvited(
     map: CurrentRaidMap,
 ) {
     if let SessionEvent::GroupUninvited = ev {
-        let before = removal_start(&group);
+        let (before, kind) = (removal_start(&group), map.kind());
         let lines = group.apply_uninvited();
-        removal_end(&mut group, &mut *ui, before, map.kind());
+        removal_end(&mut group, &mut *ui, before, kind);
         push_group_lines(&mut *ui, lines);
         crate::ui_summon::cancel(&mut ui);
     }
@@ -284,11 +284,11 @@ fn on_command_result(
         value,
     } = ev
     {
-        let before = removal_start(&group);
+        let (before, kind) = (removal_start(&group), map.kind());
         let line = group.apply_command_result(operation, &member, result, value);
         let left = operation == party_operation::LEAVE && result == party_result::OK;
         if left {
-            removal_end(&mut group, &mut *ui, before, map.kind());
+            removal_end(&mut group, &mut *ui, before, kind);
         }
         // By key, so the catalog row picks the surface; `None` is the reference's silence.
         if let Some(line) = line {
