@@ -10,8 +10,8 @@ use super::{
     combat_log, container, cursor, death, duel, follow, guild, inspect, lfg, loot, loot_roll,
     macros, mail, mirror_timer, parse_unit_token, party, petition, pvp, quest, quest_log,
     reputation, session, simplehtml, skills, slider, social, stable, trade, tradeskill, unit_menu,
-    weapon_enchant, AuraState, FontObject, MusicRequest, RegionData, ScriptValue, SoundRequest,
-    UnitState, UnitTokenParse,
+    weapon_enchant, FontObject, MusicRequest, RegionData, ScriptValue, SoundRequest, UnitState,
+    UnitTokenParse,
 };
 
 // ── The Rust-side model ──
@@ -275,12 +275,13 @@ pub(crate) struct Model {
     /// The selection `PLAYER_TARGET_CHANGED` last announced to this VM
     /// ([`super::UiScript::set_target_signalled`]).
     pub(crate) target_signalled: Option<u64>,
-    /// The player's auras in the reference cache's insertion order, durations joined: the
-    /// `GetPlayerBuff` family's list, and any token naming the player's.
-    pub(crate) player_auras: Vec<AuraState>,
-    /// Every other unit's auras by guid, ascending aura slot: one list per unit, whatever token
-    /// names it.
-    pub(crate) unit_auras: HashMap<u64, Vec<AuraState>>,
+    /// The player's auras a call reads while no view lends the game's: a test's or a capture
+    /// fixture's ([`super::UiScript::set_player_auras`]).
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) player_auras: Vec<super::AuraState>,
+    /// Every other unit's fixture auras by guid ([`super::UiScript::set_unit_auras`]).
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) unit_auras: HashMap<u64, Vec<super::AuraState>>,
     /// The focus `[0xbd07d0]`, which `FocusUnit` and `ClearFocus` set through the setter
     /// (`0x51ff20`); 0 for none.
     pub(crate) focus: u64,
@@ -1523,7 +1524,9 @@ impl Model {
             units_by_lower: HashMap::new(),
             units_by_guid: HashMap::new(),
             target_signalled: None,
+            #[cfg(any(test, feature = "fixtures"))]
             player_auras: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             unit_auras: HashMap::new(),
             focus: 0,
             #[cfg(any(test, feature = "fixtures"))]

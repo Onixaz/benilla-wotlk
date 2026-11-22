@@ -163,11 +163,6 @@ impl Plugin for VehiclePlugin {
                 on_cancel_expected_ride,
             )
             .add_systems(Startup, load_vehicle_tables.after(AssetSet::Open))
-            // The seated state a frame's `vehicle` token reads comes from the passenger chain.
-            .configure_sets(
-                Update,
-                crate::ui_aura::AuraEvents.after(passenger::advance_transits),
-            )
             .add_systems(
                 Update,
                 (

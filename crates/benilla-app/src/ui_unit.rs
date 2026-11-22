@@ -157,12 +157,8 @@ impl Plugin for UiUnitPlugin {
                 // raises for the same port.
                 fire_leaving_world_on_worldport,
                 feed_units.in_set(EnterWorldFeed),
-                // After the aura feed's turn.
-                feed_unit_reach.after(crate::ui_aura::AuraEvents),
-                // After the same feed, whose guids it covers.
-                held::feed_chain_units
-                    .in_set(ChainUnitFeed)
-                    .after(crate::ui_aura::AuraEvents),
+                feed_unit_reach,
+                held::feed_chain_units.in_set(ChainUnitFeed),
                 feed_farsight_focus,
                 melee_unit_combat,
                 fire_unit_combat,
@@ -171,14 +167,8 @@ impl Plugin for UiUnitPlugin {
                 .chain()
                 .in_set(UnitFeed),
         )
-        // After the unit snapshots and the resolver's guids, which its handlers read.
-        .add_systems(
-            Update,
-            feed_combo_points
-                .in_set(UnitFeed)
-                .after(feed_units)
-                .after(crate::ui_aura::AuraEvents),
-        )
+        // After the unit snapshots, which its handlers read.
+        .add_systems(Update, feed_combo_points.in_set(UnitFeed).after(feed_units))
         .add_systems(Update, feed_name_records.in_set(UnitFeed))
         .add_systems(Update, taxi_benchmark.in_set(UnitFeed))
         .add_systems(
@@ -3174,7 +3164,7 @@ mod tests {
             .init_resource::<crate::ui_party::GroupState>()
             .insert_resource(NetCommands(tx))
             .add_plugins(crate::ui_aura::UiAuraPlugin)
-            .add_systems(Update, feed_unit_reach.after(crate::ui_aura::AuraEvents));
+            .add_systems(Update, feed_unit_reach);
         app.insert_non_send_resource(UiScript::new().unwrap());
 
         // We at the origin, party1 (`A`) 5 yards off with a pet 15 yards off, the mob 20 yards
@@ -3282,33 +3272,6 @@ mod tests {
                 "CanInspect({token})"
             );
         }
-    }
-
-    /// The reach feed measures the guids the aura feed pushes, so a frame's feeds must run in that
-    /// order: read off the declared graph, the aura feed's set comes before the reach feed.
-    #[test]
-    fn the_reach_feed_runs_after_the_aura_feed_it_reads() {
-        use crate::game_plugins::schedule_tests::{census, headless_client, SyncPoints};
-
-        let mut app = headless_client();
-        let c = census(&mut app, Update, SyncPoints::Declared);
-        if !c.systems.values().any(|s| s.name.contains("benilla_app::")) {
-            eprintln!("skipped: this build carries no type names");
-            return;
-        }
-        let one = |suffix: &str| {
-            let mut hits = c.systems.iter().filter(|(_, s)| s.name.ends_with(suffix));
-            match (hits.next(), hits.next()) {
-                (Some((k, _)), None) => *k,
-                _ => panic!("exactly one system named `…{suffix}` in Update"),
-            }
-        };
-        let aura = one("::ui_aura::feed_auras");
-        let reach = one("::ui_unit::feed_unit_reach");
-        assert!(
-            c.dependencies.contains(&(aura, reach)),
-            "feed_unit_reach is declared after feed_auras"
-        );
     }
 
     /// The team digit comes off the race byte, whatever template sits beside it (a GM's 35).

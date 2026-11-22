@@ -1096,15 +1096,18 @@ fn seat_a_session(script: &mut UiScript) {
             ..Default::default()
         },
     );
-    script.set_player_auras(vec![benilla_ui::script::AuraState {
-        spell_id: 1243,
-        name: Some("Power Word: Fortitude".into()),
-        icon: Some("Interface\\Icons\\Spell_Holy_WordFortitude".into()),
-        count: 1,
-        helpful: true,
-        cancelable: true,
-        ..Default::default()
-    }]);
+    crate::dev::set_fixture_player_auras(
+        script,
+        vec![benilla_ui::script::AuraState {
+            spell_id: 1243,
+            name: Some("Power Word: Fortitude".into()),
+            icon: Some("Interface\\Icons\\Spell_Holy_WordFortitude".into()),
+            count: 1,
+            helpful: true,
+            cancelable: true,
+            ..Default::default()
+        }],
+    );
     script.set_unit(
         "target",
         Some(benilla_ui::script::UnitState {

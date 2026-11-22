@@ -122,8 +122,11 @@ fn a_spell_row_casts_and_a_town_row_cancels_the_aura_and_saves_the_type() {
         "the cast's aura moves the state, not the call"
     );
 
-    // The aura lands: the tracking spell, and the event.
+    // The aura lands: the tracking spell, and the event, queued with the unique signals
+    // (`0x57e0ed`), which a bare VM fires at its next tick.
     s.set_tracking_spell(1494);
+    assert_eq!(fired(&s), 0, "queued, not fired in the setter");
+    s.tick(0.0);
     assert_eq!(fired(&s), 1);
     assert!(s
         .eval::<bool>("local _, _, a = GetTrackingInfo(1) return a == 1")
@@ -135,6 +138,7 @@ fn a_spell_row_casts_and_a_town_row_cancels_the_aura_and_saves_the_type() {
         s.cvar("minimapTrackedInfo").unwrap(),
         "MINIMAP_TRACKING_REPAIR"
     );
+    s.tick(0.0);
     assert_eq!(fired(&s), 2);
     assert_eq!(s.minimap_town_tracking().map(|t| t.file), Some("Repair"));
     assert!(s
@@ -185,6 +189,7 @@ fn the_saved_type_restores_only_for_a_class_offered_it() {
         .unwrap();
     s.load_tracked_state(ROGUE);
     assert_eq!(s.minimap_town_tracking().map(|t| t.file), Some("Poisons"));
+    s.tick(0.0);
     assert_eq!(fired(&s), 1);
 }
 

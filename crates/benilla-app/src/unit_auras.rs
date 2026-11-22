@@ -180,6 +180,26 @@ impl UnitAuras {
             .any(|a| a.spell_id == spell_id && a.flags & AURA_UPDATE_EFF_INDEX_MASK != 0)
     }
 
+    /// Every slot's spell in slot order, an effect applied or not, as the spell-id walks read them
+    /// (`0x7282a0`, `0x7289c0`), each with its real-clock expiry, 0 untimed or unknown.
+    pub(crate) fn slot_spells(&self) -> Vec<(u32, f64)> {
+        let mut slots: Vec<(u8, u32, f64)> = self
+            .by_slot
+            .values()
+            .map(|a| (a.slot, a.spell_id, a.expires_at))
+            .chain(
+                self.inactive
+                    .iter()
+                    .map(|(&slot, &spell)| (slot, spell, 0.0)),
+            )
+            .collect();
+        slots.sort_by_key(|&(slot, ..)| slot);
+        slots
+            .into_iter()
+            .map(|(_, spell, end)| (spell, end))
+            .collect()
+    }
+
     /// Live auras by ascending slot.
     pub(crate) fn iter(&self) -> impl Iterator<Item = &UnitAura> + '_ {
         self.by_slot.values()
@@ -337,9 +357,18 @@ fn on_aura_update(
             if !update.all || removed {
                 ui.world(move |world| crate::ui_action::slots::aura_changed(world, spell));
             }
+            if !update.all {
+                tracking_moved(ui, spell, removed);
+            }
         }
         for spell in live {
             ui.world(move |world| crate::ui_action::slots::aura_changed(world, spell));
+            // An `ALL` packet's live tracking aura sets the spell whatever it was (`0x72f9b5`).
+            ui.write(move |script| {
+                if script.is_tracking_spell(spell) {
+                    script.set_tracking_spell(spell);
+                }
+            });
         }
         ui.world(move |world| crate::ui_action::usable_cache::aura_read(world, unit, changed));
         ui.world(move |world| crate::ui_cast::auras_changed(world, unit, changed));
@@ -360,6 +389,28 @@ fn on_aura_update(
             }
         }
     }
+    // `UNIT_AURA` for the unit, once however many packets reach it this frame, fired at the
+    // frame's flush (`0x72fde8` -> `0x6143f0`).
+    if let Some(ui) = ui.as_mut() {
+        ui.world(move |world| {
+            crate::ui_script::live::queue_unit_signal(world, unit, "UNIT_AURA");
+        });
+    }
+}
+
+/// The minimap's tracking spell at one of our aura's add or removal: a tracking aura's removal
+/// clears it (`0x722113`), one added that is not already the spell sets it (`0x727804`).
+fn tracking_moved(ui: &mut crate::ui_script::live::UiEvents, spell: u32, removed: bool) {
+    ui.write(move |script| {
+        if !script.is_tracking_spell(spell) {
+            return;
+        }
+        if removed {
+            script.set_tracking_spell(0);
+        } else if spell != script.tracking_spell() {
+            script.set_tracking_spell(spell);
+        }
+    });
 }
 
 /// One packet's removed then applied spells, flagged removed, read off the table before it applies (`0x72f803`, `0x72f904`, `0x72f9dc`).

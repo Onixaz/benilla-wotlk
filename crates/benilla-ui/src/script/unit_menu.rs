@@ -261,14 +261,27 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(i32::from(flags & PLAYER_FLAG_PVP_DESIRED != 0))
         })?,
     )?;
-    // PlayerIsPVPInactive(unit) (`0x612e20`): whether the unit carries the PvP-inactive aura.
+    // PlayerIsPVPInactive(unit) (`0x612e20`): whether the unit carries the PvP-inactive aura: a
+    // held unit in any slot, else an online member record's or a pet record's block up to its
+    // first empty slot (`0x612ec6`).
     g.set(
         "PlayerIsPVPInactive",
         lua.create_function(|lua, unit: Value| {
             let unit = string_arg(lua, unit, "Usage: PlayerIsPVPInactive(\"unit\")")?;
             let model = model_of(lua);
-            let inactive = super::aura::auras_of(&model, &unit)
-                .is_some_and(|list| list.iter().any(|a| a.spell_id == PVP_INACTIVE_AURA));
+            use super::aura::UnitAuraSlots;
+            let slots = model
+                .token_guid(&unit)
+                .and_then(|g| super::aura::slots_of(&model, g));
+            let inactive = match slots {
+                Some(UnitAuraSlots::Held(slots)) => {
+                    slots.iter().any(|&(s, _)| s == PVP_INACTIVE_AURA)
+                }
+                Some(UnitAuraSlots::Member { online: false, .. }) | None => false,
+                Some(UnitAuraSlots::Member { slots, .. } | UnitAuraSlots::Pet(slots)) => {
+                    super::aura::leading_slots(&slots).any(|s| s == PVP_INACTIVE_AURA)
+                }
+            };
             Ok(inactive)
         })?,
     )?;
