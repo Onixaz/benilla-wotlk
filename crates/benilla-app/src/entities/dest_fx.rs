@@ -49,13 +49,20 @@ pub(crate) struct GroundFx {
     /// The unit whose effect list holds it and the effect's spell: it loops until that unit is
     /// gone or its effect list clears (`0x744ac0`).
     owner: Option<(Entity, u32)>,
+    /// Its flat quads project as ground decals, as a dest-anchored spell effect's do.
+    ground_anchor: bool,
 }
 
 impl GroundFx {
     /// A looping model its spawner places, fades and despawns: the trajectory aim's impact
-    /// models (`0x6fe9b0`), which no unit's effect list holds.
+    /// models (`0x6fe9b0`), which no unit's effect list holds. A plain world model, not a
+    /// dest-anchored effect: its flat quads draw as geometry, hidden and faded with the model,
+    /// where a ground decal would ignore both (`0x6fde60` adds it as a static world object).
     pub(crate) fn marker(path: String) -> Self {
-        Self::new(path, true)
+        Self {
+            ground_anchor: false,
+            ..Self::new(path, true)
+        }
     }
 
     fn new(path: String, looping: bool) -> Self {
@@ -67,6 +74,7 @@ impl GroundFx {
             loop_armed: false,
             expires: None,
             owner: None,
+            ground_anchor: true,
         }
     }
 }
@@ -440,7 +448,8 @@ pub(super) fn attach_ground_fx_models(
                 entity,
                 dm,
                 now,
-                true, // a dest-anchored model's flat quads are ground decals
+                // A dest-anchored model's flat quads are ground decals; a marker's draw as geometry.
+                inst.ground_anchor,
                 // Chained to nothing: its trail stays world-frozen and its pool finishes in place.
                 super::spell_fx::EffectHost::default(),
                 // Not a kit effect on a unit: its own span clock, the plain single-clip arm.

@@ -25,6 +25,8 @@ use benilla_world::decal::{DecalFrame, WorldDecal};
 use benilla_world::particles::buffer::{EffectBlend, EffectFog, EffectVertex, WorldEffectDraw};
 use benilla_world::view::WorldCamera;
 
+use benilla_protocol::SessionEvent;
+
 use super::passenger::{is_vehicle_transport, Passenger};
 
 /// The row bits that arm the preview at all (`0x6fe9b0`).
@@ -41,7 +43,7 @@ const ON_FREE_LOOK: u32 = 0x400_0000;
 const ON_CAST: u32 = 0x800_0000;
 
 /// `UNIT_FLAG_STUNNED`, which refuses the free-look term.
-const UNIT_FLAG_STUNNED: u32 = 0x40000;
+pub(super) const UNIT_FLAG_STUNNED: u32 = 0x40000;
 /// A seat that lets its rider turn: without it, a seated mover's vehicle prevents turning
 /// (`0x74b900`).
 const SEAT_ALLOWS_TURNING: u32 = 0x400;
@@ -72,7 +74,11 @@ pub(crate) struct TrajectoryTargeting {
     fade_start: u32,
     mode: u8,
     /// The spell the preview last drew, set too by a trajectory cast's send (`0x6fbf90`).
-    pub(crate) spell: u32,
+    spell: u32,
+    /// A trajectory cast the reference would hold until its cast animation releases the missile
+    /// (`0x809f80`, sent by `0x80de60`), which the cast leg reads (`0x7fe500`). benilla sends at
+    /// the press, so the hold runs from the send to that cast's own go or refusal instead.
+    held_cast: Option<HeldCast>,
     /// This frame's opacity, 0 when nothing draws.
     alpha: f32,
     /// The flight, WoW coordinates: the launch, then each step's end, the landing last.
@@ -82,6 +88,14 @@ pub(crate) struct TrajectoryTargeting {
     facing: f32,
     decal: Vec<EffectVertex>,
     decal_key: Option<DecalKey>,
+}
+
+/// A sent trajectory cast awaiting its go: the caster, its `castCount` and spell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct HeldCast {
+    caster: u64,
+    count: u8,
+    spell: u32,
 }
 
 /// An impact model's root, which only the preview moves.
@@ -174,9 +188,48 @@ impl TrajectoryTargeting {
         self.arc_texture = None;
         self.impact_texture = None;
         self.target = None;
+        self.held_cast = None;
         self.alpha = 0.0;
         self.decal_key = None;
         self.decal.clear();
+    }
+
+    /// A trajectory cast sent (`0x6fbf90`): the preview's spell, held for the cast leg when the
+    /// reference would hold the cast.
+    pub(crate) fn sent(&mut self, caster: u64, count: u8, spell: u32, held: bool) {
+        self.spell = spell;
+        self.held_cast = held.then_some(HeldCast {
+            caster,
+            count,
+            spell,
+        });
+    }
+
+    /// The cast `ev` answers, if it is the held one: it launched or was refused.
+    fn answered(&self, ev: &SessionEvent) -> bool {
+        let Some(h) = self.held_cast else {
+            return false;
+        };
+        match *ev {
+            SessionEvent::SpellGo {
+                caster, cast_count, ..
+            }
+            | SessionEvent::SpellFailed {
+                caster, cast_count, ..
+            } => caster == h.caster && cast_count == h.count,
+            SessionEvent::PetCastFailed {
+                cast_count,
+                spell_id,
+                ..
+            }
+            | SessionEvent::CastResult {
+                cast_count,
+                spell_id,
+                success: false,
+                ..
+            } => cast_count == h.count && spell_id == h.spell,
+            _ => false,
+        }
     }
 
     /// The preview's opacity this frame from the mode `active` holds up, `None` for one that
@@ -309,6 +362,14 @@ pub(super) fn update_trajectory_targeting(
             .and_then(|(_, id)| tables.vehicle(id))
             .filter(|r| r.flags & ARMED != 0)
         {
+            debug!(
+                "vehicle: aim preview for vehicle {} (flags {:#x}): arc {:?}, impact {:?}, models {:?}",
+                rec.id,
+                rec.flags,
+                rec.targeting.arc_texture,
+                rec.targeting.impact_texture,
+                rec.targeting.impact_models,
+            );
             let rec = rec.targeting.clone();
             state.start(&mut commands, &asset_server, key.unwrap(), &rec, now);
         }
@@ -334,9 +395,11 @@ pub(super) fn update_trajectory_targeting(
             (def.missile != 0).then_some(())?;
             visuals.as_deref()?.0.missile(def.missile)
         };
-        // The cast leg: the mover's cast, when its spell has a missile row.
+        // The cast leg: the mover's cast, else the held trajectory cast, when its spell has a
+        // missile row.
         let cast = casting
             .map(|c| c.spell_id)
+            .or(state.held_cast.map(|h| h.spell))
             .filter(|&id| missile_of(id).is_some());
         let turn_or_action = rig.as_deref().is_some_and(|r| r.turn_or_action());
         let look = turn_or_action || binds.steering();
@@ -422,7 +485,7 @@ pub(super) fn update_trajectory_targeting(
 
 /// The free-look test's mover terms (`0x5fa110`): alive, not stunned, standing, and not seated
 /// where the vehicle prevents turning (a seat without `0x400`, `0x74b900`).
-fn may_sync_facing(
+pub(super) fn may_sync_facing(
     store: Option<&crate::net::ObjectStore>,
     seat: Option<&Passenger>,
     index: Option<&crate::net::GuidIndex>,
@@ -447,6 +510,29 @@ fn may_sync_facing(
         })
         .is_some_and(|s| s.flags & SEAT_ALLOWS_TURNING == 0);
     !prevented
+}
+
+/// The held trajectory cast ends with its go or its refusal.
+pub(super) fn on_trajectory_cast_answer(
+    In(ev): In<SessionEvent>,
+    mut state: ResMut<TrajectoryTargeting>,
+) {
+    if state.answered(&ev) {
+        state.held_cast = None;
+    }
+}
+
+/// Whether the reference holds an instant trajectory cast until its animation releases it: the
+/// caster casts nothing, the visual has a missile, and its cast kit plays an animation without
+/// the visual's `0x4` flag (`0x809f80`).
+pub(super) fn held_until_release(
+    casting: bool,
+    visual: Option<&benilla_formats::VisualStages>,
+    cast_kit: Option<&benilla_formats::VisualKit>,
+) -> bool {
+    !casting
+        && visual.is_some_and(|v| v.missile_gate != 0 && v.flags & 0x4 == 0)
+        && cast_kit.is_some_and(|k| k.anim_id.is_some_and(|a| a > 0))
 }
 
 /// The preview runs while a vehicle mover could aim or a preview is up, to stop it.
@@ -720,5 +806,72 @@ mod tests {
             texture_url("Spells\\Textures\\Target_Line.blp  ", true),
             benilla_assets::texture_url("Spells\\Textures\\Target_Line.blp", (true, true))
         );
+    }
+
+    /// The held cast ends with its own go or refusal, not another cast's.
+    #[test]
+    fn the_held_cast_ends_with_its_own_answer() {
+        let mut s = state();
+        s.sent(0xF150_0000_0000_0001, 3, 66218, true);
+        assert_eq!(s.spell, 66218);
+        let go = |caster, cast_count| SessionEvent::SpellGo {
+            caster,
+            cast_count,
+            spell_id: 66218,
+            cast_flags: 0,
+            server_time: 0,
+            hits: Vec::new(),
+            misses: Vec::new(),
+            reflects: Vec::new(),
+            target: None,
+            go_target: None,
+            target_mask: 0,
+            src: None,
+            dest: None,
+            ammo: None,
+            item_caster: None,
+            trajectory: None,
+            dest_counter: 0,
+            points: Vec::new(),
+        };
+        assert!(!s.answered(&go(0xF150_0000_0000_0001, 4)), "another count");
+        assert!(!s.answered(&go(7, 3)), "another caster");
+        assert!(s.answered(&go(0xF150_0000_0000_0001, 3)));
+        let refused = SessionEvent::PetCastFailed {
+            cast_count: 3,
+            spell_id: 66218,
+            reason: 0,
+            arg: None,
+            wire_reason: 0,
+        };
+        assert!(s.answered(&refused));
+        // A cast the reference sends at once holds nothing.
+        s.sent(0xF150_0000_0000_0001, 5, 66218, false);
+        assert!(!s.answered(&go(0xF150_0000_0000_0001, 5)));
+    }
+
+    /// The reference holds a cast whose missile visual's cast kit animates, unless a cast runs.
+    #[test]
+    fn a_cast_with_an_animated_kit_is_held() {
+        let stages = benilla_formats::VisualStages {
+            missile_gate: 1,
+            ..Default::default()
+        };
+        let kit = benilla_formats::VisualKit {
+            anim_id: Some(6),
+            ..Default::default()
+        };
+        assert!(held_until_release(false, Some(&stages), Some(&kit)));
+        assert!(!held_until_release(true, Some(&stages), Some(&kit)));
+        let still = benilla_formats::VisualKit {
+            anim_id: Some(0),
+            ..Default::default()
+        };
+        assert!(!held_until_release(false, Some(&stages), Some(&still)));
+        let flagged = benilla_formats::VisualStages {
+            flags: 0x4,
+            ..stages.clone()
+        };
+        assert!(!held_until_release(false, Some(&flagged), Some(&kit)));
     }
 }

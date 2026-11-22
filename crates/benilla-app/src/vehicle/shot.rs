@@ -219,6 +219,8 @@ pub(super) fn send_trajectory_casts(
             Option<&super::Vehicle>,
             Option<&super::aim::MoveFlags2>,
             Option<&crate::entities::CollisionHeight>,
+            Option<&crate::net::ObjectStore>,
+            Option<&crate::creature_anim::Casting>,
         ),
         With<crate::net::ActiveMover>,
     >,
@@ -230,7 +232,10 @@ pub(super) fn send_trajectory_casts(
     units: crate::entities::AttachPosQuery,
     joints: Query<&GlobalTransform>,
     world: benilla_world::collision::WorldCollision,
-    mut targeting: ResMut<super::targeting::TrajectoryTargeting>,
+    (mut targeting, mods): (
+        ResMut<super::targeting::TrajectoryTargeting>,
+        Option<Res<crate::spell::SpellModifiers>>,
+    ),
 ) {
     if casts.0.is_empty() {
         return;
@@ -240,7 +245,7 @@ pub(super) fn send_trajectory_casts(
         return;
     };
     for cast in casts {
-        let Ok((entity, guid, vehicle, flags2, height)) = mover.single() else {
+        let Ok((entity, guid, vehicle, flags2, height, store, casting)) = mover.single() else {
             debug!("vehicle: trajectory cast {} with no mover", cast.spell_id);
             continue;
         };
@@ -252,16 +257,35 @@ pub(super) fn send_trajectory_casts(
             );
             continue;
         }
-        let Some(missile) = spells
+        let Some((def, missile)) = spells
             .as_deref()
             .and_then(|s| s.catalog.get(cast.spell_id))
             .zip(visuals.as_deref())
-            .and_then(|(d, v)| v.0.missile(d.missile))
+            .and_then(|(d, v)| Some((d, v.0.missile(d.missile)?)))
         else {
             continue;
         };
-        // The aim preview draws the spell sent (`0x6fbf90`).
-        targeting.spell = cast.spell_id;
+        // The aim preview draws the spell sent (`0x6fbf90`), and its cast leg holds a cast the
+        // reference would hold for its animation (`0x809f80`).
+        let instant = spells.as_deref().is_some_and(|s| {
+            let level = store.and_then(|s| s.0.unit_level()).unwrap_or(0);
+            let cast_ms = match mods.as_deref() {
+                Some(m) => s.cast_time_unclamped_ms(def, level, m),
+                None => s.cast_time_unclamped_ms(def, level, &Default::default()),
+            };
+            cast_ms <= 0
+        });
+        let held = instant
+            && visuals.as_deref().is_some_and(|v| {
+                let stages =
+                    v.0.stages(crate::creature_anim::spell_visual::spell_visual_id(def));
+                super::targeting::held_until_release(
+                    casting.is_some(),
+                    stages,
+                    stages.and_then(|st| v.0.kit(st.cast)),
+                )
+            });
+        targeting.sent(cast.caster, cast.count, cast.spell_id, held);
         let Some(launch) = crate::entities::aim_launch_pos(entity, &units, &joints) else {
             continue;
         };

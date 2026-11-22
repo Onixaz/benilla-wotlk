@@ -624,6 +624,12 @@ pub(crate) struct CameraControl {
     /// Mouse-look is on: the reference's `[cam+0x90] & 1`. Written by [`run_look_session`], read
     /// the same frame for `cameraTerrainTilt`'s hand-off.
     pub(super) freelook: bool,
+    /// The driven vehicle aims with the mouse's vertical motion instead of the camera's pitch
+    /// (`0x5fba60`): while the facing syncs, the look leaves the pitch still and banks its change
+    /// in [`Self::aim_pitch_delta`]. Set each frame by the vehicle aim.
+    pub(crate) hold_pitch_for_aim: bool,
+    /// The pitch the held look would have turned the camera by, for the vehicle aim to take.
+    pub(crate) aim_pitch_delta: f32,
     /// The mouse buttons the world owns this frame, latched by [`latch_world_mouse`].
     pub(super) world_mouse: WorldMouse,
     /// Logical cursor position captured when look began, to restore on release.
@@ -659,6 +665,11 @@ impl CameraControl {
     /// preview's turn and free-look terms.
     pub(crate) fn turn_or_action(&self) -> bool {
         self.world_mouse.turn()
+    }
+
+    /// Mouse-look is on, the facing syncing to the camera.
+    pub(crate) fn freelook(&self) -> bool {
+        self.freelook
     }
 
     /// A vehicle seat's zoom (`0x74c0e0`): on the enter the preferred distance, raised or lowered
@@ -1030,7 +1041,11 @@ pub(super) fn run_look_session(
         // The pivot's fork: a pinned camera looking level or up, dragged mostly vertically, spends
         // the delta on the pitch bias; `None` means the integrator does not run.
         let d_pitch = -dy * pitch_rate;
-        if let Some(d_pitch) = rig.smart_pivot.route_pitch(
+        let syncs = active == LookButton::Right || both_buttons;
+        if syncs && rig.hold_pitch_for_aim {
+            // The vehicle takes the motion as its aim; the camera keeps its pitch.
+            rig.aim_pitch_delta += d_pitch;
+        } else if let Some(d_pitch) = rig.smart_pivot.route_pitch(
             d_pitch,
             d_yaw,
             cam.pitch,
@@ -1040,7 +1055,7 @@ pub(super) fn run_look_session(
         ) {
             cam.pitch = (cam.pitch + d_pitch).clamp(-CAM_PITCH_LIMIT, CAM_PITCH_LIMIT);
         }
-        if active == LookButton::Right || both_buttons {
+        if syncs {
             *face_yaw = cam.yaw;
         }
     }
