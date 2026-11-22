@@ -1,4 +1,4 @@
-//! `benilla-formats`: the schema layer over the 1.12.1 (build 5875) asset formats, the patch chain
+//! `benilla-formats`: the schema layer over the 3.3.5a (build 12340) asset formats, the patch chain
 //! ([`Chain`]) and the `benilla-extract` CLI. Data stays in raw WoW coordinates; the Bevy transform
 //! lives in `benilla`.
 
