@@ -22,8 +22,8 @@ pub use tga::tga_to_rgba;
 mod install;
 pub use install::{
     addon_corpus, addon_corpus_candidates, candidates, drop_in_install, project_folder,
-    set_drop_in_install, set_project_folder, skipped, wow_data, wow_exe, wow_exe_candidates,
-    wow_install,
+    set_drop_in_install, set_project_folder, skipped, skipped_corpus, wow_data, wow_exe,
+    wow_exe_candidates, wow_install,
 };
 /// The reference executable's sections, mapped read-only from disk.
 mod pe;
