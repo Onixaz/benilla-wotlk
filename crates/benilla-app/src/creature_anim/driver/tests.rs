@@ -6121,3 +6121,121 @@ fn a_fly_tier_riders_drake_strokes_in_flyswim_not_the_ground_walk() {
         assert!(playing(if tier == 3 { 4 } else { 2 }), "rider tier {tier}");
     }
 }
+
+/// A model with the seat clips: Stand, a ride loop (121), an upper ride loop (140) on the torso,
+/// and the JumpEnd (39) and JumpLandRun (187) one-shots.
+fn seated_model() -> ModelAnimations {
+    let mut upper = clip(140, 3, true);
+    upper.upper_node = Some(AnimationNodeIndex::new(6));
+    ModelAnimations {
+        clips: vec![
+            clip(0, 1, true),
+            clip(121, 2, true),
+            upper,
+            clip(39, 4, false),
+            clip(187, 7, false),
+        ],
+        ..caster_model()
+    }
+}
+
+fn seated(app: &mut App, pose: crate::vehicle::SeatPose) -> Entity {
+    app.world_mut()
+        .spawn((
+            seated_model(),
+            AnimationPlayer::default(),
+            AnimationTransitions::new(),
+            AnimDriver::default(),
+            MovementState::default(),
+            pose,
+        ))
+        .id()
+}
+
+/// The seat's base start goes first; a start the model lacks plays out at once and the loop
+/// takes the base (`0x747b20`, `0x7484e0`).
+#[test]
+fn a_seat_start_the_model_lacks_hands_the_base_to_its_loop() {
+    let mut app = app();
+    let unit = seated(
+        &mut app,
+        crate::vehicle::SeatPose {
+            lower: [Some(120), Some(121)],
+            ..Default::default()
+        },
+    );
+    app.update();
+    app.update();
+    let drv = app.world().entity(unit).get::<AnimDriver>().unwrap();
+    assert!(drv.seat_lower_spent, "the missing start is spent");
+    assert_eq!(drv.gait, Some(121), "the loop holds the base");
+}
+
+/// The seat's upper loop rides the torso as a looping overlay, and goes with the seat.
+#[test]
+fn a_seat_upper_anim_loops_on_the_torso() {
+    let mut app = app();
+    let unit = seated(
+        &mut app,
+        crate::vehicle::SeatPose {
+            lower: [None, Some(121)],
+            upper: [None, Some(140)],
+            ..Default::default()
+        },
+    );
+    app.update();
+    let ov = app
+        .world()
+        .entity(unit)
+        .get::<AnimDriver>()
+        .unwrap()
+        .overlay;
+    assert!(
+        ov.is_some_and(|ov| ov.id == 140 && ov.looping),
+        "{:?}",
+        ov.map(|o| o.id)
+    );
+    app.world_mut()
+        .entity_mut(unit)
+        .remove::<crate::vehicle::SeatPose>();
+    app.update();
+    let drv = app.world().entity(unit).get::<AnimDriver>().unwrap();
+    assert!(
+        drv.overlay.is_none_or(|ov| ov.id != 140),
+        "off the seat, the torso loop is released"
+    );
+}
+
+/// An exit's end plays once on the base as its anims go, a run's JumpEnd as JumpLandRun
+/// (`0x74b9c0`).
+#[test]
+fn an_exit_leaving_its_anims_plays_its_end() {
+    let mut app = app();
+    let exit = crate::vehicle::SeatPose {
+        end: Some(39),
+        ..Default::default()
+    };
+    let unit = seated(&mut app, exit);
+    app.update();
+    app.world_mut()
+        .entity_mut(unit)
+        .remove::<crate::vehicle::SeatPose>();
+    app.update();
+    let drv = app.world().entity(unit).get::<AnimDriver>().unwrap();
+    assert_eq!(drv.seat_end, Some(39));
+    assert_eq!(drv.gait, Some(39), "the end holds the base once");
+
+    let running = seated(&mut app, exit);
+    app.update();
+    app.world_mut().entity_mut(running).insert(MovementState {
+        flags: move_flags::FORWARD,
+        speed: 7.0,
+        ..Default::default()
+    });
+    app.world_mut()
+        .entity_mut(running)
+        .remove::<crate::vehicle::SeatPose>();
+    app.update();
+    let drv = app.world().entity(running).get::<AnimDriver>().unwrap();
+    assert_eq!(drv.seat_end, Some(187), "a run lands as JumpLandRun");
+}
