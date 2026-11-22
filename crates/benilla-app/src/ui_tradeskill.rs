@@ -850,26 +850,16 @@ pub(crate) fn press_trade_skill_casts(world: &mut World) {
     }
 }
 
-/// One cast as a press: the ladder, then its raises with the `World` lent (`0x80b556`, `0x80b583`).
-/// Whether the attempt went, sent or armed the cursor (`0x80d9b0`, `0x80da1a`): its record's count
-/// is filed or held by the cursor; every refusal returns false (`0x80da2c`).
+/// One cast as a press, returning the attempt's own verdict: it sent or armed the cursor (`0x80d9b0`, `0x80da1a`), else false (`0x80da2c`).
 fn press_trade_skill(world: &mut World, spell_id: u32) -> bool {
-    let count = world
+    let Some(count) = world
         .get_resource::<crate::spell::PendingCast>()
-        .map_or(0, |p| p.next_count());
-    let filed = |world: &World| {
-        world
-            .get_resource::<crate::spell::PendingCast>()
-            .map_or(0, |p| {
-                p.records().iter().filter(|r| r.count == count).count()
-            })
+        .map(|p| p.next_count())
+    else {
+        return false;
     };
-    let before = filed(world);
     crate::script_calls::press_step(world, send_trade_skill, spell_id);
-    let held = world
-        .get_resource::<crate::spell::SpellTargeting>()
-        .is_some_and(|t| t.spell() == Some(spell_id) && t.count() == count);
-    filed(world) > before || held
+    world.resource::<crate::spell::PendingCast>().went(count)
 }
 
 fn send_trade_skill(
@@ -1139,6 +1129,33 @@ mod tests {
         let repeat: i64 = script.eval("return REPEAT").expect("the line ran");
         assert_eq!(gcd, 1.5, "the next line reads the press's GCD");
         assert_eq!(repeat, 3, "the cast went, so the repeat took the count");
+    }
+
+    /// The repeat takes the attempt's own verdict (`0x80d9b0`), not what a later `SENT` listener
+    /// leaves: one that stops the cast still finds the repeat set (`0x5dacbb`).
+    #[test]
+    fn a_sent_listener_that_stops_the_cast_leaves_the_repeat_set() {
+        let (mut app, _rx, _me) = craft_world_with_gcd();
+        let world = app.world_mut();
+        crate::ui_script::safe_world::lend(world, |s| {
+            s.run(
+                r#"local f = CreateFrame("Frame")
+                   f:RegisterEvent("UNIT_SPELLCAST_SENT")
+                   f:SetScript("OnEvent", function() STOPPED = 1; SpellStopCasting() end)"#,
+            )
+            .expect("the listener registers");
+            s.run(DO_ROD)
+        })
+        .expect("a VM")
+        .expect("the chunk runs");
+        let script = world.non_send_resource::<benilla_ui::script::UiScript>();
+        let stopped: Option<i64> = script.eval("return STOPPED").expect("the read runs");
+        let repeat: i64 = script.eval("return REPEAT").expect("the line ran");
+        assert_eq!(stopped, Some(1), "the SENT listener ran inside the call");
+        assert_eq!(
+            repeat, 3,
+            "the attempt went, whatever its listener did after"
+        );
     }
 
     /// A refused cast returns false and `DoTradeSkill` sets no repeat (`0x5dacbb`): dead, the

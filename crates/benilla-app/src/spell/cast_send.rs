@@ -1290,6 +1290,7 @@ fn send_spell_cast(
         ground.enter(spell_id, commit, word);
         ground.prelude_at_commit(prelude);
         ground.count_at_commit(count);
+        pending.mark_went(count);
         // The cursor's arm runs the selection update (`0x80d806`), then the attempt's repeat tail
         // (`0x80d8f6` -> `0x80d983`).
         press.selection();
@@ -1401,6 +1402,7 @@ fn send_spell_cast(
         },
         tail_at_step: spell_commit,
     };
+    pending.mark_went(count);
     // The form drop's listeners run before the send (`0x80af88` -> `0x721d89`, `0x80b4ee`).
     if send.waits_for_the_drop() {
         press.send_commit(send);

@@ -21,6 +21,8 @@ pub(crate) struct PendingCast {
     records: Vec<PendingRecord>,
     /// The `castCount` each cast attempt's record takes (`0x8050dc`-`0x8050ec`).
     counts: benilla_protocol::messages::CastCounter,
+    /// Each count whose attempt went, sent or armed the cursor (`0x80d9b0`, `0x80da1a`).
+    went: [u64; 4],
 }
 
 #[cfg(test)]
@@ -68,7 +70,19 @@ impl PendingCast {
     /// The `castCount` a new cast attempt's record takes: 1 to 255, never 0 (`0x80cda8`,
     /// `0x8050dc`).
     pub(crate) fn take_count(&mut self) -> u8 {
-        self.counts.take()
+        let count = self.counts.take();
+        self.went[usize::from(count / 64)] &= !(1 << (count % 64));
+        count
+    }
+
+    /// The attempt that took `count` went: its own true return (`0x80d9b0`, `0x80da1a`).
+    pub(crate) fn mark_went(&mut self, count: u8) {
+        self.went[usize::from(count / 64)] |= 1 << (count % 64);
+    }
+
+    /// Whether the attempt that took `count` went, whatever its listeners did after.
+    pub(crate) fn went(&self, count: u8) -> bool {
+        self.went[usize::from(count / 64)] & (1 << (count % 64)) != 0
     }
 
     /// The `castCount` the next cast attempt takes, left untaken.
