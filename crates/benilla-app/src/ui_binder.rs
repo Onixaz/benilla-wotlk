@@ -200,24 +200,22 @@ pub(crate) mod net {
 
     fn on_bound(
         In(ev): In<SessionEvent>,
-        mut errors: ResMut<crate::ui_action::UiErrorKeys>,
+        mut ui: ResMut<crate::ui_script::live::UiEvents>,
         areas: Option<Res<AreaTableRes>>,
         mut sounds: MessageWriter<ServerSoundMessage>,
     ) {
         if let SessionEvent::PlayerBound { binder: npc, area } = ev {
             debug!("net: bound to area {area} by {npc:#x}");
-            bound(area, &mut errors, areas.as_deref(), &mut sounds);
+            bound(area, &mut sounds, areas.as_deref(), &mut *ui);
         }
     }
 
-    /// `SMSG_PLAYERBOUND`, in the handler's order: play the handler's own sound (the error row has
-    /// none), then queue `ERR_DEATHBIND_SUCCESS_S` (error id `0x138`, a system chat line) named by
-    /// the area. The latch stays; the hearthstone moves on `SMSG_BINDPOINTUPDATE`.
+    /// `SMSG_PLAYERBOUND` in the handler's order: its own sound, then `ERR_DEATHBIND_SUCCESS_S` (error id `0x138`, a system chat line) named by the area in its turn; the hearthstone moves on `SMSG_BINDPOINTUPDATE`.
     pub(crate) fn bound(
         area: u32,
-        errors: &mut crate::ui_action::UiErrorKeys,
-        areas: Option<&AreaTableRes>,
         sounds: &mut MessageWriter<ServerSoundMessage>,
+        areas: Option<&AreaTableRes>,
+        errors: &mut impl crate::ui_action::signals::SignalSink,
     ) {
         sounds.write(ServerSoundMessage {
             kind: ServerSoundKind::Sound2d,
@@ -228,7 +226,7 @@ pub(crate) mod net {
             debug!("ui_binder: bound to area {area}, which AreaTable does not name — no line");
             return;
         };
-        errors.0.push(crate::ui_action::UiError::s(
+        errors.line(crate::ui_action::UiError::s(
             "ERR_DEATHBIND_SUCCESS_S",
             name,
         ));

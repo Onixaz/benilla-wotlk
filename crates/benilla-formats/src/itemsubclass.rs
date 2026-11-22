@@ -107,6 +107,13 @@ impl ItemSubClassCatalog {
             })
     }
 
+    /// The first subclass of `class` whose bit `mask` sets, in file order: its display name, with no `ItemSubClassMask.dbc` stage.
+    pub fn first_masked_display_name(&self, class: u32, mask: u32) -> Option<&str> {
+        self.masked(class, mask)
+            .find_map(|key| self.display_names.get(&key))
+            .map(String::as_str)
+    }
+
     /// Stage 1: the group name for an exact `(class, mask)` pair.
     fn mask_group(&self, class: u32, mask: u32) -> Option<&str> {
         self.mask_groups

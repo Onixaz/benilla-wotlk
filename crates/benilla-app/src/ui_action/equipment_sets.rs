@@ -40,60 +40,67 @@ fn wire(set: EquipmentSetView) -> EquipmentSet {
     }
 }
 
+/// The VM's list as the bar holds it.
+fn held_sets(script: &UiScript) -> Vec<EquipmentSet> {
+    script.equipment_sets().into_iter().map(wire).collect()
+}
+
 /// The bar's copy follows the VM's list.
-fn sync_bar(script: &UiScript, actions: &mut PlayerActions) {
-    let sets: Vec<EquipmentSet> = script.equipment_sets().into_iter().map(wire).collect();
+fn sync_bar_to(sets: Vec<EquipmentSet>, actions: &mut PlayerActions) {
     if sets != actions.equipment_sets {
         actions.equipment_sets = sets;
         actions.dirty = true;
     }
 }
 
+/// [`sync_bar_to`] over the `World`.
+fn sync_bar(world: &mut World, sets: Vec<EquipmentSet>) {
+    if let Some(mut actions) = world.get_resource_mut::<PlayerActions>() {
+        sync_bar_to(sets, &mut actions);
+    }
+}
+
 /// `SMSG_EQUIPMENT_SET_LIST` (`0x5af490`); with no VM the bar takes the list as sent.
-fn on_equipment_set_list(
-    In(ev): In<SessionEvent>,
-    mut vm: crate::ui_script::InTurn,
-    mut actions: ResMut<PlayerActions>,
-) {
+fn on_equipment_set_list(In(ev): In<SessionEvent>, world: &mut World) {
     let SessionEvent::EquipmentSetList(sets) = ev else {
         return;
     };
     debug!("net: {} equipment set(s)", sets.len());
-    actions.equipment_sets_listed = true;
-    match vm.turn() {
-        Some(mut script) => {
-            script.set_equipment_set_list(sets.iter().map(view).collect());
-            sync_bar(&script, &mut actions);
-        }
-        None => {
-            actions.equipment_sets = sets;
-            actions.dirty = true;
-        }
+    if let Some(mut actions) = world.get_resource_mut::<PlayerActions>() {
+        actions.equipment_sets_listed = true;
     }
+    let views: Vec<EquipmentSetView> = sets.iter().map(view).collect();
+    let held = crate::ui_script::live::with_live_world(world, move |script| {
+        script.set_equipment_set_list(views);
+        held_sets(script)
+    });
+    sync_bar(world, held.unwrap_or(sets));
 }
 
 /// `SMSG_EQUIPMENT_SET_SAVED` (`0x5af6c0`): the server's guid for a new set, 0 for a refused one.
-fn on_equipment_set_saved(
-    In(ev): In<SessionEvent>,
-    mut vm: crate::ui_script::InTurn,
-    mut actions: ResMut<PlayerActions>,
-) {
-    let (SessionEvent::EquipmentSetSaved { id, guid }, Some(mut script)) = (ev, vm.turn()) else {
+fn on_equipment_set_saved(In(ev): In<SessionEvent>, world: &mut World) {
+    let SessionEvent::EquipmentSetSaved { id, guid } = ev else {
         return;
     };
     debug!("net: equipment set {id} saved as {guid:#x}");
-    script.equipment_set_saved(id, guid);
-    sync_bar(&script, &mut actions);
+    let held = crate::ui_script::live::with_live_world(world, |script| {
+        script.equipment_set_saved(id, guid);
+        held_sets(script)
+    });
+    if let Some(sets) = held {
+        sync_bar(world, sets);
+    }
 }
 
-/// `SMSG_EQUIPMENT_SET_USE_RESULT` (`0x5af710`).
-fn on_equipment_set_use_result(In(ev): In<SessionEvent>, mut script: crate::ui_script::InTurn) {
-    let (SessionEvent::EquipmentSetUseResult { result }, Some(mut script)) = (ev, script.turn())
-    else {
+/// `SMSG_EQUIPMENT_SET_USE_RESULT` (`0x5af710`): its events fire with the `World` lent, each at its step, then the bar's usable update.
+fn on_equipment_set_use_result(In(ev): In<SessionEvent>, world: &mut World) {
+    let SessionEvent::EquipmentSetUseResult { result } = ev else {
         return;
     };
     debug!("net: equipment set swap result {result}");
-    script.equipment_set_use_result(result);
+    crate::ui_script::live::with_live_world(world, |script| {
+        script.equipment_set_use_result(result)
+    });
 }
 
 /// A new VM starts from the held list; then the VM's sends go out and the bar follows its edits.
@@ -131,5 +138,5 @@ pub(super) fn drain_equipment_sets(
         };
         let _ = commands.0.send(command);
     }
-    sync_bar(&script, &mut actions);
+    sync_bar_to(held_sets(&script), &mut actions);
 }

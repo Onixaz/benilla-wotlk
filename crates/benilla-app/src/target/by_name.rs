@@ -674,7 +674,8 @@ pub(super) fn follow_requests(
     stores: Query<&ObjectStore>,
     places: Query<&Transform>,
     cast: Option<Res<crate::spell::PendingCast>>,
-    mut errors: ResMut<crate::ui_action::UiErrorKeys>,
+    mut errors: crate::ui_action::signals::QueuedSignals,
+    mut ecs: Commands,
     mut follow: ResMut<crate::player::FollowState>,
     mut approach: ResMut<crate::player::Approach>,
     mut stand: MessageWriter<crate::player::StandStateRequest>,
@@ -692,7 +693,10 @@ pub(super) fn follow_requests(
             Err(key) => {
                 // A follow in progress is left alone.
                 info!("follow: \"{}\" names no unit — {key}", request.name);
-                errors.0.push(crate::ui_action::UiError::key(key));
+                crate::ui_action::signals::SignalSink::line(
+                    &mut errors,
+                    crate::ui_action::UiError::key(key),
+                );
                 continue;
             }
         };
@@ -712,7 +716,10 @@ pub(super) fn follow_requests(
             at,
         ) {
             info!("follow: refused — {key}");
-            errors.0.push(crate::ui_action::UiError::key(key));
+            crate::ui_action::signals::SignalSink::line(
+                &mut errors,
+                crate::ui_action::UiError::key(key),
+            );
             if key == FOLLOW_TOO_FAR {
                 approach.stop();
                 follow.stop();
@@ -732,6 +739,8 @@ pub(super) fn follow_requests(
             stand.write(crate::player::StandStateRequest { state: 0 });
         }
     }
+    // Each refusal at the display (`0x5216f0`) in the drain's turn.
+    errors.flush(&mut ecs);
 }
 
 /// Everything [`scan::commit`], the one selection-set path, needs.

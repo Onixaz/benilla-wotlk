@@ -98,6 +98,41 @@ impl GroupState {
         };
         block.into_iter().flatten().flatten().copied()
     }
+
+    /// A member record's aura block, its pet's, and its pet guid, as the stats diff compares them
+    /// (`0x6cba60`: bits `0x200` and `0x40000`); empty for no record.
+    pub(crate) fn aura_blocks(&self, guid: u64) -> (Vec<RecordAura>, Vec<RecordAura>, u64) {
+        match self.member_record(guid) {
+            Some(r) => (
+                r.auras.clone().unwrap_or_default(),
+                r.pet_auras.clone().unwrap_or_default(),
+                r.pet_guid.unwrap_or(0),
+            ),
+            None => Default::default(),
+        }
+    }
+
+    /// The raw slots the spell-id checks read for a guid with no live object: its member record
+    /// with the record's online bit, else the pet record naming it.
+    pub(crate) fn roster_aura_slots(&self, guid: u64) -> Option<benilla_ui::script::UnitAuraSlots> {
+        use benilla_ui::script::UnitAuraSlots;
+        let slots = |block: &Option<Vec<RecordAura>>| {
+            block
+                .iter()
+                .flatten()
+                .map(|a| (a.slot, a.spell_id))
+                .collect::<Vec<_>>()
+        };
+        match self.member_record(guid) {
+            Some(r) => Some(UnitAuraSlots::Member {
+                online: r.is_online(),
+                slots: slots(&r.auras),
+            }),
+            None => self
+                .pet_record(guid)
+                .map(|r| UnitAuraSlots::Pet(slots(&r.pet_auras))),
+        }
+    }
 }
 
 #[cfg(test)]

@@ -264,7 +264,7 @@ mod net {
     }
 
     /// `MSG_SAVE_GUILD_EMBLEM` (`0x6d9230`): a code past 5 is dropped (`0x6d9246`); else its line unless the table's sentinel (`0x6d924f`), the latch cleared (`0x6d9264`), then success drops our guild's record with no ask (`0x6d929b`) and fires `GUILDTABARD_UPDATE` (`0x6d92a7`), a failure `TABARD_SAVE_PENDING` (`0x6d92bf`).
-    fn on_save_result(
+    pub(super) fn on_save_result(
         In(ev): In<SessionEvent>,
         mut tabard: ResMut<TabardOpen>,
         mut cache: ResMut<GuildCache>,
@@ -280,17 +280,39 @@ mod net {
         else {
             return;
         };
-        if let Some(key) = *row {
-            crate::ui_action::show_in_turn(
-                &mut ui,
-                "ui_tabard",
-                crate::ui_action::UiError::key(key),
+        let guild = me.single().ok().map(|me| me.0.player_guild_id());
+        let Some(key) = *row else {
+            saved(&mut tabard, &mut cache, &mut ui, result, guild);
+            return;
+        };
+        crate::ui_action::show_in_turn(&mut ui, "ui_tabard", crate::ui_action::UiError::key(key));
+        // The latch, the cache and the event after the line's listeners (`0x6d9257` before `0x6d9264`).
+        ui.world(move |world| {
+            let ran = world.run_system_cached_with(
+                |In((result, guild)): In<(u32, Option<u32>)>,
+                 mut tabard: ResMut<TabardOpen>,
+                 mut cache: ResMut<GuildCache>,
+                 mut ui: ResMut<UiEvents>| {
+                    saved(&mut tabard, &mut cache, &mut ui, result, guild);
+                },
+                (result, guild),
             );
-        }
+            crate::ui_cast::step_ran(ran, "a tabard save's result");
+        });
+    }
+
+    /// The save's latch cleared, the guild's record evicted on a success, then its event (`0x6d9264`, `0x6d929b`, `0x6d92a7`, `0x6d92bf`).
+    fn saved(
+        tabard: &mut TabardOpen,
+        cache: &mut GuildCache,
+        ui: &mut UiEvents,
+        result: u32,
+        guild: Option<u32>,
+    ) {
         tabard.save_pending = false;
         if result == 0 {
-            if let Ok(me) = me.single() {
-                cache.evict(me.0.player_guild_id());
+            if let Some(guild) = guild {
+                cache.evict(guild);
             }
             ui.fire("GUILDTABARD_UPDATE", vec![]);
         } else {
@@ -318,6 +340,29 @@ impl Plugin for TabardUiPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `MSG_SAVE_GUILD_EMBLEM`: a shown line's listeners read the save still pending; the latch clears and the event fires after them (`0x6d9257` before `0x6d9264`, `0x6d92bf`).
+    #[test]
+    fn a_save_results_line_runs_before_the_latch_clears() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.insert_resource(TabardOpen {
+            vendor: Some(0x42),
+            save_pending: true,
+        });
+        world.init_resource::<crate::ui_guild::GuildCache>();
+        world.init_resource::<UiEvents>();
+        world
+            .run_system_once_with(
+                net::on_save_result,
+                benilla_protocol::SessionEvent::SaveGuildEmblemResult(3),
+            )
+            .unwrap();
+        assert!(world.resource::<TabardOpen>().save_pending);
+        assert_eq!(world.resource::<UiEvents>().names(), ["<world>", "<world>"]);
+        crate::ui_script::live::fire_handler_events(&mut world);
+        assert!(!world.resource::<TabardOpen>().save_pending);
+    }
 
     #[test]
     fn the_fourteen_checks_run_in_the_references_order() {

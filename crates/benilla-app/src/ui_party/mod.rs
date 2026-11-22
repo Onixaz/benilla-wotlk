@@ -20,9 +20,11 @@ pub(crate) use feed::unheld_group_state;
 pub(crate) mod net;
 mod pets;
 mod records;
+#[cfg(test)]
+pub(crate) use feed::PARTY_PET_TOKENS;
 pub(crate) use feed::{
     raid_row_guid, raid_row_guids, synthetic_raid, synthetic_roster, GROUPTYPE_RAID,
-    GROUP_MEMBER_SUBGROUP, PARTY_PET_TOKENS, PARTY_TOKENS, RAID_PET_TOKENS, RAID_TOKENS,
+    GROUP_MEMBER_SUBGROUP,
 };
 
 /// The group drain and the step that fires what it raised.

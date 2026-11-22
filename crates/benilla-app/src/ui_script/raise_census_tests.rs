@@ -41,17 +41,12 @@ const ON_THE_QUEUE: &[(&str, &str)] = &[
     ("ui_achievement.rs", "feed_achievements"),
     ("ui_action/cast_refusal.rs", "show_refusal_now"),
     ("ui_action/equipment_sets.rs", "drain_equipment_sets"),
-    ("ui_action/equipment_sets.rs", "on_equipment_set_list"),
-    ("ui_action/equipment_sets.rs", "on_equipment_set_saved"),
-    ("ui_action/equipment_sets.rs", "on_equipment_set_use_result"),
     ("ui_action/errors.rs", "show_line_now"),
     ("ui_action/feed.rs", "feed_actions"),
     ("ui_arena_team.rs", "drain_arena_teams"),
     ("ui_auction/mod.rs", "drain_auction"),
     ("ui_auction/mod.rs", "feed_auction"),
     ("ui_aura.rs", "drain_aura_cancels"),
-    ("ui_aura.rs", "end_session_aura_state"),
-    ("ui_aura.rs", "feed_auras"),
     ("ui_battlefield.rs", "drain_battlefield"),
     ("ui_calendar.rs", "feed_calendar"),
     ("ui_char.rs", "drain_skill_abandons"),
@@ -73,8 +68,6 @@ const ON_THE_QUEUE: &[(&str, &str)] = &[
     ("ui_chat/input/mod.rs", "take_chat_lines"),
     ("ui_chat/logging.rs", "sync_chat_logging"),
     ("ui_chat/net.rs", "feed_channel_roster_names"),
-    ("ui_chat/net.rs", "on_channel_list"),
-    ("ui_chat/net.rs", "on_channel_user_list"),
     ("ui_chat/recruitment.rs", "guild_recruitment_cascade"),
     ("ui_companion.rs", "drain_companions"),
     ("ui_companion.rs", "feed_companion_booth"),
@@ -102,7 +95,6 @@ const ON_THE_QUEUE: &[(&str, &str)] = &[
     ("ui_logout.rs", "drain_logout"),
     ("ui_logout.rs", "feed_logout"),
     ("ui_loot/mod.rs", "drain_loot_asks"),
-    ("ui_loot/mod.rs", "feed_loot"),
     ("ui_loot_roll.rs", "drain_loot_rolls"),
     ("ui_loot_roll.rs", "feed_loot_rolls"),
     ("ui_macro/mod.rs", "load_icon_catalog"),
@@ -114,7 +106,6 @@ const ON_THE_QUEUE: &[(&str, &str)] = &[
     ("ui_models/mod.rs", "sync_tiles"),
     ("ui_notices.rs", "drain_level_grant"),
     ("ui_notices.rs", "feed_notices"),
-    ("ui_notices.rs", "on_notice"),
     ("ui_party/feed.rs", "drain_party"),
     ("ui_party/feed.rs", "feed_marks"),
     ("ui_party/feed.rs", "feed_party"),
@@ -142,10 +133,8 @@ const ON_THE_QUEUE: &[(&str, &str)] = &[
     ("ui_talent.rs", "feed_talents"),
     ("ui_title.rs", "drain_title_sets"),
     ("ui_title.rs", "feed_titles"),
-    ("ui_title.rs", "on_title_earned"),
     ("ui_tooltip/mod.rs", "drive_mouseover_tooltip"),
     ("ui_trade/mod.rs", "drain_trade"),
-    ("ui_trade/mod.rs", "feed_trade"),
     ("ui_tradeskill.rs", "feed_trade_skill"),
     ("ui_transfer.rs", "feed_difficulty_notices"),
     ("ui_transfer.rs", "feed_transfer_aborts"),
@@ -181,10 +170,10 @@ const ON_THE_QUEUE: &[(&str, &str)] = &[
 ];
 
 /// The raise steps: the five between the UI phases and each `then_fire` chain.
-const RAISE_STEPS: usize = 70;
+const RAISE_STEPS: usize = 69;
 
 /// `source` with every inline test module cut out, to its closing brace.
-fn production(source: &str) -> String {
+pub(super) fn production(source: &str) -> String {
     let test_module =
         regex::Regex::new(r"\r?\n#\[cfg\(test\)\]\r?\n(?:#\[[^\n]*\]\r?\n)*mod \w+ \{")
             .expect("a valid pattern");

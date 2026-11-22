@@ -328,3 +328,225 @@ fn every_macro_chooser_icon_resolves_in_the_client_archives() {
         "the chooser list must be case-insensitively sorted"
     );
 }
+
+/// The slash table the cast lines are read against.
+fn cast_table() -> crate::ui_chat::commands::SlashCommands {
+    crate::ui_chat::commands::SlashCommands::build(
+        |name| match name {
+            "SLASH_CAST1" => Some("/cast".into()),
+            _ => None,
+        },
+        |_| None,
+    )
+}
+
+/// A VM holding `macros`, a book of Fireball 133, macro 1 on slot 4 and macro 2 on slot 7.
+fn macro_world(macros: MacroState) -> bevy::prelude::World {
+    use benilla_protocol::messages::{ActionButton, ACTION_KIND_MACRO};
+    use benilla_ui::script::{SpellBookState, SpellSlotView};
+    let mut world = bevy::prelude::World::new();
+    let mut script = UiScript::new().unwrap();
+    script.set_macros(macros);
+    world.insert_non_send_resource(script);
+    world.insert_resource(cast_table());
+    world.insert_resource(crate::ui_spellbook::SpellBook::of(SpellBookState {
+        slots: vec![SpellSlotView {
+            spell_id: 133,
+            name: "Fireball".into(),
+            rank: Some("Rank 1".into()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    }));
+    world.init_resource::<super::MacroBoundSpells>();
+    world.init_resource::<crate::ui_script::live::UiEvents>();
+    let mut bar = crate::ui_action::ActionSlots::default();
+    for (slot, action) in [(4, 1), (7, 2)] {
+        bar.buttons.insert(
+            slot,
+            ActionButton {
+                slot,
+                action,
+                kind: ACTION_KIND_MACRO,
+            },
+        );
+    }
+    world.insert_resource(bar);
+    world
+}
+
+/// The macro pass looks up only an unresolved macro (`0x56617b`), which signals its slot (`0x566193` -> `0x5aa920`).
+#[test]
+fn the_book_updates_macro_pass_resolves_only_the_unresolved() {
+    use super::BoundSpell;
+    let mut world = macro_world(MacroState {
+        account: vec![
+            macro_view("Fire", "/cast Fireball"),
+            macro_view("Old", "/cast Fireball"),
+        ],
+        character: Vec::new(),
+    });
+    world.resource_mut::<super::MacroBoundSpells>().0 =
+        [(1, BoundSpell::Unresolved), (2, BoundSpell::Spell(999))].into();
+    super::book_rebind(&mut world);
+    assert_eq!(
+        world.resource::<super::MacroBoundSpells>().0,
+        [(1, BoundSpell::Spell(133)), (2, BoundSpell::Spell(999))].into()
+    );
+    assert_eq!(
+        world.resource::<crate::ui_script::live::UiEvents>().names(),
+        ["<world>", "<world>"],
+        "macro 1's slot signal, then the walk's rest"
+    );
+    crate::ui_script::live::fire_handler_events(&mut world);
+    assert_eq!(
+        world.resource::<super::MacroBoundSpells>().0,
+        [(1, BoundSpell::Spell(133)), (2, BoundSpell::Spell(999))].into(),
+        "the rest of the walk finds nothing unresolved"
+    );
+    // Nothing left unresolved: the pass changes nothing.
+    super::book_rebind(&mut world);
+    assert!(world
+        .resource::<crate::ui_script::live::UiEvents>()
+        .is_empty());
+}
+
+/// The walk signals one macro's slots before it looks up the next (`0x566172`-`0x5661ae`).
+#[test]
+fn the_book_updates_macro_pass_signals_each_macro_before_the_next_lookup() {
+    use super::BoundSpell;
+    let mut world = macro_world(MacroState {
+        account: vec![
+            macro_view("Fire", "/cast Fireball"),
+            macro_view("Again", "/cast Fireball"),
+        ],
+        character: Vec::new(),
+    });
+    world.resource_mut::<super::MacroBoundSpells>().0 =
+        [(1, BoundSpell::Unresolved), (2, BoundSpell::Unresolved)].into();
+    super::book_rebind(&mut world);
+    assert_eq!(
+        world.resource::<super::MacroBoundSpells>().0,
+        [(1, BoundSpell::Spell(133)), (2, BoundSpell::Unresolved)].into(),
+        "macro 2 waits for macro 1's slot signal"
+    );
+    world
+        .non_send_resource::<UiScript>()
+        .run(
+            "SEEN = {}
+             local f = CreateFrame('Frame')
+             f:RegisterEvent('ACTIONBAR_SLOT_CHANGED')
+             f:SetScript('OnEvent', function(_, _, slot) SEEN[#SEEN + 1] = slot end)",
+        )
+        .unwrap();
+    // Run the queue one handler turn at a time: macro 1's slot event, then the walk's rest.
+    crate::ui_script::live::fire_handler_events(&mut world);
+    assert_eq!(
+        world.resource::<super::MacroBoundSpells>().0,
+        [(1, BoundSpell::Spell(133)), (2, BoundSpell::Spell(133))].into()
+    );
+    let seen = world
+        .non_send_resource::<UiScript>()
+        .eval::<String>("table.concat(SEEN, ',')")
+        .unwrap();
+    assert_eq!(
+        seen, "5,8",
+        "slot 4's signal, then slot 7's after macro 2's lookup"
+    );
+}
+
+/// A rename parses nothing (`0x566d1a` skips `0x566d20`): every macro keeps the spell it had.
+#[test]
+fn a_rename_binds_nothing() {
+    use super::BoundSpell;
+    let mut world = macro_world(MacroState {
+        account: vec![
+            macro_view("Fire", "/cast Fireball"),
+            macro_view("Old", "/cast Fireball"),
+        ],
+        character: Vec::new(),
+    });
+    let stale: std::collections::HashMap<u32, BoundSpell> =
+        [(1, BoundSpell::Spell(999)), (2, BoundSpell::Spell(999))].into();
+    world.resource_mut::<super::MacroBoundSpells>().0 = stale.clone();
+    crate::ui_script::live::with_live_world(&mut world, |s| {
+        s.run("EditMacro(2, 'Renamed', 1)").unwrap();
+    })
+    .expect("a VM");
+    assert_eq!(world.resource::<super::MacroBoundSpells>().0, stale);
+}
+
+/// A body edit parses the edited macro alone (`0x5663a0` -> `0x565c40`); the others keep theirs.
+#[test]
+fn a_body_edit_binds_only_its_macro() {
+    use super::BoundSpell;
+    let mut world = macro_world(MacroState {
+        account: vec![
+            macro_view("Fire", "/cast Fireball"),
+            macro_view("Old", "/say hi"),
+        ],
+        character: Vec::new(),
+    });
+    world.resource_mut::<super::MacroBoundSpells>().0 =
+        [(1, BoundSpell::Spell(999)), (2, BoundSpell::None)].into();
+    crate::ui_script::live::with_live_world(&mut world, |s| {
+        s.run("EditMacro(2, nil, nil, '/cast Fireball')").unwrap();
+    })
+    .expect("a VM");
+    assert_eq!(
+        world.resource::<super::MacroBoundSpells>().0,
+        [(1, BoundSpell::Spell(999)), (2, BoundSpell::Spell(133))].into()
+    );
+}
+
+/// A delete parses nothing (`0x566d50`): its set's later macros move down one index with their spells.
+#[test]
+fn a_delete_shifts_the_later_bindings() {
+    use super::BoundSpell;
+    let mut world = macro_world(MacroState {
+        account: vec![
+            macro_view("A", "/cast Fireball"),
+            macro_view("B", "/cast Fireball"),
+            macro_view("C", "/say hi"),
+        ],
+        character: vec![macro_view("D", "/cast Fireball")],
+    });
+    world.resource_mut::<super::MacroBoundSpells>().0 = [
+        (1, BoundSpell::Spell(133)),
+        (2, BoundSpell::Spell(999)),
+        (3, BoundSpell::None),
+        (37, BoundSpell::Spell(998)),
+    ]
+    .into();
+    crate::ui_script::live::with_live_world(&mut world, |s| {
+        s.run("DeleteMacro(1)").unwrap();
+    })
+    .expect("a VM");
+    assert_eq!(
+        world.resource::<super::MacroBoundSpells>().0,
+        [
+            (1, BoundSpell::Spell(999)),
+            (2, BoundSpell::None),
+            (37, BoundSpell::Spell(998)),
+        ]
+        .into()
+    );
+}
+
+/// An edit binds its macro's spell inside its call, before its slot signal (`0x565c40`, `0x566d38`).
+#[test]
+fn an_edit_binds_its_macro_inside_the_call() {
+    use super::BoundSpell;
+    let mut world = macro_world(MacroState {
+        account: vec![macro_view("Fire", "/say hi")],
+        character: Vec::new(),
+    });
+    crate::ui_script::live::with_live_world(&mut world, |s| {
+        s.run("EditMacro(1, nil, nil, '/cast Fireball')").unwrap();
+    })
+    .expect("a VM");
+    assert_eq!(
+        world.resource::<super::MacroBoundSpells>().0.get(&1),
+        Some(&BoundSpell::Spell(133))
+    );
+}

@@ -1,35 +1,37 @@
-//! The trade window: [`net`] folds the two status packets into [`TradeSession`], [`feed_trade`]
-//! pushes it into the VM and fires the trade events, [`drain_trade`] sends the Lua intents, and
-//! [`answer_trade_request`] answers an incoming request.
+//! The trade window: [`net`] folds the two status packets into [`TradeSession`], the network
+//! cells (`0xca0b68`-`0xca0ff8`), and makes the window's own writes and signals (`0xbfa400`-`0xbfa684`,
+//! the VM's) at each packet's step; the verbs read both at the call; [`drain_trade`] sends the Lua
+//! intents, and [`answer_trade_request`] answers an incoming request.
 
 use benilla_protocol::messages::{TradeItem, TradeStatusExtended, TRADE_SLOT_COUNT};
 #[cfg(test)]
 use benilla_ui::script::UiScript;
 use bevy::prelude::*;
 
-use benilla_ui::script::{ScriptValue, TradeSideState, TradeSlotItem, TradeState};
+use benilla_ui::script::{TradeCells, TradeTargetItem};
 
-use crate::entities::ItemDisplays;
-use crate::items::Items;
 use crate::names::NameCache;
-use crate::net::{ClientCommand, GuidIndex, NetCommands, ObjectStore, Objects, SelfPlayer};
+use crate::net::{ClientCommand, GuidIndex, NetCommands, ObjectStore};
 use crate::target::Selection;
+use crate::ui_action::signals::SignalSink;
 use crate::ui_party::GroupState;
-use crate::ui_script::{UiDrain, UiFeed};
+use crate::ui_script::UiDrain;
 use crate::ui_session::NpcSession;
 
 mod net;
 
-/// One side's offer: slots 0-5 change hands, slot 6 is the non-traded enchant slot.
+/// One side's window as the wire left it (`0xca0b80`, `0xca0b74`, `0xca0ff0`): slots 0-5 change
+/// hands, slot 6 is the non-traded enchant slot.
 #[derive(Default)]
 struct TradeOffer {
     slots: [Option<TradeItem>; TRADE_SLOT_COUNT],
     gold: u32,
-    /// The spell on this side's enchant slot, 0 for none; stored, not shown yet.
+    /// The spell on this side's enchant slot, 0 for none.
     enchant_spell_id: u32,
 }
 
-/// The trade session [`net`] fills and [`feed_trade`] reads, cleared on a close and on disconnect.
+/// The trade's network cells, which [`net`] fills and the verbs read at the call; cleared on a
+/// close and on disconnect.
 #[derive(Resource, Default)]
 pub(crate) struct TradeSession {
     /// Set at our initiate or the ladder's accept, since `OPEN_WINDOW` carries no guid.
@@ -54,16 +56,10 @@ pub(crate) struct TradeSession {
     their_state: u32,
     our: TradeOffer,
     their: TradeOffer,
-    /// We pressed Trade: optimistic, dropped by `BACK_TO_TRADE`, an offer change or a close.
-    our_accept: bool,
-    /// The partner pressed Trade (`TRADE_ACCEPT`).
-    their_accept: bool,
     /// The own-window slots the server's last snapshot filled (`0xca0b80`), which a snapshot missing one denies (`0x704810`, `0x704873`).
     own_mirror: [bool; TRADE_SLOT_COUNT],
-    /// `CloseTrade` closed the window and signalled `TRADE_CLOSED` itself (`0x5879bc`).
-    verb_closed: bool,
-    /// Owed lines whose `%s` names a player, parked until [`NameCache`] answers. The reference
-    /// prints `ERR_INITIATE_TRADE_S` from its name cache in the sender; the lines survive
+    /// Lines whose `%s` names a player not yet in the name cache, shown from its answer
+    /// ([`net`]'s name handler): `ERR_INITIATE_TRADE_S`'s callback (`0x703c60`). They survive
     /// [`Self::close_window`], since that callback hangs off the name query, not the trade.
     named_lines: Vec<NamedLine>,
 }
@@ -78,17 +74,13 @@ pub(crate) enum OfferUpdate {
     OtherTrade,
 }
 
-/// A line owed whose `%s` names a player.
+/// `ERR_INITIATE_TRADE_S` owed on a name not yet cached, shown by the name's callback (`0x703c60`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct NamedLine {
     /// The `GlobalStrings` key; the catalog names its surface.
     pub(crate) key: &'static str,
     /// Whose name fills the `%s`.
     pub(crate) who: u64,
-    /// Print only while the player is streamed: the status arms read the live unit after an object
-    /// lookup of `(guid, TYPEMASK_PLAYER)`, while `ERR_INITIATE_TRADE_S` goes through the name
-    /// cache with no object test.
-    pub(crate) needs_live_object: bool,
 }
 
 impl TradeSession {
@@ -98,11 +90,7 @@ impl TradeSession {
             partner: Some(target),
             initiated: true,
             use_cursor,
-            named_lines: vec![NamedLine {
-                key: "ERR_INITIATE_TRADE_S",
-                who: target,
-                needs_live_object: false,
-            }],
+            named_lines: std::mem::take(&mut self.named_lines),
             ..Default::default()
         };
     }
@@ -135,11 +123,9 @@ impl TradeSession {
         self.initiated && self.use_cursor
     }
 
-    /// `OPEN_WINDOW` (`0x704517`): both offers empty, both states 1, the trade id kept, and the partner setter's open drops both accepts (`0x587143`, `0x587149`); the feed's open edge fires `TRADE_SHOW`.
+    /// `OPEN_WINDOW` (`0x704517`): both offers empty, both states 1, the trade id kept; the partner setter's open follows in the window (`0x5874cb`).
     pub(crate) fn open_window(&mut self, trade_id: u32) {
         self.open = true;
-        self.our_accept = false;
-        self.their_accept = false;
         self.trade_id = trade_id;
         self.own_state = 1;
         self.their_state = 1;
@@ -149,7 +135,7 @@ impl TradeSession {
 
     /// `SMSG_TRADE_STATUS_EXTENDED` as `0x704680` takes it: another trade's snapshot is answered
     /// with a cancel, an own snapshot behind our sent changes is dropped, and otherwise the side's
-    /// offer is replaced whole, which drops both accepts.
+    /// offer is replaced whole; the window's offer update follows (`0x7048b2`).
     pub(crate) fn set_offer(&mut self, ext: &TradeStatusExtended) -> OfferUpdate {
         if ext.trade_id != self.trade_id {
             return OfferUpdate::OtherTrade;
@@ -166,8 +152,6 @@ impl TradeSession {
         side.slots = ext.slots;
         side.gold = ext.gold;
         side.enchant_spell_id = ext.enchant_spell_id;
-        self.our_accept = false;
-        self.their_accept = false;
         OfferUpdate::Applied
     }
 
@@ -175,11 +159,6 @@ impl TradeSession {
     /// each of which counts `[0xca0b7c]` up (`0x70415f`, `0x7041dc`, `0x70444f`).
     pub(crate) fn own_change_sent(&mut self) {
         self.own_state += 1;
-    }
-
-    /// The partner's item in the not-traded slot, whose change releases the enchanting item (`0x586f9e`).
-    pub(crate) fn their_seventh(&self) -> Option<TradeItem> {
-        self.their.slots[6]
     }
 
     /// The permanent enchant on the partner's item in the not-traded slot; `None` with no item.
@@ -197,68 +176,58 @@ impl TradeSession {
         self.their_state
     }
 
-    /// Place our item in trade slot `id_1based` client-side: vmangos sends a placement to the
-    /// partner only (`TradeData.cpp:81`), never back to the placer.
-    pub(crate) fn place_own_item(&mut self, id_1based: u32, item: TradeItem) {
-        if let Some(slot) = id_1based
+    /// Our item at `(bag, slot)` went out to trade slot `id_1based` (`0x7040b0`).
+    pub(crate) fn offer_from(&mut self, id_1based: u32, bag: i64, slot: u32) {
+        if let Some(source) = id_1based
             .checked_sub(1)
-            .and_then(|i| self.our.slots.get_mut(i as usize))
+            .and_then(|i| self.our_sources.get_mut(i as usize))
         {
-            *slot = Some(item);
-            self.our_offer_changed();
+            *source = Some((bag, slot));
         }
     }
 
-    /// Clear our trade slot `id_1based` client-side.
+    /// Our trade slot `id_1based` was cleared (`0x7041a0`).
     pub(crate) fn clear_own_item(&mut self, id_1based: u32) {
-        if let Some(slot) = id_1based
+        if let Some(source) = id_1based
             .checked_sub(1)
-            .and_then(|i| self.our.slots.get_mut(i as usize))
+            .and_then(|i| self.our_sources.get_mut(i as usize))
         {
-            *slot = None;
-            self.our_sources[id_1based as usize - 1] = None;
-            self.our_offer_changed();
+            *source = None;
         }
     }
 
-    /// Set our gold client-side: vmangos sends it to the partner only (`TradeData.cpp:118`).
+    /// Our offered coins, as each money send writes them (`0x70445d`).
     pub(crate) fn set_own_gold(&mut self, copper: u32) {
         self.our.gold = copper;
-        self.our_offer_changed();
     }
 
-    /// Any change to our offer drops both accepts, as vmangos does.
-    fn our_offer_changed(&mut self) {
-        self.our_accept = false;
-        self.their_accept = false;
+    /// The cells the verbs read at the call: the partner's coins (`0xca0b78`) and each window's enchant spell (`0xca0ff0`).
+    pub(crate) fn cells(&self) -> TradeCells {
+        TradeCells {
+            target_gold: self.their.gold,
+            enchant_spells: [self.our.enchant_spell_id, self.their.enchant_spell_id],
+        }
     }
 
-    /// `TRADE_ACCEPT`: the partner pressed Trade.
-    pub(crate) fn partner_accepted(&mut self) {
-        self.their_accept = true;
-    }
-
-    /// `BACK_TO_TRADE`: an accept was withdrawn (an offer change, the partner's un-accept, or the
-    /// 200 ms scam-delay bounce), so both drop.
-    pub(crate) fn back_to_trade(&mut self) {
-        self.our_accept = false;
-        self.their_accept = false;
-    }
-
-    /// We pressed Trade: the optimistic local accept beside `CMSG_ACCEPT_TRADE`.
-    pub(crate) fn accept(&mut self) {
-        self.our_accept = true;
-    }
-
-    /// Our accept flag, as the reference keeps it: its unaccept reads the flag before it changes
-    /// it or sends `CMSG_UNACCEPT_TRADE`.
-    pub(crate) fn we_accepted(&self) -> bool {
-        self.our_accept
-    }
-
-    /// `CancelTradeAccept`: the local side of `CMSG_UNACCEPT_TRADE`.
-    pub(crate) fn unaccept(&mut self) {
-        self.our_accept = false;
+    /// The partner's window as the window's offer update copies it (`0x586dc0` over `0xca0db0`).
+    pub(crate) fn their_items(&self) -> [TradeTargetItem; TRADE_SLOT_COUNT] {
+        self.their.slots.map(|slot| {
+            slot.map_or_else(TradeTargetItem::default, |it| TradeTargetItem {
+                item_id: it.entry,
+                count: it.count,
+                enchant: it.perm_enchant,
+                gems: it.socket_enchants,
+                creator: it.creator,
+                wrapped: it.wrapped,
+                gift_creator: it.gift_creator,
+                charges: it.charges,
+                suffix_factor: it.suffix_factor,
+                random_property: it.random_prop_id as i32,
+                lock_id: it.lock_id,
+                max_durability: it.max_durability,
+                durability: it.durability,
+            })
+        })
     }
 
     /// An applied own-window snapshot's denials (`0x704810`, `0x704873`): each slot the last one filled and this one leaves empty, as the mirror moves to this one.
@@ -274,30 +243,25 @@ impl TradeSession {
         denied
     }
 
-    /// `CloseTrade` closed the window in its call.
-    fn closed_by_verb(&mut self) {
-        self.verb_closed = self.open;
-    }
-
-    fn take_verb_closed(&mut self) -> bool {
-        std::mem::take(&mut self.verb_closed)
-    }
-
     /// Park a line that names a player.
     pub(crate) fn owe_named_line(&mut self, line: NamedLine) {
         self.named_lines.push(line);
     }
 
-    /// Take everything owed; the caller parks back what it could not name yet.
-    fn take_named_lines(&mut self) -> Vec<NamedLine> {
-        std::mem::take(&mut self.named_lines)
+    /// Take the lines owed on `who`'s name.
+    pub(crate) fn take_named_lines_for(&mut self, who: u64) -> Vec<NamedLine> {
+        let (taken, kept) = std::mem::take(&mut self.named_lines)
+            .into_iter()
+            .partition(|l| l.who == who);
+        self.named_lines = kept;
+        taken
     }
 
     /// The name a `%s` status line carries, or `None` when the reference prints nothing: cases 0, 5
     /// and 14 read the guid cell under the latch, both of which `InitiateTrade` sets, while the
     /// `BEGIN_TRADE` arm fills only the cell. So a refuser stays silent when vmangos echoes
-    /// `IGNORE_YOU` to both sides (`TradeHandler.cpp:46`). The live-object guard rides
-    /// [`NamedLine::needs_live_object`].
+    /// `IGNORE_YOU` to both sides (`TradeHandler.cpp:46`). The live-object guard is
+    /// [`unit_name_line`]'s caller's.
     pub(crate) fn line_names(&self) -> Option<u64> {
         self.initiated.then_some(self.partner).flatten()
     }
@@ -308,7 +272,6 @@ impl TradeSession {
     /// [`Self::named_lines`].
     pub(crate) fn close_window(&mut self) {
         *self = TradeSession {
-            verb_closed: self.verb_closed,
             named_lines: std::mem::take(&mut self.named_lines),
             ..Default::default()
         };
@@ -332,15 +295,9 @@ impl TradeSession {
         self.their.gold = 0;
     }
 
-    /// `TRADE_REJECTED` (case 9): drop the partner's accept and nothing else; vmangos never sends
-    /// it.
-    pub(crate) fn partner_unaccepted(&mut self) {
-        self.their_accept = false;
-    }
-
     /// `ONLY_CONJURED` and `NOT_ELIGIBLE` (cases 22 and 23, `0x587727`/`0x587742` → `0x586410`):
-    /// empty the offending slot of our offer, or the gold for `0xff` (`0x7045eb`); the feed's diff
-    /// raises the repaint events. Deviation: an
+    /// empty the offending slot of our offer, or the gold for `0xff` (`0x7045eb`); the window's
+    /// deny raises the repaint events. Deviation: an
     /// out-of-range slot is dropped, where the reference indexes its 7-slot mirror unchecked,
     /// because an out-of-bounds write is not a behaviour to reproduce.
     pub(crate) fn bounce_own_offer(&mut self, slot: u8) {
@@ -358,6 +315,7 @@ impl TradeSession {
         *self = TradeSession::default();
     }
 
+    #[cfg(test)]
     pub(crate) fn is_open(&self) -> bool {
         self.open
     }
@@ -366,12 +324,7 @@ impl TradeSession {
 
     #[cfg(test)]
     pub(crate) fn take_named_lines_for_test(&mut self) -> Vec<NamedLine> {
-        self.take_named_lines()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn partner_has_accepted(&self) -> bool {
-        self.their_accept
+        std::mem::take(&mut self.named_lines)
     }
 
     /// Our first trade slot offered from `(bag, slot)`.
@@ -380,10 +333,10 @@ impl TradeSession {
         self.our_sources[0] = Some((bag, slot));
     }
 
-    /// Our own offer as `(gold, which slots are filled)`.
+    /// Our own offer as `(gold, which slots are offered from a bag)`.
     #[cfg(test)]
     pub(crate) fn own_offer_for_test(&self) -> (u32, [bool; TRADE_SLOT_COUNT]) {
-        (self.our.gold, self.our.slots.map(|s| s.is_some()))
+        (self.our.gold, self.our_sources.map(|s| s.is_some()))
     }
 }
 
@@ -398,8 +351,12 @@ impl NpcSession for TradeSession {
     }
 }
 
-/// The interaction close's trade leg (`0x512ea4`): the partner setter with none, its target already zeroed, so its clear finds none (`0x5870f7`); the window closes and `CMSG_CANCEL_TRADE` goes out (`0x587116` -> `0x704040`).
+/// The interaction close's trade leg (`0x512ea4`): the partner setter with none, its target already zeroed, so its clear finds none (`0x5870f7`): the enchanting item unlocks, the partner zeroes and `TRADE_CLOSED` fires (`0x58710e`); then `CMSG_CANCEL_TRADE` goes out (`0x587116` -> `0x704040`).
 pub(crate) fn close_by_interaction(world: &mut World) {
+    if let Some(mut ui) = world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
+        ui.write(|script| script.close_trade_partner(false));
+        ui.write(benilla_ui::script::UiScript::trade_partner_closed);
+    }
     if let Some(mut trade) = world.get_resource_mut::<TradeSession>() {
         trade.close_window();
     }
@@ -408,7 +365,7 @@ pub(crate) fn close_by_interaction(world: &mut World) {
     }
 }
 
-/// The world leave's trade part (`0x528d05` -> `0x5880c0`): the offer's items unlock, an open window releases the enchanting item, drops the interact target and closes, and the cancel goes out twice.
+/// The world leave's trade part (`0x528d05` -> `0x5880c0`): the offer's items unlock, an open window releases the enchanting item, drops the interact target and closes with `TRADE_CLOSED`, and the cancel goes out twice.
 pub(crate) fn leave_world(world: &mut World) {
     use crate::ui_session::NpcSession;
     let partner = world
@@ -419,6 +376,7 @@ pub(crate) fn leave_world(world: &mut World) {
         if let Some(partner) = partner {
             ui.write(|script| script.close_trade_partner(false));
             ui.world(move |w| crate::ui_session::clear_interact_target(w, partner));
+            ui.write(benilla_ui::script::UiScript::trade_partner_closed);
         }
     }
     if let Some(mut trade) = world.get_resource_mut::<TradeSession>() {
@@ -427,6 +385,44 @@ pub(crate) fn leave_world(world: &mut World) {
     if let Some(net) = world.get_resource::<NetCommands>() {
         let _ = net.0.send(ClientCommand::CancelTrade);
         let _ = net.0.send(ClientCommand::CancelTrade);
+    }
+}
+
+/// The UI world entry's trade part (`0x5281ef` -> `0x5860a0`): the window's state zeroes.
+pub(crate) fn enter_world(world: &mut World) {
+    if let Some(mut ui) = world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
+        ui.write(benilla_ui::script::UiScript::enter_trade_world);
+    }
+}
+
+/// A line whose `%s` is a unit's name as its live object reads it (`0x72a000`): the name cache's
+/// entry, asked on a miss, and `UNKNOWNOBJECT` meanwhile (`0x72a271`), so the line shows at its step.
+pub(crate) fn unit_name_line(
+    key: &'static str,
+    who: u64,
+    names: Option<&NameCache>,
+    commands: &NetCommands,
+) -> crate::ui_action::UiError {
+    use crate::ui_action::{FillArg, UiError};
+    match names.and_then(|n| n.resolve(who, commands)) {
+        Some(name) => UiError::s(key, name.to_string()),
+        None => UiError::args(key, vec![FillArg::Global("UNKNOWNOBJECT".into())]),
+    }
+}
+
+/// `ERR_INITIATE_TRADE_S` off the name cache at the initiate (`0x703db6`, `0x703dc5`), or, on a
+/// miss, owed to the name's callback (`0x703c60`, [`net`]'s name handler).
+pub(crate) fn initiate_line(
+    who: u64,
+    trade: &mut TradeSession,
+    names: &NameCache,
+    commands: &NetCommands,
+    sink: &mut dyn SignalSink,
+) {
+    const KEY: &str = "ERR_INITIATE_TRADE_S";
+    match names.resolve(who, commands).map(str::to_string) {
+        Some(name) => sink.line(crate::ui_action::UiError::s(KEY, name)),
+        None => trade.owe_named_line(NamedLine { key: KEY, who }),
     }
 }
 
@@ -523,19 +519,7 @@ impl Plugin for UiTradePlugin {
             .add_systems(
                 Update,
                 (
-                    // The feed runs after `UnitFeed`, whose item templates it reads, and before
-                    // the input pass, with the drain after it, so each lands the same frame. No
-                    // range guard: vmangos cancels a trade on distance (`Player.cpp:6117`).
-                    feed_trade.after(crate::ui_unit::UnitFeed).in_set(UiFeed),
-                    // Ahead of the press and the feed, so an accepted partner shows the frame the
-                    // window opens.
-                    answer_trade_request
-                        .before(crate::ui_script::UiPress)
-                        .before(feed_trade),
-                    // The coinage-change reflex's trade half, after the world's fields land.
-                    trim_offer_to_purse
-                        .after(crate::ui_unit::UnitFeed)
-                        .before(feed_trade),
+                    answer_trade_request.before(crate::ui_script::UiPress),
                     crate::ui_script::raises::then_fire(drain_trade).in_set(UiDrain),
                 ),
             );
@@ -569,7 +553,8 @@ fn answer_trade_request(
     mut trade: ResMut<TradeSession>,
     commands: Res<NetCommands>,
     names: Res<NameCache>,
-    mut errors: ResMut<crate::ui_action::UiErrorKeys>,
+    mut signals: crate::ui_action::signals::QueuedSignals,
+    mut ecs: Commands,
     social: Res<crate::ui_social::SocialState>,
     cinematic: Res<crate::cinematic::Cinematic>,
     player: Res<crate::player::Player>,
@@ -622,20 +607,20 @@ fn answer_trade_request(
         return;
     }
 
-    // Leg 8, Block Trades, the one leg that names the initiator. The reference reads the live
-    // unit; this may wait on a name query, with no timer, since vmangos cancels the trade to us
-    // when the initiator leaves (`Player.cpp:11747`), which clears the request.
+    // Leg 8, Block Trades, the one leg that names the initiator: the busy goes out (`0x58748b`),
+    // then the line with the live unit's name, `UNKNOWNOBJECT` while uncached (`0x587496`).
     if block_trades.0 {
-        let Some(name) = names.resolve(initiator, &commands).map(str::to_string) else {
-            return;
-        };
-        info!(target: "trade", "BEGIN_TRADE from {name} refused by BlockTrades; sending CMSG_BUSY_TRADE");
+        info!(target: "trade", "BEGIN_TRADE from {initiator:#x} refused by BlockTrades; sending CMSG_BUSY_TRADE");
         let _ = commands.0.send(ClientCommand::BusyTrade);
         trade.refuse_request();
-        // One error raise of `(0xbb, name)`; catalog row `0xbb` makes it a chat line.
-        errors
-            .0
-            .push(crate::ui_action::UiError::s("ERR_TRADE_BLOCKED_S", name));
+        // One error raise of `(0xbb, name)` (`0x5874a1`); catalog row `0xbb` makes it a chat line.
+        signals.line(unit_name_line(
+            "ERR_TRADE_BLOCKED_S",
+            initiator,
+            Some(&names),
+            &commands,
+        ));
+        signals.flush(&mut ecs);
         return;
     }
 
@@ -643,229 +628,6 @@ fn answer_trade_request(
     info!(target: "trade", "BEGIN_TRADE from {initiator:#x} accepted; sending CMSG_BEGIN_TRADE");
     trade.begin(initiator);
     let _ = commands.0.send(ClientCommand::BeginTrade);
-}
-
-/// A wire [`TradeItem`] as the Lua row: name and quality from the item-template cache once it
-/// answers, the icon from `display_id` via `ItemDisplayInfo.dbc`; `enchantment` is not filled yet.
-fn resolve_slot(
-    item: &TradeItem,
-    items: &Items,
-    icons: Option<&ItemDisplays>,
-    commands: &NetCommands,
-) -> TradeSlotItem {
-    let template = items.template(item.entry, 0, commands);
-    let name = template.map(|t| t.name.clone());
-    let quality = template.map(|t| t.quality);
-    let texture = crate::ui_items::item_icon(icons, item.display_id);
-    // Nil until the template answers: the link embeds the name and the quality colour.
-    let link = match (name.as_deref(), quality) {
-        (Some(n), Some(q)) => Some(crate::ui_items::item_link_full(
-            item.entry,
-            &benilla_ui::script::ItemLinkFields {
-                enchant: item.perm_enchant as i32,
-                gems: item.socket_enchants.map(|g| g as i32),
-                ..benilla_ui::script::ItemLinkFields::roll(
-                    item.random_prop_id as i32,
-                    item.suffix_factor as i32,
-                )
-            },
-            n,
-            q,
-        )),
-        _ => None,
-    };
-    TradeSlotItem {
-        item_id: item.entry,
-        name,
-        texture,
-        count: item.count.max(1),
-        quality,
-        enchantment: None,
-        link,
-    }
-}
-
-/// Our bag item at cursor-space `(bag, 1-based slot)` as a wire [`TradeItem`], for our own column
-/// only; `None` for an empty or unstreamed slot. The item stays in the bag until the trade ends.
-fn own_item_at(
-    bag: i64,
-    slot: u32,
-    store: Option<&ObjectStore>,
-    objects: &Objects,
-    items: &Items,
-    commands: &NetCommands,
-) -> Option<TradeItem> {
-    let (guid, count) = crate::ui_items::slot_guid_count(store, bag, slot, objects);
-    if guid == 0 {
-        return None;
-    }
-    let entry = objects.object(guid).and_then(|f| f.object_entry())?;
-    let display_id = items
-        .template(entry, guid, commands)
-        .map(|t| t.display_info_id)
-        .unwrap_or(0);
-    Some(TradeItem {
-        entry,
-        display_id,
-        count,
-        wrapped: false,
-        gift_creator: 0,
-        perm_enchant: 0,
-        socket_enchants: [0; 3],
-        creator: 0,
-        charges: 0,
-        suffix_factor: 0,
-        random_prop_id: 0,
-        lock_id: 0,
-        max_durability: 0,
-        durability: 0,
-    })
-}
-
-fn resolve_side(
-    offer: &TradeOffer,
-    items: &Items,
-    icons: Option<&ItemDisplays>,
-    commands: &NetCommands,
-) -> TradeSideState {
-    let mut slots: [Option<TradeSlotItem>; TRADE_SLOT_COUNT] = Default::default();
-    for (i, s) in offer.slots.iter().enumerate() {
-        slots[i] = s.map(|it| resolve_slot(&it, items, icons, commands));
-    }
-    TradeSideState {
-        slots,
-        gold: offer.gold,
-    }
-}
-
-fn snapshot(
-    trade: &TradeSession,
-    items: &Items,
-    icons: Option<&ItemDisplays>,
-    commands: &NetCommands,
-) -> Option<TradeState> {
-    if !trade.open {
-        return None;
-    }
-    Some(TradeState {
-        player: resolve_side(&trade.our, items, icons, commands),
-        target: resolve_side(&trade.their, items, icons, commands),
-    })
-}
-
-/// Push the trade into the VM and fire its events on a change, diffed against `Local` memory;
-/// `TRADE_ACCEPT_UPDATE` fires after `TRADE_SHOW`, whose handler hides the highlights.
-fn feed_trade(
-    mut script: crate::ui_script::InTurn,
-    mut trade: ResMut<TradeSession>,
-    items: Res<Items>,
-    icons: Option<Res<ItemDisplays>>,
-    names: Res<NameCache>,
-    commands: Res<NetCommands>,
-    mut errors: ResMut<crate::ui_action::UiErrorKeys>,
-    // The `%s` lines' live-object guard, the same reads as the ladder's leg 3.
-    index: Res<GuidIndex>,
-    stores: Query<&ObjectStore>,
-    mut last: Local<crate::ui_script::VmMemo<Option<TradeState>>>,
-    mut last_open: Local<crate::ui_script::VmMemo<bool>>,
-    mut last_player_gold: Local<crate::ui_script::VmMemo<u32>>,
-    mut last_their_gold: Local<crate::ui_script::VmMemo<u32>>,
-) {
-    let Some(mut script) = script.turn() else {
-        return;
-    };
-    let last = last.get(&script);
-    let last_open = last_open.get(&script);
-    let last_player_gold = last_player_gold.get(&script);
-    let last_their_gold = last_their_gold.get(&script);
-
-    let fresh = snapshot(&trade, &items, icons.as_deref(), &commands);
-    let opened = !*last_open && trade.is_open();
-    let closed = *last_open && !trade.is_open();
-    let changed = fresh != *last;
-    if changed {
-        script.set_trade(fresh.clone());
-    }
-    // The partner's per-slot event (`0x586f96`), arg1 the 1-based slot; our own slots signal at the step that writes them (`0x586a7e`, `0x58648c`).
-    if changed && trade.is_open() && !opened {
-        let empty = TradeState::default();
-        let old = last.as_ref().unwrap_or(&empty);
-        if let Some(new) = fresh.as_ref() {
-            let changed_slots = |mine: &[Option<TradeSlotItem>],
-                                 theirs: &[Option<TradeSlotItem>]| {
-                mine.iter()
-                    .zip(theirs.iter())
-                    .enumerate()
-                    .filter(|(_, (a, b))| a != b)
-                    .map(|(i, _)| ScriptValue::Int(i as i64 + 1))
-                    .collect::<Vec<_>>()
-            };
-            for slot in changed_slots(&new.target.slots, &old.target.slots) {
-                script.fire_event("TRADE_TARGET_ITEM_CHANGED", vec![slot]);
-            }
-        }
-    }
-    // The owed `%s` lines, resolved here where the name cache is; a miss waits for the query it
-    // started. The catalog row, read by `ui_action::feed_actions`, decides where each lands.
-    for line in trade.take_named_lines() {
-        // The status arms print nothing once the player is no longer an object.
-        if line.needs_live_object && streamed_player(&index, &stores, line.who).is_none() {
-            continue;
-        }
-        match names.resolve(line.who, &commands).map(str::to_string) {
-            Some(name) => errors.0.push(crate::ui_action::UiError::s(line.key, name)),
-            // Not cached: `resolve` has asked, so park it and retry next frame.
-            None => trade.owe_named_line(line),
-        }
-    }
-    // `CloseTrade` signalled its own close (`0x5879bc`).
-    let verb_closed = trade.take_verb_closed();
-    if opened {
-        // The partner setter's open leg (`0x587129`): the folded coins are the last offer signalled (`0x5872ba`), so they signal once.
-        if let Some(offer) = script.open_trade_partner(trade.opens_with_cursor()) {
-            trade.our.gold = offer;
-            *last_player_gold = offer;
-        }
-        script.fire_event("TRADE_SHOW", vec![]);
-    } else if closed && !verb_closed {
-        script.fire_event("TRADE_CLOSED", vec![]);
-    } else if trade.is_open() && changed {
-        script.fire_event("TRADE_UPDATE", vec![]);
-    }
-
-    // `TRADE_ACCEPT_UPDATE(mine, theirs)` when the session's flags leave the VM's while open; the accept verbs write and signal their own (`0x586712`, `0x586763`), and a send of theirs still waiting for the drain is not yet in the session.
-    let accept = (trade.our_accept, trade.their_accept);
-    if trade.is_open() && !script.trade_accept_sends_wait() && script.trade_accepts() != accept {
-        script.set_trade_accepts(accept);
-        script.fire_event(
-            "TRADE_ACCEPT_UPDATE",
-            vec![
-                ScriptValue::Int(i64::from(accept.0)),
-                ScriptValue::Int(i64::from(accept.1)),
-            ],
-        );
-    }
-
-    // Our gold reaches the money input through `PLAYER_TRADE_MONEY` (`TradeFrame.xml:565`), never
-    // `TRADE_UPDATE`, so a repaint never overwrites what the player is typing.
-    let player_gold = trade.our.gold;
-    if trade.is_open() && player_gold != *last_player_gold {
-        // The session's own trim of the offer reaches the VM's coins here.
-        script.set_trade_offer_gold(player_gold);
-        script.fire_event("PLAYER_TRADE_MONEY", vec![]);
-    }
-    *last_player_gold = if trade.is_open() { player_gold } else { 0 };
-    // The partner's gold: `TRADE_MONEY_CHANGED`, which the `TARGET_TRADE` money frame repaints on
-    // (`MoneyFrame.lua:133`). The reference fires it, beside `PLAYER_TRADE_MONEY`; which side each
-    // reports is inferred from `MoneyFrame.lua`, not traced.
-    let their_gold = trade.their.gold;
-    if trade.is_open() && their_gold != *last_their_gold {
-        script.fire_event("TRADE_MONEY_CHANGED", vec![]);
-    }
-    *last_their_gold = if trade.is_open() { their_gold } else { 0 };
-
-    *last = fresh;
-    *last_open = trade.is_open();
 }
 
 /// Drain the Lua intents into the trade `CMSG`s. `CloseTrade` clears the session and sends
@@ -876,16 +638,11 @@ fn drain_trade(
     commands: Res<NetCommands>,
     selection: Res<Selection>,
     group: Res<GroupState>,
-    objects: Objects,
-    items: Res<Items>,
-    self_q: Query<&ObjectStore, With<SelfPlayer>>,
-    mut queue: Commands,
+    names: Res<NameCache>,
 ) {
     let Some(mut script) = script.turn() else {
         return;
     };
-    // Our bag contents, for the own-column item resolve.
-    let store = self_q.iter().next();
 
     for token in script.take_trade_initiates() {
         match resolve_trade_target(&token, &selection, &group) {
@@ -896,6 +653,7 @@ fn drain_trade(
                 let _ = commands
                     .0
                     .send(ClientCommand::InitiateTrade { target: guid });
+                initiate_line(guid, &mut trade, &names, &commands, &mut *script);
             }
             None => {
                 info!(target: "trade", "initiate: {token:?} did not resolve to a player guid — nothing sent");
@@ -903,15 +661,13 @@ fn drain_trade(
         }
     }
 
-    // The accept verbs' sends in call order, whatever the window's state (`0x58671a` -> `0x703f50`, `0x58676b` -> `0x703fd0`).
+    // The accept verbs' sends in call order, whatever the window's state (`0x58671a` -> `0x703f50`, `0x58676b` -> `0x703fd0`), and our accept's drop in an offer update (`0x58696b`).
     for accept in script.take_trade_accept_sends() {
         if accept {
-            trade.accept();
             let _ = commands.0.send(ClientCommand::AcceptTrade {
                 their_state: trade.their_state(),
             });
         } else {
-            trade.unaccept();
             let _ = commands.0.send(ClientCommand::UnacceptTrade);
         }
     }
@@ -933,13 +689,7 @@ fn drain_trade(
                 let Some(trade_slot) = id.checked_sub(1).and_then(|n| u8::try_from(n).ok()) else {
                     continue;
                 };
-                // The server echoes a placement to the partner only, so our column is filled here.
-                if let Some(item) = own_item_at(bag, slot, store, &objects, &items, &commands) {
-                    trade.place_own_item(id, item);
-                    if let Some(source) = trade.our_sources.get_mut(id as usize - 1) {
-                        *source = Some((bag, slot));
-                    }
-                }
+                trade.offer_from(id, bag, slot);
                 info!(target: "trade", "set item: slot {id} <- bag {bag}/{slot} (wire {wire_bag}/{wire_slot}); sending CMSG_SET_TRADE_ITEM");
                 let _ = commands.0.send(ClientCommand::SetTradeItem {
                     trade_slot,
@@ -962,16 +712,8 @@ fn drain_trade(
         }
     }
     if script.take_trade_close() {
-        // The cancel goes out whatever the window's state (`0x5879c4` -> `0x704040`).
+        // The cancel goes out whatever the window's state (`0x5879c4` -> `0x704040`); the verb cleared the interact target in its call (`0x5879a5`).
         let _ = commands.0.send(ClientCommand::CancelTrade);
-        trade.closed_by_verb();
-        // The partner setter with none clears the interact target on the partner (`0x5870f7`).
-        if let Some(partner) = trade.npc() {
-            queue.queue(move |w: &mut World| {
-                crate::ui_session::clear_interact_target(w, partner);
-                crate::ui_script::live::fire_handler_events(w);
-            });
-        }
         trade.close_window();
     }
     // The `TRADE` popup's verbs: an empty `0x117` or `0x11C` and no local teardown; the status
@@ -984,40 +726,6 @@ fn drain_trade(
     }
 }
 
-/// The coinage-change reflex: an offer above the purse is trimmed to the purse.
-fn trimmed_offer(offer: u32, purse: u32) -> Option<u32> {
-    (offer > purse).then_some(purse)
-}
-
-/// On each `PLAYER_FIELD_COINAGE` change with a trade open, re-send an offer past the purse as an
-/// absolute `CMSG_SET_TRADE_GOLD` of the purse; the coin sound and `PLAYER_MONEY` fire elsewhere.
-fn trim_offer_to_purse(
-    self_q: Query<&ObjectStore, With<SelfPlayer>>,
-    mut trade: ResMut<TradeSession>,
-    commands: Res<NetCommands>,
-    mut prev: Local<Option<u32>>,
-) {
-    let Some(money) = self_q
-        .iter()
-        .next()
-        .and_then(|store| store.0.player_money())
-    else {
-        *prev = None;
-        return;
-    };
-    let old = prev.replace(money);
-    if !matches!(old, Some(p) if p != money) || !trade.is_open() {
-        return;
-    }
-    if let Some(trimmed) = trimmed_offer(trade.our.gold, money) {
-        trade.set_own_gold(trimmed);
-        let _ = commands
-            .0
-            .send(ClientCommand::SetTradeGold { copper: trimmed });
-        trade.own_change_sent();
-    }
-}
-
 /// The player guid a UnitPopup token names, through [`crate::ui_unit::player_token_guid`].
 fn resolve_trade_target(token: &str, selection: &Selection, group: &GroupState) -> Option<u64> {
     crate::ui_unit::player_token_guid(token, selection, group)
@@ -1027,6 +735,7 @@ fn resolve_trade_target(token: &str, selection: &Selection, group: &GroupState) 
 mod tests {
     use super::*;
     use benilla_protocol::messages::{TradeStatus, TradeStatusExtended};
+    use benilla_protocol::SessionEvent;
 
     fn wire_item(entry: u32) -> TradeItem {
         TradeItem {
@@ -1157,13 +866,11 @@ mod tests {
         let mut s = TradeSession::default();
         s.initiate(0x1, false);
         s.open_window(0);
-        s.partner_accepted();
 
         s.request(0x2);
         assert_eq!(s.pending_request(), Some(0x2));
         assert_eq!(s.partner, Some(0x1), "the live trade is untouched");
         assert!(s.is_open());
-        assert!(s.their_accept);
 
         s.refuse_request();
         assert_eq!(s.pending_request(), None);
@@ -1172,12 +879,10 @@ mod tests {
     }
 
     #[test]
-    fn extended_fills_the_right_side_and_resets_accepts() {
+    fn extended_fills_the_right_side() {
         let mut s = TradeSession::default();
         s.begin(0x1);
         s.open_window(0);
-        s.partner_accepted();
-        assert!(s.their_accept);
 
         let mut slots = [None; TRADE_SLOT_COUNT];
         slots[0] = Some(wire_item(2589));
@@ -1186,7 +891,7 @@ mod tests {
         assert!(s.their.slots[0].is_some());
         assert_eq!(s.their.gold, 500);
         assert_eq!(s.our.gold, 0);
-        assert!(!s.their_accept, "an offer change resets accepts");
+        assert_eq!(s.cells().target_gold, 500, "the cells the verbs read");
 
         let our_ext = snapshot_of(false, 999, [None; TRADE_SLOT_COUNT]);
         assert_eq!(s.set_offer(&our_ext), OfferUpdate::Applied);
@@ -1260,40 +965,18 @@ mod tests {
         );
     }
 
+    /// Our offer's sources follow the sends: a placement records where the item sits, a clear forgets it (`0x5864d0` reads them).
     #[test]
-    fn accept_glow_tracks_both_sides() {
-        let mut s = TradeSession::default();
-        s.begin(0x1);
-        s.open_window(0);
-        s.accept();
-        s.partner_accepted();
-        assert_eq!((s.our_accept, s.their_accept), (true, true));
-        s.back_to_trade();
-        assert_eq!((s.our_accept, s.their_accept), (false, false));
-    }
-
-    #[test]
-    fn own_offer_is_tracked_optimistically() {
+    fn own_offer_sources_follow_the_sends() {
         let mut s = TradeSession::default();
         s.begin(0x7);
         s.open_window(0);
-        s.accept();
-        s.partner_accepted();
-        assert_eq!((s.our_accept, s.their_accept), (true, true));
-
-        s.place_own_item(2, wire_item(1234));
-        assert!(s.our.slots[1].is_some(), "our slot 2 shows the placed item");
-        assert_eq!(
-            (s.our_accept, s.their_accept),
-            (false, false),
-            "changing our offer resets both accepts"
-        );
-
+        s.offer_from(2, 0, 5);
+        assert!(s.offers(0, 5));
         s.set_own_gold(500);
         assert_eq!(s.our.gold, 500);
-
         s.clear_own_item(2);
-        assert!(s.our.slots[1].is_none(), "clearing empties the slot");
+        assert!(!s.offers(0, 5), "clearing forgets the source");
     }
 
     #[test]
@@ -1320,7 +1003,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<TradeSession>()
             .init_resource::<GroupState>()
-            .init_resource::<Items>()
+            .init_resource::<NameCache>()
             .init_resource::<GuidIndex>()
             .insert_resource(NetCommands(tx))
             .insert_resource(Selection {
@@ -1360,7 +1043,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<TradeSession>()
             .init_resource::<GroupState>()
-            .init_resource::<Items>()
+            .init_resource::<NameCache>()
             .init_resource::<GuidIndex>()
             .init_resource::<Selection>()
             .insert_resource(NetCommands(tx));
@@ -1380,260 +1063,111 @@ mod tests {
             ]
         );
         let trade = app.world().resource::<TradeSession>();
-        assert!(!trade.is_open() && !trade.our_accept);
+        assert!(!trade.is_open());
         assert_eq!(trade.our.gold, 500);
     }
 
-    /// The feed signals an accept only when the verb has not already written and signalled it (`0x586712`); the partner's, from its status, it still signals.
-    #[test]
-    fn the_feed_does_not_signal_the_verbs_accept_again() {
-        let (mut app, _rx) = feed_app();
-        {
-            let mut trade = app.world_mut().resource_mut::<TradeSession>();
-            trade.begin(0x7);
-            trade.open_window(1);
-        }
-        app.update();
-        let seen = |app: &mut App| {
-            app.world()
-                .non_send_resource::<UiScript>()
-                .eval::<String>("return table.concat(seen, ',')")
-                .unwrap()
-        };
-        app.world_mut()
-            .non_send_resource_mut::<UiScript>()
-            .run(
-                "seen = {} local f = CreateFrame('Frame') f:RegisterEvent('TRADE_ACCEPT_UPDATE') \
-                 f:SetScript('OnEvent', function(_, _, mine, theirs) seen[#seen + 1] = mine .. ':' .. theirs end) \
-                 AcceptTrade()",
-            )
-            .unwrap();
-        assert_eq!(seen(&mut app), "1:0");
-        // The feed ahead of the drain leaves the verb's flag alone; so does the feed after it.
-        app.update();
-        assert_eq!(seen(&mut app), "1:0");
-        let drain = |app: &mut App| {
-            let sends = app
-                .world_mut()
-                .non_send_resource_mut::<UiScript>()
-                .take_trade_accept_sends();
-            let mut trade = app.world_mut().resource_mut::<TradeSession>();
-            for accept in sends {
-                if accept {
-                    trade.accept();
-                } else {
-                    trade.unaccept();
-                }
-            }
-        };
-        drain(&mut app);
-        app.update();
-        assert_eq!(seen(&mut app), "1:0");
-        app.world_mut()
-            .resource_mut::<TradeSession>()
-            .partner_accepted();
-        app.update();
-        assert_eq!(seen(&mut app), "1:0,1:1");
-        // A status that drops both between the drain and the next feed is still signalled.
-        app.world_mut()
-            .non_send_resource_mut::<UiScript>()
-            .run("CancelTradeAccept() AcceptTrade()")
-            .unwrap();
-        drain(&mut app);
-        app.world_mut()
-            .resource_mut::<TradeSession>()
-            .back_to_trade();
-        app.update();
-        assert_eq!(seen(&mut app), "1:0,1:1,0:1,1:1,0:0");
-    }
-
-    /// The open takes the cursor's coins only for an initiate of ours that asked for the cursor (`0x703c30`), and the folded coins signal once, ahead of `TRADE_SHOW` (`0x5872ba`-`0x5872d8`).
-    #[test]
-    fn the_open_folds_the_cursors_coins_only_for_an_initiate_that_asked() {
-        let (mut app, _rx) = feed_app();
-        // The purse the fold's test reads off the player (`0x704283`).
-        let purse = benilla_protocol::ObjectFields::from_pairs(&[
-            (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
-            (benilla_protocol::field::FIELD_PLAYER_FIELD_COINAGE, 1_000),
-        ]);
-        let me = app.world_mut().spawn(ObjectStore(purse)).id();
-        app.world_mut()
-            .resource_mut::<GuidIndex>()
-            .0
-            .insert(0x42, me);
-        app.insert_resource(crate::net::SelfGuid(Some(0x42)));
-        {
-            let mut vm = app.world_mut().non_send_resource_mut::<UiScript>();
-            vm.set_money(1_000);
-            vm.run(
-                "seen = {} local f = CreateFrame('Frame') \
-                 for _, e in ipairs({'PLAYER_TRADE_MONEY', 'PLAYER_MONEY', 'TRADE_SHOW'}) do f:RegisterEvent(e) end \
-                 f:SetScript('OnEvent', function(_, e) seen[#seen + 1] = e end) \
-                 PickupPlayerMoney(300) seen = {}",
-            )
-            .unwrap();
-        }
-        let seen = |app: &mut App| {
-            app.world()
-                .non_send_resource::<UiScript>()
-                .eval::<String>("local s = table.concat(seen, ',') seen = {} return s")
-                .unwrap()
-        };
-        {
-            let mut trade = app.world_mut().resource_mut::<TradeSession>();
-            trade.initiate(0x7, false);
-            trade.open_window(1);
-        }
-        app.update();
-        assert_eq!(seen(&mut app), "TRADE_SHOW");
-        assert_eq!(app.world().resource::<TradeSession>().our.gold, 0);
-
-        app.world_mut()
-            .resource_mut::<TradeSession>()
-            .close_window();
-        app.update();
-        {
-            let mut trade = app.world_mut().resource_mut::<TradeSession>();
-            trade.initiate(0x7, true);
-            trade.open_window(2);
-        }
-        app.update();
-        app.update();
-        assert_eq!(seen(&mut app), "PLAYER_TRADE_MONEY,PLAYER_MONEY,TRADE_SHOW");
-        assert_eq!(app.world().resource::<TradeSession>().our.gold, 300);
-        let vm = app.world().non_send_resource::<UiScript>();
-        assert_eq!(vm.eval::<i64>("return GetCursorMoney()").unwrap(), 0);
-        assert_eq!(vm.eval::<i64>("return GetPlayerTradeMoney()").unwrap(), 300);
-    }
-
-    /// An app running [`feed_trade`] with a live VM and `0x7` named in the cache.
-    fn feed_app() -> (App, crossbeam_channel::Receiver<ClientCommand>) {
+    /// An app running [`drain_trade`] with a live VM, the trade's handlers, and `0x7` named in the cache.
+    fn drain_app() -> (App, crossbeam_channel::Receiver<ClientCommand>) {
         let (tx, rx) = crossbeam_channel::unbounded();
         let mut app = App::new();
         let mut names = NameCache::default();
         names.insert_player(0x7, "Grubbis".to_string(), None);
         app.init_resource::<TradeSession>()
-            .init_resource::<Items>()
-            .init_resource::<crate::ui_action::UiErrorKeys>()
+            .init_resource::<GroupState>()
             .init_resource::<GuidIndex>()
+            .init_resource::<crate::ui_script::live::UiEvents>()
+            .init_resource::<crate::ui_chat::ChatLog>()
+            .init_resource::<crate::sound::MessageSounds>()
             .insert_resource(names)
             .insert_resource(NetCommands(tx));
-        app.insert_non_send_resource(UiScript::new().unwrap());
-        app.add_systems(Update, feed_trade);
+        net::register(&mut app);
+        let vm = UiScript::new().unwrap();
+        vm.run("ERR_INITIATE_TRADE_S = 'You have requested to trade with %s.'")
+            .unwrap();
+        app.insert_non_send_resource(vm);
         (app, rx)
     }
 
-    /// The reference prints the line from its own sender, not on a reply; row `0xb9` is chat.
+    /// Initiate `guid` through the verb and the drain.
+    fn initiate(app: &mut App, guid: u64) {
+        use bevy::ecs::system::RunSystemOnce;
+        app.insert_resource(Selection {
+            guid: Some(guid),
+            ..Default::default()
+        });
+        app.world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .run("InitiateTrade('target')")
+            .unwrap();
+        app.world_mut().run_system_once(drain_trade).unwrap();
+    }
+
+    /// The system lines a handler's display added to the chat log (`0x509dd0`).
+    fn chat(app: &App) -> Vec<String> {
+        app.world()
+            .resource::<crate::ui_chat::ChatLog>()
+            .pending_lines()
+    }
+
+    fn shown(app: &mut App) -> Vec<&'static str> {
+        app.world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .take_shown_keys()
+    }
+
+    /// The initiate shows its line off the name cache at the send (`0x703db6`, `0x703dc5`); row `0xb9` is chat.
     #[test]
     fn initiating_a_trade_says_so() {
-        let (mut app, _rx) = feed_app();
-        app.world_mut()
-            .resource_mut::<TradeSession>()
-            .initiate(0x7, false);
-        app.update();
-
-        assert_eq!(
-            app.world().resource::<crate::ui_action::UiErrorKeys>().0,
-            vec![crate::ui_action::UiError::s(
-                "ERR_INITIATE_TRADE_S",
-                "Grubbis".to_string()
-            )],
-        );
+        let (mut app, _rx) = drain_app();
+        initiate(&mut app, 0x7);
+        assert_eq!(shown(&mut app), ["ERR_INITIATE_TRADE_S"]);
         assert_eq!(
             benilla_ui::messages::kind_of("ERR_INITIATE_TRADE_S"),
             benilla_ui::messages::MsgKind::Chat,
         );
-        app.update();
-        assert_eq!(
-            app.world()
-                .resource::<crate::ui_action::UiErrorKeys>()
-                .0
-                .len(),
-            1,
-            "the debt is spent once, not re-raised every frame"
-        );
+        assert!(app
+            .world_mut()
+            .resource_mut::<TradeSession>()
+            .take_named_lines_for_test()
+            .is_empty());
     }
 
+    /// A name not cached asks and waits: its answer runs the callback and shows the line, after a refusal closed the trade too (`0x703c60`); a negative answer shows nothing.
     #[test]
-    fn a_naming_status_line_needs_a_live_object_and_the_initiate_line_does_not() {
-        let (mut app, _rx) = feed_app();
-        {
-            let mut trade = app.world_mut().resource_mut::<TradeSession>();
-            trade.initiate(0x7, false); // parks ERR_INITIATE_TRADE_S, needs_live_object: false
-            trade.owe_named_line(NamedLine {
-                key: "ERR_PLAYER_BUSY_S",
-                who: 0x7,
-                needs_live_object: true,
-            });
-        }
-        app.update();
-        assert_eq!(
-            app.world()
-                .resource::<crate::ui_action::UiErrorKeys>()
-                .0
-                .iter()
-                .map(|e| e.key)
-                .collect::<Vec<_>>(),
-            vec!["ERR_INITIATE_TRADE_S"],
-            "0x7 is cached, not a streamed object: the status line drops, the initiate line stays"
-        );
-
-        // Stream the player, ask again: now it prints.
-        let e = app.world_mut().spawn(ObjectStore::default()).id();
-        app.world_mut().resource_mut::<GuidIndex>().0.insert(0x7, e);
-        app.world_mut()
-            .resource_mut::<crate::ui_action::UiErrorKeys>()
-            .0
-            .clear();
-        app.world_mut()
-            .resource_mut::<TradeSession>()
-            .owe_named_line(NamedLine {
-                key: "ERR_PLAYER_BUSY_S",
-                who: 0x7,
-                needs_live_object: true,
-            });
-        app.update();
-        assert_eq!(
-            app.world().resource::<crate::ui_action::UiErrorKeys>().0,
-            vec![crate::ui_action::UiError::s(
-                "ERR_PLAYER_BUSY_S",
-                "Grubbis".to_string()
-            )],
-        );
-    }
-
-    #[test]
-    fn the_initiate_line_waits_for_the_name_and_survives_the_refusal() {
-        let (mut app, _rx) = feed_app();
-        app.world_mut()
-            .resource_mut::<TradeSession>()
-            .initiate(0x99, false); // no name cached
-        app.update();
+    fn the_initiate_line_waits_for_the_names_answer_and_survives_the_refusal() {
+        let (mut app, _rx) = drain_app();
+        initiate(&mut app, 0x99);
         assert!(
-            app.world()
-                .resource::<crate::ui_action::UiErrorKeys>()
-                .0
-                .is_empty(),
-            "no name, no line — and never a line with an unfilled %s"
+            shown(&mut app).is_empty(),
+            "never a line with an unfilled %s"
         );
-
-        // The server refuses before the name lands; the debt survives the close.
         app.world_mut()
             .resource_mut::<TradeSession>()
             .close_window();
-        app.world_mut().resource_mut::<NameCache>().insert_player(
-            0x99,
-            "Skarrid".to_string(),
-            None,
+        crate::net::handlers::dispatch(
+            app.world_mut(),
+            vec![SessionEvent::PlayerName {
+                guid: 0x99,
+                name: "Skarrid".into(),
+                realm: String::new(),
+                race: 1,
+                gender: 0,
+                class: 1,
+                declensions: None,
+            }],
         );
-        app.update();
-        assert_eq!(
-            app.world().resource::<crate::ui_action::UiErrorKeys>().0,
-            vec![crate::ui_action::UiError::s(
-                "ERR_INITIATE_TRADE_S",
-                "Skarrid".to_string()
-            )],
+        assert_eq!(chat(&app), ["You have requested to trade with Skarrid."]);
+
+        initiate(&mut app, 0x98);
+        crate::net::handlers::dispatch(
+            app.world_mut(),
+            vec![SessionEvent::PlayerNameMiss {
+                guid: 0x98,
+                miss: benilla_protocol::messages::NameQueryMiss::Deny,
+            }],
         );
+        assert_eq!(chat(&app).len(), 1, "a denied name shows nothing");
     }
 
     #[test]
@@ -1654,10 +1188,7 @@ mod tests {
             "a trade we did not start never sets the initiate latch"
         );
         assert!(
-            app.world()
-                .resource::<crate::ui_action::UiErrorKeys>()
-                .0
-                .is_empty(),
+            chat(&app).is_empty(),
             "and an accepted request says nothing — only leg 8 speaks"
         );
     }
@@ -1670,17 +1201,32 @@ mod tests {
 
         assert!(matches!(rx.try_recv(), Ok(ClientCommand::BusyTrade)));
         assert_eq!(
-            app.world().resource::<crate::ui_action::UiErrorKeys>().0,
-            vec![crate::ui_action::UiError::s(
-                "ERR_TRADE_BLOCKED_S",
-                "Grubbis".to_string()
-            )],
-            "the refusal raises the reference's own error `(0xbb, name)`"
+            chat(&app),
+            ["Grubbis is blocking trades."],
+            "the refusal raises the reference's own error `(0xbb, name)`, a chat line"
         );
         assert_eq!(
             benilla_ui::messages::kind_of("ERR_TRADE_BLOCKED_S"),
             benilla_ui::messages::MsgKind::Chat,
         );
+    }
+
+    /// An initiator whose name is not cached is refused at once, its line naming `UNKNOWNOBJECT` (`0x587496` -> `0x72a271`), with the name asked.
+    #[test]
+    fn block_trades_names_an_uncached_initiator_unknown() {
+        let (mut app, rx) = request_app(true, false, true);
+        let e = app.world_mut().spawn(ObjectStore::default()).id();
+        app.world_mut().resource_mut::<GuidIndex>().0.insert(0x9, e);
+        app.world_mut().resource_mut::<TradeSession>().request(0x9);
+        app.update();
+        let sent: Vec<_> = rx.try_iter().collect();
+        assert!(sent.iter().any(|c| matches!(c, ClientCommand::BusyTrade)));
+        assert!(
+            sent.iter()
+                .any(|c| matches!(c, ClientCommand::NameQuery { guid: 0x9 })),
+            "{sent:?}"
+        );
+        assert_eq!(chat(&app), ["Unknown is blocking trades."]);
     }
 
     #[test]
@@ -1694,10 +1240,7 @@ mod tests {
                 "cinematic={cinematic} controlled={controlled}: refused as busy"
             );
             assert!(
-                app.world()
-                    .resource::<crate::ui_action::UiErrorKeys>()
-                    .0
-                    .is_empty(),
+                chat(&app).is_empty(),
                 "cinematic={cinematic} controlled={controlled}: a silent leg says nothing"
             );
         }
@@ -1726,11 +1269,7 @@ mod tests {
             matches!(rx.try_recv(), Ok(ClientCommand::IgnoreTrade)),
             "the ignore leg does NOT answer busy"
         );
-        assert!(app
-            .world()
-            .resource::<crate::ui_action::UiErrorKeys>()
-            .0
-            .is_empty());
+        assert!(chat(&app).is_empty());
     }
 
     #[test]
@@ -1819,7 +1358,9 @@ mod tests {
         names.insert_player(0x7, "Grubbis".to_string(), None);
         names.insert_player(0x8, "Skarrid".to_string(), None);
         app.init_resource::<TradeSession>()
-            .init_resource::<crate::ui_action::UiErrorKeys>()
+            .init_resource::<crate::ui_script::live::UiEvents>()
+            .init_resource::<crate::ui_chat::ChatLog>()
+            .init_resource::<crate::sound::MessageSounds>()
             .init_resource::<crate::ui_social::SocialState>()
             .init_resource::<crate::ui_auction::AuctionOpen>()
             .init_resource::<GuidIndex>()
@@ -1843,6 +1384,10 @@ mod tests {
                 .0
                 .insert(guid, e);
         }
+        let vm = UiScript::new().unwrap();
+        vm.run("ERR_TRADE_BLOCKED_S = '%s is blocking trades.' UNKNOWNOBJECT = 'Unknown'")
+            .unwrap();
+        app.insert_non_send_resource(vm);
         app.add_systems(Update, answer_trade_request);
         (app, rx)
     }
@@ -1856,7 +1401,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<TradeSession>()
             .init_resource::<GroupState>()
-            .init_resource::<Items>()
+            .init_resource::<NameCache>()
             .init_resource::<GuidIndex>()
             .insert_resource(NetCommands(tx))
             .insert_resource(Selection::default());
@@ -1904,7 +1449,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<TradeSession>()
             .init_resource::<GroupState>()
-            .init_resource::<Items>()
+            .init_resource::<NameCache>()
             .init_resource::<GuidIndex>()
             .insert_resource(NetCommands(tx))
             .insert_resource(Selection::default());
@@ -1936,7 +1481,7 @@ mod tests {
                     slots,
                 }),
             );
-            vm.set_trade(Some(benilla_ui::script::TradeState::default()));
+            vm.open_trade_partner(0x7, false);
             vm.run("PickupContainerItem(0, 1) ClickTradeButton(1) ClickTradeButton(1)")
                 .unwrap();
             assert!(

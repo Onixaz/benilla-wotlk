@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use super::{StableOpen, SPELL_AURA_OPEN_STABLE};
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, NetHandlerApp, SelfPlayer};
-use crate::ui_action::{Spells, UiError, UiErrorKeys};
+use crate::ui_action::{Spells, UiError};
 use crate::ui_script::live::UiEvents;
 use crate::ui_session::NpcSession;
 use crate::unit_auras::UnitAuras;
@@ -28,14 +28,21 @@ fn on_session_end(
     ui: Option<ResMut<UiEvents>>,
 ) {
     // Its close re-enters through the stable leg of the interaction close it runs (`0x5a0f2c`, `0x513065`).
-    if stable_open.close() {
-        if let Some(mut ui) = ui {
-            ui.fire("PET_STABLE_CLOSED", vec![]);
-            ui.fire("PET_STABLE_CLOSED", vec![]);
+    let closed = stable_open.close();
+    let Some(mut ui) = ui.filter(|_| closed) else {
+        stable_open.clear();
+        stable_open.drop_asks();
+        return;
+    };
+    ui.fire("PET_STABLE_CLOSED", vec![]);
+    ui.fire("PET_STABLE_CLOSED", vec![]);
+    // The close leaves the list for its listeners (`0x5a0f10` clears the master alone); the session's teardown follows them.
+    ui.world(|world| {
+        if let Some(mut stable_open) = world.get_resource_mut::<StableOpen>() {
+            stable_open.clear();
+            stable_open.drop_asks();
         }
-    }
-    stable_open.clear();
-    stable_open.drop_asks();
+    });
 }
 
 /// A creature record's answer runs the stable verbs' callbacks queued on it, in order; an unknown entry fails them, which fires nothing (`0x5a0e80`, `0x5a0ea0`).
@@ -91,7 +98,6 @@ fn on_list(
 fn on_result(
     In(ev): In<SessionEvent>,
     stable_open: ResMut<StableOpen>,
-    mut errors: ResMut<UiErrorKeys>,
     commands: Res<NetCommands>,
     self_auras: Query<&UnitAuras, With<SelfPlayer>>,
     spells: Option<Res<Spells>>,
@@ -112,6 +118,7 @@ fn on_result(
                     })
                 })
         };
+        let mut errors = Vec::new();
         let mut tame_failures = Vec::new();
         let update = stable_result(
             result,
@@ -124,6 +131,10 @@ fn on_result(
         let Some(mut ui) = ui else {
             return;
         };
+        // Each refusal shows at the display (`0x5216f0`) in the handler's turn.
+        for line in errors {
+            crate::ui_action::show_in_turn(&mut ui, "ui_stable", line);
+        }
         // The exotic refusal's line shows in the handler's turn, as the tame failure's does.
         for reason in tame_failures {
             crate::ui_action::show_in_turn(
@@ -167,7 +178,7 @@ fn list_stabled_pets(
 fn stable_result(
     result: u8,
     mut stable_open: impl std::ops::DerefMut<Target = StableOpen>,
-    errors: &mut UiErrorKeys,
+    errors: &mut Vec<UiError>,
     tame_failures: &mut Vec<u8>,
     net_commands: &NetCommands,
     open_stable_aura: impl FnOnce() -> bool,
@@ -180,7 +191,7 @@ fn stable_result(
     match result {
         code::ERR_MONEY => {
             debug!("net: stable purchase refused — not enough money");
-            errors.0.push(UiError::key("ERR_NOT_ENOUGH_MONEY"));
+            errors.push(UiError::key("ERR_NOT_ENOUGH_MONEY"));
         }
         code::SUCCESS_STABLE | code::SUCCESS_UNSTABLE | code::SUCCESS_BUY_SLOT => {
             let npc = match stable_open.npc() {
@@ -206,14 +217,42 @@ mod tests {
     use super::*;
     use benilla_protocol::messages::stable_result as code;
 
+    /// The session end's close keeps the list for its `PET_STABLE_CLOSED` listeners (`0x5a0f10` clears the master alone); the teardown empties it after them.
+    #[test]
+    fn the_session_ends_close_listeners_read_the_list() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        let mut open = StableOpen::default();
+        let pet = StabledPet {
+            pet_number: 7,
+            creature_entry: 1,
+            level: 80,
+            name: "Rex".into(),
+            flags: 0,
+        };
+        open.open(0x42, 1, vec![pet]);
+        world.insert_resource(open);
+        world.init_resource::<UiEvents>();
+        world
+            .run_system_once_with(on_session_end, SessionEvent::LoggedOut)
+            .unwrap();
+        assert_eq!(world.resource::<StableOpen>().pets.len(), 1);
+        assert_eq!(
+            world.resource::<UiEvents>().names(),
+            ["PET_STABLE_CLOSED", "PET_STABLE_CLOSED", "<world>"]
+        );
+        crate::ui_script::live::fire_handler_events(&mut world);
+        assert!(world.resource::<StableOpen>().pets.is_empty());
+    }
+
     fn run(
         result: u8,
         open: &mut StableOpen,
         aura: bool,
-    ) -> (bool, UiErrorKeys, Vec<u8>, Vec<ClientCommand>) {
+    ) -> (bool, Vec<UiError>, Vec<u8>, Vec<ClientCommand>) {
         let (tx, rx) = crossbeam_channel::unbounded();
         let commands = NetCommands(tx);
-        let mut errors = UiErrorKeys::default();
+        let mut errors = Vec::new();
         let mut tame = Vec::new();
         let update = stable_result(result, open, &mut errors, &mut tame, &commands, || aura);
         (update, errors, tame, rx.try_iter().collect())
@@ -246,8 +285,8 @@ mod tests {
         let (update, errors, tame, _) = run(code::ERR_EXOTIC, &mut open, false);
         assert!(!update);
         assert_eq!(tame, vec![12]);
-        assert!(errors.0.is_empty());
+        assert!(errors.is_empty());
         let (_, errors, _, _) = run(code::ERR_MONEY, &mut open, false);
-        assert_eq!(errors.0[0].key, "ERR_NOT_ENOUGH_MONEY");
+        assert_eq!(errors[0].key, "ERR_NOT_ENOUGH_MONEY");
     }
 }

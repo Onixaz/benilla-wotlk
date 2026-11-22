@@ -44,10 +44,11 @@ fn on_left_world(
     ui: Option<ResMut<crate::ui_script::live::UiEvents>>,
 ) {
     if let SessionEvent::LoggedOut = ev {
-        drop_possess(&mut possess, ui);
+        // The owed entry step is benilla's latch, dropped before the possess zero raises (`0x5d3360`).
         if let Some(mut owed) = owed {
             *owed = Default::default();
         }
+        drop_possess(&mut possess, ui);
     }
 }
 
@@ -62,10 +63,10 @@ fn on_session_end(
 ) {
     bar.clear();
     list.0.clear();
-    drop_possess(&mut possess, ui);
     if let Some(mut owed) = owed {
         *owed = Default::default();
     }
+    drop_possess(&mut possess, ui);
 }
 
 /// The world leave's possess zero (`0x5d3360`), firing `UPDATE_BONUS_ACTIONBAR` when one was held.
@@ -94,7 +95,8 @@ fn on_spells(
         let held = combat.held(bar.spells.pet_guid);
         let dead = player.iter().next().is_some_and(player_dead);
         set_pet_tail(changed, &mut bar, &mut possess, held, dead, &mut ui);
-        // The book's re-sort after the setter, `SPELLS_CHANGED` on every packet (`0x5d6d70`, `0x53ceae`).
+        // The book update with its macro pass, then `SPELLS_CHANGED` on every packet (`0x5d6d6d`, `0x53cea3`, `0x53ceae`).
+        ui.world(crate::ui_macro::book_rebind);
         ui.fire("SPELLS_CHANGED", Vec::new());
     }
 }
@@ -227,12 +229,26 @@ fn on_action_feedback(
             .is_some_and(|d| d.is_helpful());
         debug!("net: pet action feedback {reason}");
         // The line shows in the handler's turn, ahead of the refund (`0x5d4e3c`, `0x5d4e65`).
-        if let Some(key) = pet_feedback_key(reason, helpful) {
-            crate::ui_action::show_in_turn(&mut ui, "ui_pet", UiError::key(key));
-        }
-        // A refused target refunds the spell's start cooldown (`0x5d4e42`, `0x5d4e83`).
+        let Some(key) = pet_feedback_key(reason, helpful) else {
+            if matches!(reason, 2 | 3) {
+                pet_refund_start(&mut bar, spell, &mut ui);
+            }
+            return;
+        };
+        crate::ui_action::show_in_turn(&mut ui, "ui_pet", UiError::key(key));
+        // A refused target refunds the spell's start cooldown after the line's listeners (`0x5d4e42`, `0x5d4e83`).
         if matches!(reason, 2 | 3) {
-            pet_refund_start(&mut bar, spell, &mut ui);
+            ui.world(move |world| {
+                let ran = world.run_system_cached_with(
+                    |In(spell): In<u32>,
+                     mut bar: ResMut<PetBar>,
+                     mut ui: ResMut<crate::ui_script::live::UiEvents>| {
+                        pet_refund_start(&mut bar, spell, &mut ui);
+                    },
+                    spell,
+                );
+                crate::ui_cast::step_ran(ran, "a pet feedback's refund");
+            });
         }
     }
 }
@@ -245,11 +261,10 @@ fn pet_refund_start(bar: &mut PetBar, spell: u32, ui: &mut crate::ui_script::liv
     ui.fire("PET_BAR_UPDATE_COOLDOWN", Vec::new());
 }
 
+/// `SMSG_PET_CAST_FAILED` (`0x806c30`) in 12340's order: the start cooldown's refund, the pet's line (`0x806d60` -> `0x805610`), its cast's end (`0x80584a`), then the finish, whose release of the record the handler found (`0x806d2e`) runs after their listeners (`0x805854` -> `0x8055a2`).
 fn on_cast_failed(
     In(ev): In<SessionEvent>,
     mut bar: ResMut<super::PetBar>,
-    mut pending: ResMut<crate::spell::PendingCast>,
-    mut ends: PetCastEnd,
     mut ui: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     if let SessionEvent::PetCastFailed {
@@ -257,22 +272,49 @@ fn on_cast_failed(
         spell_id,
         reason,
         arg,
+        arg2,
         wire_reason,
     } = ev
     {
-        // The failure releases the record it names (`0x806d2e` -> `0x8051d0`).
-        pending.release(spell_id, cast_count);
         // The start cooldown the press armed refunds on the pet history, then the pet bar's flush (`0x806d41`, `0x806d46`).
         pet_refund_start(&mut bar, spell_id, &mut ui);
-        pet_cast_failed(spell_id, reason, arg, &mut *ui);
-        ends.end(spell_id, cast_count, wire_reason);
+        pet_cast_failed(spell_id, reason, arg, arg2, &mut *ui);
+        ui.world(move |world| pet_cast_end(world, spell_id, cast_count, reason, wire_reason));
     }
 }
 
-/// What the pet's end-cast reaches (`0x806c30`): the charm, else the summon.
+/// The pet display's tail after its line's listeners (`0x80581c`): the end on the casting unit alone (`0x80583d`, `0x80584a`), its `UNIT_SPELLCAST_FAILED`, then the finish's release (`0x805854` -> `0x8055a2`).
+fn pet_cast_end(world: &mut World, spell_id: u32, cast_count: u8, reason: u8, wire_reason: u8) {
+    let ran = world.run_system_cached_with(
+        |In((spell_id, cast_count, wire_reason)): In<(u32, u8, u8)>, mut ends: PetCastEnd| {
+            ends.end(spell_id, cast_count, wire_reason)
+        },
+        (spell_id, cast_count, wire_reason),
+    );
+    let Some(pet) = crate::script_calls::step_ran(ran).flatten() else {
+        return;
+    };
+    let Some(mut ui) = world.get_resource_mut::<crate::ui_script::live::UiEvents>() else {
+        return;
+    };
+    ui.cast_edge(crate::ui_cast::CastBarEdge::Failed {
+        caster: pet,
+        spell_id,
+        cast_count,
+        reason,
+    });
+    ui.world(move |world| {
+        if let Some(mut pending) = world.get_resource_mut::<crate::spell::PendingCast>() {
+            pending.release(spell_id, cast_count);
+        }
+    });
+}
+
+/// What the pet's end-cast reaches: the record's caster (`0x80581c`), else the charm, else the summon (`0x806c5b`, `0x80521e`).
 #[derive(bevy::ecs::system::SystemParam)]
 struct PetCastEnd<'w, 's> {
     commands: Commands<'w, 's>,
+    pending: Option<Res<'w, crate::spell::PendingCast>>,
     player: Query<'w, 's, &'static crate::net::ObjectStore, With<crate::net::SelfPlayer>>,
     index: Res<'w, GuidIndex>,
     casting: Query<'w, 's, &'static crate::creature_anim::Casting>,
@@ -283,13 +325,18 @@ struct PetCastEnd<'w, 's> {
 }
 
 impl PetCastEnd<'_, '_> {
-    /// The pet's running cast of this spell and count ends (`0x7fed81`); any other cast's end
-    /// still drops a held model of its count (`0x7feeb0`).
-    fn end(&mut self, spell_id: u32, cast_count: u8, wire_reason: u8) {
-        let pet = self.player.iter().next().and_then(|s| s.0.unit_pet_guid());
-        let Some(&entity) = pet.and_then(|g| self.index.0.get(&g)) else {
-            return;
-        };
+    /// The caster's running cast of this spell and count ends (`0x7fed81`); any other cast's end still drops a held model of its count (`0x7feeb0`). The caster's guid, when it is streamed.
+    fn end(&mut self, spell_id: u32, cast_count: u8, wire_reason: u8) -> Option<u64> {
+        // The display's tail ends the record's own caster (`0x80581f`-`0x805833`); with no record the handler's stand-in carries the pet (`0x80521e`).
+        let recorded = self
+            .pending
+            .as_deref()
+            .and_then(|p| p.find(spell_id, cast_count))
+            .map(|r| r.caster)
+            .filter(|&c| c != 0);
+        let pet =
+            recorded.or_else(|| self.player.iter().next().and_then(|s| s.0.unit_pet_guid()))?;
+        let &entity = self.index.0.get(&pet)?;
         let seq = self.play_seq.next();
         let running = self
             .casting
@@ -319,6 +366,7 @@ impl PetCastEnd<'_, '_> {
                 kind: crate::creature_anim::ReleaseKind::Clear(cast_count),
             });
         }
+        Some(pet)
     }
 }
 
@@ -605,10 +653,11 @@ fn pet_cast_failed(
     spell_id: u32,
     reason: u8,
     arg: Option<u32>,
+    arg2: Option<u32>,
     errors: &mut impl crate::ui_action::CastRefusals,
 ) {
-    debug!("net: pet cast failed — spell {spell_id} reason {reason:#04x} arg {arg:?}");
-    errors.push_pet(spell_id, reason, arg);
+    debug!("net: pet cast failed — spell {spell_id} reason {reason:#04x} arg {arg:?} {arg2:?}");
+    errors.push_pet(spell_id, reason, arg, arg2);
 }
 
 #[cfg(test)]
@@ -934,6 +983,132 @@ mod tests {
         let changed = pet_spells(a_bar(0x2B), None, &mut bar, &mut list);
         set_pet_tail(changed, &mut bar, &mut possess, None, false, &mut ui);
         assert_eq!(ui.names(), ["<world>", "UNIT_PET", "<world>"]);
+    }
+
+    /// `0x806c30`: the refund, the pet's line (`0x806d60`), the pet's cast end (`0x80584a`), then the finish's release of the record after their listeners (`0x805854` -> `0x8055a2`).
+    #[test]
+    fn a_pets_failure_ends_its_cast_after_the_line_and_releases_its_record_last() {
+        use bevy::ecs::system::RunSystemOnce;
+        const PET: u64 = 0xF140_0000_0000_0042;
+        const GROWL: u32 = 2649;
+        let mut world = World::new();
+        world.init_resource::<PetBar>();
+        world.init_resource::<crate::ui_script::live::UiEvents>();
+        world.init_resource::<GuidIndex>();
+        world.init_resource::<crate::creature_anim::PlaySeq>();
+        world.init_resource::<Messages<crate::creature_anim::CastEvent>>();
+        world.init_resource::<Messages<crate::creature_anim::MissileRelease>>();
+        world.spawn((
+            crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (benilla_protocol::field::FIELD_UNIT_SUMMON, PET as u32),
+                (
+                    benilla_protocol::field::FIELD_UNIT_SUMMON + 1,
+                    (PET >> 32) as u32,
+                ),
+            ])),
+            crate::net::SelfPlayer,
+        ));
+        let pet = world.spawn_empty().id();
+        world.resource_mut::<GuidIndex>().0.insert(PET, pet);
+        let mut pending = crate::spell::PendingCast::default();
+        pending.file(crate::spell::PendingRecord {
+            pet: true,
+            ..crate::spell::PendingRecord::player(GROWL, 3, PET)
+        });
+        world.insert_resource(pending);
+        let failed = SessionEvent::PetCastFailed {
+            cast_count: 3,
+            spell_id: GROWL,
+            reason: 0x5F,
+            arg: None,
+            arg2: None,
+            wire_reason: 0x5F,
+        };
+        world.run_system_once_with(on_cast_failed, failed).unwrap();
+        assert_eq!(
+            world.resource::<crate::ui_script::live::UiEvents>().names(),
+            ["PET_BAR_UPDATE_COOLDOWN", "<cast edge>", "<world>"],
+            "the refund, the line, then the display's tail after the line's listeners"
+        );
+        // The tail: the pet's end edge, then the release, the record standing until then.
+        world
+            .resource_mut::<crate::ui_script::live::UiEvents>()
+            .set_aside();
+        pet_cast_end(&mut world, GROWL, 3, 0x5F, 0x5F);
+        let edges = world
+            .resource::<crate::ui_script::live::UiEvents>()
+            .cast_edges();
+        assert!(
+            matches!(
+                edges.as_slice(),
+                [crate::ui_cast::CastBarEdge::Failed {
+                    caster: PET,
+                    cast_count: 3,
+                    ..
+                }]
+            ),
+            "{edges:?}"
+        );
+        assert!(
+            world
+                .resource::<crate::spell::PendingCast>()
+                .find(GROWL, 3)
+                .is_some(),
+            "the record stands while the line's and the end's listeners run"
+        );
+        crate::ui_script::live::fire_handler_events(&mut world);
+        assert!(world
+            .resource::<crate::spell::PendingCast>()
+            .find(GROWL, 3)
+            .is_none());
+    }
+
+    /// The display's tail ends the pending record's own caster (`0x80581f`-`0x805833`), not whatever the player's pet fields name now.
+    #[test]
+    fn a_pets_failure_ends_the_records_caster() {
+        const PET: u64 = 0xF140_0000_0000_0042;
+        const CHARMED: u64 = 0xF130_0000_0000_0077;
+        const GROWL: u32 = 2649;
+        let mut world = World::new();
+        world.init_resource::<crate::ui_script::live::UiEvents>();
+        world.init_resource::<GuidIndex>();
+        world.init_resource::<crate::creature_anim::PlaySeq>();
+        world.init_resource::<Messages<crate::creature_anim::CastEvent>>();
+        world.init_resource::<Messages<crate::creature_anim::MissileRelease>>();
+        world.spawn((
+            crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (benilla_protocol::field::FIELD_UNIT_SUMMON, PET as u32),
+                (
+                    benilla_protocol::field::FIELD_UNIT_SUMMON + 1,
+                    (PET >> 32) as u32,
+                ),
+            ])),
+            crate::net::SelfPlayer,
+        ));
+        for guid in [PET, CHARMED] {
+            let e = world.spawn_empty().id();
+            world.resource_mut::<GuidIndex>().0.insert(guid, e);
+        }
+        let mut pending = crate::spell::PendingCast::default();
+        pending.file(crate::spell::PendingRecord {
+            pet: true,
+            ..crate::spell::PendingRecord::player(GROWL, 3, CHARMED)
+        });
+        world.insert_resource(pending);
+        pet_cast_end(&mut world, GROWL, 3, 0x5F, 0x5F);
+        let edges = world
+            .resource::<crate::ui_script::live::UiEvents>()
+            .cast_edges();
+        assert!(
+            matches!(
+                edges.as_slice(),
+                [crate::ui_cast::CastBarEdge::Failed {
+                    caster: CHARMED,
+                    ..
+                }]
+            ),
+            "{edges:?}"
+        );
     }
 
     #[test]

@@ -182,11 +182,6 @@ impl Plugin for VehiclePlugin {
                 targeting::on_trajectory_cast_answer,
             )
             .add_systems(Startup, load_vehicle_tables.after(AssetSet::Open))
-            // The seated state a frame's `vehicle` token reads comes from the passenger chain.
-            .configure_sets(
-                Update,
-                crate::ui_aura::AuraEvents.after(passenger::advance_transits),
-            )
             .add_systems(
                 Update,
                 (

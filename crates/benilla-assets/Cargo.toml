@@ -3,7 +3,7 @@ name = "benilla-assets"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Bevy AssetSource + AssetLoaders over the WoW 1.12.1 MPQ patch chain"
+description = "Bevy AssetSource + AssetLoaders over the WoW 3.3.5a (build 12340) MPQ patch chain"
 
 [lints]
 workspace = true

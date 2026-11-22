@@ -279,8 +279,6 @@ mod net {
         >,
         styles: Option<Res<BarberStyles>>,
         catalog: Option<Res<crate::entities::CharCreate>>,
-        mut view: MessageWriter<BarberView>,
-        mut zoom: ResMut<ZoomLimit>,
         mut ui: ResMut<UiEvents>,
     ) {
         if !matches!(ev, SessionEvent::EnableBarberShop) {
@@ -330,9 +328,14 @@ mod net {
             _ => 1.0,
         };
         let scale = if f.unit_race() == Some(7) { 3.0 } else { 2.0 };
-        zoom.barber_floor = Some(radius);
-        view.write(BarberView::Enter {
-            distance: radius * scale,
+        // The camera's floor and zoom after the event's listeners (`0x52fbac` before `0x52fbb6`-`0x52fc26`).
+        ui.world(move |world| {
+            if let Some(mut zoom) = world.get_resource_mut::<ZoomLimit>() {
+                zoom.barber_floor = Some(radius);
+            }
+            world.write_message(BarberView::Enter {
+                distance: radius * scale,
+            });
         });
     }
 

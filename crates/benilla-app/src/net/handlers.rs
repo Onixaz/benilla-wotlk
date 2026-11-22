@@ -74,6 +74,35 @@ fn call(world: &mut World, id: SystemId<In<SessionEvent>>, name: &str, ev: Sessi
     crate::ui_script::live::fire_handler_events(world);
 }
 
+/// One step of an exclusive handler: what the handler queued so far fires, then `system` runs and its raises fire with the `World` lent, so a listener reads the state as of this step and the handler's next step reads what the listener wrote (`0x703e50` runs the listeners inside the handler); `None` when the step cannot run, logged as [`call`] logs a handler.
+pub(crate) fn step<I, O, M, S>(world: &mut World, system: S, input: I::Inner<'_>) -> Option<O>
+where
+    I: bevy::ecs::system::SystemInput + 'static,
+    O: 'static,
+    S: IntoSystem<I, O, M> + 'static,
+{
+    crate::ui_script::live::fire_handler_events(world);
+    let lua = world
+        .get_non_send_resource::<benilla_ui::script::UiScript>()
+        .map(|s| s.lua().clone());
+    let (ran, raised) = match &lua {
+        Some(lua) => benilla_ui::script::world_loan::raises_in_turn(lua, || {
+            world.run_system_cached_with(system, input)
+        }),
+        None => (world.run_system_cached_with(system, input), Vec::new()),
+    };
+    crate::script_calls::assert_one_raise_list(world, !raised.is_empty());
+    if !raised.is_empty() {
+        crate::ui_script::safe_world::lend(world, |script| {
+            for raise in raised {
+                raise.run(script);
+            }
+        });
+    }
+    crate::ui_script::live::fire_handler_events(world);
+    crate::script_calls::step_ran(ran)
+}
+
 /// `app.net_handler(SessionEventKind::X, on_x)` registers a system taking `In<SessionEvent>`;
 /// several handlers on one kind run in registration order.
 pub(crate) trait NetHandlerApp {
@@ -141,6 +170,10 @@ pub(crate) fn dispatch(world: &mut World, events: Vec<SessionEvent>) {
     }
     world.insert_resource(handlers);
 }
+
+#[cfg(test)]
+#[path = "handler_step_tests.rs"]
+mod step_tests;
 
 #[cfg(test)]
 mod tests {

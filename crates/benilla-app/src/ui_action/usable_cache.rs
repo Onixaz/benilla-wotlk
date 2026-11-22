@@ -26,6 +26,9 @@ use crate::spell::{usable, Cooldowns};
 
 use super::{PlayerActions, Spells};
 
+/// `UNIT_FLAG_TAXI_FLIGHT`, which passes a set slot past the control test (`0x5aa03d`).
+const UNIT_FLAG_TAXI_FLIGHT: u32 = 0x10_0000;
+
 /// The bar's slots, the length of its usable cache.
 pub(crate) const BAR_SLOTS: usize = 144;
 
@@ -210,6 +213,8 @@ pub(crate) struct UsableWorld<'w> {
     group: Option<Res<'w, crate::ui_party::GroupState>>,
     combo: Option<Res<'w, crate::spell::ComboPoints>>,
     auto: crate::spell::AutoChecks<'w>,
+    /// The client-control flag a slot with no spell reads (`0x5aa063`).
+    control: Option<Res<'w, crate::net::ControlFlag>>,
 }
 
 /// The tables beside them, one parameter.
@@ -279,6 +284,8 @@ pub(crate) struct Reads<'a, 'w, 's> {
     /// The player's and the pet's combo points on the target.
     combo: (u8, u8),
     pending: Option<&'a crate::pending_item_ops::PendingItemOps>,
+    /// Whether we hold the client's control (`0xbcfb8c`), which a slot with no spell needs.
+    control: bool,
 }
 
 impl UsableWorld<'_> {
@@ -362,6 +369,7 @@ impl<'a, 'w, 's> Sources<'a, 'w, 's> {
             place,
             combo,
             pending: self.pending,
+            control: self.world.control.as_deref().is_none_or(|c| c.0),
         })
     }
 }
@@ -485,15 +493,14 @@ impl Reads<'_, '_, '_> {
         item || slot
     }
 
-    /// One bar slot's bytes (`0x5aa3b0`'s compute): the slot through its macro, a pet slot through
-    /// the pet bar, then the walk for a spell or an item; a set's slot with `sets_usable` (`0x5a9fe3`).
+    /// One bar slot's bytes (`0x5aa3b6`'s compute): through its macro or the pet bar, then the walk; a set's slot with `sets_usable` (`0x5a9fe3`).
     pub(crate) fn slot(&self, slot: u8, sets_usable: bool) -> Usable {
         use crate::ui_macro::BoundSpell;
         let Some(button) = self.slots.buttons.get(&slot) else {
             return Usable::default();
         };
         if button.kind == ACTION_KIND_EQUIPMENT_SET {
-            // The sets usable, the set saved (`0x5ae5c0`), none of its items and none of its slots locked (`0x5aa00d`, `0x5aa01e`).
+            // A usable, saved, unlocked set passes on a taxi flight, else needs our control (`0x5ae5c0`-`0x5aa01e`, `0x5aa03d`, `0x5aa063`).
             let usable = sets_usable
                 && self.me.is_some_and(|(_, store)| {
                     self.actions
@@ -501,6 +508,7 @@ impl Reads<'_, '_, '_> {
                         .iter()
                         .find(|s| s.id == button.action)
                         .is_some_and(|set| !self.set_locked(store, set))
+                        && (store.0.unit_flags() & UNIT_FLAG_TAXI_FLIGHT != 0 || self.control)
                 });
             return Usable {
                 usable,
@@ -510,10 +518,10 @@ impl Reads<'_, '_, '_> {
         let (kind, id) = match button.kind {
             ACTION_KIND_MACRO => match self.bound.and_then(|b| b.0.get(&button.action)) {
                 Some(BoundSpell::Spell(s)) => (ACTION_KIND_SPELL, *s),
-                // A macro that casts nothing is usable while it exists.
+                // A macro that casts nothing needs our control (`0x5aa063`, `0x5aa0c5`).
                 Some(BoundSpell::None) => {
                     return Usable {
-                        usable: true,
+                        usable: self.control,
                         no_power: false,
                     }
                 }
@@ -530,9 +538,9 @@ impl Reads<'_, '_, '_> {
                 return Usable::default();
             };
             if !entry.is_spell() {
-                // A mode or an order: usable (the control gate is not built).
+                // A mode or an order has no spell: it needs our control (`0x5aa063`, `0x5aa0d6`).
                 return Usable {
-                    usable: true,
+                    usable: self.control,
                     no_power: false,
                 };
             }
@@ -570,6 +578,10 @@ impl Reads<'_, '_, '_> {
                     .items
                     .template(id, 0, self.commands)
                     .and_then(|t| t.use_spell);
+                // An item with no use spell is a slot with no spell: it needs our control (`0x5aa063`, `0x5aa0a7`).
+                if use_spell.is_none() && !self.control {
+                    return Usable::default();
+                }
                 let count = self.carried.get(&id).copied().unwrap_or(0);
                 let worn = (0..19).any(|i| {
                     store
@@ -1251,6 +1263,85 @@ mod tests {
         assert!(power(&mut world, 20).is_empty(), "still short");
         assert_eq!(power(&mut world, 50), ["ACTIONBAR_UPDATE_USABLE"]);
         assert_eq!(pair(&world), (true, false));
+    }
+
+    /// A spell-less slot needs our control (`0x5aa063`): a set (taxi passes it, `0x5aa03d`), a macro, an item (`0x5aa0a7`).
+    #[test]
+    fn the_spell_less_slots_read_our_control() {
+        const CLOTH: u32 = 2589;
+        const CLOTH_GUID: u64 = 0x4000_0000_0000_0042;
+        let mut world = world(Vec::new(), &[], &[(FIELD_UNIT_HEALTH, 100)]);
+        world.resource_mut::<PlayerActions>().equipment_sets.push(
+            benilla_protocol::messages::EquipmentSet {
+                guid: 1,
+                id: 3,
+                name: "Tank".into(),
+                icon: "INV_Shield_06".into(),
+                items: [1; benilla_protocol::messages::EQUIPMENT_SET_SLOTS],
+            },
+        );
+        let mut bound = crate::ui_macro::MacroBoundSpells::default();
+        bound.0.insert(5, crate::ui_macro::BoundSpell::None);
+        world.insert_resource(bound);
+        {
+            let mut bar = world.resource_mut::<crate::ui_action::ActionSlots>();
+            for (slot, action, kind) in [
+                (0, 3, ACTION_KIND_EQUIPMENT_SET),
+                (1, 5, ACTION_KIND_MACRO),
+                (2, CLOTH, ACTION_KIND_ITEM),
+            ] {
+                bar.buttons.insert(
+                    slot,
+                    benilla_protocol::messages::ActionButton { slot, action, kind },
+                );
+            }
+        }
+        world.resource_mut::<UsableCaches>().sets_usable = true;
+        world
+            .resource_mut::<Items>()
+            .insert_template(CLOTH, Some(crate::items::test_template("Linen Cloth")));
+        crate::items::test_spawn_item(
+            &mut world,
+            CLOTH_GUID,
+            benilla_protocol::ObjectFields::from_pairs(&[(
+                benilla_protocol::field::FIELD_OBJECT_ENTRY,
+                CLOTH,
+            )]),
+            false,
+        );
+        let usable = |world: &mut World, control: bool, flags: u32| {
+            world.insert_resource(crate::net::ControlFlag(control));
+            let me = world.resource::<crate::net::GuidIndex>().0[&ME];
+            world
+                .entity_mut(me)
+                .insert(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                    (FIELD_UNIT_HEALTH, 100),
+                    (benilla_protocol::field::FIELD_UNIT_FLAGS, flags),
+                    (
+                        benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD,
+                        CLOTH_GUID as u32,
+                    ),
+                    (
+                        benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD + 1,
+                        (CLOTH_GUID >> 32) as u32,
+                    ),
+                ])));
+            step(Pass::Full)(world);
+            fired(world);
+            let slots = &world.resource::<UsableCaches>().slots;
+            (slots[0].usable, slots[1].usable, slots[2].usable)
+        };
+        assert_eq!(usable(&mut world, true, 0), (true, true, true));
+        assert_eq!(
+            usable(&mut world, false, 0),
+            (false, false, false),
+            "no control"
+        );
+        assert_eq!(
+            usable(&mut world, false, UNIT_FLAG_TAXI_FLIGHT),
+            (true, false, false),
+            "a taxi flight passes the set alone"
+        );
     }
 
     /// `IsUsableAction`'s pair off the two bytes (`0x5a7e60`).
