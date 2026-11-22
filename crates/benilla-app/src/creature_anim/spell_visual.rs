@@ -1023,6 +1023,8 @@ type KitSpawnWriters<'w> = (
     Option<ResMut<'w, BeamKitWaits>>,
     Res<'w, Time>,
     MessageWriter<'w, BaseRearm>,
+    // Our trajectory casts whose visuals played at the press (`0x809f80`).
+    Option<ResMut<'w, crate::vehicle::LocalTrajectoryGos>>,
 );
 
 /// The writers one kit play fans out to.
@@ -2307,6 +2309,7 @@ pub(super) fn route_cast_visuals(
     );
     let kit_clears = &mut spawns.10;
     let rearms = &mut spawns.13;
+    let local_gos = &mut spawns.14;
     // Nothing watches the waits for changes.
     let reached = waits.as_mut().map_or_else(Vec::new, |w| {
         w.bypass_change_detection()
@@ -2574,6 +2577,10 @@ pub(super) fn route_cast_visuals(
                         ceremony: false,
                     });
                 }
+                // A trajectory cast of ours played its cast kit at the press (`0x80e1b0`).
+                let local = local_gos
+                    .as_deref()
+                    .is_some_and(|l| l.has(ev.entity, ev.spell_id));
                 // For a basic shot the cast kit is the fire clip, from the ranged fallback.
                 if let Some(kit) = resolve_kit_traced(
                     "cast",
@@ -2594,15 +2601,17 @@ pub(super) fn route_cast_visuals(
                     } else {
                         commands.entity(ev.entity).try_remove::<super::RangedHold>();
                     }
-                    play_kit(
-                        ev.entity,
-                        ev.spell_id,
-                        &kit,
-                        KitPlay::DISCRETE,
-                        ev.seq,
-                        &visuals.0,
-                        &mut out,
-                    );
+                    if !local {
+                        play_kit(
+                            ev.entity,
+                            ev.spell_id,
+                            &kit,
+                            KitPlay::DISCRETE,
+                            ev.seq,
+                            &visuals.0,
+                            &mut out,
+                        );
+                    }
                 }
             }
             CastEventKind::Impact {
@@ -2883,10 +2892,16 @@ pub(super) fn route_cast_visuals(
             let dest_tag = stages.and_then(|s| s.missile_dest_attachment());
             let missile_sound = stages.and_then(|s| s.missile_sound);
             // The release gate (inverted).
-            let awaits_release = stages
-                .filter(|s| s.cast != 0)
-                .and_then(|s| visuals.0.kit(s.cast))
-                .is_some_and(|k| k.anim_id.is_some());
+            // A trajectory cast of ours was released by its animation at the press: its missile
+            // goes at the GO (`0x80e1b0`).
+            let local = local_gos
+                .as_deref_mut()
+                .is_some_and(|l| l.take(go.caster, go.spell_id));
+            let awaits_release = !local
+                && stages
+                    .filter(|s| s.cast != 0)
+                    .and_then(|s| visuals.0.kit(s.cast))
+                    .is_some_and(|k| k.anim_id.is_some());
             let base = MissileSpawn {
                 caster: go.caster,
                 spell_id: go.spell_id,

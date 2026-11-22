@@ -397,6 +397,29 @@ pub fn pet_cast_trajectory(
     body
 }
 
+/// Body of `CMSG_UPDATE_MISSILE_TRAJECTORY` (`0x6fd6b0`): the caster's `u64` guid, the spell, the
+/// pitch and speed, the launch and the impact, then `u8` 1 and the mover's `MSG_MOVE_STOP` report
+/// (`0x71f060`).
+pub fn update_missile_trajectory(
+    caster: u64,
+    spell_id: u32,
+    shot: &TrajectoryShot,
+    stop: &crate::messages::MovementInfo,
+) -> Vec<u8> {
+    let mut body = Vec::with_capacity(96);
+    body.extend_from_slice(&caster.to_le_bytes());
+    body.extend_from_slice(&spell_id.to_le_bytes());
+    body.extend_from_slice(&shot.pitch.to_le_bytes());
+    body.extend_from_slice(&shot.speed.to_le_bytes());
+    for c in shot.source.into_iter().chain(shot.dest) {
+        body.extend_from_slice(&c.to_le_bytes());
+    }
+    body.push(1);
+    body.extend_from_slice(&u32::from(super::opcode::MSG_MOVE_STOP).to_le_bytes());
+    stop.write(caster, &mut body);
+    body
+}
+
 /// Body of `CMSG_PET_STOP_ATTACK` (opcode 746, `0x5d4665`): the pet guid, sent by the Attack
 /// button's second press.
 pub fn pet_stop_attack(pet_guid: u64) -> Vec<u8> {
@@ -598,6 +621,44 @@ mod tests {
 
     /// A trajectory shot: flags 2, mask `0x60` with both points, pitch and speed, then the mover's
     /// stop report behind a 1.
+    /// The final aim: guid, spell, pitch, speed, the two points bare, then the stop report.
+    #[test]
+    fn update_missile_trajectory_body_golden() {
+        let shot = TrajectoryShot {
+            source: [1.0, 2.0, 3.0],
+            dest: [4.0, 5.0, 6.0],
+            pitch: 0.5,
+            speed: 30.0,
+        };
+        let stop = crate::messages::MovementInfo {
+            flags: 0,
+            flags2: 0,
+            timestamp: 9,
+            position: Vector3d {
+                x: 7.0,
+                y: 8.0,
+                z: 9.0,
+            },
+            orientation: 1.0,
+            transport: None,
+            pitch: 0.0,
+            fall_time: 0,
+            jump: None,
+        };
+        let body = update_missile_trajectory(0xF150_0000_0000_0007, 47801, &shot, &stop);
+        let mut want = 0xF150_0000_0000_0007u64.to_le_bytes().to_vec();
+        want.extend_from_slice(&47801u32.to_le_bytes());
+        want.extend_from_slice(&0.5f32.to_le_bytes());
+        want.extend_from_slice(&30.0f32.to_le_bytes());
+        for c in [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0] {
+            want.extend_from_slice(&c.to_le_bytes());
+        }
+        want.push(1);
+        want.extend_from_slice(&0xB7u32.to_le_bytes());
+        stop.write(0xF150_0000_0000_0007, &mut want);
+        assert_eq!(body, want);
+    }
+
     #[test]
     fn pet_cast_trajectory_body_golden() {
         let shot = TrajectoryShot {

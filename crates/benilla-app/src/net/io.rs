@@ -1641,6 +1641,23 @@ pub(super) fn writer_loop(
                         pos,
                         orientation,
                     ),
+                    ClientCommand::UpdateMissileTrajectory {
+                        caster,
+                        spell_id,
+                        shot,
+                        flags,
+                        flags2,
+                        pos,
+                        orientation,
+                    } => w.update_missile_trajectory(
+                        caster,
+                        spell_id,
+                        &shot,
+                        flags,
+                        flags2,
+                        pos,
+                        orientation,
+                    ),
                     ClientCommand::PetSetAction { pet_guid, entries } => {
                         w.pet_set_action(pet_guid, &entries)
                     }

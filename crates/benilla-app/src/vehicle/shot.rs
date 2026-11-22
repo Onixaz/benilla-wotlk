@@ -5,11 +5,12 @@
 //! (`0x80b406`-`0x80b46c`).
 //!
 //! The aim preview with its arc and impact models (`0x6fda20`) is [`super::targeting`]'s, flying
-//! this same flight at the rows' middles. Not built: an instant cast with a
-//! cast animation, which the reference sends at the animation's release (`0x809f80`, `0x80de60`),
-//! and a cast with a cast time, whose final aim follows as `CMSG_UPDATE_MISSILE_TRAJECTORY`
-//! (`0x6fd6b0`): both are aimed and sent at the press here; the spell visual's launch offset
-//! (`0x720bf0`); a sloped mover's tilt of the launch; and the sequence mark the reference writes
+//! this same flight at the rows' middles. An instant cast with a cast animation is held until the
+//! animation releases its missile, then aimed and sent (`0x809f80`, `0x80de60`); a cast with a cast
+//! time goes at the press and sends its final aim as `CMSG_UPDATE_MISSILE_TRAJECTORY` once its time
+//! has run, at the release for a kit with an animation (`0x6fbe50`, `0x6fd6b0`).
+//!
+//! Not built: the spell visual's launch offset (`0x720bf0`); a sloped mover's tilt of the launch; and the sequence mark the reference writes
 //! into the floats' low bits (`0x7fe520`), which AzerothCore does not read. The launch lifts its
 //! wall test from the mover's base by half its collision height, where the reference lifts it to
 //! the root's model collision-box centre.
@@ -209,6 +210,69 @@ pub(super) fn world_hit<'a>(
 
 /// Aim and send each handed trajectory cast, from the mover we drive.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)] // a Bevy system's full input set
+/// An instant trajectory cast held until its cast animation releases the missile (`0x809f80`):
+/// the press plays the cast's animation, and the release sends it, aimed then (`0x72df00` →
+/// `0x80de60`). A second press while one is held fails (`0x809f80`'s error 105).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct HeldCast {
+    cast: TrajectoryCast,
+    mover: Entity,
+    since_s: f64,
+}
+
+/// A trajectory cast with a cast time, whose final aim goes out as
+/// `CMSG_UPDATE_MISSILE_TRAJECTORY` once the cast time has run (`0x6fbe50`, `0x6fd6b0`), at its
+/// animation's missile release for a cast kit with one.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct FinalAim {
+    caster: u64,
+    spell_id: u32,
+    mover: Entity,
+    due_s: f64,
+    /// Waits past the cast time for the animation's release.
+    at_release: bool,
+}
+
+/// Our trajectory casts whose visuals played at the press and whose aim went at the release
+/// (`0x809f80`): their GO plays no cast kit and launches at once (`0x80e1b0`'s trajectory arm),
+/// by caster and spell, with the send's time. Deviation: the reference flies its own missile
+/// from the release; here the GO's does, a round trip later.
+#[derive(Resource, Default)]
+pub(crate) struct LocalTrajectoryGos(pub(crate) Vec<(Entity, u32, f64)>);
+
+impl LocalTrajectoryGos {
+    /// Whether `caster`'s GO of `spell_id` is one of ours.
+    pub(crate) fn has(&self, caster: Entity, spell_id: u32) -> bool {
+        self.0.iter().any(|&(e, s, _)| e == caster && s == spell_id)
+    }
+
+    /// Spend the entry the GO consumed.
+    pub(crate) fn take(&mut self, caster: Entity, spell_id: u32) -> bool {
+        let before = self.0.len();
+        self.0.retain(|&(e, s, _)| !(e == caster && s == spell_id));
+        self.0.len() != before
+    }
+}
+
+/// How long a sent cast waits for its GO before it is forgotten.
+const LOCAL_GO_WAIT_S: f64 = 5.0;
+
+/// The casts the send holds between frames.
+#[derive(Default)]
+pub(super) struct ShotMemory {
+    held: Option<HeldCast>,
+    final_aim: Option<FinalAim>,
+}
+
+/// The longest a held cast or a final aim waits for its animation's release: past it, it goes
+/// as it stands. Deviation: the reference waits on the release alone.
+const RELEASE_WAIT_S: f64 = 2.0;
+
+/// A release keyframe on the mover: the spell's cast-hand and target markers, and the bow's.
+const RELEASE_IDENTS: [[u8; 4]; 4] = [*b"$CSL", *b"$CSR", *b"$CST", *b"$BWR"];
+
+/// Aim and send the frame's trajectory casts, and the held ones their release frees.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)] // a Bevy system's full input set
 pub(super) fn send_trajectory_casts(
     mut casts: ResMut<TrajectoryCasts>,
     net: Option<Res<crate::net::NetCommands>>,
@@ -232,23 +296,107 @@ pub(super) fn send_trajectory_casts(
     units: crate::entities::AttachPosQuery,
     joints: Query<&GlobalTransform>,
     world: benilla_world::collision::WorldCollision,
-    (mut targeting, mods): (
+    (mut targeting, mods, mut memory, time, mut keys, mut anims, mut local_gos): (
         ResMut<super::targeting::TrajectoryTargeting>,
         Option<Res<crate::spell::SpellModifiers>>,
+        Local<ShotMemory>,
+        Res<Time<Real>>,
+        MessageReader<crate::creature_anim::AnimSoundEvent>,
+        Option<MessageWriter<crate::creature_anim::EmoteAnim>>,
+        Option<ResMut<LocalTrajectoryGos>>,
     ),
 ) {
-    if casts.0.is_empty() {
+    let now = time.elapsed_secs_f64();
+    if let Some(l) = local_gos.as_mut().filter(|l| !l.0.is_empty()) {
+        l.0.retain(|&(.., at)| now - at < LOCAL_GO_WAIT_S);
+    }
+    let released = |mover: Entity, keys: &[(Entity, [u8; 4])]| {
+        keys.iter()
+            .any(|&(e, ident)| e == mover && RELEASE_IDENTS.contains(&ident))
+    };
+    let keys: Vec<(Entity, [u8; 4])> = keys.read().map(|k| (k.entity, k.ident)).collect();
+    // The held cast goes on its release, aimed now.
+    let mut todo: Vec<(TrajectoryCast, bool)> = std::mem::take(&mut casts.0)
+        .into_iter()
+        .map(|c| (c, false))
+        .collect();
+    if let Some(h) = memory.held {
+        let timed_out = now - h.since_s >= RELEASE_WAIT_S;
+        if released(h.mover, &keys) || timed_out {
+            debug!(
+                "vehicle: held trajectory cast {} released after {:.3} s{}",
+                h.cast.spell_id,
+                now - h.since_s,
+                if timed_out { " (no release)" } else { "" }
+            );
+            memory.held = None;
+            todo.push((h.cast, true));
+        }
+    }
+    let final_due = memory.final_aim.filter(|f| {
+        now >= f.due_s
+            && (!f.at_release || released(f.mover, &keys) || now >= f.due_s + RELEASE_WAIT_S)
+    });
+    if todo.is_empty() && final_due.is_none() {
         return;
     }
-    let casts = std::mem::take(&mut casts.0);
     let (Some(net), Some(player)) = (net, player) else {
         return;
     };
-    for cast in casts {
-        let Ok((entity, guid, vehicle, flags2, height, store, casting)) = mover.single() else {
-            debug!("vehicle: trajectory cast {} with no mover", cast.spell_id);
-            continue;
-        };
+    let Ok((entity, guid, vehicle, flags2, height, store, casting)) = mover.single() else {
+        memory.final_aim = None;
+        debug!("vehicle: {} trajectory casts with no mover", todo.len());
+        return;
+    };
+    // The flight from the mover's aim this frame, for spell `def`'s missile row.
+    let fly_now = |missile: &SpellMissileRec| {
+        let launch = crate::entities::aim_launch_pos(entity, &units, &joints)?;
+        let from = aim_from(
+            missile,
+            vehicle.and_then(|v| tables.vehicle(v.id)),
+            &aim,
+            &player,
+            launch,
+            height,
+        );
+        Some(fly(&from, rand::random::<f32>, world_hit(&world)))
+    };
+    let pose = (
+        player.move_flags(),
+        flags2.map_or(0, |f| f.0),
+        benilla_assets::coords::bevy_to_wow(player.pos),
+        player.facing().rem_euclid(std::f32::consts::TAU),
+    );
+    // The final aim of a cast whose time has run (`0x6fd6b0`).
+    if let Some(f) = final_due {
+        memory.final_aim = None;
+        let missile = spells
+            .as_deref()
+            .and_then(|s| s.catalog.get(f.spell_id))
+            .zip(visuals.as_deref())
+            .and_then(|(d, v)| v.0.missile(d.missile));
+        if let Some(shot) = missile.and_then(fly_now).filter(|_| guid.0 == f.caster) {
+            debug!(
+                "vehicle: trajectory {} final aim pitch {:.3} speed {:.2}",
+                f.spell_id, shot.pitch, shot.speed
+            );
+            let _ = net.0.send(ClientCommand::UpdateMissileTrajectory {
+                caster: f.caster,
+                spell_id: f.spell_id,
+                shot: TrajectoryShot {
+                    source: shot.launch.to_array(),
+                    dest: shot.impact.to_array(),
+                    pitch: shot.pitch,
+                    speed: shot.speed,
+                },
+                flags: pose.0,
+                flags2: pose.1,
+                pos: pose.2,
+                orientation: pose.3,
+            });
+        }
+    }
+    for (cast, freed) in todo {
         // `0x80b3a6`: a caster that is not the active mover fails unreported.
         if guid.0 != cast.caster {
             debug!(
@@ -265,43 +413,69 @@ pub(super) fn send_trajectory_casts(
         else {
             continue;
         };
-        // The aim preview draws the spell sent (`0x6fbf90`), and its cast leg holds a cast the
-        // reference would hold for its animation (`0x809f80`).
-        let instant = spells.as_deref().is_some_and(|s| {
-            let level = store.and_then(|s| s.0.unit_level()).unwrap_or(0);
-            let cast_ms = match mods.as_deref() {
-                Some(m) => s.cast_time_unclamped_ms(def, level, m),
-                None => s.cast_time_unclamped_ms(def, level, &Default::default()),
-            };
-            cast_ms <= 0
+        let level = store.and_then(|s| s.0.unit_level()).unwrap_or(0);
+        let cast_ms = spells.as_deref().map_or(0, |s| match mods.as_deref() {
+            Some(m) => s.cast_time_unclamped_ms(def, level, m),
+            None => s.cast_time_unclamped_ms(def, level, &Default::default()),
         });
-        let held = instant
-            && visuals.as_deref().is_some_and(|v| {
-                let stages =
-                    v.0.stages(crate::creature_anim::spell_visual::spell_visual_id(def));
-                super::targeting::held_until_release(
-                    casting.is_some(),
-                    stages,
-                    stages.and_then(|st| v.0.kit(st.cast)),
-                )
-            });
-        targeting.sent(cast.caster, cast.count, cast.spell_id, held);
-        let Some(launch) = crate::entities::aim_launch_pos(entity, &units, &joints) else {
+        let stages = visuals.as_deref().and_then(|v| {
+            v.0.stages(crate::creature_anim::spell_visual::spell_visual_id(def))
+        });
+        let kit = stages.and_then(|st| visuals.as_deref()?.0.kit(st.cast));
+        // The aim preview draws the spell sent (`0x6fbf90`), and its cast leg holds a cast the
+        // reference holds for its animation (`0x809f80`).
+        let held =
+            cast_ms <= 0 && super::targeting::held_until_release(casting.is_some(), stages, kit);
+        if !freed {
+            if held {
+                if memory.held.is_some() {
+                    // `0x809f80`: one held cast at a time; the second fails (error 105).
+                    debug!(
+                        "vehicle: trajectory cast {} refused, one is held",
+                        cast.spell_id
+                    );
+                    continue;
+                }
+                targeting.sent(cast.caster, cast.count, cast.spell_id, true);
+                // The press plays the cast's animation; its release sends the cast.
+                if let (Some(out), Some(anim)) = (
+                    anims.as_mut(),
+                    kit.and_then(|k| k.anim_id).filter(|&a| a > 0),
+                ) {
+                    out.write(crate::creature_anim::EmoteAnim {
+                        entity,
+                        anim_id: anim,
+                        seq: 0,
+                        via_player: false,
+                        play: Default::default(),
+                    });
+                }
+                debug!(
+                    "vehicle: trajectory cast {} held for its animation's release",
+                    cast.spell_id
+                );
+                memory.held = Some(HeldCast {
+                    cast,
+                    mover: entity,
+                    since_s: now,
+                });
+                continue;
+            }
+            targeting.sent(cast.caster, cast.count, cast.spell_id, false);
+        }
+        let Some(shot) = fly_now(missile) else {
             continue;
         };
-        let from = aim_from(
-            missile,
-            vehicle.and_then(|v| tables.vehicle(v.id)),
-            &aim,
-            &player,
-            launch,
-            height,
-        );
-        let shot = fly(&from, rand::random::<f32>, world_hit(&world));
         debug!(
             "vehicle: trajectory cast {} pitch {:.3} speed {:.2} lands in {:.2} s at {:?}",
             cast.spell_id, shot.pitch, shot.speed, shot.time, shot.impact
         );
+        // A released cast's visuals already played: its GO plays none.
+        if freed {
+            if let Some(l) = local_gos.as_mut() {
+                l.0.push((entity, cast.spell_id, now));
+            }
+        }
         let _ = net.0.send(ClientCommand::PetCastTrajectory {
             count: cast.count,
             pet_guid: cast.caster,
@@ -312,17 +486,41 @@ pub(super) fn send_trajectory_casts(
                 pitch: shot.pitch,
                 speed: shot.speed,
             },
-            flags: player.move_flags(),
-            flags2: flags2.map_or(0, |f| f.0),
-            pos: benilla_assets::coords::bevy_to_wow(player.pos),
-            orientation: player.facing().rem_euclid(std::f32::consts::TAU),
+            flags: pose.0,
+            flags2: pose.1,
+            pos: pose.2,
+            orientation: pose.3,
         });
+        // A cast with a cast time sends its final aim once the time has run (`0x6fbe50`), at the
+        // missile's release for a kit with an animation (`0x6fbf90`'s tail).
+        if cast_ms > 0 && missile.flags & 0x1 != 0 {
+            memory.final_aim = Some(FinalAim {
+                caster: cast.caster,
+                spell_id: cast.spell_id,
+                mover: entity,
+                due_s: now + f64::from(cast_ms) / 1000.0,
+                at_release: super::targeting::held_until_release(false, stages, kit),
+            });
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A released cast's GO is ours once: it is found by caster and spell, then spent.
+    #[test]
+    fn a_released_cast_s_go_is_spent_once() {
+        let mut w = World::new();
+        let caster = w.spawn_empty().id();
+        let mut gos = LocalTrajectoryGos::default();
+        gos.0.push((caster, 47801, 1.0));
+        assert!(gos.has(caster, 47801));
+        assert!(!gos.has(caster, 1));
+        assert!(gos.take(caster, 47801));
+        assert!(!gos.take(caster, 47801), "spent");
+    }
 
     fn missile() -> SpellMissileRec {
         SpellMissileRec {
