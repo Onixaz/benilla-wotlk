@@ -502,6 +502,10 @@ pub(crate) enum RecordWait {
     /// The loot window's, from a row's record read at the open or a slot change (`0x589899`,
     /// `0x589af3` -> `0x589460`), with the window's generation.
     Loot(u64),
+    /// A group loot roll's start, by roll id (`0x6fb410` -> `0x6fb1f0`).
+    GroupRollStart(u32),
+    /// A group loot roll line's, by line id (`0x6faf04`, `0x6fbc11`, `0x6fb6c6`).
+    GroupRollLine(u32),
     /// An item push's, from the push handler's miss (`0x52398d` -> `0x512b60`).
     ItemPush,
     /// A refusal's line that named the item, linked each time (`0x8086bc`, `0x80874e` ->
