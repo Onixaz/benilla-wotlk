@@ -39,8 +39,6 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::SpellSuperceded, on_spell_superceded)
         .net_handler(K::CastResult, on_cast_result)
         .net_handler(K::SpellStart, on_spell_start)
-        // Before `on_spell_go`, which clears the in-flight guard the chain tests.
-        .net_handler(K::SpellGo, on_own_spell_go)
         .net_handler(K::SpellGo, on_spell_go)
         .net_handler(K::SpellChainTargets, on_spell_chain_targets)
         .net_handler(K::SpellFailed, on_spell_failed)
@@ -450,12 +448,8 @@ pub(crate) struct Reply<'w, 's> {
     play_seq: ResMut<'w, crate::creature_anim::PlaySeq>,
 }
 
-/// The cast-result handler, the one handler that casts: a reply whose spell names a
-/// `modalNextSpell` (column 38) chains it through the ladder in the same call (the cast attempt),
-/// so it arms the in-flight slot before the next packet.
-///
-/// The chained cast goes out at the null target guid (`ebx = 0`), so it binds through the target
-/// resolve's ordinary walk ([`CastTargeting::context`]) and takes every rung a press takes.
+/// The cast-failed handler (`0x808200`): its line, its cast's end, then its finish
+/// ([`finish_ours`]), whose `modalNextSpell` chain goes out before the next packet.
 fn on_cast_result(In(ev): In<SessionEvent>, mut ladder: CastLadder, mut r: Reply) {
     if let SessionEvent::CastResult {
         cast_count,
@@ -467,7 +461,7 @@ fn on_cast_result(In(ev): In<SessionEvent>, mut ladder: CastLadder, mut r: Reply
         wire_reason,
     } = ev
     {
-        use crate::ui_action::signals::{cooldown_site, selection, spellbook, Tail};
+        use crate::ui_action::signals::{cooldown_site, spellbook, Tail};
         let row = ladder
             .spells
             .as_deref()
@@ -492,7 +486,7 @@ fn on_cast_result(In(ev): In<SessionEvent>, mut ladder: CastLadder, mut r: Reply
             !success && reason != Some(0x17) && ladder.cooldowns.has_spell(spell_id);
         // The routine's auto-repeat cancel (`0x8082d3`, `0x8083c6`), signalled in its place below.
         let mut cancels: Vec<&'static str> = Vec::new();
-        let chained = cast_result(
+        cast_result(
             (spell_id, cast_count, wire_reason.unwrap_or(0)),
             success,
             reason,
@@ -509,7 +503,7 @@ fn on_cast_result(In(ev): In<SessionEvent>, mut ladder: CastLadder, mut r: Reply
             &ladder.commands,
             r.play_seq.next(),
             &mut cancels,
-            success,
+            false,
         );
         // The routine's signals in its order: the hold's release, the auto-repeat cancel, the
         // start cooldown's clear, then the cast's end through `0x7fecc0` and its finish's
@@ -534,6 +528,7 @@ fn on_cast_result(In(ev): In<SessionEvent>, mut ladder: CastLadder, mut r: Reply
                 ..crate::ui_action::CastFail::local(spell_id, reason)
             });
         }
+        let failed_ours = !success && reason.is_some() && r.self_guid.0.is_some();
         if let (false, Some(reason), Some(caster)) = (success, reason, r.self_guid.0) {
             r.ui.cast_edge(CastBarEdge::Failed {
                 caster,
@@ -541,30 +536,73 @@ fn on_cast_result(In(ev): In<SessionEvent>, mut ladder: CastLadder, mut r: Reply
                 cast_count,
                 reason,
             });
-            if cast_count != 0 {
-                selection(&mut r.ui);
-            }
         }
-        // A failure other than not-ready of a cooldown-on-event spell drops its on-hold record,
-        // then signals (`0x809bd5`-`0x809c05`).
+        // The failure routine's finish after the line's and the end's listeners (`0x808b7f` -> `0x8054f0`).
+        finish_ours(
+            &mut r.ui,
+            spell_id,
+            cast_count,
+            failed_ours && cast_count != 0,
+        );
+        // Past the routine, a failure other than not-ready of a cooldown-on-event spell drops its
+        // on-hold record, then signals (`0x809bd5`-`0x809c05`).
         if !success && reason != Some(0x3c) && on_event {
             cooldown_site(&mut r.ui, true, Tail::Bags);
         }
-        // The finish releases the failed record after the line's and the end's listeners
-        // (`0x808b7f` -> `0x8054f0`, `0x8055a2`).
-        if !success {
-            r.ui.world(move |world| {
-                crate::net::handlers::step(world, release_failed, (spell_id, cast_count));
-            });
-        }
-        // The chain is the routine's last call (`0x808b7f` -> `0x8054f0`): a step after the
-        // listeners of the failure's line and its cast end.
-        if let Some(next) = chained {
-            r.ui.world(move |world| {
-                crate::net::handlers::step(world, send_chained, next);
-            });
-        }
     }
+}
+
+/// Our cast's finish (`0x8054f0`), each call a step: the `modalNextSpell` chain (`0x80559a`), then the record's release (`0x8055a2`), then the selection update when `select` (`0x8055b5`).
+fn finish_ours(
+    ui: &mut crate::ui_script::live::UiEvents,
+    spell_id: u32,
+    cast_count: u8,
+    select: bool,
+) {
+    use crate::net::handlers::step;
+    ui.world(move |world| {
+        if let Some(next) = step(world, modal_chain, (spell_id, cast_count)).flatten() {
+            step(world, send_chained, next);
+        }
+        step(world, release_ours, (spell_id, cast_count));
+        if select {
+            step(world, select_now, ());
+        }
+    });
+}
+
+/// The finish's chain test (`0x80551e`-`0x805536`): our record still held names a spell whose column 38 is non-zero and not the running repeat (equal re-arms, never re-casts).
+fn modal_chain(
+    In((spell_id, cast_count)): In<(u32, u8)>,
+    pending: Res<PendingCast>,
+    spells: Option<Res<Spells>>,
+    auto_repeat: Res<AutoRepeatActive>,
+) -> Option<u32> {
+    chain_of(
+        &pending,
+        spells.as_deref(),
+        &auto_repeat,
+        spell_id,
+        cast_count,
+    )
+}
+
+/// [`modal_chain`]'s read: the chained spell of `spell_id`'s held record, if any.
+fn chain_of(
+    pending: &PendingCast,
+    spells: Option<&Spells>,
+    auto_repeat: &AutoRepeatActive,
+    spell_id: u32,
+    cast_count: u8,
+) -> Option<u32> {
+    pending.find(spell_id, cast_count)?;
+    let next = spells?.catalog.get(spell_id)?.modal_next_spell;
+    (next != 0 && Some(next) != auto_repeat.0).then_some(next)
+}
+
+/// The finish's selection update (`0x8055b5`).
+fn select_now(mut ui: ResMut<crate::ui_script::live::UiEvents>) {
+    crate::ui_action::signals::selection(&mut ui);
 }
 
 /// The `modalNextSpell` chain's send at the null target guid, through every rung a press takes; its `UNIT_SPELLCAST_SENT` in the handler's turn (`0x80b556`).
@@ -577,46 +615,6 @@ fn send_chained(
     let ctx = targeting.context();
     ladder.send(next, &ctx, CastCommit::Spell);
     ladder.press.defer(&mut ui);
-}
-
-/// Our own `SMSG_SPELL_GO` as the cast's success. 12340 sends no success verdict
-/// (`SMSG_CAST_FAILED` carries refusals only); its GO handler runs the `modalNextSpell` chain
-/// (`0x80e666 call 0x8054f0`) that 1.12.1 ran from the verdict, so the success arm of
-/// [`cast_result`] runs here, ahead of [`on_spell_go`].
-fn on_own_spell_go(In(ev): In<SessionEvent>, mut ladder: CastLadder, mut r: Reply) {
-    let SessionEvent::SpellGo {
-        caster, spell_id, ..
-    } = ev
-    else {
-        return;
-    };
-    if r.self_guid.0 != Some(caster) {
-        return;
-    }
-    let chained = cast_result(
-        (spell_id, 0, 0),
-        true,
-        None,
-        &mut ladder.ecs,
-        &r.self_guid,
-        &r.index,
-        &r.casting,
-        &mut r.cast_events,
-        ladder.pending.as_mut(),
-        ladder.queued_melee.as_mut(),
-        ladder.cooldowns.as_mut(),
-        ladder.auto_repeat.as_mut(),
-        ladder.spells.as_deref(),
-        &ladder.commands,
-        r.play_seq.next(),
-        &mut *r.ui,
-        true,
-    );
-    if let Some(next) = chained {
-        r.ui.world(move |world| {
-            crate::net::handlers::step(world, send_chained, next);
-        });
-    }
 }
 
 fn on_spell_start(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
@@ -844,20 +842,15 @@ fn on_spell_failed(
             cast_count,
             reason,
         });
-        // Ours: the finish releases the pending record after the end's listeners (`0x809dc1` -> `0x8054f0`, `0x8055a2`).
+        // Ours: the finish after the end's listeners (`0x809dc1` -> `0x8054f0`).
         if l.self_guid.0 == Some(caster) {
-            l.ui.world(move |world| {
-                crate::net::handlers::step(world, release_failed, (spell_id, cast_count));
-            });
-            if cast_count != 0 {
-                crate::ui_action::signals::selection(&mut l.ui);
-            }
+            finish_ours(&mut l.ui, spell_id, cast_count, cast_count != 0);
         }
     }
 }
 
-/// Our failed cast's pending record and the queued strike it was, released (`0x8055a2`).
-fn release_failed(
+/// Our cast's pending record and the queued strike it was, released (`0x8055a2`).
+fn release_ours(
     In((spell_id, cast_count)): In<(u32, u8)>,
     mut pending: ResMut<PendingCast>,
     mut queued_melee: ResMut<QueuedMeleeSpell>,
@@ -1495,8 +1488,8 @@ fn superceded_spell(
     tab_flash.0.push(new_spell_id);
 }
 
-/// The verdict on our cast: a refusal (`SMSG_CAST_FAILED`, benilla's `SMSG_CAST_RESULT`), or
-/// with `success` our own `SMSG_SPELL_GO` ([`on_own_spell_go`]).
+/// The verdict on our cast: a refusal (`SMSG_CAST_FAILED`, benilla's `SMSG_CAST_RESULT`); the
+/// finish, with its `modalNextSpell` chain, is [`finish_ours`].
 fn cast_result(
     (spell_id, cast_count, wire_reason): (u32, u8, u8),
     success: bool,
@@ -1515,11 +1508,8 @@ fn cast_result(
     seq: u64,
     sink: &mut dyn crate::ui_action::signals::SignalSink,
     release: bool,
-) -> Option<u32> {
+) {
     debug!("net: cast result — spell {spell_id} success={success} reason={reason:?}");
-    // Is this the reply to our outstanding cast? Read before either arm clears the guard: both
-    // clears are the reference's one.
-    let in_flight = pending.find(spell_id, cast_count).is_some();
     if !success {
         // The cast-failed handler clears the GCD armed at send, and the bit-25 revert below drops a
         // parked record; the spell's own recovery starts at SPELL_GO, which a failed cast never
@@ -1565,9 +1555,8 @@ fn cast_result(
         if *crate::net::CAST_TRACE {
             info!("cast-trace: RECV CAST_RESULT failure — spell {spell_id} reason={reason:?}; fails_bar={fails_our_cast}");
         }
-        // The in-flight guard opens either way. A queued on-next-swing strike dies here too: the
-        // server's melee-slot interrupt (vmangos `Spell::cancel` on the preparing slot) arrives as
-        // a failure.
+        // A caller without the finish's step releases here; a queued on-next-swing strike dies with
+        // the record (the melee-slot interrupt arrives as a failure).
         if release {
             pending.release(spell_id, cast_count);
             queued_melee.clear_if(spell_id);
@@ -1591,31 +1580,6 @@ fn cast_result(
             });
         }
     }
-    // The `modalNextSpell` chain (the cast-result handler): the reply to our in-flight cast
-    // finishes its slot, then reads column 38 of its spell; non-zero and not the running repeat,
-    // the client casts it at the null target guid. Every hunter shot names 75, Auto Shot.
-    // - It fires on success as well as failure: the reference sends a non-failure straight to the
-    //   block the failure path reaches.
-    // - The slot clears first, or the in-flight rung (our `0x61`) would refuse the chain. vmangos
-    //   sends `SMSG_CAST_RESULT` before `SMSG_SPELL_GO` (`Spell.cpp:3681`, `Spell.cpp:3715`), so
-    //   the guard is still armed here.
-    // - Equal to the running repeat means re-arm, not re-cast, so a second sting never resets the
-    //   swing timer; with no record to refresh, we send nothing.
-    // The chained spell is returned; `on_cast_result` hands it to the ladder in the same call.
-    if in_flight {
-        if release {
-            pending.release(spell_id, cast_count);
-        }
-        if let Some(next) = spells
-            .and_then(|s| s.catalog.get(spell_id))
-            .map(|d| d.modal_next_spell)
-            .filter(|&next| next != 0 && Some(next) != auto_repeat.0)
-        {
-            debug!("net: cast result {spell_id} chains modalNextSpell {next}");
-            return Some(next);
-        }
-    }
-    None
 }
 
 /// `SMSG_SPELL_START`: a unit began a non-triggered cast, instants included (`cast_time_ms == 0`).
@@ -1850,11 +1814,22 @@ fn spell_go(
     // A source or dest on a transport not here ends the GO at the pending cast's release: no
     // feed edge, cooldown, swing, latch or visual (`0x80e647`-`0x80e686`).
     let (cooldowns, spells, items, net_commands, pet_bar, spell_mods) = cooldown_ctx;
-    if !transports_here {
-        if self_guid.0 == Some(caster) {
+    // Ours ends in the finish (chain, release, selection), a hidden go in the release alone
+    // (`0x80e650`-`0x80e686`, `0x80fe86`-`0x80fea9`).
+    let ours = self_guid.0 == Some(caster);
+    let finish = |ui: &mut crate::ui_script::live::UiEvents,
+                  pending: &mut PendingCast,
+                  queued_melee: &mut QueuedMeleeSpell| {
+        if !ours {
+        } else if cast_flags & 1 != 0 {
             pending.release(spell_id, cast_count);
             queued_melee.clear_if(spell_id);
+        } else {
+            finish_ours(ui, spell_id, cast_count, cast_count != 0);
         }
+    };
+    if !transports_here {
+        finish(ui, pending, queued_melee);
         if pet_bar.has_bar() && pet_bar.spells.pet_guid == caster {
             pending.release(spell_id, cast_count);
         }
@@ -1927,9 +1902,6 @@ fn spell_go(
         if *crate::net::CAST_TRACE {
             info!("cast-trace: RECV SPELL_GO — spell {spell_id} (self); completes_bar={completes_our_cast}");
         }
-        pending.release(spell_id, cast_count);
-        // The queued strike fired on this swing: the queue opens here, like the in-flight finish.
-        queued_melee.clear_if(spell_id);
 
         // The GO-deferred auto-attack start, the complement of [`crate::spell::cast_send`]'s
         // send-time tail: an `AttributesEx2 & 0x100000` spell (the stealth openers and Judgement,
@@ -2050,11 +2022,8 @@ fn spell_go(
         cooldowns.collect(now);
         pet_bar.cooldowns.collect(now);
     }
-    // Our cast's finish runs the selection update last, a hidden go aside (`0x80fe86`-`0x80fe9d`,
-    // `0x8054f0`).
-    if self_guid.0 == Some(caster) && cast_count != 0 && cast_flags & 1 == 0 {
-        crate::ui_action::signals::selection(ui);
-    }
+    // Our cast's finish is the go's last call, after the inserts and the collect (`0x80fe9d`).
+    finish(ui, pending, queued_melee);
     // The end clears the held state of this spell and count alone (`0x7fed81`).
     if let Some(&e) = index.0.get(&caster) {
         let ends_cast = casting
@@ -3211,8 +3180,8 @@ mod tests {
             vec![go(6136), go(133)]
         );
 
-        // A dest on a transport not here (`0x80e647`): the pending cast is released, the cast
-        // state stays, and no feed edge.
+        // A dest on a transport not here (`0x80e647`): the finish releases the pending cast
+        // (`0x80e666`), the cast state stays, and no feed edge.
         app.world_mut().entity_mut(self_e).insert(Casting {
             spell_id: 10,
             cast_count: 0,
@@ -3229,6 +3198,8 @@ mod tests {
                 .len(),
             2
         );
+        assert_eq!(app.world().resource::<PendingCast>().committed(), Some(10));
+        crate::ui_script::live::fire_handler_events(app.world_mut());
         assert_eq!(app.world().resource::<PendingCast>().committed(), None);
         // Held, but its pending cast is no longer listed (`0x805f30`).
         assert_eq!(
@@ -4283,17 +4254,12 @@ mod tests {
             "somebody else's Backstab is not our attack-start"
         );
     }
-    /// The `modalNextSpell` chain (the cast-result handler):
-    /// - a successful sting chains Auto Shot;
-    /// - a failed one does too;
-    /// - the in-flight guard clears first, or the in-flight rung would refuse the chain;
+    /// The finish's `modalNextSpell` chain (`0x80551e`-`0x80559a`), the same for a go and a failure:
+    /// - a sting chains Auto Shot, its record still held;
     /// - Auto Shot already running sends nothing;
     /// - a reply for a spell not in flight chains nothing.
     #[test]
     fn a_hunter_shots_cast_result_chains_auto_shot_exactly_once() {
-        use crate::net::{Guid, SelfPlayer};
-        use bevy::ecs::system::RunSystemOnce;
-
         const SERPENT_STING: u32 = 1978;
         const AUTO_SHOT: u32 = 75;
 
@@ -4336,103 +4302,46 @@ mod tests {
             radii: Default::default(),
         };
 
-        // One CAST_RESULT for `spell_id`, with `in_flight` outstanding and `running` the live
-        // repeat. Returns (what the reply chains, whether the guard is still armed).
-        let fire = |spell_id: u32, success: bool, in_flight: Option<u32>, running: Option<u32>| {
-            let mut app = App::new();
-            app.add_message::<CastEvent>()
-                .init_resource::<GuidIndex>()
-                .init_resource::<SelfGuid>()
-                .init_resource::<crate::ui_action::RefusalsSeen>()
-                .init_resource::<crate::ui_action::UiErrorKeys>()
-                .init_resource::<crate::ui_action::UiErrorKeys>()
-                .init_resource::<crate::ui_script::live::UiEvents>()
-                .init_resource::<PendingCast>()
-                .init_resource::<QueuedMeleeSpell>()
-                .init_resource::<Cooldowns>()
-                .init_resource::<crate::spell::SpellModifiers>()
-                .init_resource::<AutoRepeatActive>();
-            let self_e = app.world_mut().spawn((Guid(10), SelfPlayer)).id();
-            app.world_mut()
-                .resource_mut::<GuidIndex>()
-                .0
-                .insert(10, self_e);
-            app.world_mut().resource_mut::<SelfGuid>().0 = Some(10);
-            app.world_mut().resource_mut::<AutoRepeatActive>().0 = running;
+        // The finish's test for `spell_id`'s record, with `in_flight` held and `running` the live
+        // repeat: what it chains.
+        let fire = |spell_id: u32, in_flight: Option<u32>, running: Option<u32>| {
+            let mut pending = PendingCast::default();
             if let Some(id) = in_flight {
-                app.world_mut()
-                    .resource_mut::<PendingCast>()
-                    // The answer names the record's spell and count 0.
-                    .arm(id, 0);
+                // The answer names the record's spell and count 0.
+                pending.arm(id, 0);
             }
-            let (tx, _rx) = crossbeam_channel::unbounded();
-            let cat = spells();
-            let chained = app
-                .world_mut()
-                .run_system_once(
-                    move |mut commands: Commands,
-                          self_guid: Res<SelfGuid>,
-                          index: Res<GuidIndex>,
-                          casting: Query<&Casting>,
-                          mut cast_events: MessageWriter<CastEvent>,
-                          mut pending: ResMut<PendingCast>,
-                          mut queued_melee: ResMut<QueuedMeleeSpell>,
-                          mut cooldowns: ResMut<Cooldowns>,
-                          mut auto_repeat: ResMut<AutoRepeatActive>| {
-                        let net = crate::net::NetCommands(tx.clone());
-                        cast_result(
-                            (spell_id, 0, 0),
-                            success,
-                            if success { None } else { Some(0x1b) },
-                            &mut commands,
-                            &self_guid,
-                            &index,
-                            &casting,
-                            &mut cast_events,
-                            &mut pending,
-                            &mut queued_melee,
-                            &mut cooldowns,
-                            &mut auto_repeat,
-                            Some(&cat),
-                            &net,
-                            1,
-                            &mut Vec::new(),
-                            true,
-                        )
-                    },
-                )
-                .unwrap();
-            let still_armed = app.world().resource::<PendingCast>().in_flight();
-            (chained, still_armed)
+            let chained = chain_of(
+                &pending,
+                Some(&spells()),
+                &AutoRepeatActive(running),
+                spell_id,
+                0,
+            );
+            // The chain reads the record still held: its release follows (`0x80559a`, `0x8055a2`).
+            (chained, pending.in_flight())
         };
 
         // The ordinary case: the sting lands, and Auto Shot follows by itself.
         assert_eq!(
-            fire(SERPENT_STING, true, Some(SERPENT_STING), None),
-            (Some(AUTO_SHOT), false),
-            "a successful sting chains Auto Shot, and clears the in-flight guard first"
-        );
-        // A failed one does too: both results converge on the same block.
-        assert_eq!(
-            fire(SERPENT_STING, false, Some(SERPENT_STING), None).0,
-            Some(AUTO_SHOT),
-            "a FAILED sting chains it as well"
+            fire(SERPENT_STING, Some(SERPENT_STING), None),
+            (Some(AUTO_SHOT), true),
+            "a sting chains Auto Shot while its record is still held"
         );
         // Already shooting: re-arm, never re-cast.
         assert_eq!(
-            fire(SERPENT_STING, true, Some(SERPENT_STING), Some(AUTO_SHOT)).0,
+            fire(SERPENT_STING, Some(SERPENT_STING), Some(AUTO_SHOT)).0,
             None,
             "Auto Shot already running: the equal branch sends nothing"
         );
         // Auto Shot's own replies terminate the chain.
         assert_eq!(
-            fire(AUTO_SHOT, true, Some(AUTO_SHOT), Some(AUTO_SHOT)).0,
+            fire(AUTO_SHOT, Some(AUTO_SHOT), Some(AUTO_SHOT)).0,
             None,
             "Auto Shot's own column 38 is 0 — no second hop"
         );
         // Not our in-flight cast (a proc's result, a stale reply): not ours to chain from.
         assert_eq!(
-            fire(SERPENT_STING, true, Some(133), None).0,
+            fire(SERPENT_STING, Some(133), None).0,
             None,
             "a reply for a spell we do not have in flight chains nothing"
         );

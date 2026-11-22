@@ -11,13 +11,13 @@ use regex::Regex;
 
 use crate::test_support::{fn_items, rel_path, rust_files, src_dir};
 
-/// The handlers that raise before a later write: (file, handler, the #1245 part that converts it).
+/// The handlers that raise before a later write: (file, handler, the #1245 part or issue that converts it).
 const RAISES_BEFORE_A_WRITE: &[(&str, &str, u16)] = &[
     ("death/net.rs", "on_death_refresh", 1274),
-    ("spell/net.rs", "on_spell_go", 1281),
-    ("spell/net.rs", "on_spell_learned", 1281),
-    ("spell/net.rs", "on_spell_removed", 1281),
-    ("spell/net.rs", "on_spell_superceded", 1281),
+    ("spell/net.rs", "on_spell_go", 1414),
+    ("spell/net.rs", "on_spell_learned", 1414),
+    ("spell/net.rs", "on_spell_removed", 1414),
+    ("spell/net.rs", "on_spell_superceded", 1414),
     ("ui_arena_team.rs", "on_packet", 1275),
     ("ui_barber.rs", "on_enable", 1279),
     ("ui_battlefield.rs", "on_mgr", 1275),
@@ -70,10 +70,10 @@ const READ_AT_THEIR_STEP: &[(&str, &str, &str)] = &[
     ),
 ];
 
-/// The #1245 parts a row may name.
+/// The #1245 parts a row may name, and #1414, which converts #1281's closed rows.
 const PARTS: &[u16] = &[
     1248, 1274, 1275, 1276, 1277, 1278, 1279, 1280, 1281, 1282, 1283, 1284, 1285, 1286, 1287, 1288,
-    1289, 1366,
+    1289, 1366, 1414,
 ];
 
 /// What raises into the VM through the handler queue or a sink over it.
@@ -515,7 +515,7 @@ fn the_list_is_sorted_unique_and_names_a_part() {
     for (f, h, part) in RAISES_BEFORE_A_WRITE {
         assert!(
             PARTS.contains(part),
-            "{f} `{h}`: #{part} is not a #1245 part"
+            "{f} `{h}`: #{part} is not a #1245 part or #1414"
         );
     }
 }
