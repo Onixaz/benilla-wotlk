@@ -52,7 +52,7 @@ fn on_inventory_failure(
 /// A refused inventory operation (reason 0 never arrives: `benilla_protocol::events` drops it): its line (`0x6e3204`), the loot close on the looted item (`0x6e3232`), then both items' unlocks (`0x6e3259`, `0x6e326f`), each a step after the listeners of the one before.
 ///
 /// Not built: the item's client-side spell cancel (`0x6e3249`), as no spell is kept by its casting
-/// item, and reason `0x51`'s bind confirm, which needs the named item held (`0x6e1a70`); AzerothCore
+/// item, and reason `0x51`'s bind confirm, which needs the named item held (`0x6e3192`); AzerothCore
 /// sends that item as 0.
 fn inventory_failure(f: InventoryFailure, ui: &mut UiEvents) {
     debug!(
@@ -84,16 +84,16 @@ fn inventory_failure(f: InventoryFailure, ui: &mut UiEvents) {
 fn close_loot(world: &mut World, item: u64) {
     let closed = world.run_system_cached_with(
         |In(item): In<u64>,
-         mut loot: ResMut<crate::ui_loot::LootState>,
-         mut latch: ResMut<LootLatch>,
+         loot: Option<ResMut<crate::ui_loot::LootState>>,
+         latch: Option<ResMut<LootLatch>>,
          net: Res<crate::net::NetCommands>| {
-            loot.inventory_failed(item, &mut latch, &net);
+            if let (Some(mut loot), Some(mut latch)) = (loot, latch) {
+                loot.inventory_failed(item, &mut latch, &net);
+            }
         },
         item,
     );
-    if let Err(e) = closed {
-        debug!("ui_items: no loot to close on a failure: {e}");
-    }
+    crate::ui_cast::step_ran(closed, "an inventory failure's loot close");
 }
 
 /// An equip refusal's line, in turn with the events around it: reason 16 names the target bag's family when it resolves, reasons 1 and `0x57` fill the level; an empty or missing string shows nothing.

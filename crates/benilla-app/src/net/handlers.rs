@@ -91,6 +91,7 @@ where
         }),
         None => (world.run_system_cached_with(system, input), Vec::new()),
     };
+    crate::script_calls::assert_one_raise_list(world, !raised.is_empty());
     if !raised.is_empty() {
         crate::ui_script::safe_world::lend(world, |script| {
             for raise in raised {
@@ -99,8 +100,7 @@ where
         });
     }
     crate::ui_script::live::fire_handler_events(world);
-    ran.inspect_err(|e| error!("net: a handler step did not run: {e}"))
-        .ok()
+    crate::script_calls::step_ran(ran)
 }
 
 /// `app.net_handler(SessionEventKind::X, on_x)` registers a system taking `In<SessionEvent>`;

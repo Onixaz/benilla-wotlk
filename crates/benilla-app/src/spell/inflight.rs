@@ -275,6 +275,13 @@ impl QueuedMeleeSpell {
             self.0 = None;
         }
     }
+
+    /// The queued strike's record unlinked (`0x805100`): only the record of this spell and count.
+    pub(crate) fn clear_record(&mut self, spell_id: u32, count: u8) {
+        if self.0 == Some((spell_id, count)) {
+            self.0 = None;
+        }
+    }
 }
 
 /// What the reference's one inflight id holds, joined from our two slots: the in-flight check and

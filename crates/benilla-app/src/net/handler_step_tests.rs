@@ -157,3 +157,43 @@ fn a_step_fires_what_the_handler_queued_before_it_first() {
     dispatch(app.world_mut(), vec![SessionEvent::LoggedOut]);
     assert_eq!(seen(&app), "PLAYER_CONTROL_GAINED,PLAYER_CONTROL_LOST");
 }
+
+/// A step nested in a handler's world step hands its system lines on after the lines the handler
+/// queued before it, in wire and step order.
+#[test]
+fn a_nested_steps_lines_follow_the_handlers_earlier_lines() {
+    fn later(mut ui: ResMut<UiEvents>) {
+        ui.system_line("LINE_B", Vec::new());
+    }
+    fn on_lines(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
+        assert!(matches!(ev, SessionEvent::LoggedOut));
+        ui.system_line("LINE_A", Vec::new());
+        ui.world(|world| {
+            step(world, later, ());
+        });
+    }
+    let mut app = client(r#"LINE_A = "first" LINE_B = "second""#);
+    app.init_resource::<crate::ui_chat::ChatLog>();
+    app.net_handler(SessionEventKind::LoggedOut, on_lines);
+    dispatch(app.world_mut(), vec![SessionEvent::LoggedOut]);
+    assert_eq!(
+        app.world()
+            .resource::<crate::ui_chat::ChatLog>()
+            .pending_lines(),
+        ["first", "second"]
+    );
+}
+
+/// A step that raised both in turn on the VM and on the handler queue loses their order: a hard
+/// failure in a debug build.
+#[test]
+#[cfg_attr(debug_assertions, should_panic(expected = "their order is lost"))]
+fn a_step_never_raises_on_both_lists() {
+    fn both(mut script: NonSendMut<UiScript>, mut ui: ResMut<UiEvents>) {
+        script.fire_event("PLAYER_CONTROL_LOST", Vec::new());
+        ui.fire("PLAYER_CONTROL_GAINED", Vec::new());
+    }
+    let mut app = client(LISTENER);
+    app.init_resource::<UiEvents>();
+    step(app.world_mut(), both, ());
+}

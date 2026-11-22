@@ -869,8 +869,8 @@ fn release_ours(
     mut queued_melee: ResMut<QueuedMeleeSpell>,
 ) {
     pending.release(spell_id, cast_count);
-    // The melee-slot interrupt's other half, beside the failing CAST_RESULT.
-    queued_melee.clear_if(spell_id);
+    // The strike's record is the one unlinked (`0x805100`), never a listener's re-queue.
+    queued_melee.clear_record(spell_id, cast_count);
 }
 
 fn on_spell_delayed(In(ev): In<SessionEvent>, mut l: Lifecycle) {
@@ -2380,6 +2380,34 @@ mod tests {
     use super::*;
     use crate::spell::learn_place::Learner;
 
+    /// The finish's release unlinks the failed record alone (`0x8055a2` -> `0x805100`): a strike a
+    /// failure listener queued again, under a new count, stays queued.
+    #[test]
+    fn the_release_keeps_a_strike_a_listener_queued_again() {
+        use bevy::ecs::system::RunSystemOnce;
+        const HEROIC_STRIKE: u32 = 78;
+        let mut world = World::new();
+        let mut pending = PendingCast::default();
+        pending.file(crate::spell::PendingRecord::player(HEROIC_STRIKE, 1, 0));
+        pending.file(crate::spell::PendingRecord::player(HEROIC_STRIKE, 2, 0));
+        world.insert_resource(pending);
+        let mut queued = QueuedMeleeSpell::default();
+        queued.arm(HEROIC_STRIKE, 2);
+        world.insert_resource(queued);
+        world
+            .run_system_once_with(release_ours, (HEROIC_STRIKE, 1))
+            .unwrap();
+        assert_eq!(world.resource::<QueuedMeleeSpell>().count(), Some(2));
+        assert!(world
+            .resource::<PendingCast>()
+            .find(HEROIC_STRIKE, 2)
+            .is_some());
+        world
+            .run_system_once_with(release_ours, (HEROIC_STRIKE, 2))
+            .unwrap();
+        assert_eq!(world.resource::<QueuedMeleeSpell>().current(), None);
+    }
+
     /// A point with no transport is its own world place; one on a transport here is placed
     /// through it and keeps its local point; one on a transport not here resolves to nothing
     /// (`0x9ab810`, `0x7fd830`).
@@ -3084,6 +3112,7 @@ mod tests {
             .init_resource::<Cooldowns>()
             .init_resource::<crate::spell::SpellModifiers>()
             .init_resource::<crate::ui_pet::PetBar>()
+            .init_resource::<AutoRepeatActive>()
             .init_resource::<crate::items::Items>();
 
         // The self player mid-cast on Fireball (133): the bar is up, `Casting{133}` marks it.
