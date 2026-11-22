@@ -14,6 +14,11 @@ use super::model::Model;
 const MACRO_LINE: usize = 1023;
 const MACRO_BODY: usize = 1023;
 
+/// The running macro's nearest-target bit (`0x20` of `[0xbeaf44]`): the first `TargetNearestEnemy`,
+/// `TargetNearestEnemyPlayer`, `TargetNearestFriend` or `TargetNearestFriendPlayer` of a run clears
+/// it, and the run's later ones do nothing (`0x525ad0` to `0x525b90`).
+pub(crate) const MACRO_TARGET_NEAREST: u32 = 0x20;
+
 /// One key's override entries by priority, newest first (`0x5603d0`).
 #[derive(Debug, Clone, Default)]
 struct OverrideKey {
@@ -131,11 +136,19 @@ impl super::UiScript {
     }
 }
 
-/// The macro runner (`0x564db0`): each line through `EXECUTE_CHAT_LINE`, a comment or `#` line
-/// skipped, until `StopMacro`; the outer macro's state comes back after.
+/// The macro runner (`0x564db0`), for secure code alone (`0x5191c0`, kind 3): each line through
+/// `EXECUTE_CHAT_LINE`, a comment or `#` line skipped, until `StopMacro`. An outermost run starts
+/// with every macro action open; the outer macro and its button come back after, unless the
+/// caller is refused by then.
 fn run_macro(lua: &Lua, body: &str, button: Option<String>) {
+    if !super::taint::secure_only(lua) {
+        return;
+    }
     let saved = {
         let mut model = crate::script::model_mut_of(lua);
+        if !model.macro_running {
+            model.macro_actions = u32::MAX;
+        }
         let saved = (model.macro_running, model.click_button.take());
         model.macro_running = true;
         model.click_button = button;
@@ -154,20 +167,22 @@ fn run_macro(lua: &Lua, body: &str, button: Option<String>) {
             );
         }
     }
-    let mut model = crate::script::model_mut_of(lua);
-    model.macro_running = saved.0;
-    model.click_button = saved.1;
+    if super::taint::secure_only(lua) {
+        let mut model = crate::script::model_mut_of(lua);
+        model.macro_running = saved.0;
+        model.click_button = saved.1;
+    }
 }
 
-/// A macro by its 1-based id or its name (`0x566df0`).
-fn macro_body(model: &Model, id: &Value, name: Option<String>) -> Option<String> {
-    let index = match (id, name) {
-        (Value::Integer(i), _) => usize::try_from(*i).ok()?,
-        (Value::Number(n), _) => *n as usize,
-        (_, Some(name)) => model.macros.index_by_name(&name),
-        _ => 0,
-    };
-    model.macros.get(index).map(|m| m.body.clone())
+/// Whether a macro's nearest-target cycle may run, clearing the bit when it does: outside a macro
+/// always, inside one once per run.
+pub(crate) fn take_macro_target_nearest(lua: &Lua) -> bool {
+    let mut model = crate::script::model_mut_of(lua);
+    if model.macro_running && model.macro_actions & MACRO_TARGET_NEAREST == 0 {
+        return false;
+    }
+    model.macro_actions &= !MACRO_TARGET_NEAREST;
+    true
 }
 
 /// The frame a binding clicks (`0x562990`): the global's frame, carrying that exact name.
@@ -241,12 +256,12 @@ pub(super) fn run_special(lua: &Lua, command: &str, down: bool) -> Option<mlua::
                         .expect("model app_data");
                     let digits =
                         !argument.is_empty() && argument.bytes().all(|b| b.is_ascii_digit());
-                    if digits {
-                        let index = argument.parse().unwrap_or(0);
-                        macro_body(&model, &Value::Integer(index), None)
+                    let index = if digits {
+                        argument.parse().unwrap_or(0)
                     } else {
-                        macro_body(&model, &Value::Nil, Some(argument.to_string()))
-                    }
+                        model.macros.index_by_name(argument)
+                    };
+                    model.macros.get(index).map(|m| m.body.clone())
                 };
                 if let Some(body) = body {
                     run_macro(lua, &body, Some("LeftButton".to_string()));
@@ -424,16 +439,17 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // RunMacro(macro [, button]) (`0x566e80`): by 1-based id or name.
+    // RunMacro(macro [, button]) (`0x566e80`): by 1-based id or name; no macro, no run and no
+    // refusal.
     g.set(
         "RunMacro",
         lua.create_function(|lua, (id, button): (Value, Value)| {
-            let name = optional_string(lua, &id);
             let body = {
                 let model = lua
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
-                macro_body(&model, &id, name)
+                let index = super::macros::macro_index(lua, &model, &id);
+                model.macros.get(index).map(|m| m.body.clone())
             };
             if let Some(body) = body {
                 run_macro(lua, &body, optional_string(lua, &button));
@@ -453,13 +469,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // StopMacro() (`0x564b90`): the running macro's next line does not come.
+    // StopMacro() (`0x564b90`), for secure code alone: the running macro's next line does not
+    // come.
     g.set(
         "StopMacro",
         lua.create_function(|lua, ()| {
-            let mut model = crate::script::model_mut_of(lua);
-            model.macro_running = false;
-            model.click_button = None;
+            if super::taint::secure_only(lua) {
+                let mut model = crate::script::model_mut_of(lua);
+                model.macro_running = false;
+                model.click_button = None;
+            }
             Ok(())
         })?,
     )?;
@@ -643,5 +662,121 @@ mod tests {
         let joined: String = s.eval("return table.concat(lines, '|')").unwrap();
         assert_eq!(joined, " /say a|stop");
         assert!(s.run("RunMacroText()").is_err());
+    }
+
+    /// Listens for the runner's lines and both refusal pairs, into `Seen`.
+    const LISTEN: &str = "Seen = {}
+         local f = CreateFrame('Frame')
+         for _, e in ipairs({'EXECUTE_CHAT_LINE', 'ADDON_ACTION_FORBIDDEN',
+                             'MACRO_ACTION_FORBIDDEN', 'ADDON_ACTION_BLOCKED'}) do
+             f:RegisterEvent(e)
+         end
+         f:SetScript('OnEvent', function(_, e, a, b)
+             Seen[#Seen + 1] = e .. '|' .. tostring(a) .. '|' .. tostring(b)
+         end)";
+
+    fn seen(s: &UiScript) -> Vec<String> {
+        s.eval("local t = Seen Seen = {} return t").unwrap()
+    }
+
+    /// `0x564db0` and `0x564b90` ask `0x5191c0` with kind 3, which tainted code never passes, in or
+    /// out of combat: an addon's run is refused with `ADDON_ACTION_FORBIDDEN`, a `RunScript`
+    /// line's with `MACRO_ACTION_FORBIDDEN`, and a missing macro asks nothing (`0x566e80`).
+    #[test]
+    fn a_tainted_macro_run_is_forbidden() {
+        let s = UiScript::new().unwrap();
+        s.run(LISTEN).unwrap();
+        s.with_addon_owner("TaintTest", || {
+            s.run("RunMacroText('/say a') RunMacro('Nope') StopMacro()")
+        })
+        .unwrap();
+        assert_eq!(
+            seen(&s),
+            [
+                "ADDON_ACTION_FORBIDDEN|TaintTest|RunMacroText()",
+                "ADDON_ACTION_FORBIDDEN|TaintTest|StopMacro()",
+            ]
+        );
+        s.run("RunScript(\"RunMacroText('/say b')\")").unwrap();
+        assert_eq!(seen(&s), ["MACRO_ACTION_FORBIDDEN|RunMacroText()|nil"]);
+        s.run("RunMacroText('/say c')").unwrap();
+        assert_eq!(
+            seen(&s),
+            ["EXECUTE_CHAT_LINE|/say c|nil"],
+            "secure code runs"
+        );
+    }
+
+    /// `0x566df0`: a number or a numeric string is the 1-based id, truncated; any other string is
+    /// the name, case blind.
+    #[test]
+    fn run_macro_takes_an_id_a_numeric_string_or_a_name() {
+        let mut s = UiScript::new().unwrap();
+        s.set_macros(crate::script::MacroState {
+            account: vec![
+                crate::script::MacroView {
+                    name: "One".into(),
+                    texture: None,
+                    body: "/say one".into(),
+                },
+                crate::script::MacroView {
+                    name: "Two".into(),
+                    texture: None,
+                    body: "/say two".into(),
+                },
+            ],
+            character: Vec::new(),
+        });
+        s.run(LISTEN).unwrap();
+        s.run("RunMacro(1) RunMacro('2') RunMacro(2.9) RunMacro('one') RunMacro(0) RunMacro('3')")
+            .unwrap();
+        assert_eq!(
+            seen(&s),
+            [
+                "EXECUTE_CHAT_LINE|/say one|nil",
+                "EXECUTE_CHAT_LINE|/say two|nil",
+                "EXECUTE_CHAT_LINE|/say two|nil",
+                "EXECUTE_CHAT_LINE|/say one|nil",
+            ]
+        );
+        // The other macro verbs resolve their argument the same way.
+        assert_eq!(
+            s.eval::<String>("return select(3, GetMacroInfo('TWO'))")
+                .unwrap(),
+            "/say two"
+        );
+        s.run("DeleteMacro('one') RunMacro('1')").unwrap();
+        assert_eq!(seen(&s), ["EXECUTE_CHAT_LINE|/say two|nil"]);
+    }
+
+    /// `0x525ad0` to `0x525b90`: inside one run, nested runs included, the enemy and friend
+    /// cycles go once; the party cycle has no such check, and outside a macro each call goes.
+    #[test]
+    fn a_macro_cycles_the_nearest_target_once_per_run() {
+        let mut s = UiScript::new().unwrap();
+        s.run(
+            "local f = CreateFrame('Frame')
+             f:RegisterEvent('EXECUTE_CHAT_LINE')
+             f:SetScript('OnEvent', function(_, _, line)
+                 if line == 'nested' then RunMacroText('enemy') return end
+                 if line == 'enemy' then TargetNearestEnemy() end
+                 if line == 'friend' then TargetNearestFriend() end
+                 if line == 'party' then TargetNearestPartyMember() end
+             end)",
+        )
+        .unwrap();
+        let nearest = |s: &mut UiScript| {
+            s.take_script_calls()
+                .into_iter()
+                .filter(|c| matches!(c, ScriptCall::TargetNearest { .. }))
+                .count()
+        };
+        s.run("RunMacroText('enemy\\nnested\\nfriend\\nparty\\nparty')")
+            .unwrap();
+        assert_eq!(nearest(&mut s), 3, "one enemy cycle, two party ones");
+        s.run("RunMacroText('friend')").unwrap();
+        assert_eq!(nearest(&mut s), 1, "a new run opens the bit again");
+        s.run("TargetNearestEnemy() TargetNearestEnemy()").unwrap();
+        assert_eq!(nearest(&mut s), 2, "outside a macro there is no limit");
     }
 }
