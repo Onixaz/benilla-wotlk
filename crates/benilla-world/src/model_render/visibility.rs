@@ -216,9 +216,10 @@ pub(super) fn apply_model_visibility(
         if let Some(f) = fade {
             if let Some(mut mat) = mat {
                 // The reference sorts a batch into the transparent pass on its full alpha
-                // (`A = fade × colourAlpha × weight`), not on the distance fade alone, where an
-                // opaque batch draws alpha-blended, the pass's blend table: a steady doodad whose
-                // batch alpha sits below 1 (`BF2_OilSlick_02`'s constant 0.2) blends at rest.
+                // (`A = fade × colourAlpha × weight`, `0x821a20`), not on the distance fade alone,
+                // where an opaque batch draws alpha-blended by the pass's blend table (`0x81fe90`):
+                // a steady doodad whose batch alpha sits below 1 (`BF2_OilSlick_02`'s constant 0.2)
+                // blends at rest.
                 let blended = is_partial_alpha(fade_alpha * mat_factor);
                 let base = if blended { &f.blend } else { &f.cutout };
                 // A feathering doodad beyond the water plane takes its pick's far twin
@@ -276,8 +277,8 @@ pub(super) fn apply_model_visibility(
     }
 }
 
-/// Whether a batch alpha puts the batch in the transparent pass: the reference's test is
-/// `alpha < 0.99999`, so a fixed-point track sampled a hair under 1 stays opaque.
+/// Whether a batch alpha puts the batch in the transparent pass: the reference's test
+/// (`0x821a20`) is `alpha < 0.99999`, so a fixed-point track sampled a hair under 1 stays opaque.
 fn is_partial_alpha(alpha: f32) -> bool {
     alpha < 0.99999
 }
