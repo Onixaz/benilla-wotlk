@@ -12,17 +12,9 @@ use std::path::Path;
 /// Per source file, the lines outside its tests that name either queue: the systems and helpers
 /// that still hold one. Sorted by path.
 const HOLDERS: &[(&str, usize)] = &[
-    ("target/by_name.rs", 1),
-    ("target/click.rs", 1),
-    ("ui_binder.rs", 2),
-    ("ui_chat/input/mod.rs", 3),
-    ("ui_guild/mod.rs", 10),
-    ("ui_lfg.rs", 2),
+    // #1280's: the loot window's and the loot handlers' refusals.
     ("ui_loot/mod.rs", 3),
     ("ui_loot/net.rs", 6),
-    ("ui_party/feed.rs", 1),
-    ("ui_party/net.rs", 18),
-    ("ui_stable/net.rs", 3),
 ];
 
 /// Where the queues are defined, drained and registered, which the count leaves out.

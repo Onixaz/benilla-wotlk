@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use super::{StableOpen, SPELL_AURA_OPEN_STABLE};
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, NetHandlerApp, SelfPlayer};
-use crate::ui_action::{Spells, UiError, UiErrorKeys};
+use crate::ui_action::{Spells, UiError};
 use crate::ui_script::live::UiEvents;
 use crate::ui_session::NpcSession;
 use crate::unit_auras::UnitAuras;
@@ -91,7 +91,6 @@ fn on_list(
 fn on_result(
     In(ev): In<SessionEvent>,
     stable_open: ResMut<StableOpen>,
-    mut errors: ResMut<UiErrorKeys>,
     commands: Res<NetCommands>,
     self_auras: Query<&UnitAuras, With<SelfPlayer>>,
     spells: Option<Res<Spells>>,
@@ -112,6 +111,7 @@ fn on_result(
                     })
                 })
         };
+        let mut errors = Vec::new();
         let mut tame_failures = Vec::new();
         let update = stable_result(
             result,
@@ -124,6 +124,10 @@ fn on_result(
         let Some(mut ui) = ui else {
             return;
         };
+        // Each refusal shows at the display (`0x5216f0`) in the handler's turn.
+        for line in errors {
+            crate::ui_action::show_in_turn(&mut ui, "ui_stable", line);
+        }
         // The exotic refusal's line shows in the handler's turn, as the tame failure's does.
         for reason in tame_failures {
             crate::ui_action::show_in_turn(
@@ -167,7 +171,7 @@ fn list_stabled_pets(
 fn stable_result(
     result: u8,
     mut stable_open: impl std::ops::DerefMut<Target = StableOpen>,
-    errors: &mut UiErrorKeys,
+    errors: &mut Vec<UiError>,
     tame_failures: &mut Vec<u8>,
     net_commands: &NetCommands,
     open_stable_aura: impl FnOnce() -> bool,
@@ -180,7 +184,7 @@ fn stable_result(
     match result {
         code::ERR_MONEY => {
             debug!("net: stable purchase refused — not enough money");
-            errors.0.push(UiError::key("ERR_NOT_ENOUGH_MONEY"));
+            errors.push(UiError::key("ERR_NOT_ENOUGH_MONEY"));
         }
         code::SUCCESS_STABLE | code::SUCCESS_UNSTABLE | code::SUCCESS_BUY_SLOT => {
             let npc = match stable_open.npc() {
@@ -210,10 +214,10 @@ mod tests {
         result: u8,
         open: &mut StableOpen,
         aura: bool,
-    ) -> (bool, UiErrorKeys, Vec<u8>, Vec<ClientCommand>) {
+    ) -> (bool, Vec<UiError>, Vec<u8>, Vec<ClientCommand>) {
         let (tx, rx) = crossbeam_channel::unbounded();
         let commands = NetCommands(tx);
-        let mut errors = UiErrorKeys::default();
+        let mut errors = Vec::new();
         let mut tame = Vec::new();
         let update = stable_result(result, open, &mut errors, &mut tame, &commands, || aura);
         (update, errors, tame, rx.try_iter().collect())
@@ -246,8 +250,8 @@ mod tests {
         let (update, errors, tame, _) = run(code::ERR_EXOTIC, &mut open, false);
         assert!(!update);
         assert_eq!(tame, vec![12]);
-        assert!(errors.0.is_empty());
+        assert!(errors.is_empty());
         let (_, errors, _, _) = run(code::ERR_MONEY, &mut open, false);
-        assert_eq!(errors.0[0].key, "ERR_NOT_ENOUGH_MONEY");
+        assert_eq!(errors[0].key, "ERR_NOT_ENOUGH_MONEY");
     }
 }

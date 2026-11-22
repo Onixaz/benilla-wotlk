@@ -335,7 +335,21 @@ pub(crate) fn show_in_turn(
     who: &'static str,
     line: UiError,
 ) {
+    #[cfg(test)]
+    LINES_IN_TURN.with(|lines| lines.borrow_mut().push(line.clone()));
     ui.world(move |world| show_line_in_world(world, who, line));
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Every line [`show_in_turn`] queued on this thread, for the handlers' tests.
+    static LINES_IN_TURN: std::cell::RefCell<Vec<UiError>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The lines [`show_in_turn`] queued on this thread since the last take, in order.
+#[cfg(test)]
+pub(crate) fn take_lines_in_turn() -> Vec<UiError> {
+    LINES_IN_TURN.with(|lines| std::mem::take(&mut *lines.borrow_mut()))
 }
 
 /// Show `line` now from a step over the `World`.

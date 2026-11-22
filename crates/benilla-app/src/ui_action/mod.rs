@@ -54,6 +54,8 @@ pub(crate) struct ActionRanks;
 #[cfg(test)]
 pub(crate) use cast_refusal::take_refusals;
 pub(crate) use cast_refusal::{show_refusal, CastFailShow, CastRefusals, RefusalsSeen, WaitRecord};
+#[cfg(test)]
+pub(crate) use errors::take_lines_in_turn;
 pub(crate) use errors::{
     attack_actor_blocked, attack_actor_refusal, keyed_line, reagent_totem_refusal, show_in_turn,
     show_line_in_world, show_messages, ui_error_text, CastFail, Caster, FillArg, MessageSink,
