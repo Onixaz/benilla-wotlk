@@ -26,7 +26,7 @@ echo "gating: $root"
 
 # No install and no corpus, whatever the caller's environment or the checkout's links say.
 export WOW_DATA= BENILLA_ADDON_CORPUS=
-unset BENILLA_REQUIRE_DATA BENILLA_SKIP_LOG
+unset BENILLA_REQUIRE_DATA BENILLA_REQUIRE_CORPUS BENILLA_SKIP_LOG
 
 # The first Python 3 that runs: `python3` is a Microsoft Store stub on some Windows machines.
 python=""
