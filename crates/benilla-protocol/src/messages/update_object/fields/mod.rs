@@ -140,6 +140,9 @@ struct Shadow {
     /// The mount a dismount kept while passengers ride (`[unit+0xa30]` bit `0x10000000` set, its
     /// display left in `[unit+0x9c0]`), 0 when the bit is clear.
     mount_kept: u32,
+    /// The form our own cancel dropped ahead of the server (`[unit+0x9f4]`, `0x721d82`), until the
+    /// form byte next moves (`0x6da174`).
+    form_suppressed: bool,
 }
 
 /// An object's descriptor length in dwords: the `*_END` of its innermost block, so a Player spans
@@ -415,7 +418,7 @@ impl ObjectFields {
                     );
                     if old != new {
                         changed(index, old, new);
-                        follow_shadow(&mut self.shadow, index, new);
+                        follow_shadow(&mut self.shadow, index, old, new);
                     }
                 }
             }
@@ -427,7 +430,7 @@ impl ObjectFields {
                 let old = self.get_raw(index).unwrap_or(0);
                 if old != value {
                     changed(index, old, value);
-                    follow_shadow(&mut self.shadow, index, value);
+                    follow_shadow(&mut self.shadow, index, old, value);
                 }
                 self.insert(index, value);
             }
@@ -504,6 +507,16 @@ impl ObjectFields {
             .copied()?
     }
 
+    /// The early form cancel (`0x721cf0`): the form reads none until the form byte next moves.
+    pub fn suppress_form(&mut self) {
+        self.shadow.get_or_insert_default().form_suppressed = true;
+    }
+
+    /// Whether an early form cancel stands (`[unit+0x9f4]`).
+    pub fn unit_form_suppressed(&self) -> bool {
+        self.shadow.as_deref().is_some_and(|s| s.form_suppressed)
+    }
+
     /// Whether `SMSG_DISMOUNT` dropped the mount the field still names.
     fn mount_dropped(&self) -> bool {
         self.shadow.as_deref().is_some_and(|s| s.dismounted)
@@ -512,7 +525,7 @@ impl ObjectFields {
 
 /// Drop the copy a moved field re-seeds: its power type's for a power or maximum, the new display
 /// type's for `UNIT_FIELD_BYTES_0` (`0x723620`), the dropped mount for the mount field.
-fn follow_shadow(shadow: &mut Option<Box<Shadow>>, index: u16, new: u32) {
+fn follow_shadow(shadow: &mut Option<Box<Shadow>>, index: u16, old: u32, new: u32) {
     let Some(s) = shadow.as_deref_mut() else {
         return;
     };
@@ -532,6 +545,10 @@ fn follow_shadow(shadow: &mut Option<Box<Shadow>>, index: u16, new: u32) {
     }
     if index == FIELD_UNIT_HEALTH {
         s.health = None;
+    }
+    // The form byte's mirror handler (`0x6e538a`, offset `0x1d3`) clears the early cancel.
+    if index == FIELD_UNIT_BYTES_2 && (old >> 24) != (new >> 24) {
+        s.form_suppressed = false;
     }
 }
 

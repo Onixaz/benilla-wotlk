@@ -69,6 +69,7 @@ pub(crate) fn drain_meeting_stone_uses(
     mut errors: ResMut<crate::ui_action::UiErrorKeys>,
     spells: Option<Res<crate::ui_action::Spells>>,
     auras: Query<&crate::unit_auras::UnitAuras, With<SelfPlayer>>,
+    mut ecs: Commands,
 ) {
     let Some(level) = self_q.single().ok().and_then(|s| s.0.unit_level()) else {
         uses.clear();
@@ -98,6 +99,10 @@ pub(crate) fn drain_meeting_stone_uses(
                         if crate::spell::validator::form_blocks_interact(form, flags) {
                             for id in crate::ui_shapeshift::form_auras(form, auras, &spells.catalog)
                             {
+                                // The aura cancel's early form drop (`0x80324d`).
+                                ecs.queue(move |w: &mut World| {
+                                    crate::ui_shapeshift::preempt_form_cancel(w, id);
+                                });
                                 let _ = commands.0.send(ClientCommand::CancelAura { spell_id: id });
                             }
                         }

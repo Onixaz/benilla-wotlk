@@ -35,6 +35,36 @@ pub(crate) fn form_auras(
         .collect()
 }
 
+/// The aura cancel's early form drop (`0x8031d0`-`0x80324d` -> `0x721cf0`): a spell whose
+/// shapeshift aura names a row without flag `0x2` and our form drops the form at once and signals
+/// `UPDATE_SHAPESHIFT_FORM` (`0x721d89`); the server's form byte ends it. Its display override
+/// (`0x721d6b`) is not kept: every reader takes it only while the display field is the native
+/// one (`0x717a37`, `0x616b27`, `0x72a49a`), which the display handler clears it on (`0x7168b1`).
+pub(crate) fn preempt_form_cancel(world: &mut World, spell_id: u32) {
+    let form = world
+        .get_resource::<crate::ui_action::Spells>()
+        .and_then(|s| {
+            let form = s.catalog.get(spell_id)?.shapeshift_form?;
+            let row = s.forms.get(&form)?;
+            (row.flags & 0x2 == 0).then_some(form)
+        });
+    let Some(form) = form.filter(|&f| f != 0) else {
+        return;
+    };
+    let mut q =
+        world.query_filtered::<&mut crate::net::ObjectStore, With<crate::net::SelfPlayer>>();
+    let Ok(mut store) = q.single_mut(world) else {
+        return;
+    };
+    if u32::from(store.0.unit_shapeshift_form()) != form {
+        return;
+    }
+    store.0.suppress_form();
+    if let Some(mut ui) = world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
+        ui.fire("UPDATE_SHAPESHIFT_FORM", Vec::new());
+    }
+}
+
 /// `CancelShapeshiftForm()` (`0x726ce0`): every cancelable aura of the active form's spell, unless
 /// charmed or the form's row forbids it (`0x802f80`).
 pub(crate) fn cancel_form(cast: &mut crate::spell::ScriptCast) {
@@ -55,17 +85,20 @@ pub(crate) fn cancel_form(cast: &mut crate::spell::ScriptCast) {
     let Some(auras) = targeting.self_auras.iter().next() else {
         return;
     };
-    for aura in auras.iter().filter(|a| a.is_cancelable()) {
-        let Some(d) = spells.catalog.get(aura.spell_id) else {
-            continue;
-        };
-        if d.shapeshift_form.unwrap_or(0) == u32::from(form_byte)
-            && crate::ui_action::toggle::form_recast_disposition(d, form_byte, row) == Some(true)
-        {
-            let _ = ladder.commands.0.send(ClientCommand::CancelAura {
-                spell_id: aura.spell_id,
-            });
-        }
+    let cancels: Vec<u32> = auras
+        .iter()
+        .filter(|a| a.is_cancelable())
+        .filter(|a| {
+            spells.catalog.get(a.spell_id).is_some_and(|d| {
+                d.shapeshift_form.unwrap_or(0) == u32::from(form_byte)
+                    && crate::ui_action::toggle::form_recast_disposition(d, form_byte, row)
+                        == Some(true)
+            })
+        })
+        .map(|a| a.spell_id)
+        .collect();
+    for spell_id in cancels {
+        ladder.cancel_aura(spell_id);
     }
 }
 
@@ -100,10 +133,7 @@ pub(crate) fn cast_form(cast: &mut crate::spell::ScriptCast, spell_id: u32) {
         }
         Some(true) => {
             debug!("ui_shapeshift: cancel form aura {spell_id}");
-            let _ = ladder
-                .commands
-                .0
-                .send(ClientCommand::CancelAura { spell_id });
+            ladder.cancel_aura(spell_id);
         }
         Some(false) => {}
         None => {

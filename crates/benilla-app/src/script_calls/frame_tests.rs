@@ -1815,6 +1815,74 @@ fn a_use_glyph_listeners_cast_sends_before_the_glyphs_use() {
     assert_eq!(sends, ["cast"]);
 }
 
+/// Our aura cancel drops the form ahead of the server (`0x80324d` -> `0x721cf0`): after
+/// `CancelShapeshiftForm` the same chunk reads no form, and `UPDATE_SHAPESHIFT_FORM` fires inside
+/// the call (`0x721d89`), its listener reading no form; the cancel still goes out.
+#[test]
+fn a_form_cancel_drops_the_form_before_the_server_answers() {
+    const BEAR: u32 = 5487;
+    const FORM: u32 = 5;
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    {
+        let world = rig.app.world_mut();
+        let me = world.resource::<GuidIndex>().0[&ME];
+        world.entity_mut(me).insert((
+            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_FLAGS, 0x8),
+                (benilla_protocol::field::FIELD_UNIT_BYTES_2, FORM << 24),
+            ])),
+            crate::unit_auras::UnitAuras::of(
+                ME,
+                &[(
+                    0,
+                    BEAR,
+                    benilla_protocol::messages::AURA_UPDATE_FLAG_CANCELABLE | 1,
+                )],
+            ),
+        ));
+        let mut spells = world.resource_mut::<crate::ui_action::Spells>();
+        let bear = SpellDisplay {
+            name: "Bear Form".into(),
+            shapeshift_form: Some(FORM),
+            ..Default::default()
+        };
+        spells.catalog = SpellCatalog::from_displays(HashMap::from([(BEAR, bear)]));
+        spells
+            .forms
+            .insert(FORM, benilla_formats::ShapeshiftForm::default());
+    }
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"local f = CreateFrame("Frame")
+        f:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
+        f:SetScript("OnEvent", function() IN_EVENT = GetShapeshiftForm() end)
+        TICK_DO = function()
+            BEFORE = GetShapeshiftForm()
+            CancelShapeshiftForm()
+            AFTER = GetShapeshiftForm()
+            TICK_DO = nil
+        end"#,
+    );
+    rig.frame();
+    let read: (i64, Option<i64>, i64) = rig
+        .vm()
+        .eval("return BEFORE, IN_EVENT, AFTER")
+        .expect("the chunk ran");
+    assert_eq!(read, (1, Some(0), 0), "(before, in the signal, after)");
+    let cancels: Vec<u32> = rig
+        .sent()
+        .into_iter()
+        .filter_map(|c| match c {
+            ClientCommand::CancelAura { spell_id } => Some(spell_id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(cancels, [BEAR]);
+}
+
 /// A lootable item's lock edge (`0x6dcded` -> `0x706feb`) raises as `UseContainerItem` returns:
 /// its listener's `TargetUnit` applies inside it.
 #[test]

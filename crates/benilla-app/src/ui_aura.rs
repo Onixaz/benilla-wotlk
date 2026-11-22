@@ -636,6 +636,10 @@ fn drain_aura_cancels(mut script: crate::ui_script::InTurn, net: Res<NetCommands
         return;
     };
     for spell_id in script.take_cancel_aura_requests() {
+        // The aura cancel's early form drop at the step, then its send (`0x80324d`, `0x803458`).
+        if let Some(queue) = script.queue() {
+            queue.world(move |w| crate::ui_shapeshift::preempt_form_cancel(w, spell_id));
+        }
         let _ = net.0.send(ClientCommand::CancelAura { spell_id });
     }
     for slot in script.take_temp_enchant_cancels() {

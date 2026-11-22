@@ -424,8 +424,9 @@ impl Dispatch<'_, '_> {
             .is_some_and(|s| self.checks.unshift(s, flags))
     }
 
-    /// Leaves the form: `CMSG_CANCEL_AURA` for each aura holding it.
-    fn cancel_shapeshift(&self) {
+    /// Leaves the form: `CMSG_CANCEL_AURA` for each aura holding it, the early form drop queued
+    /// ahead of the frame's raises (`0x80324d`).
+    fn cancel_shapeshift(&mut self) {
         let form = self.form_state().0;
         let (Some(spells), Some(auras)) = (
             self.go_inputs.spells.as_deref(),
@@ -435,6 +436,9 @@ impl Dispatch<'_, '_> {
         };
         for spell_id in crate::ui_shapeshift::form_auras(form, auras, &spells.catalog) {
             debug!("leaves the form first ({spell_id})");
+            self.feedback.queue.queue(move |w: &mut World| {
+                crate::ui_shapeshift::preempt_form_cancel(w, spell_id);
+            });
             let _ = self.seam.net.0.send(ClientCommand::CancelAura { spell_id });
         }
     }

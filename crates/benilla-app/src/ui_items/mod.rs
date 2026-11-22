@@ -857,11 +857,9 @@ fn leave_form_to_use(
         return false;
     }
     if let (Some(auras), Some(spells)) = (ctx.self_auras, ladder.spells.as_ref()) {
-        for spell_id in crate::ui_shapeshift::form_auras(form, auras, &spells.catalog) {
-            let _ = ladder
-                .commands
-                .0
-                .send(crate::net::ClientCommand::CancelAura { spell_id });
+        let cancels = crate::ui_shapeshift::form_auras(form, auras, &spells.catalog);
+        for spell_id in cancels {
+            ladder.cancel_aura(spell_id);
         }
     }
     true

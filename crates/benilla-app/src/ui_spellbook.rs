@@ -392,10 +392,7 @@ pub(crate) fn cast_spell(
                 }
                 Some(true) => {
                     debug!("ui_spellbook: cast {spell_id} — the active form cancels");
-                    let _ = ladder
-                        .commands
-                        .0
-                        .send(crate::net::ClientCommand::CancelAura { spell_id });
+                    ladder.cancel_aura(spell_id);
                     return;
                 }
                 Some(false) => {

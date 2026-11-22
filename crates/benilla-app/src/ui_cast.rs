@@ -92,6 +92,8 @@ pub(crate) enum CastBarEdge {
     /// The attempt's pending bail: the refusal kit, with `Sound_EnableErrorSpeech` on
     /// (`0x80d385`-`0x80d3c1`).
     PendingBail,
+    /// Our aura cancel's early form drop for this spell (`0x80324d` -> `0x721cf0`).
+    FormCancel(u32),
 }
 
 /// The kit the pending bail plays (`0x80d3b2`).
@@ -231,6 +233,14 @@ impl PressSignals<'_, '_> {
         if let Some(edges) = self.edges.as_mut() {
             edges.0.push(CastBarEdge::Cancelled { caster });
             edges.0.push(CastBarEdge::Selection);
+        }
+    }
+
+    /// Our aura cancel of `spell_id` (`0x802f80`): its early form drop at the step, in order with
+    /// the press's other edges (`0x80324d`).
+    pub(crate) fn form_cancel(&mut self, spell_id: u32) {
+        if let Some(edges) = self.edges.as_mut() {
+            edges.0.push(CastBarEdge::FormCancel(spell_id));
         }
     }
 
@@ -736,6 +746,10 @@ pub(crate) fn apply_edge(world: &mut World, edge: CastBarEdge) {
         }
         return;
     }
+    if let CastBarEdge::FormCancel(spell_id) = edge {
+        crate::ui_shapeshift::preempt_form_cancel(world, spell_id);
+        return;
+    }
     if let CastBarEdge::PendingBail = edge {
         let speech = world
             .get_resource::<crate::sound::SoundConfig>()
@@ -816,6 +830,7 @@ fn edge_system(
         | CastBarEdge::Line(_)
         | CastBarEdge::SendTail(_)
         | CastBarEdge::LadderRest(_)
+        | CastBarEdge::FormCancel(_)
         | CastBarEdge::PendingBail => {}
         CastBarEdge::Selection => crate::ui_action::signals::selection(&mut ui),
         CastBarEdge::Signal(event) => ui.fire(event, Vec::new()),

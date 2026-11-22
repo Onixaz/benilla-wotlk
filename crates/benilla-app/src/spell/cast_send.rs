@@ -222,9 +222,16 @@ impl CastLadder<'_, '_> {
         )
     }
 
+    /// Our aura cancel (`0x802f80`): the early form drop at the press's step (`0x80324d`), then
+    /// `CMSG_CANCEL_AURA`.
+    pub(crate) fn cancel_aura(&mut self, spell_id: u32) {
+        self.press.form_cancel(spell_id);
+        let _ = self.commands.0.send(ClientCommand::CancelAura { spell_id });
+    }
+
     /// Sends the aura cancel (`0x802f80`) for an active spell on our own player.
     pub(crate) fn cancel_active_spell(
-        &self,
+        &mut self,
         spell_id: u32,
         store: Option<&crate::net::ObjectStore>,
         auras: Option<&crate::unit_auras::UnitAuras>,
@@ -234,7 +241,12 @@ impl CastLadder<'_, '_> {
         };
         let none = benilla_formats::SummonPropertiesCatalog::default();
         let summons = self.summons.as_ref().map_or(&none, |s| &s.0);
-        for send in crate::ui_companion::dismiss(spell_id, &spells.catalog, summons, store, auras) {
+        let sends = crate::ui_companion::dismiss(spell_id, &spells.catalog, summons, store, auras);
+        for send in sends {
+            // An aura cancel's early form drop at the step (`0x80324d`).
+            if let ClientCommand::CancelAura { spell_id } = send {
+                self.press.form_cancel(spell_id);
+            }
             let _ = self.commands.0.send(send);
         }
     }
@@ -366,11 +378,11 @@ impl CastLadder<'_, '_> {
         // The send clears the cursor's pending cast before it goes out (`0x80b4a2`).
         let prelude = self.ground.prelude().cloned();
         self.ground.clear();
+        if let Some(prelude) = prelude {
+            prelude.send(&self.commands, &mut self.ecs, &mut self.press);
+        }
         if !commit.is_item() {
             self.press.sent(spell_id, target);
-        }
-        if let Some(prelude) = prelude {
-            prelude.send(&self.commands, &mut self.ecs);
         }
         let _ = self.commands.0.send(cmd);
         let now = Instant::now();
@@ -1346,11 +1358,11 @@ fn send_spell_cast(
     if spell_id != pressed {
         debug!("ui_action: cast {pressed} goes out as {spell_id}, the rank its target takes");
     }
+    // The pending send's stand, dismount and unshift go out ahead of the cast.
+    prelude.send(commands, ecs, press);
     if matches!(commit, CastCommit::Spell) {
         press.sent(spell_id, target);
     }
-    // The pending send's stand, dismount and unshift go out ahead of the cast.
-    prelude.send(commands, ecs);
     // The cast send: one targets block, two opcodes.
     let _ = commands.0.send(match commit {
         CastCommit::Spell => match (explicit_object, item_target) {
@@ -1727,7 +1739,12 @@ pub(crate) struct CastPrelude {
 }
 
 impl CastPrelude {
-    pub(crate) fn send(&self, net: &NetCommands, ecs: &mut Commands) {
+    pub(crate) fn send(
+        &self,
+        net: &NetCommands,
+        ecs: &mut Commands,
+        press: &mut crate::ui_cast::PressSignals,
+    ) {
         if self.stand {
             ecs.write_message(crate::player::StandStateRequest { state: 0 });
         }
@@ -1737,6 +1754,7 @@ impl CastPrelude {
         }
         for &spell_id in &self.cancel_form {
             debug!("ui_action: the cast leaves the form first ({spell_id})");
+            press.form_cancel(spell_id);
             let _ = net.0.send(ClientCommand::CancelAura { spell_id });
         }
     }

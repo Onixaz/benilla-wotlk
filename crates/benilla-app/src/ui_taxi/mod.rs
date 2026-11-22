@@ -179,7 +179,11 @@ fn leave_for_the_flight(world: &mut World) {
         if mounted {
             let _ = net.0.send(ClientCommand::CancelMountAura);
         }
-        for spell_id in form_auras {
+    }
+    // Each aura cancel: its early form drop, then its send (`0x80324d`, `0x803458`).
+    for spell_id in form_auras {
+        crate::ui_shapeshift::preempt_form_cancel(world, spell_id);
+        if let Some(net) = world.get_resource::<NetCommands>() {
             let _ = net.0.send(ClientCommand::CancelAura { spell_id });
         }
     }
