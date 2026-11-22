@@ -286,8 +286,11 @@ type UnitData = (
         // A proc-11 rate node here (the freeze auras') refuses the wound flinch.
         Option<&'static crate::aura_visual::AuraNodes>,
         &'static mut UnitAnimRng,
-        // A seated passenger's ride pose (`0x747b20`).
-        Option<&'static crate::vehicle::SeatPose>,
+        // A passenger's seat anims (`0x747b20`), and a vehicle's seat ride loop.
+        (
+            Option<&'static crate::vehicle::SeatPose>,
+            Option<&'static crate::vehicle::VehicleSeatLoop>,
+        ),
         // Created by update type 3: the stand-state seed its first pass reads.
         Has<crate::net::FreshSpawn>,
         // The unit's effect list: its state kits' anims and its live kit models' (`0x71f560`).
@@ -643,7 +646,7 @@ fn drive_unit(
             move_modes,
             aura_nodes,
             mut unit_rng,
-            seat_pose,
+            (seat_pose, seat_loop),
             fresh_spawn,
             state_kits,
             kit_fx,
@@ -764,7 +767,16 @@ fn drive_unit(
         mv.stand_state = 0;
     }
     // A live passenger holds its seat state's anims (`0x7385c0`), out of any stand state.
-    let seat = seat_pose.copied().filter(|_| !dead);
+    // A vehicle's seat ride loop holds its base as a passenger's ride loop does.
+    let seat = seat_pose
+        .copied()
+        .or_else(|| {
+            seat_loop.map(|l| crate::vehicle::SeatPose {
+                lower: [None, Some(l.0)],
+                ..Default::default()
+            })
+        })
+        .filter(|_| !dead);
     if seat.is_some() {
         mv.stand_state = 0;
     }

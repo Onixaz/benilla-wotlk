@@ -27,7 +27,7 @@ mod transit;
 pub(crate) use shot::{LocalTrajectoryGos, TrajectoryCast, TrajectoryCasts};
 
 pub(crate) use passenger::{Passenger, TransitionCue, SEATED};
-pub(crate) use ride::SeatPose;
+pub(crate) use ride::{SeatPose, VehicleSeatLoop};
 
 use bevy::prelude::*;
 

@@ -64,6 +64,12 @@ pub(crate) struct SeatPose {
     pub(crate) end_forced: bool,
 }
 
+/// On a vehicle: the ride loop a seated passenger's seat plays on it (`0x7489c0`, through
+/// `0x756f80`). Deviation: on the whole model, where the reference arms the seat's bone; a bone at
+/// or past 35 is the whole model there too.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct VehicleSeatLoop(pub(crate) u16);
+
 /// A seat anim column: `-1` and 506, the getters' "no anim", are none.
 fn seat_anim(id: i32) -> Option<u16> {
     u16::try_from(id).ok().filter(|&a| i32::from(a) != NO_ANIM)
@@ -302,6 +308,10 @@ pub(super) fn ride_seats(
                 } else {
                     commands.entity(entity).remove::<(SeatRide, SeatPose)>();
                 }
+                // The seat's ride loop on the vehicle ends with the ride.
+                if let Ok(mut ec) = commands.get_entity(r.vehicle) {
+                    ec.remove::<VehicleSeatLoop>();
+                }
                 continue;
             }
         }
@@ -392,6 +402,12 @@ pub(super) fn ride_seats(
             Some(pose) => commands.entity(entity).insert(pose),
             None => commands.entity(entity).remove::<SeatPose>(),
         };
+        // A seat flagged `0x20000` loops its ride anim (column 35) on the vehicle while seated
+        // (`0x7489c0`).
+        if let Some(anim) = seat_anim(seat.vehicle_anims[2]).filter(|_| seat.flags & 0x2_0000 != 0)
+        {
+            commands.entity(vehicle).insert(VehicleSeatLoop(anim));
+        }
     }
 }
 

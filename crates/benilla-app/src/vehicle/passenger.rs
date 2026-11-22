@@ -107,6 +107,50 @@ impl Transit {
     }
 }
 
+/// A transport change held for the vehicle's own seat anim (`0x74be10`, `0x748070`): the
+/// reference defers the move that carries it until the vehicle's anim ends, or for the seat's
+/// fixed wait, and never past 3 s. The change then runs as it came, its server cue kept.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub(crate) struct TransitWait {
+    start_s: f64,
+    /// The fixed wait's end, or `None` to wait for the vehicle's anim.
+    until_s: Option<f64>,
+    vehicle: Entity,
+    cue: bool,
+}
+
+/// The longest a transport change waits for the vehicle (`0x748070`).
+const VEHICLE_WAIT_MAX_S: f64 = 3.0;
+
+/// `0x74be10`'s seat test: the vehicle anim an enter (seat flag `0x400000`, column 33) or an exit
+/// (`0x40000` for a unit whose extra flags carry `0x40`, else `0x80000`; column 34) plays on the
+/// vehicle, an id below `ANIM_COUNT`; and the fixed wait under `0x8000000` (enter) or
+/// `0x10000000` (exit), the seat's delay (columns 39-40) at most 3 s (`0x748070`).
+pub(crate) fn vehicle_wait(
+    seat: &VehicleSeatRec,
+    entering: bool,
+    flags2: u16,
+) -> Option<(u16, Option<f32>)> {
+    let (flag, anim) = if entering {
+        (0x40_0000, seat.vehicle_anims[0])
+    } else if flags2 & 0x40 != 0 {
+        (0x4_0000, seat.vehicle_anims[1])
+    } else {
+        (0x8_0000, seat.vehicle_anims[1])
+    };
+    let anim = u16::try_from(anim).ok().filter(|&a| a <= 505)?;
+    if seat.flags & flag == 0 {
+        return None;
+    }
+    let fixed_flag = if entering { 0x800_0000 } else { 0x1000_0000 };
+    let delay = if entering {
+        seat.vehicle_enter_anim_delay
+    } else {
+        seat.vehicle_exit_anim_delay
+    };
+    Some((anim, (seat.flags & fixed_flag != 0).then(|| delay.min(3.0))))
+}
+
 /// The pre-delay states' end (`0x74a200`): the seat's delay, at most 10 s.
 fn pre_delay_end(now: f64, delay: f32) -> f64 {
     now + f64::from(delay.min(10.0))
@@ -153,6 +197,7 @@ pub(super) fn track_passengers(
     mut signals: ResMut<VehicleSignals>,
     mut stop: ResMut<super::SeatStop>,
     time: Res<Time<Real>>,
+    mut wait: VehicleWaits,
 ) {
     let now = time.elapsed_secs_f64();
     // A seat's stop lasts 2 s at most (`0x74af70`).
@@ -189,6 +234,19 @@ pub(super) fn track_passengers(
         if cue {
             commands.entity(e).remove::<TransitionCue>();
         }
+        // A change held for the vehicle's anim waits it out, then runs with its cue.
+        let mut cue = cue;
+        if let Ok(w) = wait.held.get(e) {
+            if !wait.done(w, now) {
+                continue;
+            }
+            debug!(
+                "vehicle: passenger {guid:#x} done waiting for its vehicle after {:.3} s",
+                now - w.start_s
+            );
+            cue |= w.cue;
+            commands.entity(e).remove::<TransitWait>();
+        }
         let wanted = rider
             .filter(|r| is_vehicle_transport(r.transport_guid) && r.seat >= 0)
             .filter(|r| vehicle_of(r.transport_guid).is_some())
@@ -214,6 +272,31 @@ pub(super) fn track_passengers(
         let seat_rec = |p: &Passenger| {
             vehicle_of(p.vehicle).and_then(|v| tables.seat(v.id, usize::from(p.seat)))
         };
+        // A server move into or out of a seat first waits on the vehicle's own seat anim
+        // (`0x74c040`): an enter on the seat taken, an exit on the seat left.
+        if cue && !wait.held.contains(e) {
+            let side = wanted.or(held_c);
+            let entering = wanted.is_some();
+            let vehicle = side.and_then(|s| index.0.get(&s.vehicle).copied());
+            let pick = side
+                .as_ref()
+                .and_then(seat_rec)
+                .and_then(|s| vehicle_wait(s, entering, flags2.map_or(0, |f| f.0)));
+            if let (Some((anim, fixed)), Some(vehicle)) = (pick, vehicle) {
+                debug!(
+                    "vehicle: passenger {guid:#x} waits for its vehicle's anim {anim} \
+                     (fixed {fixed:?}) at {now:.3} s"
+                );
+                wait.play(vehicle, anim);
+                commands.entity(e).insert(TransitWait {
+                    start_s: now,
+                    until_s: fixed.map(|f| now + f64::from(f)),
+                    vehicle,
+                    cue,
+                });
+                continue;
+            }
+        }
         let from = held_c.map_or(0, |p| p.state);
         let next = match wanted {
             // `0x749aa0`: a server move animates an enter where the seat does.
@@ -276,6 +359,65 @@ pub(super) fn track_passengers(
             &root,
             &vehicle_of,
         );
+    }
+}
+
+/// The vehicle-anim wait's reads and its play: who waits, the vehicle's animation state, and the
+/// one-shot that plays the seat anim on the vehicle.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(super) struct VehicleWaits<'w, 's> {
+    held: Query<'w, 's, &'static TransitWait>,
+    anims: Query<
+        'w,
+        's,
+        (
+            &'static crate::creature_anim::AnimDriver,
+            &'static AnimationPlayer,
+            &'static AnimationTransitions,
+            &'static benilla_assets::ModelAnimations,
+        ),
+    >,
+    anim_data: Option<Res<'w, crate::creature_anim::AnimData>>,
+    seq: Option<ResMut<'w, crate::creature_anim::PlaySeq>>,
+    out: Option<MessageWriter<'w, crate::creature_anim::EmoteAnim>>,
+}
+
+impl VehicleWaits<'_, '_> {
+    /// Play the seat's anim on the vehicle (`0x756f80`). Deviation: on the whole model, where the
+    /// reference arms the seat's bone; a bone at or past 35 (the IoC catapult's `-1`) is the whole
+    /// model there too.
+    fn play(&mut self, vehicle: Entity, anim: u16) {
+        let seq = self.seq.as_mut().map_or(0, |s| s.next());
+        if let Some(out) = self.out.as_mut() {
+            out.write(crate::creature_anim::EmoteAnim {
+                entity: vehicle,
+                anim_id: anim,
+                seq,
+                via_player: false,
+                play: Default::default(),
+            });
+        }
+    }
+
+    /// The wait is over: its fixed time has passed, or the vehicle's anim has ended (a vehicle
+    /// that never armed it counts as ended after its first frames), or 3 s have.
+    fn done(&self, w: &TransitWait, now: f64) -> bool {
+        let waited = now - w.start_s;
+        if waited >= VEHICLE_WAIT_MAX_S {
+            return true;
+        }
+        if let Some(until) = w.until_s {
+            return now >= until;
+        }
+        let catalog = self.anim_data.as_deref().map(|d| &d.0);
+        let live = self
+            .anims
+            .get(w.vehicle)
+            .is_ok_and(|(drv, player, tr, anims)| {
+                crate::creature_anim::oneshot_is_live(drv, player, tr, anims, catalog)
+            });
+        // The play lands a frame after it is sent.
+        !live && waited > 0.1
     }
 }
 
@@ -440,6 +582,41 @@ pub(super) fn advance_transits(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The IoC catapult's second seat: its enter waits a fixed 0.6 s on vehicle anim 112, its
+    /// exit 0.35 s on 107 for a unit without extra flag `0x40`; a seat without the flags waits
+    /// on nothing.
+    #[test]
+    fn a_seat_s_vehicle_anim_holds_the_change() {
+        let seat = VehicleSeatRec {
+            flags: 0x7b5b_000b,
+            vehicle_anims: [112, 107, 111],
+            vehicle_enter_anim_delay: 0.6,
+            vehicle_exit_anim_delay: 0.35,
+            ..Default::default()
+        };
+        assert_eq!(vehicle_wait(&seat, true, 0), Some((112, Some(0.6))));
+        assert_eq!(vehicle_wait(&seat, false, 0), Some((107, Some(0.35))));
+        assert_eq!(
+            vehicle_wait(&seat, false, 0x40),
+            None,
+            "0x40 asks for 0x40000"
+        );
+        let driver = VehicleSeatRec {
+            flags: 0x7310_8c0b,
+            vehicle_anims: [-1, 107, 111],
+            ..Default::default()
+        };
+        assert_eq!(vehicle_wait(&driver, true, 0), None);
+        assert_eq!(vehicle_wait(&driver, false, 0), None);
+        let unfixed = VehicleSeatRec {
+            flags: 0x40_0000,
+            vehicle_anims: [112, -1, -1],
+            vehicle_enter_anim_delay: 9.0,
+            ..Default::default()
+        };
+        assert_eq!(vehicle_wait(&unfixed, true, 0), Some((112, None)));
+    }
 
     use std::sync::Arc;
 
