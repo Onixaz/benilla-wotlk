@@ -3,7 +3,7 @@ use benilla_ui::script::{
     SoundRequest, UiScript,
 };
 
-use super::test_live::VerbWritesExt;
+use super::test_live::{LootVerbsExt, VerbWritesExt};
 use super::test_ui::stock_ui;
 
 /// The rect of the `QuadContent::Frame` quad sized `w` by `h`: every frame emits one.

@@ -140,36 +140,23 @@ impl super::UiScript {
     pub fn set_loot_source(&mut self, guid: u64) {
         set_field!(self, loot_source, guid);
     }
-
-    /// Drain the 1-based rows `LootSlot` took; the app maps each to the coin or the item's wire
-    /// slot and applies the bind-on-pickup deferral.
-    pub fn take_loot_picks(&mut self) -> Vec<u32> {
-        drain_field!(self, loot_picks)
-    }
-
-    /// Drain the 1-based rows `ConfirmLootSlot` queued; the app honours only the one a LOOT_BIND
-    /// confirm is pending for (the reference's `[0xacee24]` gate, `0x589300`).
-    pub fn take_loot_confirms(&mut self) -> Vec<u32> {
-        drain_field!(self, loot_confirms)
-    }
-
-    /// `CloseLoot` since the last drain, with its "unable to open the UI" flag; the app releases
-    /// an open loot.
-    pub fn take_loot_close(&mut self) -> Option<bool> {
-        drain_field!(self, loot_close)
-    }
-
-    /// Drain the `GiveMasterLoot(slot, candidateIndex)` pairs, both 1-based; the app resolves them
-    /// to a wire slot and a guid for `CMSG_LOOT_MASTER_GIVE`.
-    pub fn take_loot_master_gives(&mut self) -> Vec<(u32, u32)> {
-        drain_field!(self, loot_master_gives)
-    }
 }
 
-/// A loot verb's slot as its binding converts it: truncated toward zero, and nothing below 1.
-fn loot_slot_arg(slot: f64) -> Option<u32> {
-    let slot = slot.trunc();
-    (slot >= 1.0).then_some(slot as u32)
+/// `LootSlot`'s and `ConfirmLootSlot`'s usage error, which both raise (`0x589539`, `0x5895a9`).
+const LOOT_SLOT_USAGE: &str = "Usage: LootSlot(slot)";
+
+/// `GiveMasterLoot`'s usage error, on either argument not a number (`0x589697`).
+const GIVE_MASTER_LOOT_USAGE: &str = "Usage: GiveMasterLoot(slot, index)";
+
+/// A loot verb's 1-based argument as its binding converts it (the truncating `fistp`, then `sub 1`):
+/// below 1 the decremented index fails the unsigned bound, so it names nothing.
+fn one_based(n: i32) -> Option<u32> {
+    u32::try_from(n).ok().filter(|&n| n >= 1)
+}
+
+/// Run `verb` inside this call where the host's state is lent (else it waits, in call order).
+fn run_loot(lua: &Lua, verb: super::LootVerb) {
+    super::calls::make(lua, super::ScriptCall::Loot(verb));
 }
 
 /// Display slot `slot` (1-based) of the open loot: `Some(Some(row))` an item or the coins,
@@ -326,39 +313,40 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // LootSlot(slot): the take (`0x589520`: a number check, the truncating `fistp`, `sub eax,1`,
-    // then `0x589140`). The dispatcher bounds-checks the decremented slot, so below 1 takes nothing.
+    // then `0x589140`), run inside the call: code after it reads what it did.
     g.set(
         "LootSlot",
-        lua.create_function(|lua, slot: f64| {
-            if let Some(slot) = loot_slot_arg(slot) {
-                let mut model = crate::script::model_mut_of(lua);
-                model.loot_picks.push(slot);
+        lua.create_function(|lua, slot: Value| {
+            let slot = super::binding_abi::number_arg(lua, slot, LOOT_SLOT_USAGE)?;
+            if let Some(slot) = one_based(slot) {
+                run_loot(lua, super::LootVerb::Slot(slot));
             }
             Ok(())
         })?,
     )?;
 
     // ConfirmLootSlot(slot): the `LOOT_BIND` popup's accept (`StaticPopup.lua:1519`). `0x589590`
-    // converts as `LootSlot` does and calls `0x589300`, which sends only for the pending slot.
+    // converts as `LootSlot` does, with its usage line, and calls `0x589300` inside the call, which
+    // sends only for the pending slot.
     g.set(
         "ConfirmLootSlot",
-        lua.create_function(|lua, slot: f64| {
-            if let Some(slot) = loot_slot_arg(slot) {
-                let mut model = crate::script::model_mut_of(lua);
-                model.loot_confirms.push(slot);
+        lua.create_function(|lua, slot: Value| {
+            let slot = super::binding_abi::number_arg(lua, slot, LOOT_SLOT_USAGE)?;
+            if let Some(slot) = one_based(slot) {
+                run_loot(lua, super::LootVerb::Confirm(slot));
             }
             Ok(())
         })?,
     )?;
 
-    // CloseLoot([noUI]) (`0x5888b0` → the internal close with `(1, 0, noUI)`): `noUI` through the
-    // bool-or-default read with false, `LootFrame.lua:21`'s "unable to open the UI".
+    // CloseLoot([noUI]) (`0x5888b0` -> the close chain with `(1, 0, noUI)`, inside the call, up to
+    // `LOOT_CLOSED`): `noUI` through the bool-or-default read with false, `LootFrame.lua:21`'s
+    // "unable to open the UI".
     g.set(
         "CloseLoot",
         lua.create_function(|lua, args: MultiValue| {
             let no_ui = super::binding_abi::bool_or_default(args.front(), false);
-            let mut model = crate::script::model_mut_of(lua);
-            model.loot_close = Some(no_ui);
+            run_loot(lua, super::LootVerb::Close { no_ui });
             Ok(())
         })?,
     )?;
@@ -386,12 +374,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // GiveMasterLoot(slot, candidateIndex): from the dropdown below the quality threshold, and from
     // the `CONFIRM_LOOT_DISTRIBUTION` popup above it (`LootFrame.lua:234-244`,
-    // `StaticPopup.lua:85-94`).
+    // `StaticPopup.lua:85-94`). Both are number-checked and truncated (`0x589617`, `0x589626`); a
+    // candidate that resolves to no guid sends nothing (`0x589680`); the send runs inside the call.
     g.set(
         "GiveMasterLoot",
-        lua.create_function(|lua, (slot, candidate): (u32, u32)| {
-            let mut model = crate::script::model_mut_of(lua);
-            model.loot_master_gives.push((slot, candidate));
+        lua.create_function(|lua, (slot, candidate): (Value, Value)| {
+            let slot = super::binding_abi::number_arg(lua, slot, GIVE_MASTER_LOOT_USAGE)?;
+            let candidate = super::binding_abi::number_arg(lua, candidate, GIVE_MASTER_LOOT_USAGE)?;
+            if let (Some(slot), Some(candidate)) = (one_based(slot), one_based(candidate)) {
+                run_loot(lua, super::LootVerb::MasterGive { slot, candidate });
+            }
             Ok(())
         })?,
     )?;
@@ -402,7 +394,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{LootRow, LootState};
-    use crate::script::UiScript;
+    use crate::script::{LootVerb, UiScript};
 
     /// The region data behind a named texture: its portrait key and file.
     fn portrait_of(s: &UiScript, name: &str) -> (Option<String>, Option<String>) {
@@ -697,39 +689,47 @@ mod tests {
         );
     }
 
+    /// `GiveMasterLoot` resolves both arguments as numbers, raising its own usage line otherwise
+    /// (`0x589697`), and names nothing below 1.
     #[test]
-    fn give_master_loot_queues_the_assignment() {
+    fn give_master_loot_runs_the_assignment() {
         let mut s = UiScript::new().unwrap();
         let mut ml = loot();
         ml.master_candidates = vec![Some("Thrall".into())];
         s.set_loot(Some(ml));
-        assert!(s.take_loot_master_gives().is_empty());
-        s.run("GiveMasterLoot(2, 1)").unwrap();
-        assert_eq!(s.take_loot_master_gives(), vec![(2, 1)]);
-        assert!(s.take_loot_master_gives().is_empty(), "drained");
-        assert!(s.take_loot_picks().is_empty());
+        s.run("GiveMasterLoot(2, 1) GiveMasterLoot(2.9, '1') GiveMasterLoot(0, 1) GiveMasterLoot(2, 0)")
+            .unwrap();
+        let give = LootVerb::MasterGive {
+            slot: 2,
+            candidate: 1,
+        };
+        assert_eq!(s.take_loot_verbs(), vec![give, give]);
+        let err = s.run("GiveMasterLoot(2)").unwrap_err().to_string();
+        assert!(err.contains("Usage: GiveMasterLoot(slot, index)"), "{err}");
+        assert!(s.take_loot_verbs().is_empty());
     }
 
     /// `LootSlot` is the take (`0x589520` → `0x589140`); `ConfirmLootSlot` the confirm
-    /// (`0x589590` → `0x589300`).
+    /// (`0x589590` → `0x589300`), raising `LootSlot`'s usage line (`0x5895a9`).
     #[test]
     fn loot_slot_takes_and_confirm_loot_slot_confirms() {
         let mut s = UiScript::new().unwrap();
         s.set_loot(Some(loot()));
-        s.run("LootSlot(2)").unwrap();
-        assert_eq!(s.take_loot_picks(), vec![2], "LootSlot is the take");
-        assert!(s.take_loot_confirms().is_empty());
-        assert!(s.take_loot_picks().is_empty(), "drained");
-
-        s.run("ConfirmLootSlot(3)").unwrap();
-        assert_eq!(s.take_loot_confirms(), vec![3]);
-        assert!(s.take_loot_picks().is_empty(), "a confirm is not a take");
+        s.run("LootSlot(2) ConfirmLootSlot(3)").unwrap();
+        assert_eq!(
+            s.take_loot_verbs(),
+            vec![LootVerb::Slot(2), LootVerb::Confirm(3)],
+            "in call order"
+        );
 
         // The `fistp` truncates, and a decremented slot below 0 takes nothing.
         s.run("LootSlot(2.9) LootSlot(0) LootSlot(-1) ConfirmLootSlot(0.5)")
             .unwrap();
-        assert_eq!(s.take_loot_picks(), vec![2]);
-        assert!(s.take_loot_confirms().is_empty());
+        assert_eq!(s.take_loot_verbs(), vec![LootVerb::Slot(2)]);
+        for verb in ["LootSlot", "ConfirmLootSlot"] {
+            let err = s.run(&format!("{verb}('x')")).unwrap_err().to_string();
+            assert!(err.contains("Usage: LootSlot(slot)"), "{verb}: {err}");
+        }
     }
 
     /// The fifth return is 1 for a `LOCKED` row and nil otherwise, never the item id.
@@ -763,13 +763,11 @@ mod tests {
 
     /// `CloseLoot(noUI)`: stock `CloseLoot(autoLoot == 0)` passes a boolean (`LootFrame.lua:21`).
     #[test]
-    fn close_loot_flags_the_intent_with_its_no_ui_argument() {
+    fn close_loot_runs_with_its_no_ui_argument() {
         let mut s = UiScript::new().unwrap();
         s.set_loot(Some(loot()));
-        assert_eq!(s.take_loot_close(), None);
         s.run("CloseLoot()").unwrap();
-        assert_eq!(s.take_loot_close(), Some(false));
-        assert_eq!(s.take_loot_close(), None, "drained");
+        assert_eq!(s.take_loot_verbs(), vec![LootVerb::Close { no_ui: false }]);
         for (arg, no_ui) in [
             ("1", true),
             ("true", true),
@@ -778,7 +776,11 @@ mod tests {
             ("nil", false),
         ] {
             s.run(&format!("CloseLoot({arg})")).unwrap();
-            assert_eq!(s.take_loot_close(), Some(no_ui), "CloseLoot({arg})");
+            assert_eq!(
+                s.take_loot_verbs(),
+                vec![LootVerb::Close { no_ui }],
+                "CloseLoot({arg})"
+            );
         }
     }
 

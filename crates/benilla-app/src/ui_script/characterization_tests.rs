@@ -8421,3 +8421,169 @@ fn a_loot_window_fires_from_its_handlers_with_the_rows_read_at_the_call() {
         ]
     );
 }
+
+/// The loot verbs act and raise inside their call (`0x589520` -> `0x589140`, `0x589590` ->
+/// `0x589300`, `0x5888b0` -> `0x523640`), so the code after each in the same chunk reads what it
+/// did, and its events have fired before it returned:
+/// - the coin take clears the coins before its `LOOT_SLOT_CLEARED 1` (`0x589195`, `0x58919f`);
+/// - a bind-on-pickup take signals `LOOT_BIND_CONFIRM` and sends nothing; the accept after it in the
+///   same chunk sends the row;
+/// - `CloseLoot()` has fired `LOOT_CLOSED` (`0x523784`), emptied the window and dropped the dead
+///   corpse's selection (`0x5237ae`) by its return, so a new window on it stays open;
+/// - a coin-only window's take closes it after the clear's signal (`0x58919f`, `0x5891b8`);
+/// - the stash is written after `LOOT_BIND_CONFIRM` (`0x5892c4`, `0x5892d1`), so a listener's own
+///   `ConfirmLootSlot` meets no pending row and sends nothing.
+#[test]
+fn the_loot_verbs_act_and_raise_inside_their_call() {
+    use benilla_protocol::messages::LootItem;
+    const CORPSE: u64 = 0x0000_0000_0000_0889;
+    const GEM: u32 = 0x8_2001;
+    const BOP: u32 = 0x8_2002;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let bop = benilla_protocol::ItemInfo {
+        quality: 4,
+        bonding: 1,
+        ..crate::items::test_template("Charz Bound")
+    };
+    rig.packets(
+        vec![
+            player_create_with(CORPSE, &[(FIELD_UNIT_HEALTH, 0)]),
+            SessionEvent::ItemTemplate {
+                entry: GEM,
+                info: Some(Box::new(crate::items::test_template("Charz Gem"))),
+            },
+            SessionEvent::ItemTemplate {
+                entry: BOP,
+                info: Some(Box::new(bop)),
+            },
+        ],
+        2,
+    );
+    let row = |slot: u8, item_id: u32| LootItem {
+        slot,
+        item_id,
+        count: 1,
+        display_info_id: 1,
+        random_property_id: 0,
+        random_suffix: 0,
+        slot_type: 0,
+    };
+    let open = |rig: &mut Rig, gold: u32, items: Vec<LootItem>| {
+        rig.app
+            .world_mut()
+            .resource_mut::<crate::ui_loot::LootLatch>()
+            .0 = Some(CORPSE);
+        let seen = rig.packets(
+            vec![SessionEvent::LootResponse {
+                guid: CORPSE,
+                loot_type: 1,
+                gold,
+                items,
+            }],
+            3,
+        );
+        rx.try_iter().for_each(drop);
+        seen
+    };
+    // One chunk with the `World` lent, a mark between its calls; what the observer saw, in order.
+    let run = |rig: &mut Rig, body: &str| -> Vec<Seen> {
+        let chunk = format!(
+            "local function mark(m) CHARZ_LOG[#CHARZ_LOG + 1] = 'MARK\\t' .. m .. '\\t' .. CHARZ_ANSWERS() end \
+             CHARZ_LOG = {{}} {body} local t = CHARZ_LOG CHARZ_LOG = {{}} return t"
+        );
+        let lines =
+            super::live::with_live_world(rig.app.world_mut(), |s| s.eval::<Vec<String>>(&chunk))
+                .expect("a VM")
+                .expect("the chunk runs");
+        lines.iter().map(|l| Seen::parse(l)).collect()
+    };
+    const EVENTS: &[&str] = &[
+        "MARK",
+        "LOOT_OPENED",
+        "LOOT_SLOT_CLEARED",
+        "LOOT_CLOSED",
+        "LOOT_BIND_CONFIRM",
+    ];
+    const VERBS: &[&str] = &["lootn", "l1", "l2", "l3", "coin1"];
+
+    let _ = open(&mut rig, 250, vec![row(0, GEM), row(1, BOP)]);
+    let seen = run(
+        &mut rig,
+        "mark('a') LootSlot(1) mark('b') LootSlot(3) mark('c') ConfirmLootSlot(3) mark('d') \
+         CloseLoot() mark('e')",
+    );
+    let full = "l2=Charz Gem l3=Charz Bound";
+    assert_eq!(
+        pin(&seen, EVENTS, VERBS),
+        vec![
+            format!("MARK a | lootn=3 l1=2 Silver 50 Copper {full} coin1=1"),
+            format!("LOOT_SLOT_CLEARED 1 | lootn=3 l1= {full} coin1=nil"),
+            format!("MARK b | lootn=3 l1= {full} coin1=nil"),
+            format!("LOOT_BIND_CONFIRM 3 | lootn=3 l1= {full} coin1=nil"),
+            format!("MARK c | lootn=3 l1= {full} coin1=nil"),
+            format!("MARK d | lootn=3 l1= {full} coin1=nil"),
+            "LOOT_CLOSED | lootn=0 l1= l2= l3= coin1=nil".to_string(),
+            "MARK e | lootn=0 l1= l2= l3= coin1=nil".to_string(),
+        ]
+    );
+    let sent: Vec<_> = rx.try_iter().collect();
+    assert!(
+        matches!(
+            sent[..],
+            [
+                crate::net::ClientCommand::LootMoney,
+                crate::net::ClientCommand::AutostoreLootItem { slot: 1 },
+                crate::net::ClientCommand::LootRelease { guid: CORPSE },
+                // The dead corpse deselected inside the close (`0x5237ae`).
+                crate::net::ClientCommand::SetSelection { guid: 0 },
+            ]
+        ),
+        "{sent:?}"
+    );
+
+    // A coin-only window: the take's signal, then the emptied window's close, both in the call.
+    let opened = open(&mut rig, 120, vec![]);
+    assert_eq!(
+        fired(&opened, &["LOOT_OPENED", "LOOT_CLOSED"]),
+        ["LOOT_OPENED"],
+        "the corpse's earlier close left nothing to close the new window"
+    );
+    let seen = run(&mut rig, "LootSlot(1) mark('a')");
+    assert_eq!(
+        pin(&seen, EVENTS, &["lootn", "l1"]),
+        vec![
+            "LOOT_SLOT_CLEARED 1 | lootn=1 l1=",
+            "LOOT_CLOSED | lootn=0 l1=",
+            "MARK a | lootn=0 l1=",
+        ]
+    );
+
+    // A listener's own accept meets the stash as it stood before the signal: nothing goes out.
+    let _ = open(&mut rig, 0, vec![row(1, BOP)]);
+    let seen = run(
+        &mut rig,
+        "local f = CreateFrame('Frame') f:RegisterEvent('LOOT_BIND_CONFIRM') \
+         f:SetScript('OnEvent', function(_, _, slot) ConfirmLootSlot(slot) f:UnregisterAllEvents() end) \
+         LootSlot(1) mark('a')",
+    );
+    assert_eq!(
+        fired(&seen, &["LOOT_BIND_CONFIRM", "MARK"]),
+        ["LOOT_BIND_CONFIRM", "MARK"]
+    );
+    let sent: Vec<_> = rx.try_iter().collect();
+    assert!(sent.is_empty(), "{sent:?}");
+    // The stash stands once the call returns: the popup's later accept sends the row.
+    run(&mut rig, "ConfirmLootSlot(1)");
+    let sent: Vec<_> = rx.try_iter().collect();
+    assert!(
+        matches!(
+            sent[..],
+            [crate::net::ClientCommand::AutostoreLootItem { slot: 1 }]
+        ),
+        "{sent:?}"
+    );
+}

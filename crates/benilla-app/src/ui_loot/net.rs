@@ -1426,7 +1426,8 @@ mod tests {
 
     /// The response's tail (`0x6d57a6`-`0x6d57b5`): a bit of our movement word's low byte, forward,
     /// back, strafe, turn or pitch, takes the move-start close on the window it just opened, the
-    /// release after the selection and the dead body's deselect last.
+    /// release after the selection and the dead body's deselect last, inside the close after its
+    /// release (`0x523754`, `0x5237ae`), its `CMSG_SET_SELECTION` 0 on the wire behind the release.
     #[test]
     fn a_window_that_opens_while_moving_closes_as_a_movement_start_does() {
         for bit in (0..8).map(|b| 1u32 << b) {
@@ -1437,12 +1438,18 @@ mod tests {
             assert!(
                 matches!(
                     sent[..],
-                    [ClientCommand::SetSelection { guid: a }, ClientCommand::LootRelease { guid: b }]
-                        if a == CORPSE && b == CORPSE
+                    [
+                        ClientCommand::SetSelection { guid: a },
+                        ClientCommand::LootRelease { guid: b },
+                        ClientCommand::SetSelection { guid: 0 },
+                    ] if a == CORPSE && b == CORPSE
                 ),
                 "{bit:#x}: {sent:?}"
             );
-            assert_eq!(deselects(&mut world), [CORPSE], "{bit:#x}");
+            assert!(
+                deselects(&mut world).is_empty(),
+                "{bit:#x}: applied, not asked"
+            );
         }
     }
 
@@ -1532,6 +1539,8 @@ mod tests {
                     ClientCommand::SetSelection { .. },
                     ClientCommand::AutostoreLootItem { slot: 0 },
                     ClientCommand::LootRelease { guid },
+                    // The dead body's deselect inside the close (`0x5237ae`).
+                    ClientCommand::SetSelection { guid: 0 },
                 ] if guid == CORPSE
             ),
             "{sent:?}"

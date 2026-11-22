@@ -3,6 +3,8 @@
 
 use benilla_ui::script::{LootRow, LootState, ScriptValue};
 
+use super::test_live::LootVerbsExt;
+
 /// Errors from the loot code itself; the production load carries unrelated 3.3.5a gaps.
 fn loot_errors(errors: impl IntoIterator<Item = String>) -> Vec<String> {
     errors

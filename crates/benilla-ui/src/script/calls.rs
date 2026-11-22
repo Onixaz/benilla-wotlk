@@ -222,6 +222,21 @@ pub enum ScriptCall {
     PetOrder(u32),
     /// A verb whose press the host runs inside the call, off the intents it queued.
     Press(VerbPress),
+    /// A loot verb, run by the host inside the call.
+    Loot(LootVerb),
+}
+
+/// A loot verb the host runs inside its call, its slots 1-based display rows as Lua passes them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LootVerb {
+    /// `LootSlot(slot)`: the take dispatcher (`0x589520` -> `0x589140`).
+    Slot(u32),
+    /// `ConfirmLootSlot(slot)`: the pending bind confirm's take (`0x589590` -> `0x589300`).
+    Confirm(u32),
+    /// `GiveMasterLoot(slot, index)`: `index` the 1-based candidate the binding resolves (`0x589676`), then the send (`0x5893a0`).
+    MasterGive { slot: u32, candidate: u32 },
+    /// `CloseLoot([noUI])`: the close chain with `(1, 0, noUI)` (`0x5888b0` -> `0x523640`).
+    Close { no_ui: bool },
 }
 
 /// The verbs that press inside their call off a queued intent: each casts or sends before it returns, so the caller's next line reads what the press armed.
@@ -325,6 +340,15 @@ impl UiScript {
         let mut model = self.model_mut();
         let later = std::mem::replace(&mut model.script_calls, calls);
         model.script_calls.extend(later);
+    }
+
+    /// Take the loot verbs left waiting where no host state was lent, in call order, leaving the
+    /// rest queued.
+    pub fn take_loot_verbs(&mut self) -> Vec<LootVerb> {
+        self.take_calls_where(|c| match c {
+            ScriptCall::Loot(verb) => Some(*verb),
+            _ => None,
+        })
     }
 
     /// Take the queued calls `pick` answers for, in call order, leaving the rest queued.

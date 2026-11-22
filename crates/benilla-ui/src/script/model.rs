@@ -836,13 +836,6 @@ pub(crate) struct Model {
     /// A fixture's open loot, read where no view is lent.
     #[cfg(any(test, feature = "fixtures"))]
     pub(crate) loot: Option<super::loot::LootState>,
-    /// The `LootSlot` takes and whether `CloseLoot` ran, with its `noUI` flag.
-    pub(crate) loot_picks: Vec<u32>,
-    /// `ConfirmLootSlot(slot)` rows, 1-based, for its pending-slot gate (`0x589300`).
-    pub(crate) loot_confirms: Vec<u32>,
-    pub(crate) loot_close: Option<bool>,
-    /// `GiveMasterLoot(slot, candidateIndex)`, both 1-based display positions the app translates.
-    pub(crate) loot_master_gives: Vec<(u32, u32)>,
 
     /// The open group-loot rolls, and the `RollOnLoot` `(roll_id, roll_type)` votes.
     pub(crate) loot_rolls: loot_roll::LootRollsState,
@@ -1797,10 +1790,6 @@ impl Model {
             loot: None,
             pending_equip_answers: Vec::new(),
             bind_on_use_confirms: 0,
-            loot_picks: Vec::new(),
-            loot_confirms: Vec::new(),
-            loot_close: None,
-            loot_master_gives: Vec::new(),
             loot_rolls: loot_roll::LootRollsState::default(),
             combat_log: combat_log::CombatLogStore::default(),
             loot_roll_votes: Vec::new(),
