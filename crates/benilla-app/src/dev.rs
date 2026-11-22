@@ -60,6 +60,17 @@ pub(crate) fn set_fixture_action(
     _script.set_action(_action, _slot);
 }
 
+/// A fixture's stand-in action state (`UiScript::set_action_state`), compiled out of the player
+/// build with the fixtures.
+pub(crate) fn set_fixture_action_state(
+    _script: &mut benilla_ui::script::UiScript,
+    _action: u32,
+    _state: Option<benilla_ui::script::ActionState>,
+) {
+    #[cfg(any(feature = "dev", test))]
+    _script.set_action_state(_action, _state);
+}
+
 /// A fixture's stand-in spellbook (`UiScript::set_spellbook`), compiled out of the player build.
 pub(crate) fn set_fixture_spellbook(
     _script: &mut benilla_ui::script::UiScript,

@@ -74,10 +74,29 @@ pub struct ActionState {
 }
 
 /// [`ActionState`] with its cooldown in `GetTime` seconds.
+#[cfg(any(test, feature = "fixtures"))]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct StoredActionState {
     pub(crate) state: ActionState,
     pub(crate) cooldown: Option<(f64, f64, bool)>,
+}
+
+/// The stand-in state a test or fixture pushed for `action`, which the verbs read with no view
+/// lent; none in the player build.
+#[cfg(any(test, feature = "fixtures"))]
+fn stand_in(lua: &Lua, action: u32) -> Option<(ActionState, Option<(f64, f64, bool)>)> {
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
+    model
+        .action_states
+        .get(&action)
+        .map(|s| (s.state, s.cooldown))
+}
+
+#[cfg(not(any(test, feature = "fixtures")))]
+fn stand_in(_: &Lua, _: u32) -> Option<(ActionState, Option<(f64, f64, bool)>)> {
+    None
 }
 
 /// One queued `UseAction` press.
@@ -106,8 +125,10 @@ impl super::UiScript {
         }
     }
 
-    /// Push (or clear) one action's state; the cooldown start is already on the `GetTime` clock,
-    /// so storing only converts milliseconds to seconds.
+    /// Push (or clear) one action's stand-in state, which the verbs read with no view lent; the
+    /// cooldown start is already on the `GetTime` clock, so storing only converts milliseconds to
+    /// seconds.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_action_state(&mut self, action: u32, state: Option<ActionState>) {
         let mut model = self.model_mut();
         match state {
@@ -491,11 +512,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // reads the bar at the call; with no view lent, the stand-in state a test or fixture pushed.
 
     fn state_flag(lua: &Lua, action: u32, pick: impl Fn(&ActionState) -> bool) -> Value {
-        let model = lua
-            .app_data_ref::<crate::script::ModelCell>()
-            .expect("model app_data");
-        match model.action_states.get(&action) {
-            Some(s) if pick(&s.state) => Value::Integer(1),
+        match stand_in(lua, action) {
+            Some((s, _)) if pick(&s) => Value::Integer(1),
             _ => Value::Nil,
         }
     }
@@ -541,14 +559,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if let Some(near) = super::read_live(|l| l.action_in_range(slot, target)).flatten() {
                 return Ok(super::spell_info::range_answer(near));
             }
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
             Ok(super::spell_info::range_answer(
-                model
-                    .action_states
-                    .get(&action)
-                    .and_then(|s| s.state.in_range),
+                stand_in(lua, action).and_then(|(s, _)| s.in_range),
             ))
         })?,
     )?;
@@ -654,8 +666,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     i32::from(enabled),
                 ));
             }
+            drop(model);
             Ok(
-                match model.action_states.get(&action).and_then(|s| s.cooldown) {
+                match stand_in(lua, action).and_then(|(_, cooldown)| cooldown) {
                     Some((start, duration, enabled)) if start + duration > now || !enabled => {
                         (start, duration, i32::from(enabled))
                     }

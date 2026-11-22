@@ -564,7 +564,9 @@ pub(crate) struct Model {
     /// Every line the display showed, for the tests.
     #[cfg(any(test, feature = "fixtures"))]
     pub(crate) shown_lines: Vec<(&'static str, Option<String>)>,
-    /// Per action, its usable, range, current and cooldown state; an absent one reads cold.
+    /// Per action, the usable, range, current and cooldown state a test or fixture pushed, read
+    /// with no view lent; an absent one reads cold.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) action_states: HashMap<u32, super::action::StoredActionState>,
     /// The bonus offset a test or fixture pushed, with no view lent.
     #[cfg(any(test, feature = "fixtures"))]
@@ -1647,6 +1649,7 @@ impl Model {
             equipment_set_requests: Vec::new(),
             #[cfg(any(test, feature = "fixtures"))]
             shown_lines: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             action_states: HashMap::new(),
             #[cfg(any(test, feature = "fixtures"))]
             bonus_bar_offset: 0,
