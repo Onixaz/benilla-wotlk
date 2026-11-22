@@ -4054,7 +4054,6 @@ mod tests {
             .init_resource::<GuidIndex>()
             .init_resource::<SelfGuid>()
             .init_resource::<crate::ui_action::RefusalsSeen>()
-            .init_resource::<crate::ui_action::UiErrorKeys>()
             .init_resource::<crate::ui_script::live::UiEvents>()
             .init_resource::<PendingCast>()
             .init_resource::<QueuedMeleeSpell>()

@@ -134,8 +134,8 @@ const READS: &[&str] = &[
     "slot_of",
 ];
 
-/// The line queues: a push there is a line shown a frame late (#1354, `HOLDERS`), not state.
-const LINE_QUEUES: &[&str] = &["UiErrorKeys", "UiErrorTexts", "ChatLog"];
+/// The line queue: a push there is a chat line, not state.
+const LINE_QUEUES: &[&str] = &["ChatLog"];
 
 /// `source` with comments and string and char literals blanked, every offset and line kept.
 fn blank(source: &str) -> String {

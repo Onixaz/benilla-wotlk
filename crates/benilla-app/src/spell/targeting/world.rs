@@ -164,7 +164,6 @@ mod tests {
         world.init_resource::<crate::ui_action::RefusalsSeen>();
         world.init_resource::<crate::ui_cast::PressEdges>();
         world.init_resource::<crate::ui_script::live::UiEvents>();
-        world.init_resource::<crate::ui_action::UiErrorKeys>();
         world.init_resource::<crate::spell::AutoRepeatActive>();
         world.init_resource::<crate::ui_tradeskill::TradeSkillOpens>();
         world.init_resource::<super::super::SpellTargeting>();

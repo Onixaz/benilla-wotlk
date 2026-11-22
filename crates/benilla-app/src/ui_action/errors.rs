@@ -143,11 +143,6 @@ impl UiError {
     }
 }
 
-/// Client-local refusals queued by GlobalStrings key: the error-display route for errors with no
-/// wire code and no spell record.
-#[derive(Resource, Default)]
-pub(crate) struct UiErrorKeys(pub Vec<UiError>);
-
 /// Where a line that arrives already resolved shows, with no key and no catalog record: the reference's message sink called as `(text, flag)` without the error display, flag 1 firing `UI_ERROR_MESSAGE` and 0 `UI_INFO_MESSAGE`, in the caller's turn. `SMSG_NOTIFICATION` passes 1, `SMSG_AREA_TRIGGER_MESSAGE` passes 0.
 pub(crate) trait TextSink {
     fn text_line(&mut self, kind: MsgKind, text: String);

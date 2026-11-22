@@ -10,7 +10,7 @@ use benilla_ui::script::UiScript;
 use bevy::prelude::*;
 
 use super::feed::feed_actions;
-use super::{CastFail, PlayerActions, TextSink, UiErrorKeys};
+use super::{CastFail, PlayerActions, TextSink};
 use crate::entities::ItemDisplays;
 use crate::items::{test_template, Items};
 use crate::net::{ClientCommand, NetCommands};
@@ -52,7 +52,6 @@ fn app_with_food_on_the_bar() -> (App, crossbeam_channel::Receiver<ClientCommand
         .init_resource::<PlayerActions>()
         .init_resource::<Items>()
         .init_resource::<crate::net::GuidIndex>()
-        .init_resource::<UiErrorKeys>()
         .init_resource::<crate::ui_chat::ChatLog>()
         .init_resource::<crate::sound::MessageSounds>()
         .insert_resource(ItemDisplays::icons_for_tests(
@@ -205,7 +204,6 @@ fn a_pets_refused_cast_writes_no_combat_log_line() {
         })
         .init_resource::<Items>()
         .init_resource::<crate::net::GuidIndex>()
-        .init_resource::<UiErrorKeys>()
         .init_resource::<crate::ui_chat::ChatLog>()
         .init_resource::<crate::sound::MessageSounds>()
         .add_message::<crate::combat_log::SpellCastFailedLog>()
@@ -252,7 +250,6 @@ fn a_custom_refusal_shows_its_row_and_is_not_logged() {
         .insert_resource(Spells::empty_for_tests())
         .init_resource::<Items>()
         .init_resource::<crate::net::GuidIndex>()
-        .init_resource::<UiErrorKeys>()
         .init_resource::<crate::ui_chat::ChatLog>()
         .init_resource::<crate::sound::MessageSounds>()
         .add_message::<crate::combat_log::SpellCastFailedLog>()
@@ -337,7 +334,6 @@ fn need_more_items_and_min_skill_fill_both_argument_words() {
             catalog: std::sync::Arc::new(lines),
         })
         .init_resource::<crate::net::GuidIndex>()
-        .init_resource::<UiErrorKeys>()
         .init_resource::<crate::ui_chat::ChatLog>()
         .init_resource::<crate::sound::MessageSounds>()
         .add_message::<crate::combat_log::SpellCastFailedLog>()
