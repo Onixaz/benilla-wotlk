@@ -5,11 +5,12 @@ use std::collections::HashMap;
 
 use benilla_formats::{ItemDisplay, ItemDisplayCatalog};
 use benilla_protocol::messages::{ActionButton, ItemSpellEntry, ACTION_KIND_ITEM};
+use benilla_ui::messages::MsgKind;
 use benilla_ui::script::UiScript;
 use bevy::prelude::*;
 
 use super::feed::feed_actions;
-use super::{CastFail, PlayerActions, UiErrorKeys, UiErrorTexts};
+use super::{CastFail, PlayerActions, TextSink, UiErrorKeys};
 use crate::entities::ItemDisplays;
 use crate::items::{test_template, Items};
 use crate::net::{ClientCommand, NetCommands};
@@ -52,7 +53,6 @@ fn app_with_food_on_the_bar() -> (App, crossbeam_channel::Receiver<ClientCommand
         .init_resource::<Items>()
         .init_resource::<crate::net::GuidIndex>()
         .init_resource::<UiErrorKeys>()
-        .init_resource::<UiErrorTexts>()
         .init_resource::<crate::ui_chat::ChatLog>()
         .init_resource::<crate::sound::MessageSounds>()
         .insert_resource(ItemDisplays::icons_for_tests(
@@ -108,8 +108,8 @@ fn is_consumable_is_ammo_thrown_or_a_negative_charge_use_block() {
     assert!(!proc_item.is_consumable());
 }
 
-/// `UiErrorTexts` end to end into the stock `UIErrorsFrame`: an `SMSG_NOTIFICATION` draws red,
-/// an `SMSG_AREA_TRIGGER_MESSAGE` yellow.
+/// A resolved line ([`TextSink`]) end to end into the stock `UIErrorsFrame`, in the handler's turn:
+/// an `SMSG_NOTIFICATION` draws red, an `SMSG_AREA_TRIGGER_MESSAGE` yellow.
 #[test]
 fn pre_resolved_lines_land_on_the_errors_frame_in_the_arms_colour() {
     benilla_formats::wow_data_or_skip!();
@@ -126,16 +126,15 @@ fn pre_resolved_lines_land_on_the_errors_frame_in_the_arms_colour() {
         }
     }
 
-    // What the net drain queues for one `.gm on`, plus a refused portal.
-    let mut texts = app.world_mut().resource_mut::<UiErrorTexts>();
-    texts.error("GM mode is ON".to_string());
-    texts.info("You must be at least level 58 to enter.".to_string());
-    app.update();
-
-    assert!(
-        app.world().resource::<UiErrorTexts>().0.is_empty(),
-        "the feed drains the queue"
+    // What the handlers show for one `.gm on`, plus a refused portal, fired in their turn.
+    let mut ui = crate::ui_script::live::UiEvents::default();
+    ui.text_line(MsgKind::Error, "GM mode is ON".to_string());
+    ui.text_line(
+        MsgKind::Info,
+        "You must be at least level 58 to enter.".to_string(),
     );
+    app.insert_resource(ui);
+    crate::ui_script::live::fire_handler_events(app.world_mut());
 
     let mut script = app.world_mut().non_send_resource_mut::<UiScript>();
     assert!(
@@ -208,7 +207,6 @@ fn a_pets_refused_cast_writes_no_combat_log_line() {
         .init_resource::<Items>()
         .init_resource::<crate::net::GuidIndex>()
         .init_resource::<UiErrorKeys>()
-        .init_resource::<UiErrorTexts>()
         .init_resource::<crate::ui_chat::ChatLog>()
         .init_resource::<crate::sound::MessageSounds>()
         .add_message::<crate::combat_log::SpellCastFailedLog>()
@@ -256,7 +254,6 @@ fn a_custom_refusal_shows_its_row_and_is_not_logged() {
         .init_resource::<Items>()
         .init_resource::<crate::net::GuidIndex>()
         .init_resource::<UiErrorKeys>()
-        .init_resource::<UiErrorTexts>()
         .init_resource::<crate::ui_chat::ChatLog>()
         .init_resource::<crate::sound::MessageSounds>()
         .add_message::<crate::combat_log::SpellCastFailedLog>()
@@ -341,7 +338,6 @@ fn need_more_items_and_min_skill_fill_both_argument_words() {
         })
         .init_resource::<crate::net::GuidIndex>()
         .init_resource::<UiErrorKeys>()
-        .init_resource::<UiErrorTexts>()
         .init_resource::<crate::ui_chat::ChatLog>()
         .init_resource::<crate::sound::MessageSounds>()
         .add_message::<crate::combat_log::SpellCastFailedLog>()

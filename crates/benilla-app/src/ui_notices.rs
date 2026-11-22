@@ -19,8 +19,10 @@ use bevy::prelude::*;
 use crate::items::Items;
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, NetHandlerApp, NetStatus, SelfGuid};
-use crate::ui_action::{FillArg, UiError, UiErrorKeys};
+use crate::ui_action::signals::SignalSink;
+use crate::ui_action::{FillArg, UiError};
 use crate::ui_chat::{ChatEvent, ChatEventKind, ChatLog};
+use crate::ui_script::live::UiEvents;
 use crate::ui_script::{UiDrain, UiFeed};
 
 /// How often the UI clock is asked for in world (`0x5488f0`: `now + 20000`).
@@ -154,9 +156,11 @@ fn arena_error(error: u32, team_type: Option<u8>) -> Option<UiError> {
     }
 }
 
-fn on_arena_error(In(ev): In<SessionEvent>, mut errors: ResMut<UiErrorKeys>) {
+fn on_arena_error(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
     if let SessionEvent::ArenaError { error, team_type } = ev {
-        errors.0.extend(arena_error(error, team_type));
+        if let Some(line) = arena_error(error, team_type) {
+            ui.line(line);
+        }
     }
 }
 
@@ -182,9 +186,11 @@ fn refer_a_friend_error(error: u32, name: &str) -> Option<UiError> {
     })
 }
 
-fn on_refer_a_friend_failure(In(ev): In<SessionEvent>, mut errors: ResMut<UiErrorKeys>) {
+fn on_refer_a_friend_failure(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
     if let SessionEvent::ReferAFriendFailure { error, name } = ev {
-        errors.0.extend(refer_a_friend_error(error, &name));
+        if let Some(line) = refer_a_friend_error(error, &name) {
+            ui.line(line);
+        }
     }
 }
 
@@ -603,7 +609,6 @@ fn drain_level_grant(
     mut grant: ResMut<LevelGrant>,
     net: Res<NetCommands>,
     names: Res<NameCache>,
-    mut errors: ResMut<UiErrorKeys>,
     mut chat: ResMut<crate::ui_chat::ChatLog>,
     mut waiting: Local<crate::ui_script::VmMemo<Vec<(u8, u64)>>>,
     mut echo: Option<ResMut<crate::console::ConsoleEcho>>,
@@ -620,6 +625,7 @@ fn drain_level_grant(
         }
     }
     let waiting = waiting.get(&script);
+    let mut lines = Vec::new();
     for request in script.take_unit_requests() {
         match request {
             R::GrantLevel(friend) => {
@@ -634,7 +640,7 @@ fn drain_level_grant(
                 waiting.push((code, guid));
             }
             R::ReferAFriendRefused { code, .. } => {
-                errors.0.extend(refer_a_friend_error(u32::from(code), ""));
+                lines.extend(refer_a_friend_error(u32::from(code), ""));
             }
             R::SummonFriend {
                 guid,
@@ -672,9 +678,15 @@ fn drain_level_grant(
         let Some(name) = names.peek(guid) else {
             return !names.answered_unknown(guid);
         };
-        errors.0.extend(refer_a_friend_error(u32::from(code), name));
+        lines.extend(refer_a_friend_error(u32::from(code), name));
         false
     });
+    // Each refusal at the drain's step, in turn with its raises.
+    if let Some(queue) = script.queue() {
+        for line in lines {
+            queue.line(line);
+        }
+    }
     for accept in script.take_level_grant_answers() {
         let Some(granter) = grant.granter.take() else {
             continue;
@@ -941,7 +953,7 @@ mod tests {
         let mut w = World::new();
         w.init_resource::<LevelGrant>();
         w.init_resource::<NameCache>();
-        w.init_resource::<UiErrorKeys>();
+        w.init_resource::<UiEvents>();
         w.init_resource::<crate::ui_chat::ChatLog>();
         w.init_resource::<crate::spell::PendingCast>();
         w.insert_resource(NetCommands(tx));

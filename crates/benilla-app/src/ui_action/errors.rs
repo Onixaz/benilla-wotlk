@@ -9,7 +9,7 @@ use bevy::prelude::*;
 use crate::net::ObjectStore;
 use crate::sound::MessageSounds;
 use crate::spell::validator::MountedGate;
-use crate::ui_chat::{ChatEvent, ChatEventKind, ChatLog};
+use crate::ui_chat::{ChatEvent, ChatLog};
 use crate::ui_items::{count_of, InventoryScope};
 
 /// One cast failure. `arg` fills the message's `%s`; the reference raises its local refusals
@@ -145,23 +145,40 @@ impl UiError {
 #[derive(Resource, Default)]
 pub(crate) struct UiErrorKeys(pub Vec<UiError>);
 
-/// Lines that arrive already resolved, with no key and no catalog record: they reach the
-/// reference's message sink, called as `(text, flag)` without the error display, flag 1 firing
-/// `UI_ERROR_MESSAGE` and 0 `UI_INFO_MESSAGE`. `SMSG_NOTIFICATION` passes 1,
-/// `SMSG_AREA_TRIGGER_MESSAGE` passes 0.
-#[derive(Resource, Default)]
-pub(crate) struct UiErrorTexts(pub Vec<(String, MsgKind)>);
+/// Where a line that arrives already resolved shows, with no key and no catalog record: the
+/// reference's message sink called as `(text, flag)` without the error display, flag 1 firing
+/// `UI_ERROR_MESSAGE` and 0 `UI_INFO_MESSAGE`, in the caller's turn. `SMSG_NOTIFICATION` passes
+/// 1, `SMSG_AREA_TRIGGER_MESSAGE` passes 0.
+pub(crate) trait TextSink {
+    fn text_line(&mut self, kind: MsgKind, text: String);
+}
 
-impl UiErrorTexts {
-    /// The red `UI_ERROR_MESSAGE` arm (the sink's `(text, 1)`).
-    pub(crate) fn error(&mut self, text: String) {
-        self.0.push((text, MsgKind::Error));
+/// A handler's resolved line: a step in its turn, in order with its events.
+impl TextSink for crate::ui_script::live::UiEvents {
+    fn text_line(&mut self, kind: MsgKind, text: String) {
+        self.world(move |world| show_text_in_world(world, kind, text));
     }
+}
 
-    /// The yellow `UI_INFO_MESSAGE` arm (the sink's `(text, 0)`).
-    pub(crate) fn info(&mut self, text: String) {
-        self.0.push((text, MsgKind::Info));
+/// A test's record of the resolved lines, in order.
+#[cfg(test)]
+impl TextSink for Vec<(String, MsgKind)> {
+    fn text_line(&mut self, kind: MsgKind, text: String) {
+        self.push((text, kind));
     }
+}
+
+/// Show a resolved line now with the `World` lent: no record, so no sound; a chat line is added on
+/// the system type.
+pub(crate) fn show_text_in_world(world: &mut World, kind: MsgKind, text: String) {
+    let event = match kind {
+        MsgKind::Error => "UI_ERROR_MESSAGE",
+        MsgKind::Info => "UI_INFO_MESSAGE",
+        MsgKind::Chat => return crate::ui_chat::add_chat_line_now(world, 0, text),
+    };
+    crate::ui_script::live::with_live_world(world, |script| {
+        script.fire_event(event, vec![ScriptValue::Str(text)]);
+    });
 }
 
 /// Resolve a [`UiError`] to its text, the template filled in push order. Deviation: an absent or
@@ -226,7 +243,7 @@ impl Shown {
         }
     }
 
-    /// A line with no catalog row, the wire's own text ([`UiErrorTexts`]), which reaches the sink
+    /// A line with no catalog row, the wire's own text ([`TextSink`]), which reaches the sink
     /// without a record and so makes no sound.
     pub(crate) fn unkeyed(kind: MsgKind, text: String) -> Self {
         Self {
@@ -258,9 +275,9 @@ pub(crate) fn keyed_line_s(script: &UiScript, key: &'static str, args: &[&str]) 
 
 /// The one sink for a resolved line: show it on its [`MsgKind`]'s surface and queue its catalog
 /// row's sound, which `crate::sound::message` plays after the input pass, the same frame. `who`
-/// tags the debug line. [`MsgKind::Chat`] lines go out as `CHAT_MSG_SYSTEM`; the three rows that
-/// ask for `CHAT_MSG_SKILL` ([`benilla_ui::messages::MessageRecord::chat_type`]) are not raised
-/// yet.
+/// tags the debug line. A [`MsgKind::Chat`] line goes out on its row's chat type
+/// ([`benilla_ui::messages::MessageRecord::chat_type`]): 26 `CHAT_MSG_SKILL`, else
+/// `CHAT_MSG_SYSTEM`.
 pub(crate) fn show_messages(
     script: &mut UiScript,
     sink: &mut MessageSink,
@@ -292,9 +309,14 @@ pub(super) fn show_one(
         sounds.push(record);
     }
     match kind {
+        // The display's chat arm adds the line on its row's chat type in the caller's turn (`0x521814` -> `0x509dd0`); with no chat log lent the chat feed takes it.
         MsgKind::Chat => {
-            if let Some(chat) = chat {
-                chat.push_event(ChatEvent::text_only(ChatEventKind::System, text));
+            let chat_type = record.map_or(0, |r| r.chat_type);
+            if let (Some(text), Some(chat)) = (script.add_chat_text(chat_type, text), chat) {
+                chat.push_event(ChatEvent::text_only(
+                    crate::ui_chat::kind_of_type(chat_type),
+                    text,
+                ));
             }
         }
         MsgKind::Info => {
@@ -1026,5 +1048,48 @@ mod totem_reagent_tests {
         let none = spell([0, 0], [(0, 0); 8]);
         assert_eq!(first_missing_totem(&none, &st, &objs.get()), None);
         assert_eq!(first_short_reagent(&none, &st, &objs.get()), None);
+    }
+}
+
+#[cfg(test)]
+mod chat_arm_tests {
+    use benilla_ui::script::UiScript;
+    use bevy::prelude::*;
+
+    use super::{show_line_in_world, UiError};
+
+    /// A handler's chat-kind line is added in its turn on its row's chat type (`0x521814` ->
+    /// `0x509dd0`): a type-26 row fires `CHAT_MSG_SKILL` as the handler's events fire, not a
+    /// `CHAT_MSG_SYSTEM` line from the chat feed a frame later.
+    #[test]
+    fn a_skill_rows_line_is_added_in_turn_as_a_skill_line() {
+        let mut world = World::new();
+        world.init_resource::<crate::ui_script::live::UiEvents>();
+        world.init_resource::<crate::ui_chat::ChatWindows>();
+        world.init_resource::<crate::ui_chat::ChatLog>();
+        world.init_resource::<crate::sound::MessageSounds>();
+        let script = UiScript::new().unwrap();
+        script
+            .run(
+                r#"SEEN = {} ERR_SKILL_GAINED_S = "You have gained the %s skill."
+                local f = CreateFrame("Frame")
+                f:RegisterEvent("CHAT_MSG_SKILL")
+                f:RegisterEvent("CHAT_MSG_SYSTEM")
+                f:SetScript("OnEvent", function(_, e, t) SEEN[#SEEN + 1] = e .. ":" .. t end)"#,
+            )
+            .unwrap();
+        world.insert_non_send_resource(script);
+        show_line_in_world(
+            &mut world,
+            "test",
+            UiError::s("ERR_SKILL_GAINED_S", "Swords"),
+        );
+        crate::ui_script::live::fire_handler_events(&mut world);
+        let seen: String = world
+            .non_send_resource::<UiScript>()
+            .eval("return table.concat(SEEN, ',')")
+            .unwrap();
+        assert_eq!(seen, "CHAT_MSG_SKILL:You have gained the Swords skill.");
+        assert_eq!(world.resource::<crate::ui_chat::ChatLog>().pending_len(), 0);
     }
 }
