@@ -489,8 +489,7 @@ pub(super) fn cast_fail_text(
             0x01 => return get_display("ERR_SPELL_FAILED_ALREADY_AT_FULL_HEALTH"),
             // 12340's 4 (`0x808982`): our own power type's token; no player, a type past 6 or an empty token fails the cast with no line (`0x808984`, `0x808997`, `0x8089b5` -> `0x8086ff`).
             0x02 => {
-                let power = args.own_power.filter(|&p| p <= 6)?;
-                let name = get_text(POWER_TOKENS[usize::from(power)])?;
+                let name = full_power_noun(args.own_power, get)?;
                 let t = get_display("ERR_SPELL_FAILED_ALREADY_AT_FULL_POWER_S")?;
                 // The reference puts only the power noun in the argText buffer: the log reads the
                 // bare word.
@@ -576,14 +575,16 @@ pub(super) fn exits_quietly(
     get: &dyn Fn(&str) -> Option<String>,
 ) -> bool {
     match reason {
-        0x02 => args
-            .own_power
-            .filter(|&p| p <= 6)
-            .and_then(|p| get(POWER_TOKENS[usize::from(p)]).filter(|s| !s.is_empty()))
-            .is_none(),
+        0x02 => full_power_noun(args.own_power, get).is_none(),
         0x56 | 0x9C => matches!(args.fill(Caster::Player, reason, spell), Fill::Nothing),
         _ => false,
     }
+}
+
+/// Arm 4's power noun: our power type's token, `None` with no player, a type past 6 or an empty token (`0x808984`, `0x808997`, `0x8089b5`, `0x8089be`).
+fn full_power_noun(own_power: Option<u8>, get: &dyn Fn(&str) -> Option<String>) -> Option<String> {
+    let power = own_power.filter(|&p| p <= 6)?;
+    get(POWER_TOKENS[usize::from(power)]).filter(|s| !s.is_empty())
 }
 
 /// 12340's `SPELL_FAILED_CUSTOM_ERROR` (wire 172) in the shared numbering.
@@ -1054,6 +1055,16 @@ mod tests {
         );
         assert_eq!(at(Some(7)), None);
         assert_eq!(at(None), None);
+        // An empty token shows nothing and takes the silent exit (`0x8089be` -> `0x8086ff`).
+        let mut empty = m.clone();
+        empty.insert("RUNIC_POWER", "");
+        let g = getter(&empty);
+        let args = FailArgs {
+            own_power: Some(6),
+            ..FailArgs::default()
+        };
+        assert!(cast_fail_text(Caster::Player, 0x02, None, args, &g).is_none());
+        assert!(exits_quietly(0x02, None, args, &g));
     }
 
     /// 12340's 176 (`0x8089f3`) names the casting item, else the spell; 181 (`0x808acd`) prints the first word as a number.
@@ -1532,9 +1543,7 @@ mod tests {
         );
     }
 
-    /// `SPELL_FAILED_CUSTOM_ERROR` (wire 172) names its line by the word: Fire Nova's id 83 on
-    /// the player's handler, never logged; a missing word and an id with no plain row show nothing.
-    /// The pet's handler fills its buffer and shows nothing (`0x8059f5` -> `0x80581c`).
+    /// `SPELL_FAILED_CUSTOM_ERROR` (wire 172) names its line by the word on the player's handler, never logged, a missing word or an id with no plain row showing nothing; the pet's handler shows nothing (`0x8059f5` -> `0x80581c`).
     #[test]
     fn a_custom_refusal_shows_the_row_its_word_names() {
         let m = HashMap::from([
