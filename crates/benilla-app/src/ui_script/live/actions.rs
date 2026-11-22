@@ -15,7 +15,7 @@ use super::LiveView;
 /// `Spell.dbc`'s auto-attack effect, `IsAttackAction`'s test (`0x5a96d0`).
 const EFFECT_ATTACK: u32 = 78;
 
-/// `AttributesExB & 0x40000`: a pet-bar spell the player casts (`0x5a8cb5`).
+/// `AttributesExB & 0x40000`: a pet-bar spell the player casts (`0x5a8cf5`).
 const EX2_CAST_BY_PLAYER: u32 = 0x0004_0000;
 
 /// A bar slot as the resolvers read it.
@@ -33,7 +33,7 @@ pub(super) struct Resolved {
     pet_word: Option<PetActionEntry>,
 }
 
-/// Pet action word kinds: a spell, a reaction, a command, and the spell kinds 8-17 (`0x5a8113`).
+/// Pet action word kinds: a spell, a reaction, a command, and the spell kinds 8-17 (`0x5a8136`-`0x5a8141`).
 const PET_KIND_SPELL: u8 = 1;
 const PET_KIND_REACTION: u8 = 6;
 const PET_KIND_COMMAND: u8 = 7;
@@ -281,7 +281,7 @@ impl<'w, 's> LiveView<'w, 's> {
     }
 
     /// `IsEquippedAction` (`0x5a88b0`): an item with an inventory type worn, a copy with charges
-    /// left counting first when the item's use spell has finite charges (`0x5a894b`-`0x5a8990`).
+    /// left counting first when the item's use spell has finite charges (`0x5a8949`-`0x5a8990`).
     pub(super) fn slot_equipped(&self, r: Resolved) -> bool {
         let (Some((objects, items, commands)), Some((_, me))) =
             (self.containers.as_ref().map(|c| c.item_reads()), self.me())

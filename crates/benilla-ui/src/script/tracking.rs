@@ -103,7 +103,7 @@ pub(crate) struct TrackingModel {
     pub(crate) town: Option<usize>,
 }
 
-/// The active player's class bit at the call, 0 with no active player (`0x57e999`).
+/// The active player's class bit at the call, 0 with no active player (`0x57e996`).
 fn live_class_mask() -> u32 {
     let class_id = super::read_live(|l| l.player_fields())
         .flatten()

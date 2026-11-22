@@ -2175,7 +2175,7 @@ fn on_power_update(
         return;
     }
     store.set_changed();
-    // Ours or our pet's moved: the power-only usable update (`0x722cd4` -> `0x53d1b0`).
+    // Ours or our pet's moved: the power-only usable update (`0x722cd2` -> `0x53d1b0`).
     let me = self_guid.and_then(|g| g.0);
     let pet = me
         .and_then(|g| index.0.get(&g))
