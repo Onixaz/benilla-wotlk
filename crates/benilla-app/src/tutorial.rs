@@ -118,6 +118,31 @@ impl TutorialEvent {
     }
 }
 
+/// `TriggerTutorial(id, 0)` at its caller's step (`0x530840`): the cue and `TUTORIAL_TRIGGER` now.
+pub(crate) fn trigger_at_step(world: &mut World, id: u32) {
+    let Some(mut tutorials) = world.get_resource_mut::<Tutorials>() else {
+        return;
+    };
+    let owed = tutorials.fired.len();
+    tutorials.trigger(id, 0, Instant::now());
+    if !world.contains_resource::<crate::ui_script::live::UiEvents>() {
+        return; // no event queue: the feed fires what is owed
+    }
+    let published: Vec<u32> = world
+        .resource_mut::<Tutorials>()
+        .fired
+        .drain(owed..)
+        .collect();
+    for published in published {
+        if let Some(mut sounds) = world.get_resource_mut::<crate::sound::MessageSounds>() {
+            sounds.push_cue(TUTORIAL_POPUP_SOUND);
+        }
+        let args = vec![ScriptValue::Int(i64::from(published))];
+        let mut ui = world.resource_mut::<crate::ui_script::live::UiEvents>();
+        ui.fire("TUTORIAL_TRIGGER", args);
+    }
+}
+
 /// A send the drains owe the wire.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TutorialSend {

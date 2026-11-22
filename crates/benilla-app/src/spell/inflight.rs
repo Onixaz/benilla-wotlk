@@ -210,7 +210,10 @@ pub(crate) fn cancel_records(world: &mut World, records: &[(PendingRecord, u64)]
             });
         }
         if let Some(mut ui) = world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
-            ui.cast_edge(crate::ui_cast::CastBarEdge::Cancelled { caster: unit });
+            ui.cast_edge(crate::ui_cast::CastBarEdge::Cancelled {
+                caster: unit,
+                reason: wire_reason,
+            });
             ui.cast_edge(crate::ui_cast::CastBarEdge::Selection);
         }
     }
@@ -392,8 +395,10 @@ impl AutoRepeatActive {
 pub(crate) const SPELL_INTERRUPT_MOVEMENT: u32 = 0x1; // SpellRec+0x54 InterruptFlags (SPELL_INTERRUPT_FLAG_MOVEMENT)
 const CHANNEL_INTERRUPT_MOVING: u32 = 0x8; // SpellRec+0x5c ChannelInterruptFlags (AURA_INTERRUPT_MOVING_CANCELS)
 
-/// The wire reason the movement cancel ends the cast with (`0x8066ce`).
-const CANCEL_REASON: u8 = 0x28;
+/// The wire reason the movement cancel ends the cast with (`0x8066ce`): `INTERRUPTED`.
+const MOVE_CANCEL_REASON: u8 = 0x28;
+/// The reason Esc (`0x809aa8`) and the controls clear (`0x5194cc` -> `0x8063c1`) cancel with: `FAILED_QUIET` (`0x7fee0f`).
+const STOP_CANCEL_REASON: u8 = 0x1b;
 
 /// A directional move start or a jump happened this frame (the `0x10f0` mask; there is no
 /// autorun yet). Set by `player::control`, consumed by [`local_self_cancel`].
@@ -404,15 +409,12 @@ pub(crate) struct LocalMoveStart(pub(crate) bool);
 ///
 /// - Esc first stops a running auto-repeat (`SpellStopCasting`), and that spends the press; the
 ///   cast survives to the next one.
-/// - The cast: `CMSG_CANCEL_CAST`, the self `Casting` reaped with a `Fail` cast event, and the
-///   running cast ended interrupted ([`CastBarEdge::Cancelled`]). Movement tests the spell's
-///   `InterruptFlags`; Esc does not.
+/// - The cast: `CMSG_CANCEL_CAST`, `Casting` reaped, the cast ended by its caller's reason ([`CastBarEdge::Cancelled`]); only a move tests `InterruptFlags`.
 /// - The channel, on movement only: `CMSG_CANCEL_CHANNELLING` and nothing local; the bar and
 ///   [`ActiveChannel`] close on `MSG_CHANNEL_UPDATE(0)`. Esc cannot stop a channel: the Esc cancel
 ///   never calls the channel's, and the inflight id is 0 mid-channel.
 ///
-/// 12340's cancel (`0x806200`) ends the cast through `0x7fecc0` itself, so `INTERRUPTED` and
-/// `STOP` fire before the server's `SMSG_SPELL_FAILURE` echo, which the bar then ignores.
+/// 12340's cancel (`0x806200`) ends the cast itself (`0x7fecc0`), ahead of the `SMSG_SPELL_FAILURE` echo the bar ignores.
 pub(super) fn local_self_cancel(mut moved: ResMut<LocalMoveStart>, mut cancel: SelfCancel) {
     if std::mem::take(&mut moved.0) {
         cancel.cancel(CancelBy::Moved);
@@ -486,6 +488,11 @@ impl SelfCancel<'_, '_> {
         let now = Instant::now();
         let self_e = self_guid.0.as_ref().and_then(|g| index.0.get(g)).copied();
         let moved = by == CancelBy::Moved;
+        let reason = if moved {
+            MOVE_CANCEL_REASON
+        } else {
+            STOP_CANCEL_REASON
+        };
         // Esc stops one thing, auto-repeat first.
         let esc = by == CancelBy::Esc;
         let esc = if esc && auto_repeat.0.is_some() {
@@ -559,10 +566,9 @@ impl SelfCancel<'_, '_> {
                         if let Some(record) = pending.current().copied() {
                             pending.release_record(&record);
                         }
-                        // The cancel ends the running cast as `0x806200` does: `INTERRUPTED`, then
-                        // `STOP` (reason `0x28`, the `0x8066ce` arm).
+                        // The cancel ends the cast by its caller's reason, then `STOP` (`0x806200`, `0x806349` -> `0x7fedd0`).
                         if let Some(caster) = self_guid.0 {
-                            press.cancelled(caster);
+                            press.cancelled(caster, reason);
                         }
                         // `spell_failed_other`'s self reap, run early so the echo finds it done.
                         if let Some(e) = self_e {
@@ -575,7 +581,7 @@ impl SelfCancel<'_, '_> {
                                 spell_id,
                                 kind: CastEventKind::Fail {
                                     interrupt: false,
-                                    wire_reason: CANCEL_REASON,
+                                    wire_reason: reason,
                                     ends_cast: running.is_some(),
                                 },
                                 cast_count: running.map_or(0, |c| c.cast_count),
@@ -777,7 +783,10 @@ mod tests {
                     .resource::<crate::ui_script::live::UiEvents>()
                     .cast_edges(),
                 [
-                    crate::ui_cast::CastBarEdge::Cancelled { caster: PET },
+                    crate::ui_cast::CastBarEdge::Cancelled {
+                        caster: PET,
+                        reason: 0x1b
+                    },
                     crate::ui_cast::CastBarEdge::Selection
                 ]
             );
@@ -1206,7 +1215,7 @@ mod tests {
                 script
                     .run(
                         "LOG = {} local f = CreateFrame('Frame') f:RegisterEvent('ITEM_UNLOCKED') \
-                         f:RegisterEvent('UNIT_SPELLCAST_INTERRUPTED') \
+                         f:RegisterEvent('UNIT_SPELLCAST_FAILED_QUIET') \
                          f:SetScript('OnEvent', function(_, e) LOG[#LOG + 1] = e end)",
                     )
                     .unwrap();
@@ -1236,20 +1245,24 @@ mod tests {
             };
             use crate::ui_cast::CastBarEdge;
             let end = [
-                CastBarEdge::Cancelled { caster: 10 },
+                // The controls clear's reason (`0x8063c1`).
+                CastBarEdge::Cancelled {
+                    caster: 10,
+                    reason: 0x1b,
+                },
                 CastBarEdge::Selection,
             ];
             let (edges, log) = cancelled(SCROLL);
             assert_eq!(edges[0], CastBarEdge::CastItemCancelled(SCROLL));
             assert_eq!(edges[1..], end, "the release is ahead of the cast's end");
             assert_eq!(
-                log, "ITEM_UNLOCKED UNIT_SPELLCAST_INTERRUPTED",
+                log, "ITEM_UNLOCKED UNIT_SPELLCAST_FAILED_QUIET",
                 "the unlock fires ahead of the cast's end"
             );
             let (edges, log) = cancelled(SCROLL + 1);
             assert_eq!(edges[0], CastBarEdge::CastItemCancelled(SCROLL + 1));
             assert_eq!(
-                log, "UNIT_SPELLCAST_INTERRUPTED",
+                log, "UNIT_SPELLCAST_FAILED_QUIET",
                 "another item's cast leaves it locked"
             );
         }

@@ -1841,9 +1841,7 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     let target = sc.selection.as_deref().and_then(|s| s.guid);
     if sc.self_guid.0 != Some(guid) {
         if merged.aura_state_moved && target == Some(guid) {
-            sc.ui.world(crate::ui_action::usable_cache::step(
-                crate::ui_action::usable_cache::Pass::Full,
-            ));
+            aura_state_watch(sc);
         }
         let our_pet = sc
             .self_guid
@@ -1927,11 +1925,14 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
         sc.ui.world(crate::ui_action::bonus::form_changed);
         sc.ui.fire("UPDATE_SHAPESHIFT_FORM", Vec::new());
     }
-    // Our own fields' usable updates, the aura state's among them (`0x716810`).
-    for _ in 0..merged.usable_updates + u8::from(merged.aura_state_moved) {
+    // Our own fields' usable updates, then the aura state's (`0x716810`).
+    for _ in 0..merged.usable_updates {
         sc.ui.world(crate::ui_action::usable_cache::step(
             crate::ui_action::usable_cache::Pass::Full,
         ));
+    }
+    if merged.aura_state_moved {
+        aura_state_watch(sc);
     }
     // The override-spell watch's selection update after its usable update (`0x6d1c58`), then the
     // override bar and the bonus update (`0x6d1c5d`, `0x6d1c62`).
@@ -1986,6 +1987,14 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     }
     own_death_fields(sc, guid, past_farsight);
     own_player_watches(sc, guid, &merged.watched);
+}
+
+/// The aura state's watch for us or the target (`0x716810`): the full usable update, then `PET_BAR_UPDATE_USABLE` (`0x716836`, `0x716842`).
+fn aura_state_watch(sc: &mut Scene) {
+    sc.ui.world(crate::ui_action::usable_cache::step(
+        crate::ui_action::usable_cache::Pass::Full,
+    ));
+    sc.ui.fire("PET_BAR_UPDATE_USABLE", Vec::new());
 }
 
 /// The guild timestamp's watch (`0x6e1c60`): a stamp new for the player's guild drops its record and asks it again with the walk as its callback (`0x6e1d5f` -> `0x6e1b90`).

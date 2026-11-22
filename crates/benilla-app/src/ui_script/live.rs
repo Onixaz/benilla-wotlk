@@ -69,8 +69,10 @@ pub(crate) struct LiveView<'w, 's> {
     pub(crate) trade: Option<ResMut<'w, crate::ui_tradeskill::TradeSkillOpen>>,
     /// The usable caches (`0x53cf10`), which every loan owns: a verb's site refreshes them.
     pub(crate) usable: Option<ResMut<'w, crate::ui_action::usable_cache::UsableCaches>>,
-    /// The macros' bound spells, a macro slot's spell (`0x5a89f0`), which the rebind owns.
+    /// The macros' bound spells, a macro slot's spell (`0x5a89f0`), which an edit's parse writes.
     pub(crate) bound: Option<ResMut<'w, crate::ui_macro::MacroBoundSpells>>,
+    /// The slash table a macro's `/cast` line is read against.
+    macro_table: Option<Res<'w, crate::ui_chat::commands::SlashCommands>>,
     /// The usable walk's reads beside the player's own state (`0x80b5d0`).
     usable_world: crate::ui_action::usable_cache::UsableWorld<'w>,
     /// The bar's pages: the temporary bar's owners and the bonus offset.
@@ -1329,6 +1331,17 @@ impl LiveState for LiveView<'_, '_> {
 
     fn set_action_word(&mut self, slot: u32, word: u32) -> Option<bool> {
         self.write_slot_word(slot, word)
+    }
+
+    fn macros_changed(
+        &mut self,
+        macros: &benilla_ui::script::MacroState,
+        change: benilla_ui::script::MacroChange,
+    ) -> Option<std::collections::HashMap<u32, benilla_ui::script::MacroBinding>> {
+        let (table, book) = (self.macro_table.as_deref()?, self.book.as_deref()?);
+        let bound = &mut self.bound.as_deref_mut()?.0;
+        crate::ui_macro::apply_change(table, macros, &book.live.book, bound, change);
+        Some(crate::ui_macro::vm_bindings(bound))
     }
 
     fn bar_usable_update(&mut self, sets_usable: bool) -> Option<bool> {

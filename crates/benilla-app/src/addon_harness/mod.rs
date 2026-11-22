@@ -1137,7 +1137,8 @@ fn seat_a_session(script: &mut UiScript) {
             pet_spell: None,
         }),
     );
-    script.set_action_state(
+    crate::dev::set_fixture_action_state(
+        script,
         1,
         Some(benilla_ui::script::ActionState {
             usable: true,

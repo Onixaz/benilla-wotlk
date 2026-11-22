@@ -716,6 +716,15 @@ pub trait LiveState {
         None
     }
 
+    /// A macro verb's binding change (`0x565c40` -> `0x5650c0`, `0x566d50`), stored for the bar; every binding returned by index. `None` without a view.
+    fn macros_changed(
+        &mut self,
+        _macros: &super::MacroState,
+        _change: super::MacroChange,
+    ) -> Option<std::collections::HashMap<u32, super::MacroBinding>> {
+        None
+    }
+
     /// `IsUsableItem`'s pair for `item_id` (`0x51c450`); `None` without a view.
     fn item_usable(&self, _item_id: u32) -> Option<(bool, bool)> {
         None

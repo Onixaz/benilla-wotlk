@@ -21,10 +21,10 @@ use super::{ActionSlots, PlayerActions, Spells};
 /// `ItemDisplayInfo` row: the literal the reference's icon resolver falls back to.
 pub(crate) const MISSING_ITEM_ICON: &str = "Interface\\Icons\\INV_Misc_QuestionMark";
 
-/// `ITEM_SPELLTRIGGER_LEARN_SPELL_ID`: the block a used-up item's slot turns into (`0x5aa6f5`).
+/// `ITEM_SPELLTRIGGER_LEARN_SPELL_ID`: the block a used-up item's slot turns into (`0x5aa6f3`).
 const TRIGGER_LEARN: u32 = 6;
 
-/// `SPELL_EFFECT_SUMMON`, the companion test's effect (`0x5aac6d`).
+/// `SPELL_EFFECT_SUMMON`, the companion test's effect (`0x5aac6a`).
 const EFFECT_SUMMON: u32 = 28;
 
 /// `slot`'s signal, 1-based, or 0 for the whole bar.
