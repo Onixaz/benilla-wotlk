@@ -457,6 +457,11 @@ impl SpellCatalog {
         self.dispel_types.name(display.dispel)
     }
 
+    /// `SpellDispelType.dbc`'s mask for a dispel class, else its bit.
+    pub fn dispel_mask(&self, dispel: u32) -> u32 {
+        self.dispel_types.mask(dispel)
+    }
+
     /// Every loaded spell, unordered.
     pub fn iter(&self) -> impl Iterator<Item = (u32, &SpellDisplay)> + '_ {
         self.spells.iter().map(|(id, s)| (*id, s))

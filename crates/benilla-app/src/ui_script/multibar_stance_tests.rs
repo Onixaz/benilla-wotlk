@@ -1395,12 +1395,12 @@ fn the_middle_strip_tiles_along_its_length_only() {
     );
 }
 
-/// The reference fires `UPDATE_SHAPESHIFT_FORMS` only when the form list changes: its
-/// `ShapeshiftBar_Update` re-shows the middle strip with no manage pass
-/// (BonusActionBarFrame.lua:170, 177), so a state change sent as one would draw the strip over the
-/// raised bar.
+/// The reference fires `UPDATE_SHAPESHIFT_FORMS` only when the form list changes, and a state move
+/// through the form, usable and cooldown events, which repaint the buttons through
+/// `ShapeshiftBar_UpdateState` alone (BonusActionBarFrame.lua:121) and never touch the shelf; a
+/// list edge's `ShapeshiftBar_Update` re-shows the middle strip and its own manage pass takes it
+/// back down under a raised bar (:137, :149).
 #[test]
-#[ignore = "the stance feed repaints on 1.12's events (#577)"]
 fn a_forms_state_change_leaves_the_shelf_down_over_the_raised_bar() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::ShapeshiftFormView;
@@ -1411,7 +1411,7 @@ fn a_forms_state_change_leaves_the_shelf_down_over_the_raised_bar() {
     // A recorder for the two events a push may announce.
     s.run(
         "STANCE_LOG = {} local f = CreateFrame('Frame') \
-         f:RegisterEvent('UPDATE_SHAPESHIFT_FORMS') f:RegisterEvent('SPELL_UPDATE_USABLE') \
+         f:RegisterEvent('UPDATE_SHAPESHIFT_FORMS') f:RegisterEvent('UPDATE_SHAPESHIFT_USABLE') \
          f:SetScript('OnEvent', function() table.insert(STANCE_LOG, event) end)",
     )
     .unwrap();
@@ -1445,7 +1445,8 @@ fn a_forms_state_change_leaves_the_shelf_down_over_the_raised_bar() {
         cooldown,
     };
     // The stand-in list, and what the reference signals for it: the registrar's list edit fires
-    // `UPDATE_SHAPESHIFT_FORMS`, the usable update `SPELL_UPDATE_USABLE`, a state move nothing.
+    // `UPDATE_SHAPESHIFT_FORMS`, the usable update `UPDATE_SHAPESHIFT_USABLE` (`0x53d1b0`), a state
+    // move nothing.
     #[derive(Debug, PartialEq)]
     enum FormsEdge {
         List,
@@ -1457,7 +1458,7 @@ fn a_forms_state_change_leaves_the_shelf_down_over_the_raised_bar() {
         s.set_shapeshift_forms(forms);
         match edge {
             FormsEdge::List => s.fire_event("UPDATE_SHAPESHIFT_FORMS", vec![]),
-            FormsEdge::Usable => s.fire_event("SPELL_UPDATE_USABLE", vec![]),
+            FormsEdge::Usable => s.fire_event("UPDATE_SHAPESHIFT_USABLE", vec![]),
             FormsEdge::Silent | FormsEdge::Unchanged => {}
         }
         edge
@@ -1487,7 +1488,8 @@ fn a_forms_state_change_leaves_the_shelf_down_over_the_raised_bar() {
     assert_eq!(ring(&s), 50.0);
 
     // A stance switch: the form byte flips to Defensive and category 47 arms for a second on all
-    // three, a state move the reference announces through the aura and cooldown events.
+    // three, a state move the reference announces through the form watch's and the cooldown site's
+    // events (`0x6da130`, `0x53bac0`).
     let cd = Some((0, 1000, true));
     let edge = push_forms(
         &mut s,
@@ -1507,15 +1509,16 @@ fn a_forms_state_change_leaves_the_shelf_down_over_the_raised_bar() {
     assert_eq!(ring(&s), 50.0);
     assert_eq!(edge, FormsEdge::Silent);
     assert_eq!(log(&s), "", "a state move fires no list edge");
-    // …and the checked ring follows the aura event the switch carries.
+    // …and the checked ring follows the form event the switch carries.
     assert!(
         checked(&s, 1) && !checked(&s, 2),
         "no repaint before the state event"
     );
-    s.fire_event("UNIT_AURA", vec![ScriptValue::Str("player".into())]);
+    s.fire_event("UPDATE_SHAPESHIFT_FORM", vec![]);
+    s.fire_event("UPDATE_SHAPESHIFT_COOLDOWN", vec![]);
     assert!(
         !checked(&s, 1) && checked(&s, 2),
-        "the aura event repaints the ring"
+        "the form event repaints the ring"
     );
     for region in shelf {
         assert!(
@@ -1540,7 +1543,7 @@ fn a_forms_state_change_leaves_the_shelf_down_over_the_raised_bar() {
     assert_eq!(log(&s), "");
     assert!(!shown(&s, "ShapeshiftBarMiddle"));
 
-    // A castable flip fires `SPELL_UPDATE_USABLE`; the bar greys the icon and leaves the shelf.
+    // A castable flip fires `UPDATE_SHAPESHIFT_USABLE`; the bar greys the icon and leaves the shelf.
     assert_eq!(
         push_forms(
             &mut s,
@@ -1553,7 +1556,7 @@ fn a_forms_state_change_leaves_the_shelf_down_over_the_raised_bar() {
         ),
         FormsEdge::Usable
     );
-    assert_eq!(log(&s), "SPELL_UPDATE_USABLE");
+    assert_eq!(log(&s), "UPDATE_SHAPESHIFT_USABLE");
     let grey = s
         .eval::<f64>("local r = ShapeshiftButton1Icon:GetVertexColor() return r")
         .unwrap();
@@ -1578,8 +1581,8 @@ fn a_forms_state_change_leaves_the_shelf_down_over_the_raised_bar() {
     );
     assert_eq!(log(&s), "");
 
-    // A fourth stance learned is a list edge: `ShapeshiftBar_Update` shows the strip over the
-    // raised bar until the next pass.
+    // A fourth stance learned is a list edge: `ShapeshiftBar_Update` shows the strip (:137), and
+    // its own manage pass takes it down under the raised bar (:149).
     assert_eq!(
         push_forms(
             &mut s,
@@ -1595,11 +1598,10 @@ fn a_forms_state_change_leaves_the_shelf_down_over_the_raised_bar() {
     );
     assert_eq!(log(&s), "UPDATE_SHAPESHIFT_FORMS");
     assert!(
-        shown(&s, "ShapeshiftBarMiddle"),
-        "the learn edge: Update shows the strip"
+        !shown(&s, "ShapeshiftBarMiddle"),
+        "the learn edge's own pass keeps the shelf down"
     );
-    s.run("UIParent_ManageFramePositions()").unwrap();
-    assert!(!shown(&s, "ShapeshiftBarMiddle"));
+    assert!(shown(&s, "ShapeshiftButton4"), "the fourth button is up");
     assert!(
         super::test_ui::errors_but_unported(&s).is_empty(),
         "script errors: {:?}",

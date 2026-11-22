@@ -378,6 +378,14 @@ impl crate::ui_action::signals::SignalSink for InTurn<'_> {
         self.0.fire(event, Vec::new());
     }
 
+    fn fire(&mut self, event: &'static str, args: Vec<benilla_ui::script::ScriptValue>) {
+        self.0.fire(event, args);
+    }
+
+    fn unlock_item(&mut self, guid: u64) {
+        crate::ui_action::signals::SignalSink::unlock_item(self.0, guid);
+    }
+
     fn line(&mut self, line: crate::ui_action::UiError) {
         self.0
             .write(move |script| crate::ui_action::signals::SignalSink::line(script, line));

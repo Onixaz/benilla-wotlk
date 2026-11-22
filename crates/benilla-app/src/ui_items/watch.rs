@@ -126,22 +126,6 @@ pub(crate) fn lock_now(world: &mut World, lock: LockStep) {
     crate::ui_script::safe_world::lend(world, |s| lock_moved_now(s, locked, moved));
 }
 
-/// Run `step`, a send that raises in turn, then fire what it raised and write each lock it made,
-/// each lock's edge signalled before the next is written (`0x706fe0` -> `0x706feb`).
-pub(crate) fn run_lock_step<I: Send + 'static, M>(
-    world: &mut World,
-    step: impl IntoSystem<In<I>, Vec<LockStep>, M> + 'static,
-    input: I,
-) {
-    let locks = world
-        .run_system_cached_with(step, input)
-        .unwrap_or_default();
-    crate::ui_script::live::fire_handler_events(world);
-    for lock in locks {
-        lock_now(world, lock);
-    }
-}
-
 /// Run `step` on the lent `World` in the caller's turn: for a step that holds the `World` while it
 /// raises in turn (an applier inside its call), behind the raises made so far; at once otherwise.
 pub(crate) fn world_in_turn(
@@ -692,8 +676,8 @@ mod tests {
     const A: u64 = 0x4000_0000_0000_0A01;
     const B: u64 = 0x4000_0000_0000_0B02;
 
-    /// A step that locks both ends of a swap.
-    fn swap_locks(In(()): In<()>) -> Vec<LockStep> {
+    /// The locks of both ends of a swap.
+    fn swap_locks() -> Vec<LockStep> {
         [A, B]
             .into_iter()
             .map(|guid| LockStep {
@@ -734,7 +718,9 @@ mod tests {
             )
             .unwrap();
         world.insert_non_send_resource(script);
-        run_lock_step(&mut world, swap_locks, ());
+        for lock in swap_locks() {
+            lock_now(&mut world, lock);
+        }
         let seen = world
             .non_send_resource::<UiScript>()
             .eval::<Vec<String>>("return SEEN")

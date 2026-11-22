@@ -312,7 +312,7 @@ pub use auction::{
     AuctionBid, AuctionCategory, AuctionHighBidder, AuctionItemRow, AuctionListState, AuctionQuery,
     AuctionStartRequest, AuctionState, AuctionSubCategory, BIDDER, LIST, OWNER, SORT_COLUMNS,
 };
-pub use aura::AuraState;
+pub use aura::{AuraFacts, AuraState, UnitAuraSlots};
 pub(crate) use backdrop::set_edge_blend as backdrop_set_edge_blend;
 pub use backdrop::{inset_atlas_bleed, pieces, Backdrop, BackdropPiece, Insets};
 pub use barber::{BarberRead, BarberStyle};
@@ -442,8 +442,8 @@ pub use lfg::{
 pub use loot::{LootRow, LootState, LOOT_PORTRAIT_UNIT};
 pub use loot_roll::{LootRollEntry, LootRollsState};
 pub use macros::{
-    MacroBinding, MacroState, MacroView, MAX_ACCOUNT_MACROS, MAX_MACRO_BODY, MAX_MACRO_INDEX,
-    MAX_MACRO_NAME,
+    MacroBinding, MacroChange, MacroState, MacroView, MAX_ACCOUNT_MACROS, MAX_MACRO_BODY,
+    MAX_MACRO_INDEX, MAX_MACRO_NAME,
 };
 pub use mail::{
     MailAttachmentView, MailCommand, MailInboxRow, MailInvoice, MailSendRequest, MailState,

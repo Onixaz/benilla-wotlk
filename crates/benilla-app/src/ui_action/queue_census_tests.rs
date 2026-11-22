@@ -12,9 +12,6 @@ use std::path::Path;
 /// Per source file, the lines outside its tests that name either queue: the systems and helpers
 /// that still hold one. Sorted by path.
 const HOLDERS: &[(&str, usize)] = &[
-    // #1280's: the loot window's and the loot handlers' refusals.
-    ("ui_loot/mod.rs", 3),
-    ("ui_loot/net.rs", 6),
 ];
 
 /// Where the queues are defined, drained and registered, which the count leaves out.

@@ -523,7 +523,7 @@ pub(super) fn commit_at(
     selection.last = selection.guid;
     if let Some(old) = selection.guid {
         // The old target's teardown closes its loot first.
-        seam.close_loot_on(old);
+        seam.close_loot_on(old, sink);
     }
     selection.target = entity;
     selection.guid = Some(guid);
@@ -1005,7 +1005,7 @@ mod tests {
         let open = |world: &mut World, guid: u64| {
             world
                 .resource_mut::<crate::ui_loot::LootState>()
-                .open(guid, 1, 0, Vec::new());
+                .open_for_test(guid, 1, 0, Vec::new());
             world.resource_mut::<crate::ui_loot::LootLatch>().0 = Some(guid);
         };
         let source = |world: &World| world.resource::<crate::ui_loot::LootState>().source();

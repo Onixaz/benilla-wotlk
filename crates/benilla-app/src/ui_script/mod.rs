@@ -832,7 +832,8 @@ fn demo_units(script: &mut UiScript, player: u64, fired: &mut VmMemo<bool>) {
                 }),
             );
             // Server-less a slot has no usable state; a live bar's resting state is usable.
-            script.set_action_state(
+            crate::dev::set_fixture_action_state(
+                script,
                 action,
                 Some(benilla_ui::script::ActionState {
                     usable: true,

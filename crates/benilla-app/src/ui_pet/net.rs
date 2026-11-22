@@ -95,7 +95,8 @@ fn on_spells(
         let held = combat.held(bar.spells.pet_guid);
         let dead = player.iter().next().is_some_and(player_dead);
         set_pet_tail(changed, &mut bar, &mut possess, held, dead, &mut ui);
-        // The book's re-sort after the setter, `SPELLS_CHANGED` on every packet (`0x5d6d70`, `0x53ceae`).
+        // The book update with its macro pass, then `SPELLS_CHANGED` on every packet (`0x5d6d6d`, `0x53cea3`, `0x53ceae`).
+        ui.world(crate::ui_macro::book_rebind);
         ui.fire("SPELLS_CHANGED", Vec::new());
     }
 }

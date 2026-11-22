@@ -7,11 +7,11 @@ use crate::widget::{FrameHandle, RegionHandle, WidgetArena};
 
 use super::{
     auction, backdrop, bind_confirm, calendar, camera_view, char_stats, chat_window, colorselect,
-    combat_log, container, cursor, death, duel, follow, guild, inspect, lfg, loot, loot_roll,
-    macros, mail, mirror_timer, parse_unit_token, party, petition, pvp, quest, quest_log,
-    reputation, session, simplehtml, skills, slider, social, stable, trade, tradeskill, unit_menu,
-    weapon_enchant, AuraState, FontObject, MusicRequest, RegionData, ScriptValue, SoundRequest,
-    UnitState, UnitTokenParse,
+    combat_log, container, cursor, death, duel, follow, guild, inspect, lfg, loot_roll, macros,
+    mail, mirror_timer, parse_unit_token, party, petition, pvp, quest, quest_log, reputation,
+    session, simplehtml, skills, slider, social, stable, trade, tradeskill, unit_menu,
+    weapon_enchant, FontObject, MusicRequest, RegionData, ScriptValue, SoundRequest, UnitState,
+    UnitTokenParse,
 };
 
 // ── The Rust-side model ──
@@ -275,12 +275,13 @@ pub(crate) struct Model {
     /// The selection `PLAYER_TARGET_CHANGED` last announced to this VM
     /// ([`super::UiScript::set_target_signalled`]).
     pub(crate) target_signalled: Option<u64>,
-    /// The player's auras in the reference cache's insertion order, durations joined: the
-    /// `GetPlayerBuff` family's list, and any token naming the player's.
-    pub(crate) player_auras: Vec<AuraState>,
-    /// Every other unit's auras by guid, ascending aura slot: one list per unit, whatever token
-    /// names it.
-    pub(crate) unit_auras: HashMap<u64, Vec<AuraState>>,
+    /// The player's auras a call reads while no view lends the game's: a test's or a capture
+    /// fixture's ([`super::UiScript::set_player_auras`]).
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) player_auras: Vec<super::AuraState>,
+    /// Every other unit's fixture auras by guid ([`super::UiScript::set_unit_auras`]).
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) unit_auras: HashMap<u64, Vec<super::AuraState>>,
     /// The focus `[0xbd07d0]`, which `FocusUnit` and `ClearFocus` set through the setter
     /// (`0x51ff20`); 0 for none.
     pub(crate) focus: u64,
@@ -564,7 +565,8 @@ pub(crate) struct Model {
     /// Every line the display showed, for the tests.
     #[cfg(any(test, feature = "fixtures"))]
     pub(crate) shown_lines: Vec<(&'static str, Option<String>)>,
-    /// Per action, its usable, range, current and cooldown state; an absent one reads cold.
+    /// Per action, the stand-in usable, range, current and cooldown state, read with no view lent; absent reads cold.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) action_states: HashMap<u32, super::action::StoredActionState>,
     /// The bonus offset a test or fixture pushed, with no view lent.
     #[cfg(any(test, feature = "fixtures"))]
@@ -666,7 +668,8 @@ pub(crate) struct Model {
     pub(crate) played_time: Option<(u32, f64)>,
     /// `ContainerRefundItemPurchase` sends, item guids, for the app.
     pub(crate) refund_sends: Vec<u64>,
-    /// The open loot window's object (`[0xbfa8d8]`), 0 with none.
+    /// A fixture's looted object, 0 with none, read where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) loot_source: u64,
     /// `CharTitles.dbc`'s rows in file order.
     pub(crate) title_rows: Vec<super::title::TitleRow>,
@@ -830,8 +833,10 @@ pub(crate) struct Model {
     pub(crate) pending_equip_answers: Vec<bind_confirm::PendingEquipAnswer>,
     pub(crate) bind_on_use_confirms: u32,
 
-    /// The open loot, the `LootSlot` takes and whether `CloseLoot` ran, with its `noUI` flag.
-    pub(crate) loot: Option<loot::LootState>,
+    /// A fixture's open loot, read where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) loot: Option<super::loot::LootState>,
+    /// The `LootSlot` takes and whether `CloseLoot` ran, with its `noUI` flag.
     pub(crate) loot_picks: Vec<u32>,
     /// `ConfirmLootSlot(slot)` rows, 1-based, for its pending-slot gate (`0x589300`).
     pub(crate) loot_confirms: Vec<u32>,
@@ -1522,7 +1527,9 @@ impl Model {
             units_by_lower: HashMap::new(),
             units_by_guid: HashMap::new(),
             target_signalled: None,
+            #[cfg(any(test, feature = "fixtures"))]
             player_auras: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             unit_auras: HashMap::new(),
             focus: 0,
             #[cfg(any(test, feature = "fixtures"))]
@@ -1656,6 +1663,7 @@ impl Model {
             equipment_set_requests: Vec::new(),
             #[cfg(any(test, feature = "fixtures"))]
             shown_lines: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             action_states: HashMap::new(),
             #[cfg(any(test, feature = "fixtures"))]
             bonus_bar_offset: 0,
@@ -1708,6 +1716,7 @@ impl Model {
             bound_trade_stamps: HashMap::new(),
             played_time: None,
             refund_sends: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             loot_source: 0,
             title_rows: Vec::new(),
             player_titles: None,
@@ -1784,6 +1793,7 @@ impl Model {
             trade_skill: Default::default(),
             lfg: Default::default(),
             calendar: Default::default(),
+            #[cfg(any(test, feature = "fixtures"))]
             loot: None,
             pending_equip_answers: Vec::new(),
             bind_on_use_confirms: 0,
