@@ -21,7 +21,7 @@ macro_rules! quiver_or_skip {
         match quiver_root() {
             Some(root) => root,
             None => {
-                benilla_formats::skipped(
+                benilla_formats::skipped_corpus(
                     "no Quiver in the addon corpus (set $BENILLA_ADDON_CORPUS; the folder needs \
                      Quiver.toc + Quiver.bundle.lua)",
                     &benilla_formats::addon_corpus_candidates(),
