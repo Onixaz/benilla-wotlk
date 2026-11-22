@@ -200,6 +200,15 @@ impl super::UiScript {
     }
 }
 
+/// The edit's parse binds the macros' spells at the call (`0x565c40` -> `0x5650c0`), before the
+/// bar's macro update signals their slots.
+fn rebind(lua: &mlua::Lua) {
+    let macros = crate::script::model_mut_of(lua).macros.clone();
+    if let Some(bindings) = super::write_live(|l| l.macros_changed(&macros)).flatten() {
+        crate::script::model_mut_of(lua).macro_bindings = bindings;
+    }
+}
+
 /// The bar's macro update (`0x5aa920`): each slot whose macro `touched` names signals
 /// `ACTIONBAR_SLOT_CHANGED` inside the call, in slot order.
 fn signal_macro_slots(lua: &mlua::Lua, touched: impl Fn(u32) -> bool) {
@@ -449,6 +458,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(i) = made else {
                 return Ok(Value::Nil);
             };
+            rebind(lua);
             signal_macro_slots(lua, |m| m as usize == i);
             Ok(Value::Integer(i as i64))
         })?,
@@ -472,6 +482,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(i) = edited else {
                 return Ok(Value::Nil);
             };
+            rebind(lua);
             signal_macro_slots(lua, |m| m as usize == i);
             Ok(Value::Integer(i as i64))
         })?,
@@ -483,6 +494,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let index = index_arg(lua, Some(&arg));
             let deleted = delete_macro(&mut crate::script::model_mut_of(lua), index);
             if deleted {
+                rebind(lua);
                 // The gap closes, so every later index of the same set names another macro now.
                 let last = if index <= MAX_ACCOUNT_MACROS {
                     MAX_ACCOUNT_MACROS

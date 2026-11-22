@@ -65,13 +65,15 @@ pub(crate) struct BookInputs<'a> {
 
 impl SpellBook {
     /// The book update (`0x53ca70`) with its re-sort and its school-mask rebuild, as the learn,
-    /// the removal and our object's init run it: the book rebuilt, the masks (`0x53cd48`), then
-    /// `SPELLS_CHANGED` (`0x53ceae`).
+    /// the removal and our object's init run it: the book rebuilt, the masks (`0x53cd48`), the
+    /// macro pass when `macros` (a caller's first or second argument set, `0x53ce97`-`0x53cea3`),
+    /// then `SPELLS_CHANGED` (`0x53ceae`).
     pub(crate) fn update(
         &mut self,
         inputs: &BookInputs,
         schools: &mut crate::ui_cast::InterruptSchools,
         ui: &mut UiEvents,
+        macros: bool,
     ) {
         if let Some(spells) = inputs.spells {
             let (race, class) = self.race_class;
@@ -93,6 +95,9 @@ impl SpellBook {
             self.tab_lines = tab_lines;
         }
         crate::ui_cast::book_updated(schools, inputs.known, inputs.spells);
+        if macros {
+            ui.world(crate::ui_macro::book_rebind);
+        }
         ui.fire("SPELLS_CHANGED", Vec::new());
     }
 
@@ -135,7 +140,7 @@ impl SpellBook {
     }
 }
 
-/// The book's known tracking spells in display order (`0x53cab5`, filled by `0x7fdf60`).
+/// The book's known tracking spells in display order (`0x53cab2`, filled by `0x7fdf60`).
 fn tracking_of(
     book: &SpellBookState,
     catalog: &SpellCatalog,

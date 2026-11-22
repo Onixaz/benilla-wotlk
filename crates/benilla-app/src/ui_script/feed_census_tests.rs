@@ -47,7 +47,6 @@ const FEEDS: &[&str] = &[
     "benilla_app::ui_loot_roll::feed_loot_rolls",
     "benilla_app::ui_macro::load_icon_catalog",
     "benilla_app::ui_macro::load_macros",
-    "benilla_app::ui_macro::rebind_macro_spells",
     "benilla_app::ui_mail::feed_mail",
     "benilla_app::ui_mirror::feed_mirror_timers",
     "benilla_app::ui_models::forget_dead_vm_tiles",

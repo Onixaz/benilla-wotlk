@@ -253,7 +253,8 @@ pub(crate) fn active_player_init(In((race, class, form)): In<(u8, u8, u8)>, init
             summons: summons.as_deref().map_or(&EMPTY_SUMMONS, |s| &s.0),
             skill_lines: skill_lines.as_deref().map(|s| &*s.catalog),
         };
-        book.update(&inputs, &mut schools, ui);
+        // Our object's init passes its first argument set (`0x6e7fd5`).
+        book.update(&inputs, &mut schools, ui, true);
     };
     let (Some(spells), Some(summons), Some(names), Some(commands)) = (
         spells.as_deref(),

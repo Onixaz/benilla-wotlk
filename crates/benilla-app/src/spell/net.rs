@@ -98,16 +98,18 @@ pub(crate) struct Lifecycle<'w> {
 }
 
 impl Lifecycle<'_> {
-    /// The book update with its re-sort and masks (`0x53ca70`): the book, the school masks, then
-    /// `SPELLS_CHANGED`; then `LEARNED_SPELL_IN_TAB` for each spell `learned` names (`0x542d16`).
-    fn update_book(&mut self, learned: &LearnedInTab) {
+    /// The book update with its re-sort and masks (`0x53ca70`): the book, the school masks, the
+    /// macro pass when `macros`, then `SPELLS_CHANGED`; then `LEARNED_SPELL_IN_TAB` for each spell
+    /// `learned` names (`0x542d16`).
+    fn update_book(&mut self, learned: &LearnedInTab, macros: bool) {
         let inputs = crate::ui_spellbook::BookInputs {
             known: &self.actions.spells,
             spells: self.spells.as_deref(),
             summons: &self.summons.0,
             skill_lines: self.skill_lines.as_deref().map(|s| &*s.catalog),
         };
-        self.book.update(&inputs, &mut self.schools, &mut self.ui);
+        self.book
+            .update(&inputs, &mut self.schools, &mut self.ui, macros);
         self.book.flash(learned, &inputs, &mut self.ui);
     }
 }
@@ -160,7 +162,7 @@ fn on_spell_book(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
                 ranged_ms,
             },
         );
-        // The book load files the totems without a refill (`0x6e7f73`).
+        // The book load files the totems without a refill (`0x6e7fc5`).
         l.multicast.lists = Default::default();
         if let Some(spells) = l.spells.as_deref() {
             for d in l
@@ -221,9 +223,9 @@ fn on_spell_learned(
             form: store.0.unit_shapeshift_form(),
         });
         let mut flash = LearnedInTab::default();
-        // Each slot the rank replace or the first-rank placement writes signals at its write
-        // (`0x5aae80`), around the announcement as the registrar orders them.
-        learned_spell(
+        // Each slot the rank replace writes signals at its write (`0x5aae80`), ahead of the
+        // announcement as the registrar orders them; the first-rank placement waits for the book.
+        let place = learned_spell(
             spell_id,
             (&mut l.actions, &mut l.slots),
             l.spells.as_deref(),
@@ -259,11 +261,54 @@ fn on_spell_learned(
             None => l.known_buffer.0.push(spell_id),
         }
         // The registrar's book update and tab flash, reached by a live learn past its exits, the
-        // same ones the flash is gated on (`0x542cbf`-`0x542d16`).
+        // same ones the flash is gated on (`0x542cbf`-`0x542d16`), then its tutorial (`0x542d1d`)
+        // and the first-rank placement on the page's first empty button, tested after the
+        // book's listeners have run (`0x542dc1`, `0x542de3`).
         if !flash.0.is_empty() {
-            l.update_book(&flash);
+            l.update_book(&flash, true);
+            if let Some(t) = l.tutorials.as_mut() {
+                t.write(crate::tutorial::TutorialEvent::trigger(LEARN_TUTORIAL));
+            }
+        }
+        if let Some(page) = place {
+            l.ui.world(move |world| learn_place_step(world, spell_id, page));
         }
     }
+}
+
+/// The tutorial a live learn into a tab raises after its flash (`0x542d1b`).
+const LEARN_TUTORIAL: u32 = 0x27;
+
+/// A live learn's first-rank placement on the first empty button of `page`, at its step after the
+/// book update's listeners (`0x542dc1`-`0x542de3`): the slot written and signalled (`0x5aae80`).
+fn learn_place_step(world: &mut World, spell_id: u32, page: u8) {
+    let Some(net) = world
+        .get_resource::<NetCommands>()
+        .map(|n| NetCommands(n.0.clone()))
+    else {
+        return;
+    };
+    let Some(mut bar) = world.get_resource_mut::<crate::ui_action::ActionSlots>() else {
+        return;
+    };
+    if let Some(slot) = place_first_rank(&mut bar, spell_id, page, &net) {
+        crate::ui_script::live::in_turn(world, move |world| {
+            crate::ui_action::slots::slot_changed(world, slot)
+        });
+    }
+}
+
+/// The placement's write on `page`'s first empty button (`0x542dc0`-`0x542de3`): the slot written.
+fn place_first_rank(
+    bar: &mut crate::ui_action::ActionSlots,
+    spell_id: u32,
+    page: u8,
+    net: &NetCommands,
+) -> Option<u8> {
+    let slot = learn_place::first_empty_slot(bar, page)?;
+    info!("net: learned spell {spell_id} placed on bar slot {slot} (page {page})");
+    let packed = spell_id | (u32::from(ACTION_KIND_SPELL) << 24);
+    bar.write_slot(slot, packed, net).then_some(slot)
 }
 
 fn on_spell_removed(In(ev): In<SessionEvent>, mut l: Lifecycle, mut commands: Commands) {
@@ -276,6 +321,8 @@ fn on_spell_removed(In(ev): In<SessionEvent>, mut l: Lifecycle, mut commands: Co
         } else {
             companion_remove(&mut l, spell_id);
         }
+        // The removal's first argument: whether the spell was in the known list (`0x53fbe2`).
+        let held = l.actions.spells.contains(&spell_id);
         removed_spell(spell_id, &mut l.actions, l.spells.as_deref(), &mut *l.ui);
         unlearn_totem(&mut l.multicast, spell_id);
         // The plain unlearn drops its stance entry (`0x53fe44`, notify clear, `0x6e7361`).
@@ -285,7 +332,7 @@ fn on_spell_removed(In(ev): In<SessionEvent>, mut l: Lifecycle, mut commands: Co
         }
         // The removal ends in the book update, a spell it held or not (`0x5401b8`).
         if exists {
-            l.update_book(&LearnedInTab::default());
+            l.update_book(&LearnedInTab::default(), held);
         }
     }
 }
@@ -394,8 +441,8 @@ fn on_spell_superceded(
         match me {
             Some(me) => {
                 companion_remove(&mut l, old_spell_id);
-                l.actions.spells.remove(&old_spell_id);
-                l.update_book(&LearnedInTab::default());
+                let held = l.actions.spells.remove(&old_spell_id);
+                l.update_book(&LearnedInTab::default(), held);
                 companion_add(&mut l, me, new_spell_id);
             }
             None => {
@@ -434,7 +481,7 @@ fn on_spell_superceded(
                 spell: new_spell_id,
                 replaces: Some(old_spell_id),
             }));
-            l.update_book(&flash);
+            l.update_book(&flash, true);
         }
     }
 }
@@ -1296,12 +1343,11 @@ fn put_table(book: &PlayerActions, table: Option<&[ActionButton]>) -> Vec<Action
 
 /// `SMSG_LEARNED_SPELL` (`0x6e7d60`): with our player streamed, `0x6e7b00(spell, slot, 1, 1)`:
 /// the rank below leaves the bar for the new one (`0x5aafd0`), then the registrar `0x542030`
-/// with its live flag set adds the spell to the book (the spellbook feed diffs it; learning
-/// never bars a spell), announces it in chat, flashes its tab, and places a first rank on the
-/// first empty button of its page while the character is under level 11
-/// ([`super::learn_place`]). Before the player streams, the pair is buffered (`0x6dec70`) and
-/// the player's own init replays it as `0x6e7b00(spell, slot, 0, 1)` (`0x6e7f73`): the book
-/// alone, no line, no flash, no button.
+/// with its live flag set adds the spell to the book, announces it in chat, queues its tab flash,
+/// and returns the page a first rank goes on while the character is under level 11
+/// ([`super::learn_place`]), which the caller places after the book update. Before the player
+/// streams, the pair is buffered (`0x6dec70`) and the player's own init replays it as
+/// `0x6e7b00(spell, slot, 0, 1)` (`0x6e7fc5`): the book alone, no line, no flash, no button.
 ///
 /// Hidden, recipe, companion (#263) and unbooked learns skip tab and bar (`0x54265c`-`0x542856`).
 fn learned_spell(
@@ -1313,14 +1359,14 @@ fn learned_spell(
     learner: Option<Learner>,
     net: &NetCommands,
     summons: &benilla_formats::SummonPropertiesCatalog,
-) {
+) -> Option<u8> {
     debug!("net: learned spell {spell_id}");
     if actions.spells.insert(spell_id) {
         actions.dirty = true;
     }
     let Some(learner) = learner else {
         debug!("net: learned spell {spell_id} before the player: book only");
-        return;
+        return None;
     };
     let packed = spell_id | (u32::from(ACTION_KIND_SPELL) << 24);
     let display = spells.and_then(|s| s.catalog.get(spell_id));
@@ -1334,32 +1380,24 @@ fn learned_spell(
     }
     if let Some(d) = display {
         if d.attributes & ATTR_DO_NOT_DISPLAY != 0 {
-            return;
+            return None;
         }
         if d.attributes & benilla_formats::SPELL_ATTR_IS_TRADESKILL != 0 {
             announce_learn(spell_id, spells, errors);
-            return;
+            return None;
         }
         if d.is_companion(summons) {
-            return;
+            return None;
         }
     }
     announce_learn(spell_id, spells, errors);
     if display.is_some_and(|d| d.attributes_ex4 & ATTR_EX4_NOT_IN_SPELLBOOK != 0) {
-        return;
+        return None;
     }
     tab_flash.0.push(spell_id);
-    if let (Some(spells), Some(display)) = (spells, display) {
-        if learn_place::auto_place_allowed(display, learner.level) {
-            let page = learn_place::auto_place_page(display, learner, &spells.forms);
-            if let Some(slot) = learn_place::first_empty_slot(bar, page) {
-                info!("net: learned spell {spell_id} placed on bar slot {slot} (page {page})");
-                if bar.write_slot(slot, packed, net) {
-                    errors.slot_changed(slot);
-                }
-            }
-        }
-    }
+    let (spells, display) = (spells?, display?);
+    learn_place::auto_place_allowed(display, learner.level)
+        .then(|| learn_place::auto_place_page(display, learner, &spells.forms))
 }
 
 /// Where a learn's writes signal, in its order: a bar slot it wrote (`0x5aae80`) and its line.
@@ -2766,6 +2804,33 @@ mod tests {
         );
     }
 
+    /// [`learned_spell`] then its first-rank placement, as the handler runs it after the book update.
+    #[allow(clippy::too_many_arguments)]
+    fn learn_and_place(
+        spell_id: u32,
+        (actions, bar): (&mut PlayerActions, &mut crate::ui_action::ActionSlots),
+        spells: Option<&Spells>,
+        errors: &mut crate::ui_action::signals::LinesSeen,
+        tab_flash: &mut LearnedInTab,
+        learner: Option<Learner>,
+        net: &NetCommands,
+        summons: &benilla_formats::SummonPropertiesCatalog,
+    ) {
+        let page = learned_spell(
+            spell_id,
+            (actions, &mut *bar),
+            spells,
+            errors,
+            tab_flash,
+            learner,
+            net,
+            summons,
+        );
+        if let Some(page) = page {
+            place_first_rank(bar, spell_id, page, net);
+        }
+    }
+
     /// What the sender saw, as `(wire slot, packed)`.
     fn sent(rx: &crossbeam_channel::Receiver<crate::net::ClientCommand>) -> Vec<(u8, u32)> {
         rx.try_iter()
@@ -2819,7 +2884,7 @@ mod tests {
         let mut errors = crate::ui_action::signals::LinesSeen::default();
         let mut flash = LearnedInTab::default();
 
-        learned_spell(
+        learn_and_place(
             133,
             (&mut actions, &mut bar),
             Some(&spells),
@@ -2840,7 +2905,7 @@ mod tests {
 
         // The passive gate: nothing placed, nothing sent.
         actions.dirty = false;
-        learned_spell(
+        learn_and_place(
             168,
             (&mut actions, &mut bar),
             Some(&spells),
@@ -2855,7 +2920,7 @@ mod tests {
 
         // Rank 2: the rank-1 button becomes rank 2 (`0x5aafd0` runs before the registrar), and
         // the rank gate (`< 2`) places nothing more.
-        learned_spell(
+        learn_and_place(
             143,
             (&mut actions, &mut bar),
             Some(&spells),
@@ -2872,7 +2937,7 @@ mod tests {
         // At level 11 the level gate closes: the book grows, the bar does not.
         actions.spells.clear();
         bar.buttons.remove(&1);
-        learned_spell(
+        learn_and_place(
             133,
             (&mut actions, &mut bar),
             Some(&spells),
@@ -2964,7 +3029,7 @@ mod tests {
             let mut bar = crate::ui_action::ActionSlots::default();
             let mut errors = crate::ui_action::signals::LinesSeen::default();
             let mut flash = LearnedInTab::default();
-            learned_spell(
+            learn_and_place(
                 id,
                 (&mut actions, &mut bar),
                 Some(&spells),
@@ -2982,7 +3047,7 @@ mod tests {
     }
 
     /// Before our player streams, the pair is buffered and replayed with the live flag clear
-    /// (`0x6e7f73`): the book only.
+    /// (`0x6e7fc5`): the book only.
     #[test]
     fn a_learn_before_the_player_is_book_only() {
         let spells = catalog_with(

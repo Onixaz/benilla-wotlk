@@ -685,6 +685,16 @@ pub trait LiveState {
         None
     }
 
+    /// A macro edit's parse (`0x565c40` -> `0x5650c0`): each macro's bound spell off the book,
+    /// stored where the bar reads it, and returned keyed by 1-based index for the VM's copy;
+    /// `None` without a view.
+    fn macros_changed(
+        &mut self,
+        _macros: &super::MacroState,
+    ) -> Option<std::collections::HashMap<u32, super::MacroBinding>> {
+        None
+    }
+
     /// `IsUsableItem`'s pair for `item_id` (`0x51c450`); `None` without a view.
     fn item_usable(&self, _item_id: u32) -> Option<(bool, bool)> {
         None

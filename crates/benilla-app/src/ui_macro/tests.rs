@@ -328,3 +328,102 @@ fn every_macro_chooser_icon_resolves_in_the_client_archives() {
         "the chooser list must be case-insensitively sorted"
     );
 }
+
+/// The slash table the cast lines are read against.
+fn cast_table() -> crate::ui_chat::commands::SlashCommands {
+    crate::ui_chat::commands::SlashCommands::build(
+        |name| match name {
+            "SLASH_CAST1" => Some("/cast".into()),
+            _ => None,
+        },
+        |_| None,
+    )
+}
+
+/// A world with a VM holding `macros`, a book of Fireball 133, and a bar whose slot 4 holds
+/// macro 1 and slot 7 macro 2.
+fn macro_world(macros: MacroState) -> bevy::prelude::World {
+    use benilla_protocol::messages::{ActionButton, ACTION_KIND_MACRO};
+    use benilla_ui::script::{SpellBookState, SpellSlotView};
+    let mut world = bevy::prelude::World::new();
+    let mut script = UiScript::new().unwrap();
+    script.set_macros(macros);
+    world.insert_non_send_resource(script);
+    world.insert_resource(cast_table());
+    world.insert_resource(crate::ui_spellbook::SpellBook::of(SpellBookState {
+        slots: vec![SpellSlotView {
+            spell_id: 133,
+            name: "Fireball".into(),
+            rank: Some("Rank 1".into()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    }));
+    world.init_resource::<super::MacroBoundSpells>();
+    world.init_resource::<crate::ui_script::live::UiEvents>();
+    let mut bar = crate::ui_action::ActionSlots::default();
+    for (slot, action) in [(4, 1), (7, 2)] {
+        bar.buttons.insert(
+            slot,
+            ActionButton {
+                slot,
+                action,
+                kind: ACTION_KIND_MACRO,
+            },
+        );
+    }
+    world.insert_resource(bar);
+    world
+}
+
+/// The book update's macro pass looks up only a macro whose `/cast` did not resolve (`0x56617b`):
+/// one resolving now takes its spell and signals its bar slot (`0x566193` -> `0x5aa920`); a bound
+/// macro keeps its spell.
+#[test]
+fn the_book_updates_macro_pass_resolves_only_the_unresolved() {
+    use super::BoundSpell;
+    let mut world = macro_world(MacroState {
+        account: vec![
+            macro_view("Fire", "/cast Fireball"),
+            macro_view("Old", "/cast Fireball"),
+        ],
+        character: Vec::new(),
+    });
+    world.resource_mut::<super::MacroBoundSpells>().0 =
+        [(1, BoundSpell::Unresolved), (2, BoundSpell::Spell(999))].into();
+    super::book_rebind(&mut world);
+    assert_eq!(
+        world.resource::<super::MacroBoundSpells>().0,
+        [(1, BoundSpell::Spell(133)), (2, BoundSpell::Spell(999))].into()
+    );
+    assert_eq!(
+        world.resource::<crate::ui_script::live::UiEvents>().names(),
+        ["<world>"],
+        "one slot signal, macro 1's"
+    );
+    // Nothing left unresolved: the pass changes nothing.
+    *world.resource_mut::<crate::ui_script::live::UiEvents>() = Default::default();
+    super::book_rebind(&mut world);
+    assert!(world
+        .resource::<crate::ui_script::live::UiEvents>()
+        .is_empty());
+}
+
+/// An edit binds the macros' spells inside its call, before its slot signal (`0x565c40`,
+/// `0x566d38`): the bar's macro spell is read at the call, with no frame between.
+#[test]
+fn an_edit_binds_its_macro_inside_the_call() {
+    use super::BoundSpell;
+    let mut world = macro_world(MacroState {
+        account: vec![macro_view("Fire", "/say hi")],
+        character: Vec::new(),
+    });
+    crate::ui_script::live::with_live_world(&mut world, |s| {
+        s.run("EditMacro(1, nil, nil, '/cast Fireball')").unwrap();
+    })
+    .expect("a VM");
+    assert_eq!(
+        world.resource::<super::MacroBoundSpells>().0.get(&1),
+        Some(&BoundSpell::Spell(133))
+    );
+}
