@@ -164,6 +164,7 @@ local VERBS = {
     { "lock01", function() return (select(3, GetContainerItemInfo(0, 1))) end },
     { "lock02", function() return (select(3, GetContainerItemInfo(0, 2))) end },
     { "lock05", function() return (select(3, GetContainerItemInfo(0, 5))) end },
+    { "cnt11", function() return (select(2, GetContainerItemInfo(1, 1))) end },
     { "lock11", function() return (select(3, GetContainerItemInfo(1, 1))) end },
     { "lock12", function() return (select(3, GetContainerItemInfo(1, 2))) end },
     { "slots1", function() return GetContainerNumSlots(1) end },
@@ -6205,6 +6206,74 @@ fn the_bag_watches_fire_from_the_update_in_field_order() {
             "BAG_UPDATE -4",
             "BAG_UPDATE 5",
         ]
+    );
+}
+
+/// A create for a held item skips its movement block (`0x4d6c4d`) and runs the field handlers on its fields (`0x4d64be` -> `0x4d5550`): a larger stack runs the count watch (`0x707720`), whose container leg fires the bag's `BAG_UPDATE` (`0x707805` -> `0x5d7070`), read at its event; an unchanged count runs no watch.
+#[test]
+fn a_held_items_re_create_runs_its_count_watch() {
+    use benilla_protocol::field::{
+        FIELD_CONTAINER_NUM_SLOTS, FIELD_CONTAINER_SLOT_1, FIELD_ITEM_CONTAINED, FIELD_ITEM_OWNER,
+        FIELD_ITEM_STACK_COUNT, FIELD_OBJECT_ENTRY, FIELD_PLAYER_INV_SLOT_HEAD,
+    };
+    const ARROWS: u64 = 0x4000_0000_0000_0410;
+    const POUCH: u64 = 0x4000_0000_0000_0411;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let arrows = |count: u32| SessionEvent::ItemCreate {
+        guid: ARROWS,
+        container: false,
+        fields: ObjectFields::from_pairs(&[
+            (FIELD_OBJECT_ENTRY, 2512),
+            (FIELD_ITEM_OWNER, ME as u32),
+            (FIELD_ITEM_OWNER + 1, (ME >> 32) as u32),
+            (FIELD_ITEM_CONTAINED, POUCH as u32),
+            (FIELD_ITEM_CONTAINED + 1, (POUCH >> 32) as u32),
+            (FIELD_ITEM_STACK_COUNT, count),
+        ])
+        .into_created(ObjectType::Item),
+    };
+    let bag_slot = FIELD_PLAYER_INV_SLOT_HEAD + 2 * 19;
+    rig.packets(
+        vec![
+            arrows(1),
+            SessionEvent::ItemCreate {
+                guid: POUCH,
+                container: true,
+                fields: ObjectFields::from_pairs(&[
+                    (FIELD_OBJECT_ENTRY, 828),
+                    (FIELD_ITEM_OWNER, ME as u32),
+                    (FIELD_ITEM_OWNER + 1, (ME >> 32) as u32),
+                    (FIELD_ITEM_CONTAINED, ME as u32),
+                    (FIELD_ITEM_CONTAINED + 1, (ME >> 32) as u32),
+                    (FIELD_ITEM_STACK_COUNT, 1),
+                    (FIELD_CONTAINER_NUM_SLOTS, 6),
+                    (FIELD_CONTAINER_SLOT_1, ARROWS as u32),
+                    (FIELD_CONTAINER_SLOT_1 + 1, (ARROWS >> 32) as u32),
+                ])
+                .into_created(ObjectType::Container),
+            },
+            self_values(&[
+                (bag_slot, POUCH as u32),
+                (bag_slot + 1, (POUCH >> 32) as u32),
+            ]),
+        ],
+        2,
+    );
+    let events = &["BAG_UPDATE"];
+    let verbs = &["cnt11"];
+    let seen = rig.packets(vec![arrows(2)], 2);
+    assert_eq!(
+        pin(&seen, events, verbs),
+        ["BAG_UPDATE 1 | cnt11=2"],
+        "the count watch's container leg, read at its event"
+    );
+    let seen = rig.packets(vec![arrows(2)], 2);
+    assert_eq!(
+        pin(&seen, events, verbs),
+        Vec::<String>::new(),
+        "an unchanged count runs no watch"
     );
 }
 
