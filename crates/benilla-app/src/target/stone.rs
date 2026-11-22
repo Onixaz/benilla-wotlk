@@ -69,6 +69,7 @@ pub(crate) fn drain_meeting_stone_uses(
     mut errors: ResMut<crate::ui_action::UiErrorKeys>,
     spells: Option<Res<crate::ui_action::Spells>>,
     auras: Query<&crate::unit_auras::UnitAuras, With<SelfPlayer>>,
+    mut ecs: Commands,
 ) {
     let Some(level) = self_q.single().ok().and_then(|s| s.0.unit_level()) else {
         uses.clear();
@@ -90,21 +91,32 @@ pub(crate) fn drain_meeting_stone_uses(
             }
             None => {
                 // Past its own gates the stone's use is the shared one, dismount first (`0x71190c`).
+                let mut cancels = Vec::new();
                 if let Ok(own) = self_q.single() {
                     crate::creature_anim::dismount_first(own, &commands);
                     let form = own.0.unit_shapeshift_form();
                     if let (Some(spells), Ok(auras)) = (spells.as_deref(), auras.single()) {
                         let flags = spells.forms.get(&u32::from(form)).map_or(0, |f| f.flags);
                         if crate::spell::validator::form_blocks_interact(form, flags) {
-                            for id in crate::ui_shapeshift::form_auras(form, auras, &spells.catalog)
-                            {
-                                let _ = commands.0.send(ClientCommand::CancelAura { spell_id: id });
-                            }
+                            cancels =
+                                crate::ui_shapeshift::form_auras(form, auras, &spells.catalog);
                         }
                     }
                 }
                 trace_use(&format!("SEND CMSG_GAMEOBJ_USE guid={go_guid:#x}"));
-                let _ = commands.0.send(ClientCommand::GameObjUse { guid: go_guid });
+                let use_go = ClientCommand::GameObjUse { guid: go_guid };
+                if cancels.is_empty() {
+                    let _ = commands.0.send(use_go);
+                } else {
+                    // Each aura cancel's drop and its listeners, its send, then the use (`0x80324d`, `0x803458`).
+                    ecs.queue(move |w: &mut World| {
+                        for id in cancels {
+                            crate::ui_shapeshift::cancel_aura_step(w, id);
+                        }
+                        crate::ui_shapeshift::send_after_raises(w, use_go);
+                        crate::ui_script::live::fire_handler_events(w);
+                    });
+                }
             }
         }
     }

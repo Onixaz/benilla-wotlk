@@ -2372,6 +2372,65 @@ mod tests {
         assert_eq!(s.errors().len(), before, "{:?}", s.errors());
     }
 
+    /// The stock handle's binding methods (`RestrictedFrames.lua`, `HANDLE:SetBinding` and kin)
+    /// run from a wrapped click's secure snippet in combat (#370): a plain override and a spell
+    /// override stand over the saved binding, `ClearBinding` takes one key back, and
+    /// `ClearBindings` restores the saved one.
+    #[test]
+    fn the_stock_handle_binding_methods_override_and_restore() {
+        let _data = benilla_formats::wow_data_or_skip!();
+        let mut s = UiScript::new().expect("VM");
+        s.set_screen_size(1024.0, 768.0);
+        seat_a_player(&mut s);
+        let _ = super::super::manifest::load_default_ui(&s);
+        let before = s.errors().len();
+        s.run(
+            r#"
+            SetBinding("F7", "JUMP")
+            local header = CreateFrame("Frame", nil, UIParent, "SecureHandlerBaseTemplate")
+            BindButton = CreateFrame("Button", "BindButton", UIParent, "SecureActionButtonTemplate")
+            BindButton:RegisterForClicks("AnyUp")
+            SecureHandlerWrapScript(BindButton, "OnClick", header, [[
+                if button == "LeftButton" then
+                    owner:SetBinding(false, "F7", "TOGGLEAUTORUN")
+                    owner:SetBindingSpell(true, "F8", "Fireball")
+                    owner:SetBindingClick(false, "F9", "BindButton", "RightButton")
+                    owner:SetBindingMacro(false, "F10", 3)
+                    owner:SetBindingItem(false, "F11", "Hearthstone")
+                elseif button == "RightButton" then
+                    owner:ClearBinding("F8")
+                else
+                    owner:ClearBindings()
+                end
+            ]])
+            "#,
+        )
+        .unwrap();
+        s.set_regen_enabled(false);
+        s.run(r#"BindButton:Click("LeftButton")"#).unwrap();
+        let action = |s: &UiScript, key: &str| -> String {
+            s.eval(&format!("return GetBindingAction('{key}', true)"))
+                .unwrap()
+        };
+        assert_eq!(action(&s, "F7"), "TOGGLEAUTORUN", "{:?}", s.errors());
+        assert_eq!(action(&s, "F8"), "SPELL Fireball");
+        assert_eq!(action(&s, "F9"), "CLICK BindButton:RightButton");
+        assert_eq!(action(&s, "F10"), "MACRO 3");
+        assert_eq!(action(&s, "F11"), "ITEM Hearthstone");
+        assert_eq!(
+            s.eval::<String>("return GetBindingAction('F7')").unwrap(),
+            "JUMP",
+            "the saved binding is untouched underneath"
+        );
+        s.run(r#"BindButton:Click("RightButton")"#).unwrap();
+        assert_eq!(action(&s, "F8"), "");
+        assert_eq!(action(&s, "F7"), "TOGGLEAUTORUN");
+        s.run(r#"BindButton:Click("MiddleButton")"#).unwrap();
+        assert_eq!(action(&s, "F7"), "JUMP", "the saved binding is back");
+        assert!(s.override_bindings().is_empty());
+        assert_eq!(s.errors().len(), before, "{:?}", s.errors());
+    }
+
     /// The stock secure code's two `GetRect` callers run clean (#1270): a restricted snippet
     /// reads its frame handle's rect (`RestrictedFrames.lua`), and the hover driver reads every
     /// frame `RegisterAutoHide` lists, each update (`SecureHoverDriver.lua`), hiding the frame

@@ -283,6 +283,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .enchant_confirms
                     .push(super::cursor::EnchantConfirm::SpellEnchant);
             }
+            drop(model);
+            super::calls::press_item_picks(lua);
             Ok(())
         })?,
     )?;

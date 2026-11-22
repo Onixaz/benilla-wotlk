@@ -718,8 +718,7 @@ pub(super) fn read_play_spell_visual(r: &mut impl Read) -> io::Result<(u64, u32)
     Ok((unit, kit_id))
 }
 
-/// The client's `castCount`, which keys a sent cast to the server's answer: 12340 hands out 1 to
-/// 255 and never 0, wrapping to 1 (`0x8050dc`-`0x8050ec`).
+/// The client's `castCount`, which keys a sent cast to the server's answer: 12340 hands out 1 to 255 and never 0, wrapping to 1, as each cast attempt files its record (`0x8050dc`-`0x8050ec`).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct CastCounter(u8);
 
@@ -729,6 +728,11 @@ impl CastCounter {
         let count = self.0.max(1);
         self.0 = count.wrapping_add(1);
         count
+    }
+
+    /// The count the next cast carries, the counter left as it is.
+    pub fn peek(&self) -> u8 {
+        self.0.max(1)
     }
 }
 
@@ -872,6 +876,14 @@ pub fn cast_spell_at_source(cast_count: u8, spell_id: u32, src: TargetPoint) -> 
     cast_at_point(cast_count, spell_id, TARGET_FLAG_SOURCE_LOCATION, src)
 }
 
+/// Body of `CMSG_CANCEL_CAST`: the `u8` cast count the cast went out with, then its `u32` spell id (`0x8062e6`, `0x8062f2`).
+pub fn cancel_cast(cast_count: u8, spell_id: u32) -> Vec<u8> {
+    let mut body = Vec::with_capacity(5);
+    body.push(cast_count);
+    body.extend_from_slice(&spell_id.to_le_bytes());
+    body
+}
+
 /// Body of `CMSG_CANCEL_AURA`: by spell id, not slot. `HandleCancelAuraOpcode`
 /// (`SpellHandler.cpp:333-405`) refuses passives, debuffs and `SPELL_ATTR_NO_AURA_CANCEL` spells;
 /// the client gates on the aura's `AURA_FLAG_CANCELABLE` bit.
@@ -924,6 +936,13 @@ mod tests {
         assert_eq!((c.take(), c.take()), (1, 2));
         let mut c = CastCounter(255);
         assert_eq!((c.take(), c.take()), (255, 1), "0 is never handed out");
+    }
+
+    /// `CMSG_CANCEL_CAST`: `u8` cast count, then `u32` spell id (`0x8062e6`, `0x8062f2`).
+    #[test]
+    fn cancel_cast_body_is_count_then_spell() {
+        assert_eq!(cancel_cast(3, 688), [3, 0xb0, 0x02, 0, 0]);
+        assert_eq!(cancel_cast(0, 5019), [0, 0x9b, 0x13, 0, 0]);
     }
 
     #[test]

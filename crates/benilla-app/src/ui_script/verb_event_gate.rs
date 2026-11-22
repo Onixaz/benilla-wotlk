@@ -53,6 +53,26 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
         "UPDATE_BINDINGS",
         "benilla-app/src/bindings.rs",
     ),
+    (
+        "SetBindingClick",
+        "UPDATE_BINDINGS",
+        "benilla-app/src/bindings.rs",
+    ),
+    (
+        "SetBindingItem",
+        "UPDATE_BINDINGS",
+        "benilla-app/src/bindings.rs",
+    ),
+    (
+        "SetBindingMacro",
+        "UPDATE_BINDINGS",
+        "benilla-app/src/bindings.rs",
+    ),
+    (
+        "SetBindingSpell",
+        "UPDATE_BINDINGS",
+        "benilla-app/src/bindings.rs",
+    ),
     // The direct RSVP (`direct_rsvp`) marks the action pending and signals it.
     (
         "CalendarContextInviteAvailable",

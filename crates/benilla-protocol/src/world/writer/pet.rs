@@ -22,11 +22,11 @@ impl WorldWriter {
     /// refusal with `SMSG_PET_CAST_FAILED`.
     pub fn pet_cast_spell(
         &mut self,
+        count: u8,
         pet_guid: u64,
         spell_id: u32,
         target: messages::UseItemTarget,
     ) -> Result<()> {
-        let count = self.cast_counter.take();
         self.send(
             opcode::CMSG_PET_CAST_SPELL,
             &messages::pet_cast_spell(pet_guid, count, spell_id, target),
@@ -38,6 +38,7 @@ impl WorldWriter {
     #[allow(clippy::too_many_arguments)] // the shot and the mover's pose, one each
     pub fn pet_cast_trajectory(
         &mut self,
+        count: u8,
         pet_guid: u64,
         spell_id: u32,
         shot: &messages::TrajectoryShot,
@@ -46,7 +47,6 @@ impl WorldWriter {
         pos: [f32; 3],
         orientation: f32,
     ) -> Result<()> {
-        let count = self.cast_counter.take();
         let mut stop = crate::world::movement::movement_info(pos, orientation, flags);
         stop.flags2 = flags2;
         self.send(

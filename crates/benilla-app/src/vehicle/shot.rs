@@ -25,6 +25,8 @@ use crate::net::ClientCommand;
 pub(crate) struct TrajectoryCast {
     pub(crate) caster: u64,
     pub(crate) spell_id: u32,
+    /// The cast attempt's record `castCount` (`0x8050dc`).
+    pub(crate) count: u8,
 }
 
 /// The trajectory casts handed this frame.
@@ -211,6 +213,7 @@ pub(super) fn send_trajectory_casts(
             cast.spell_id, shot.pitch, shot.speed, shot.time, shot.impact
         );
         let _ = net.0.send(ClientCommand::PetCastTrajectory {
+            count: cast.count,
             pet_guid: cast.caster,
             spell_id: cast.spell_id,
             shot: TrajectoryShot {

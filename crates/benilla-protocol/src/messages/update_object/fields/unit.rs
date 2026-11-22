@@ -232,8 +232,11 @@ impl ObjectFields {
         self.get_u32(FIELD_UNIT_AURASTATE).unwrap_or(0)
     }
 
-    /// `UNIT_FIELD_BYTES_2` byte 3, the shapeshift form (`0x71af70`).
+    /// `UNIT_FIELD_BYTES_2` byte 3, the shapeshift form, none while an early cancel stands (`0x71af70`).
     pub fn unit_shapeshift_form(&self) -> u8 {
+        if self.unit_form_suppressed() {
+            return 0;
+        }
         (self.get_u32(FIELD_UNIT_BYTES_2).unwrap_or(0) >> 24) as u8
     }
     /// `UNIT_FIELD_POWER1..7`: current power of type `ty`, on the wire's raw scale (`0x71c2e0`);

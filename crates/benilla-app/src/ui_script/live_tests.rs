@@ -216,6 +216,36 @@ const CALLS_NO_LUA: &[(&str, &str, &str)] = &[
         "reads the focus and the names a token resolves through off the model",
     ),
     (
+        "death/mod.rs",
+        "death_action",
+        "one death intent as a press, its raises queued in turn; `press_step` fires them with the          `World` lent",
+    ),
+    (
+        "spell/targeting/item.rs",
+        "item_leg",
+        "one item-pick leg as a press, its raises queued in turn; `press_step` fires them with the          `World` lent",
+    ),
+    (
+        "ui_items/drain.rs",
+        "direct_use_step",
+        "the glyph arm's direct use as a press, its raises queued in turn; `press_step` fires them          with the `World` lent",
+    ),
+    (
+        "ui_items/mod.rs",
+        "run_item_use_rest",
+        "the item use's rest past its form leave, a cast edge's step: the bind deferral queues its event on the VM, no call into Lua; its edges fire with the `World` lent",
+    ),
+    (
+        "ui_action/drain.rs",
+        "go_opener",
+        "one GameObject opener as a press, its raises queued in turn; `press_step` fires them with          the `World` lent",
+    ),
+    (
+        "ui_action/drop_item.rs",
+        "feed_leg",
+        "reads the cursor payload off the model; `press_step` fires the press's raises with the          `World` lent",
+    ),
+    (
         "script_calls.rs",
         "apply_one",
         "applies one script call with its raises queued in turn; its caller fires them with the \

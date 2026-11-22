@@ -40,6 +40,10 @@ pub(crate) fn apply_in_call(lua: &mlua::Lua, call: ScriptCall) -> bool {
         }
         return true;
     }
+    // The verbs that press off a queued intent: their drain, each press at its own step.
+    if let ScriptCall::Press(verb) = call {
+        return with_world(|world| press_verb(world, verb)).is_some();
+    }
     let applied = with_world(|world| {
         // The setter's tail at the selection write (`0x524f38`-`0x524f54`), ahead of what the call
         // raises after it: the cast's attack pick selects before the send (`0x80d661`, `0x80b556`).
@@ -95,10 +99,51 @@ fn step_then_fire<R>(
     let earlier = world.get_resource_or_init::<UiEvents>().set_aside();
     let (out, raised) = benilla_ui::script::world_loan::raises_in_turn(&lua, || step(world));
     tail(world, &out);
-    // The step's raises as it returns: the ones it made through the VM (the item-use fork's
-    // `USE_GLYPH` `0x5d8ad3`, the lock edges `0x706feb`, the selection's refusal line
-    // `0x5216f0`), then its queued ones (`0x80b556`, `0x806200`). #1363 fires each at its step
-    // inside the press.
+    // The step's raises with the `World` lent again, each last on its path or followed by its rest as a step (`0x5d8ad3`, `0x706feb`, `0x5216f0`, `0x80b556`, `0x806200`).
+    if !raised.is_empty() {
+        crate::ui_script::safe_world::lend(world, |script| {
+            for raise in raised {
+                raise.run(script);
+            }
+        });
+    }
+    crate::ui_script::live::fire_handler_events(world);
+    world.resource_mut::<UiEvents>().put_back(earlier);
+    out
+}
+
+/// A verb's press inside its call: the drain of the intents it queued, each press at its own step ([`press_step`]), so the line after the call reads what it armed.
+fn press_verb(world: &mut World, verb: benilla_ui::script::VerbPress) {
+    use benilla_ui::script::VerbPress;
+    match verb {
+        VerbPress::TradeSkill => crate::ui_tradeskill::press_trade_skill_casts(world),
+        VerbPress::DropItemOnUnit => crate::ui_action::drop_item::press_dropped_tokens(world),
+        VerbPress::Death => crate::death::drain_death(world),
+        VerbPress::ItemPicks => crate::spell::targeting::commit_item_cast_on_pick(world),
+    }
+}
+
+/// One press of an exclusive holder at its own step: its raises and edges fire with the `World` lent before the holder's next press, which reads what it armed (`0x80b556`, `0x80b583`); earlier queues stay set aside.
+pub(crate) fn press_step<I, O, M, S>(world: &mut World, system: S, input: I::Inner<'_>) -> Option<O>
+where
+    I: bevy::ecs::system::SystemInput + 'static,
+    O: 'static,
+    S: IntoSystem<I, O, M> + 'static,
+{
+    use crate::ui_script::live::UiEvents;
+    let lua = world
+        .get_non_send_resource::<UiScript>()
+        .map(|s| s.lua().clone());
+    let earlier = world.get_resource_or_init::<UiEvents>().set_aside();
+    let (out, raised) = match &lua {
+        Some(lua) => benilla_ui::script::world_loan::raises_in_turn(lua, || {
+            step_ran(world.run_system_cached_with(system, input))
+        }),
+        None => (
+            step_ran(world.run_system_cached_with(system, input)),
+            Vec::new(),
+        ),
+    };
     if !raised.is_empty() {
         crate::ui_script::safe_world::lend(world, |script| {
             for raise in raised {
@@ -138,6 +183,18 @@ pub(crate) fn answer_in_call(
     .flatten()
 }
 
+/// A press that did not run drops its whole press silently: a hard failure in a debug build.
+fn step_ran<O, E: std::fmt::Display>(ran: Result<O, E>) -> Option<O> {
+    match ran {
+        Ok(out) => Some(out),
+        Err(e) if cfg!(debug_assertions) => panic!("script_calls: a press step did not run: {e}"),
+        Err(e) => {
+            warn!("script_calls: a press step did not run: {e}");
+            None
+        }
+    }
+}
+
 /// Apply the calls that waited where no `World` was lent, in call order, in the press pass after
 /// the clicks and keys and before the frame's feed, which publishes the cooldowns they arm.
 pub(crate) fn apply_script_calls(world: &mut World) {
@@ -146,11 +203,7 @@ pub(crate) fn apply_script_calls(world: &mut World) {
     });
 }
 
-/// Apply one call in its owner's applier; its signals, lines and the press's edges queue on `ui`,
-/// and what it raises through the VM queues in turn ([`raises_in_turn`]), for the caller to fire
-/// once the applier's borrows end (#1363 moves each to its step).
-///
-/// [`raises_in_turn`]: benilla_ui::script::world_loan::raises_in_turn
+/// Apply one call in its owner's applier; its edges queue on `ui` and its VM raises queue in turn ([`benilla_ui::script::world_loan::raises_in_turn`]) for the caller to fire once its borrows end.
 #[allow(clippy::type_complexity)] // the appliers, one per owner of the state a call touches
 fn apply_one(
     In(call): In<ScriptCall>,
@@ -253,7 +306,7 @@ fn apply_one(
                 }
             }
             // Applied by the caller, which holds no borrow for its view write.
-            ScriptCall::DestroyTotem(_) => {}
+            ScriptCall::DestroyTotem(_) | ScriptCall::Press(_) => {}
             ScriptCall::UseItem { bag, slot } => appliers.p5().use_item(script, bag, slot),
             ScriptCall::InteractObject(guid) => appliers.p0().interact_object(guid),
             ScriptCall::UseContainerItem { bag, slot } => {
@@ -287,12 +340,13 @@ fn apply_one(
                 cast_as_pet(&mut appliers.p3(), out);
             }
         }
-        // The cast attempt's attack pick can move the selection mid-cast, so a press held there is
-        // picked and resumed before the next call reads the selection.
+        // A harness without the press's step queue holds the attack pick here; with it, the pick and the rungs below it are steps of their own ([`crate::spell::attack_pick_step`]).
         if let Some(held) = appliers.p3().ladder.take_held() {
-            if appliers.p7().pick_for_cast(held, ui) {
+            if let Some(unit) = appliers.p7().pick_for_cast(held, ui) {
                 let mut cast = appliers.p3();
-                let ctx = cast.targeting.context();
+                let ctx = cast
+                    .targeting
+                    .context_at(crate::spell::cast_target::Aim::Unit(Some(unit)));
                 cast.ladder.resume_after_pick(held, &ctx);
             }
         }
@@ -318,7 +372,7 @@ impl crate::ui_action::signals::SignalSink for InTurn<'_> {
     }
 }
 
-/// A pet press, then the `PET_BAR_UPDATE`s its latch raised (`0x5d4530`) and what its cooldown start made (`0x805d70`): an on-hold start's usable update (`0x805ed1`), then the pet's cooldown flush (`0x805eda`), in turn on `ui` as the press returns.
+/// A pet press, then the `PET_BAR_UPDATE`s its latch raised (`0x5d4530`) and what its cooldown start made (`0x805d70`): an on-hold start's usable update (`0x805ed1`), then the pet's cooldown flush (`0x805eda`), in turn on `ui` as the press returns; its `CMSG_PET_ACTION` after their listeners (`0x5d4556`).
 pub(crate) fn pet_press(
     press: &mut crate::ui_pet::PetPress,
     ui: &mut InTurn,
@@ -338,6 +392,21 @@ pub(crate) fn pet_press(
         press.cooldown_start_in_turn(ui.0);
     }
     crate::ui_pet::bar_signals_in_turn(ui.0, signals, now_signals);
+    if let crate::ui_pet::PetCast::Send {
+        packed,
+        target_guid,
+    } = out
+    {
+        ui.0.world(move |w| {
+            if let (Some(bar), Some(c)) = (
+                w.get_resource::<crate::ui_pet::PetBar>(),
+                w.get_resource::<crate::net::NetCommands>(),
+            ) {
+                crate::ui_pet::send_pet_action(bar, c, packed, target_guid);
+            }
+        });
+        return crate::ui_pet::PetCast::Done;
+    }
     out
 }
 
@@ -412,6 +481,16 @@ mod tests {
     const OURS: u32 = 1;
     const FRIEND: u32 = 2;
     const FOE: u32 = 3;
+
+    /// A press step whose system cannot run loses its whole press (its send, its GCD arm): a debug build fails on it.
+    #[test]
+    #[should_panic(expected = "a press step did not run")]
+    fn a_press_step_that_cannot_run_fails_loudly() {
+        #[derive(Resource)]
+        struct Absent;
+        let mut world = World::new();
+        press_step(&mut world, |_: In<()>, _: Res<Absent>| {}, ());
+    }
 
     struct Frame {
         app: App,
@@ -517,7 +596,9 @@ mod tests {
     fn casts(f: &Frame) -> Vec<(u32, Option<u64>)> {
         f.rx.try_iter()
             .filter_map(|c| match c {
-                ClientCommand::CastSpell { spell_id, target } => Some((spell_id, target)),
+                ClientCommand::CastSpell {
+                    spell_id, target, ..
+                } => Some((spell_id, target)),
                 _ => None,
             })
             .collect()
@@ -1121,6 +1202,7 @@ mod tests {
                 ClientCommand::CastSpell {
                     spell_id: SINISTER_STRIKE,
                     target: Some(guid),
+                    ..
                 } => Some(("cast", guid)),
                 ClientCommand::AttackSwing { guid } => Some(("swing", guid)),
                 _ => None,
@@ -1252,5 +1334,75 @@ mod tests {
         assert_eq!(selected(&f), None);
         assert_eq!(errors(&mut f), vec!["ERR_NO_ATTACK_TARGET"]);
         assert!(crate::ui_action::take_refusals(f.app.world_mut()).is_empty());
+    }
+
+    /// The pick's target setter fires inside the attempt before the rungs below it (`0x80d661` -> `0x72bdb0` -> `0x524bf0`, then `0x80d6ad`): a `PLAYER_TARGET_CHANGED` listener reads the strike not current and its select goes out first.
+    #[test]
+    fn a_strikes_pick_listener_runs_before_the_rest_of_the_attempt() {
+        let mut f = frame(false);
+        spawn_mob(&mut f, &[]);
+        with_strike(&mut f);
+        run(
+            &mut f,
+            r#"local l = CreateFrame("Frame")
+               l:RegisterEvent("PLAYER_TARGET_CHANGED")
+               l:SetScript("OnEvent", function()
+                   if AT_PICK then return end
+                   AT_PICK = IsCurrentAction(1) and 1 or 0
+                   TargetUnit("party1")
+               end)
+               UseAction(1)"#,
+        );
+        let at_pick = f
+            .app
+            .world()
+            .non_send_resource::<UiScript>()
+            .eval::<i64>("return AT_PICK")
+            .unwrap();
+        assert_eq!(at_pick, 0, "the strike is not current at its pick's signal");
+        // The attempt's guid argument stays the unit the pick bound (`0x80d65e`).
+        assert_eq!(
+            strike_wire(&f),
+            vec![
+                ("select", MOB),
+                ("select", NEW),
+                ("cast", MOB),
+                ("swing", MOB)
+            ]
+        );
+    }
+
+    /// A strike held at its pick takes one `castCount`, at its attempt's top (`0x80cda8` -> `0x8050dc`); its rest below the pick keeps it.
+    #[test]
+    fn a_picked_strike_takes_one_count() {
+        let mut f = frame(false);
+        spawn_mob(&mut f, &[]);
+        with_strike(&mut f);
+        let next = f
+            .app
+            .world()
+            .resource::<crate::spell::PendingCast>()
+            .next_count();
+        run(&mut f, "UseAction(1)");
+        let counts: Vec<u8> =
+            f.rx.try_iter()
+                .filter_map(|c| match c {
+                    ClientCommand::CastSpell {
+                        spell_id: SINISTER_STRIKE,
+                        count,
+                        ..
+                    } => Some(count),
+                    _ => None,
+                })
+                .collect();
+        assert_eq!(counts, [next]);
+        assert_eq!(
+            f.app
+                .world()
+                .resource::<crate::spell::PendingCast>()
+                .next_count(),
+            next.wrapping_add(1).max(1),
+            "one count taken"
+        );
     }
 }

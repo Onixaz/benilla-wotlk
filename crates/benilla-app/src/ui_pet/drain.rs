@@ -57,6 +57,11 @@ fn pet_cannot_cast(unit_flags: u32, spell: &benilla_formats::SpellDisplay) -> bo
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PetCast {
     Done,
+    /// `CMSG_PET_ACTION` with this word at this target, sent after the press's signals' listeners (`0x5d4530`, `0x5d4427` before `0x5d4556`).
+    Send {
+        packed: u32,
+        target_guid: u64,
+    },
     CastAsPet {
         pet_guid: u64,
         spell_id: u32,
@@ -251,12 +256,10 @@ impl PetPress<'_, '_> {
             entry.action(),
             entry.kind()
         );
-        let _ = commands.0.send(ClientCommand::PetAction {
-            pet_guid,
+        PetCast::Send {
             packed: entry.packed,
             target_guid,
-        });
-        PetCast::Done
+        }
     }
 }
 
@@ -291,27 +294,34 @@ pub(crate) fn plain_press_word(
     (!entry.is_spell() && !is_attack_order(entry)).then_some(entry)
 }
 
-/// [`plain_press_word`]'s press inside the verb's call: the usability gate (`0x5d447f`), the latch with its signal, then the send at the selection (`0x5d4556`); whether the latch signalled the bar (`0x5d4530`).
+/// [`plain_press_word`]'s press inside the verb's call: the usability gate (`0x5d447f`) and the latch with its signal (`0x5d448e`, `0x5d453b`); the send at the selection read here (`0x5d4240`) waits for the signal's listeners (`0x5d4556`).
 pub(crate) fn press_plain(
     bar: &mut PetBar,
     pet: &PetUnit,
     entry: PetActionEntry,
     selected: Option<u64>,
-    commands: Option<&NetCommands>,
-) -> bool {
+) -> benilla_ui::script::PetLatch {
     if pet.usable_pet_with(bar, false).is_none() {
-        return false;
+        return benilla_ui::script::PetLatch {
+            signalled: false,
+            send: None,
+        };
     }
     let before = bar.bar_signals;
     latch_press(bar, entry);
-    if let Some(c) = commands {
-        let _ = c.0.send(ClientCommand::PetAction {
-            pet_guid: bar.spells.pet_guid,
-            packed: entry.packed,
-            target_guid: selected.unwrap_or(0),
-        });
+    benilla_ui::script::PetLatch {
+        signalled: bar.bar_signals != before,
+        send: Some((entry.packed, selected.unwrap_or(0))),
     }
-    bar.bar_signals != before
+}
+
+/// `CMSG_PET_ACTION` with `word` at `target`, under the pet the bar holds at the send (`0x5d4585`).
+pub(crate) fn send_pet_action(bar: &PetBar, commands: &NetCommands, word: u32, target: u64) {
+    let _ = commands.0.send(ClientCommand::PetAction {
+        pet_guid: bar.spells.pet_guid,
+        packed: word,
+        target_guid: target,
+    });
 }
 
 /// `TogglePetAutocast`'s local half: flip bit 30 in place and return the whole word to send, or

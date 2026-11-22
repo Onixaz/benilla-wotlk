@@ -13,7 +13,7 @@ use benilla_ui::script::{DeathAction, ScriptValue, UiScript};
 use crate::net::{ClientCommand, NetCommands, ObjectStore, Objects, SelfPlayer};
 use crate::ui_action::Spells;
 use crate::ui_script::live::UiEvents;
-use crate::ui_script::{UiDrain, UiFeed};
+use crate::ui_script::UiFeed;
 
 pub(crate) mod net;
 
@@ -892,9 +892,20 @@ pub(crate) fn ghost_probe() -> Option<bool> {
     })
 }
 
-/// Map the queued Lua death intents onto the wire, after `UiInput` so a click drains that frame.
-fn drain_death(
-    mut vm: crate::ui_script::InTurn,
+/// Map the queued Lua death intents onto the wire: inside the verb's call where the `World` is lent, else in the press pass after `UiInput`; each is its own press, its raises fired before the next.
+pub(crate) fn drain_death(world: &mut World) {
+    let actions = crate::ui_script::safe_world::lend(world, |s| s.take_death_actions());
+    for action in actions.unwrap_or_default() {
+        crate::script_calls::press_step(world, death_action, action);
+    }
+}
+
+/// One death intent.
+#[allow(clippy::too_many_arguments)]
+fn death_action(
+    In(action): In<DeathAction>,
+    mut script: NonSendMut<benilla_ui::script::UiScript>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
     death_net: Res<DeathNet>,
     mut commands: Commands,
     net: Res<NetCommands>,
@@ -904,10 +915,7 @@ fn drain_death(
     // The soulstone's item leg is an item use, so it carries the bind gate.
     mut gate: crate::ui_bind_confirm::BindGate,
 ) {
-    let Some(mut script) = vm.turn() else {
-        return;
-    };
-    for action in script.take_death_actions() {
+    {
         let _ = match action {
             DeathAction::Repop => net.0.send(ClientCommand::RepopRequest { automatic: false }),
             // Else 0: vmangos resolves the corpse through the player and never reads the guid
@@ -995,8 +1003,8 @@ fn drain_death(
                 }
             }
         };
-        // The press's cast-bar edges, in turn as it returns (`0x80b556`).
-        ladder.press.defer_in_turn(&mut script);
+        // The press's cast-bar edges, fired at its step (`0x80b556`).
+        ladder.press.defer(&mut ui);
     }
 }
 
@@ -1014,7 +1022,10 @@ impl Plugin for DeathPlugin {
             .add_systems(
                 Update,
                 (
-                    crate::ui_script::raises::then_fire(drain_death).in_set(UiDrain),
+                    // In the press pass after the clicks: the soulstone's cast and GCD reach the frame's tick (`0x480410` before `0x495320`).
+                    drain_death
+                        .in_set(crate::ui_script::UiPress)
+                        .after(crate::script_calls::apply_script_calls),
                     drive_death_look,
                     // After the transport chain, so a corpse rides this frame's deck pose.
                     resolve_corpse_position

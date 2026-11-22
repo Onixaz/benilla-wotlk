@@ -715,8 +715,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, ()| Ok(with(lua, |t| i64::from(t.repeat_count()))))?,
     )?;
 
-    // DoTradeSkill(index [, repeat]) (`0x5dac00`): casts the recipe, the count capped by what the
-    // reagents cover; a running repeat of it only takes the new count.
+    // DoTradeSkill(index [, repeat]) (`0x5dac00`): casts the recipe inside the call, the count capped by what the reagents cover; a running repeat of it only takes the new count.
     g.set(
         "DoTradeSkill",
         lua.create_function(|lua, (index, times): (Value, Value)| {
@@ -734,12 +733,15 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 } else {
                     times
                 };
+                // Another recipe casts first and takes its repeat once the cast went (`0x5daca6`).
                 if t.recast_spell() != spell {
-                    t.casts.push(spell);
+                    t.casts.push((spell, times));
+                    return Vec::new();
                 }
                 t.set_recast(spell, times);
                 vec!["UPDATE_TRADESKILL_RECAST"]
             });
+            crate::script::calls::press(lua, crate::script::VerbPress::TradeSkill);
             Ok(())
         })?,
     )?;

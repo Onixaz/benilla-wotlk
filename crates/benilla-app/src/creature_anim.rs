@@ -246,10 +246,11 @@ pub(crate) fn stop_attack_local(
         return;
     }
     let _ = net.0.send(crate::net::ClientCommand::AttackStop);
-    if let Some(spell_id) = queued_melee.current() {
+    if let (Some(spell_id), Some(count)) = (queued_melee.current(), queued_melee.count()) {
+        // The queued strike's record names its own count (`0x8062de`).
         let _ = net
             .0
-            .send(crate::net::ClientCommand::CancelCast { spell_id });
+            .send(crate::net::ClientCommand::CancelCast { spell_id, count });
         queued_melee.clear_if(spell_id);
     }
 }
@@ -323,6 +324,8 @@ pub(crate) fn toggle_attack_local(
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct AttackSeam<'w, 's> {
     pub(crate) net: Res<'w, crate::net::NetCommands>,
+    /// The cast records' count, which a cast sent from here takes (`0x8050dc`); a harness without the spell plugin has none.
+    pub(crate) pending: Option<ResMut<'w, crate::spell::PendingCast>>,
     pub(crate) queued_melee: ResMut<'w, crate::spell::QueuedMeleeSpell>,
     pub(crate) auto_repeat: ResMut<'w, crate::spell::AutoRepeatActive>,
     pub(crate) sheath: MessageWriter<'w, SheathRequest>,
@@ -420,8 +423,7 @@ pub(crate) struct Casting {
 }
 
 impl Casting {
-    /// Whether an end of this spell and count ends the state (`0x7fed81`); a sent state's count is
-    /// taken by the wire writer, so it matches by spell.
+    /// Whether an end of this spell and count ends the state (`0x7fed81`); a sent state keeps no count, so it matches by spell.
     pub(crate) fn ended_by(&self, spell_id: u32, cast_count: u8) -> bool {
         self.spell_id == spell_id && (self.hidden || self.cast_count == cast_count)
     }

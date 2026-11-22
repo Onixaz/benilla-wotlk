@@ -708,8 +708,7 @@ pub(super) fn follow_requests(
         if let Some(key) = scan_params.follow_refusal(
             guid,
             followee,
-            cast.as_deref()
-                .is_some_and(|c| c.in_flight(std::time::Instant::now())),
+            cast.as_deref().is_some_and(|c| c.in_flight()),
             at,
         ) {
             info!("follow: refused — {key}");

@@ -659,6 +659,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if let Some(back) = find(&model, previous).map(|h| cursor_item(&h)) {
                 cursor::set_cursor(&mut model, CursorPayload::Item(back));
             }
+            drop(model);
+            super::calls::press_item_picks(lua);
             Ok(())
         })?,
     )?;

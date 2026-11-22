@@ -634,3 +634,38 @@ fn a_press_over_a_unit_and_a_release_over_nothing_raises_no_prompt() {
         .write(WorldClick);
     assert_eq!(prompts(&mut world), 0);
 }
+
+/// A terrain click goes to a pending location cast first (`0x52737a` -> `0x80c340`): the held item's prompt runs only with none waiting or one that wants an object (`0x80c3cd`, `0x52738e`).
+#[test]
+fn a_pending_location_cast_takes_the_terrain_click_before_the_held_item() {
+    const BLIZZARD: u32 = 10;
+    const OPENING: u32 = 3365;
+    let ground = PressPick {
+        occlusion: PickOcclusion {
+            distance: 20.0,
+            point: Some(Vec3::new(1.0, 2.0, 3.0)),
+            ..PickOcclusion::default()
+        },
+        ..PressPick::default()
+    };
+    for (name, word, expected) in [
+        ("a location cast waits", Some((BLIZZARD, 0x40)), 0),
+        ("no cast waits", None, 1),
+        (
+            "the waiting cast wants an object",
+            Some((OPENING, 0x4800)),
+            1,
+        ),
+    ] {
+        let mut world = clicking_world(ground);
+        let mut targeting = crate::spell::SpellTargeting::default();
+        if let Some((spell, word)) = word {
+            targeting.enter(spell, crate::spell::CastCommit::Spell, word);
+        }
+        world.insert_resource(targeting);
+        world
+            .resource_mut::<Messages<WorldDropClick>>()
+            .write(WorldDropClick);
+        assert_eq!(prompts(&mut world), expected, "{name}");
+    }
+}

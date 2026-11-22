@@ -1524,8 +1524,10 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         "DropItemOnUnit",
         lua.create_function(|lua, token: Option<String>| {
             if let Some(token) = token {
-                let mut model = crate::script::model_mut_of(lua);
-                model.drop_item_on_unit.push(token);
+                crate::script::model_mut_of(lua)
+                    .drop_item_on_unit
+                    .push(token);
+                crate::script::calls::press(lua, crate::script::VerbPress::DropItemOnUnit);
             }
             Ok(())
         })?,

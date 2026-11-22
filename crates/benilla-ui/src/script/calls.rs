@@ -220,6 +220,39 @@ pub enum ScriptCall {
     PetAction(u32),
     /// `PetAttack` and the other one-shot orders, as their bar slot's packed word.
     PetOrder(u32),
+    /// A verb whose press the host runs inside the call, off the intents it queued.
+    Press(VerbPress),
+}
+
+/// The verbs that press inside their call off a queued intent: each casts or sends before it returns, so the caller's next line reads what the press armed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VerbPress {
+    /// `DoTradeSkill(index [, repeat])` (`0x5dac00`): the cast (`0x5dacb1` -> `0x80da40`), then the repeat set on success alone (`0x5dacbb`, `0x5dacc1` -> `0x5d9fa0`).
+    TradeSkill,
+    /// `DropItemOnUnit(unit)` (`0x51bdd0`): the pet's feed (`0x51bf26` -> `0x80dcf0`).
+    DropItemOnUnit,
+    /// `RepopMe`, `RetrieveCorpse`, `AcceptResurrect`, `DeclineResurrect`, `AcceptXPLoss` and `UseSoulstone`, each sending or using its item inside the call (`0x51aab3`, `0x51ae6d`).
+    Death,
+    /// An item pick of the targeting cursor (`SpellTargetItem` `0x8008a5` -> `0x5210d0`), the enchant confirms (`0x522f7f`, `0x5167c8`) and the trade slot's (`0x80c5f0`).
+    ItemPicks,
+}
+
+/// Press `verb` inside this call where the host's state is lent (else it waits, in call order). The caller holds no model borrow.
+pub(crate) fn press(lua: &mlua::Lua, verb: VerbPress) {
+    make(lua, ScriptCall::Press(verb));
+}
+
+/// [`press`] the item picks when a pick, an enchant confirm or a trade slot's is queued.
+pub(crate) fn press_item_picks(lua: &mlua::Lua) {
+    let queued = {
+        let model = super::model_mut_of(lua);
+        !model.item_picks.is_empty()
+            || !model.enchant_confirms.is_empty()
+            || !model.trade_enchant_targets.is_empty()
+    };
+    if queued {
+        press(lua, VerbPress::ItemPicks);
+    }
 }
 
 /// The unit a cast verb aims at, the guid its target argument leaves for the cast

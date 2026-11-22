@@ -328,7 +328,7 @@ pub use battlefield_score::{
 pub use bind_confirm::PendingEquipAnswer;
 pub use calls::{
     apply_queued, set_answer, set_apply, AnswerHost, ApplyCall, CastAt, GuildBankVerdict,
-    HostAnswer, HostAsk, NearestMode, ScriptCall,
+    HostAnswer, HostAsk, NearestMode, ScriptCall, VerbPress,
 };
 pub use camera_view::{CameraViewRequest, CAMERA_VIEW_COUNT};
 pub use channel::{ChannelCommand, ZoneChannelRow};
@@ -458,7 +458,9 @@ pub(crate) use minimap::apply_model_attrs as apply_minimap_model_attrs;
 pub use model::{FontProbe, MacroIconSource, TextureProbe, TextureSizeProbe};
 pub(crate) use model::{Model, ModelCell};
 pub use party::{PartyMemberInfo, PartyRequest, PartyState, RaidMemberInfo, SavedInstanceInfo};
-pub use pet::{PetActionView, PetBarLive, PetMenuOutcome, PetMenuVerb, PetStats, PossessView};
+pub use pet::{
+    PetActionView, PetBarLive, PetLatch, PetMenuOutcome, PetMenuVerb, PetStats, PossessView,
+};
 pub use pvp::{
     pvp_name_global_keys, HonorState, InspectArenaTeamWords, InspectHonorData, RankTitle,
     PLAYER_FLAGS_PVP_TIMER,

@@ -32,92 +32,109 @@ fn feedable_pet(
         && feed_pet_known
 }
 
-/// Runs the pet leg for both of the reference's entries into the feed validator:
-/// `PetFrame_OnClick`'s `DropItemOnUnit("pet")`, and a left click on the pet's model with an item
-/// held (in the world click's object leg, where the click still selects).
-pub(crate) fn drop_item_on_unit(
-    mut vm: crate::ui_script::InTurn,
+/// Runs the pet leg for both entries into the feed validator (`DropItemOnUnit("pet")` and a held item's left click on the pet's model), each token its own press.
+pub(crate) fn drop_item_on_unit(world: &mut World) {
+    let clicked_pet = world.run_system_cached(clicked_pet).unwrap_or(false);
+    press_dropped_tokens(world);
+    if clicked_pet {
+        crate::script_calls::press_step(world, feed_leg, "pet".to_string());
+    }
+}
+
+/// The tokens `DropItemOnUnit` queued, each its own press: inside the verb's call where the `World` is lent (`0x51bf26`), else in the press pass.
+pub(crate) fn press_dropped_tokens(world: &mut World) {
+    let tokens = crate::ui_script::safe_world::lend(world, |s| s.take_drop_item_on_unit());
+    for token in tokens.unwrap_or_default() {
+        crate::script_calls::press_step(world, feed_leg, token);
+    }
+}
+
+/// The world entry: a click whose press-time pick is the pet. That is the pick the click selects from; the live hover can differ after a drag.
+fn clicked_pet(
+    press: Res<crate::target::PressPick>,
+    pet_bar: Option<Res<crate::ui_pet::PetBar>>,
+    mut clicks: MessageReader<benilla_world::interact::WorldClick>,
+) -> bool {
+    let pet_guid = pet_bar.as_ref().map_or(0, |b| b.spells.pet_guid);
+    clicks.read().count() > 0 && pet_guid != 0 && press.hovered.guid == Some(pet_guid)
+}
+
+/// One `DropItemOnUnit` token.
+#[allow(clippy::too_many_arguments)]
+fn feed_leg(
+    In(token): In<String>,
+    script: NonSend<benilla_ui::script::UiScript>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
     self_q: Query<(&crate::net::Guid, &crate::net::ObjectStore), With<crate::net::SelfPlayer>>,
     stores: Query<&crate::net::ObjectStore>,
     index: Res<crate::net::GuidIndex>,
     pet_bar: Option<Res<crate::ui_pet::PetBar>>,
     learned: Res<super::LearnedAbilities>,
-    press: Res<crate::target::PressPick>,
-    mut clicks: MessageReader<benilla_world::interact::WorldClick>,
     mut ladder: crate::spell::CastLadder,
 ) {
-    let Some(mut script) = vm.turn() else {
-        clicks.clear();
-        return;
-    };
-    let hovered = press.hovered;
     let pet_guid = pet_bar.as_ref().map_or(0, |b| b.spells.pet_guid);
-    let mut tokens = script.take_drop_item_on_unit();
-    // The world entry: a click whose press-time pick is the pet. That is the pick the click
-    // selects from; the live hover can differ after a drag.
-    let clicked_pet = clicks.read().count() > 0 && pet_guid != 0 && hovered.guid == Some(pet_guid);
-    if clicked_pet {
-        tokens.push("pet".to_string());
-    }
-    if tokens.is_empty() {
-        return;
-    }
     let Some((self_guid, self_store)) = self_q.iter().next() else {
         return;
     };
-    for token in tokens {
-        // Only the "pet" token is the pet; any other unit takes the unbuilt trade leg.
-        if token != "pet" {
-            debug!("DropItemOnUnit({token}) — only the pet leg is modelled; refused, payload kept");
-            continue;
-        }
-        let Some(pet_fields) = (pet_guid != 0)
-            .then(|| index.0.get(&pet_guid))
-            .flatten()
-            .and_then(|&e| stores.get(e).ok())
-        else {
-            continue; // no pet, or not streamed in: silent, payload kept
-        };
-        let Some(spell_id) = learned.feed_pet else {
-            continue; // gate 3 fails outright: we never learned Feed Pet
-        };
-        if !feedable_pet(&pet_fields.0, self_guid.0, true) {
-            debug!("DropItemOnUnit(\"pet\") — not a pet I summoned; refused, payload kept");
-            continue;
-        }
-        // The food: the held item's live guid. Only an item payload can be dropped on a unit.
-        let Some(CursorPayload::Item(held)) = script.cursor_payload() else {
-            continue;
-        };
-        let slot0 = u8::try_from(held.slot.saturating_sub(1)).unwrap_or(0);
-        let Some(item_guid) =
-            crate::ui_items::slot_guid(&self_store.0, held.bag, slot0, &ladder.objects)
-        else {
-            continue; // the slot emptied: silent, as every refusal here is
-        };
-        debug!("DropItemOnUnit(\"pet\") — Feed Pet {spell_id} at item {item_guid:#x}");
-        ladder.commit_targeted(spell_id, CastCommit::Spell, TargetedBind::Item(item_guid));
-        // The send's cast-bar edges, in turn as it returns (`0x80b556`).
-        ladder.press.defer_in_turn(&mut script);
-        // `ClearCursor(1,1)`, on success only, after the send's events.
-        benilla_ui::script::world_loan::in_turn_or_now(&mut script, |s| s.clear_cursor_payload());
+    // Only the "pet" token is the pet; any other unit takes the unbuilt trade leg.
+    if token != "pet" {
+        debug!("DropItemOnUnit({token}) — only the pet leg is modelled; refused, payload kept");
+        return;
     }
+    let Some(pet_fields) = (pet_guid != 0)
+        .then(|| index.0.get(&pet_guid))
+        .flatten()
+        .and_then(|&e| stores.get(e).ok())
+    else {
+        return; // no pet, or not streamed in: silent, payload kept
+    };
+    let Some(spell_id) = learned.feed_pet else {
+        return; // gate 3 fails outright: we never learned Feed Pet
+    };
+    if !feedable_pet(&pet_fields.0, self_guid.0, true) {
+        debug!("DropItemOnUnit(\"pet\") — not a pet I summoned; refused, payload kept");
+        return;
+    }
+    // The food: the held item's live guid. Only an item payload can be dropped on a unit.
+    let Some(CursorPayload::Item(held)) = script.cursor_payload() else {
+        return;
+    };
+    let slot0 = u8::try_from(held.slot.saturating_sub(1)).unwrap_or(0);
+    let Some(item_guid) =
+        crate::ui_items::slot_guid(&self_store.0, held.bag, slot0, &ladder.objects)
+    else {
+        return; // the slot emptied: silent, as every refusal here is
+    };
+    debug!("DropItemOnUnit(\"pet\") — Feed Pet {spell_id} at item {item_guid:#x}");
+    ladder.commit_targeted(spell_id, CastCommit::Spell, TargetedBind::Item(item_guid));
+    // The send's cast-bar edges, fired at its step (`0x80b556`).
+    ladder.press.defer(&mut ui);
+    // `ClearCursor(1,1)`, on success only, after the send's events.
+    ui.world(|world| {
+        crate::ui_script::safe_world::lend(world, |s| s.clear_cursor_payload());
+    });
 }
 
 /// The left click's payload legs on the press pick, at the settled click (`0x4f7880`).
-pub(crate) fn drop_on_world_click(
-    mut script: crate::ui_script::InTurn,
+pub(crate) fn drop_on_world_click(world: &mut World) {
+    let pick = world.run_system_cached(settled_click).ok().flatten();
+    if let Some(pick) = pick {
+        crate::ui_script::safe_world::lend(world, |s| s.world_drop_click(pick));
+    }
+}
+
+/// The press pick of a settled click, unless a pending location cast takes the terrain click first (`0x52737a` -> `0x80c340`, the item's leg at `0x52738e`).
+fn settled_click(
     press: Res<crate::target::PressPick>,
+    ground: Option<Res<crate::spell::SpellTargeting>>,
     mut clicks: MessageReader<WorldClick>,
     mut drops: MessageReader<WorldDropClick>,
-) {
+) -> Option<benilla_ui::script::WorldPick> {
     let clicked = clicks.read().count() + drops.read().count() > 0;
-    if !clicked {
-        return;
-    }
-    if let Some(mut script) = script.turn() {
-        script.world_drop_click(press.world_pick());
-    }
+    let taken = ground
+        .as_deref()
+        .is_some_and(|g| crate::spell::targeting::location_cast_takes(g, &press.occlusion));
+    (clicked && !taken).then(|| press.world_pick())
 }
 
 #[cfg(test)]
