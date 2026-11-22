@@ -226,6 +226,11 @@ const CALLS_NO_LUA: &[(&str, &str, &str)] = &[
         "one item-pick leg as a press, its raises queued in turn; `press_step` fires them with the          `World` lent",
     ),
     (
+        "ui_items/drain.rs",
+        "direct_use_step",
+        "the glyph arm's direct use as a press, its raises queued in turn; `press_step` fires them          with the `World` lent",
+    ),
+    (
         "ui_action/drain.rs",
         "go_opener",
         "one GameObject opener as a press, its raises queued in turn; `press_step` fires them with          the `World` lent",
