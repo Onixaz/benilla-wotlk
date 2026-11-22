@@ -2559,3 +2559,50 @@ fn a_spell_failures_end_listener_reads_the_cast_still_pending() {
     .unwrap();
     assert_eq!(seen, "UNIT_SPELLCAST_FAILED player current=1 after=0");
 }
+
+/// `SMSG_CAST_FAILED` for our sent cast: the line's listener reads the cast still pending; the finish releases it after the line and the end (`0x808aa5`, `0x808b75`, then `0x808b7f` -> `0x8054f0`, `0x8055a2`).
+#[test]
+fn a_cast_failures_line_listener_reads_the_cast_still_pending() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"SEEN = {} ERR_ITEM_COOLDOWN = "Item is not ready yet."
+        local f = CreateFrame("Frame")
+        f:RegisterEvent("UI_ERROR_MESSAGE")
+        f:SetScript("OnEvent", function(_, e)
+            SEEN[#SEEN + 1] = e .. " current=" .. (IsCurrentAction(1) and 1 or 0)
+        end)
+        TICK_DO = function() UseAction(1) TICK_DO = nil end"#,
+    );
+    rig.frame();
+    let count = rig
+        .sent()
+        .into_iter()
+        .find_map(|c| match c {
+            ClientCommand::CastSpell {
+                spell_id: BOLT,
+                count,
+                ..
+            } => Some(count),
+            _ => None,
+        })
+        .expect("the press sent the cast");
+    crate::net::handlers::dispatch(
+        rig.app.world_mut(),
+        vec![benilla_protocol::SessionEvent::CastResult {
+            cast_count: count,
+            spell_id: BOLT,
+            success: false,
+            reason: Some(0x28),
+            arg: None,
+            arg2: None,
+            wire_reason: Some(0x28),
+        }],
+    );
+    let seen: String = crate::ui_script::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval("return table.concat(SEEN, ',') .. ' after=' .. (IsCurrentAction(1) and 1 or 0)")
+    })
+    .unwrap()
+    .unwrap();
+    assert_eq!(seen, "UI_ERROR_MESSAGE current=1 after=0");
+}

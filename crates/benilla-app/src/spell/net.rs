@@ -509,6 +509,7 @@ fn on_cast_result(In(ev): In<SessionEvent>, mut ladder: CastLadder, mut r: Reply
             &ladder.commands,
             r.play_seq.next(),
             &mut cancels,
+            success,
         );
         // The routine's signals in its order: the hold's release, the auto-repeat cancel, the
         // start cooldown's clear, then the cast's end through `0x7fecc0` and its finish's
@@ -548,6 +549,13 @@ fn on_cast_result(In(ev): In<SessionEvent>, mut ladder: CastLadder, mut r: Reply
         // then signals (`0x809bd5`-`0x809c05`).
         if !success && reason != Some(0x3c) && on_event {
             cooldown_site(&mut r.ui, true, Tail::Bags);
+        }
+        // The finish releases the failed record after the line's and the end's listeners
+        // (`0x808b7f` -> `0x8054f0`, `0x8055a2`).
+        if !success {
+            r.ui.world(move |world| {
+                crate::net::handlers::step(world, release_failed, (spell_id, cast_count));
+            });
         }
         // The chain is the routine's last call (`0x808b7f` -> `0x8054f0`): a step after the
         // listeners of the failure's line and its cast end.
@@ -602,6 +610,7 @@ fn on_own_spell_go(In(ev): In<SessionEvent>, mut ladder: CastLadder, mut r: Repl
         &ladder.commands,
         r.play_seq.next(),
         &mut *r.ui,
+        true,
     );
     if let Some(next) = chained {
         r.ui.world(move |world| {
@@ -1505,6 +1514,7 @@ fn cast_result(
     net: &crate::net::NetCommands,
     seq: u64,
     sink: &mut dyn crate::ui_action::signals::SignalSink,
+    release: bool,
 ) -> Option<u32> {
     debug!("net: cast result — spell {spell_id} success={success} reason={reason:?}");
     // Is this the reply to our outstanding cast? Read before either arm clears the guard: both
@@ -1558,8 +1568,10 @@ fn cast_result(
         // The in-flight guard opens either way. A queued on-next-swing strike dies here too: the
         // server's melee-slot interrupt (vmangos `Spell::cancel` on the preparing slot) arrives as
         // a failure.
-        pending.release(spell_id, cast_count);
-        queued_melee.clear_if(spell_id);
+        if release {
+            pending.release(spell_id, cast_count);
+            queued_melee.clear_if(spell_id);
+        }
         // Our cast died (vmangos never sends `SMSG_SPELL_FAILURE`): end the self avatar's cast
         // state and precast hold, keyed by spell id.
         if let Some(e) = self_e {
@@ -1591,7 +1603,9 @@ fn cast_result(
     //   swing timer; with no record to refresh, we send nothing.
     // The chained spell is returned; `on_cast_result` hands it to the ladder in the same call.
     if in_flight {
-        pending.release(spell_id, cast_count);
+        if release {
+            pending.release(spell_id, cast_count);
+        }
         if let Some(next) = spells
             .and_then(|s| s.catalog.get(spell_id))
             .map(|d| d.modal_next_spell)
@@ -3392,6 +3406,7 @@ mod tests {
                             &crate::net::NetCommands(tx.clone()),
                             1,
                             &mut Vec::new(),
+                            true,
                         );
                     },
                 )
@@ -3933,6 +3948,7 @@ mod tests {
                             &net,
                             1,
                             &mut Vec::new(),
+                            true,
                         );
                     },
                 )
@@ -4381,6 +4397,7 @@ mod tests {
                             &net,
                             1,
                             &mut Vec::new(),
+                            true,
                         )
                     },
                 )
@@ -4753,6 +4770,7 @@ mod tests {
                             &crate::net::NetCommands(tx.clone()),
                             1,
                             &mut Vec::new(),
+                            true,
                         );
                     },
                 )
