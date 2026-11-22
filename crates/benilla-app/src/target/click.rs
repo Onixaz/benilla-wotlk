@@ -308,19 +308,34 @@ impl Dispatch<'_, '_> {
     fn arm_auto_loot(&mut self) {
         let on =
             crate::ui_loot::is_auto_looting(&self.service.loot_cfg, self.service.script.as_deref());
-        self.seam
-            .loot
-            .set_auto_loot(on, &self.seam.loot_latch, &self.seam.net);
+        let mut raised = crate::ui_script::live::UiEvents::default();
+        let closed = self.seam.loot.set_auto_loot(
+            on,
+            &mut self.seam.loot_latch,
+            &self.seam.net,
+            &mut raised,
+        );
+        crate::ui_script::live::fire_after(&mut self.seam.ecs, raised);
+        self.deselect_dead(closed);
     }
 
-    /// `CloseLoot(1, 0, 0)` ahead of a loot send (`0x6daec5`, `0x6dacf4`, `0x71115b`).
+    /// `CloseLoot(1, 0, 0)` ahead of a loot send (`0x6daec5`, `0x6dacf4`, `0x71115b`), its raises
+    /// once the system's commands apply.
     fn close_open_loot(&mut self) {
+        let mut raised = crate::ui_script::live::UiEvents::default();
         let closed = crate::ui_loot::close_interaction(
             &mut self.seam.loot,
             &mut self.seam.loot_latch,
             &self.seam.net,
             true,
+            &mut raised,
         );
+        crate::ui_script::live::fire_after(&mut self.seam.ecs, raised);
+        self.deselect_dead(closed);
+    }
+
+    /// The close's dead-unit deselect (`0x52378c`).
+    fn deselect_dead(&mut self, closed: Option<u64>) {
         if let Some(guid) =
             closed.filter(|&g| crate::ui_loot::dead_unit_source(&self.go_inputs.objects, g))
         {
@@ -2018,8 +2033,11 @@ pub(super) fn clear(
     // Keyed on the guid: a group member's selection may hold no entity (`0x5241b0`).
     selection.target = None;
     if let Some(old) = selection.guid.take() {
-        // The teardown closes the old target's loot before its own send.
-        seam.close_loot_on(old);
+        // The teardown closes the old target's loot before its own send, its raises once the
+        // system's commands apply.
+        let mut raised = crate::ui_script::live::UiEvents::default();
+        seam.close_loot_on(old, &mut raised);
+        crate::ui_script::live::fire_after(&mut seam.ecs, raised);
         let _ = seam.net.0.send(ClientCommand::SetSelection { guid: 0 });
         // The selection set's own, the real StopAttack, which also un-queues a pending
         // on-next-swing strike.
@@ -3805,9 +3823,20 @@ mod tests {
         for (on_corpse, auto) in [(false, false), (false, true), (true, true)] {
             let (mut world, body, corpse, rx) = loot_world(2.0, 0, false);
             world.resource_mut::<crate::ui_loot::LootConfig>().auto_loot = auto;
+            // A window still waiting on a row's record, so the arm's sweep (`0x6cde75`) has
+            // nothing to take yet (`0x588f99`).
+            let row = benilla_protocol::messages::LootItem {
+                slot: 0,
+                item_id: 117,
+                count: 1,
+                display_info_id: 1117,
+                random_property_id: 0,
+                random_suffix: 0,
+                slot_type: 0,
+            };
             world
                 .resource_mut::<crate::ui_loot::LootState>()
-                .open(CHEST, 3, 0, Vec::new());
+                .open_for_test(CHEST, 3, 0, vec![row]);
             world.resource_mut::<crate::ui_loot::LootLatch>().0 = Some(CHEST);
             right_click_loot(&mut world, loot_hover(on_corpse, body, corpse, 2.0));
             assert!(
@@ -3993,7 +4022,7 @@ mod tests {
             world.resource_mut::<crate::ui_loot::LootConfig>().auto_loot = true;
             world
                 .resource_mut::<crate::ui_loot::LootState>()
-                .open(LOOTED, 3, 0, Vec::new());
+                .open_for_test(LOOTED, 3, 0, Vec::new());
             world.resource_mut::<crate::ui_loot::LootLatch>().0 = Some(LOOTED);
             let object = spawn_object(&mut world, go_type, Vec3::new(0.0, 0.0, -distance));
             *world.resource_mut::<PressPick>() = PressPick {
@@ -4237,7 +4266,7 @@ mod tests {
         spawn_chest(&mut world, Vec3::new(0.0, 0.0, -2.0));
         world
             .resource_mut::<crate::ui_loot::LootState>()
-            .open(LOOTED, 3, 0, Vec::new());
+            .open_for_test(LOOTED, 3, 0, Vec::new());
         world.resource_mut::<crate::ui_loot::LootLatch>().0 = Some(LOOTED);
         world.resource_mut::<crate::player::Approach>().arrived =
             Some((crate::player::ApproachVerb::Use, CHEST));

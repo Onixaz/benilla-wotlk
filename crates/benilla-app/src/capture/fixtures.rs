@@ -83,7 +83,6 @@ pub(super) fn seed_ui_fixture(
     mut ctx: ResMut<CaptureCtx>,
     mut commands: Commands,
     progress: Res<WorldLoadProgress>,
-    mut loot: ResMut<crate::ui_loot::LootState>,
     (icons, mut name_seeds): (Option<Res<crate::entities::ItemDisplays>>, Commands),
     (mut vm, mut giver, mut chunks): (
         crate::ui_script::InTurn,
@@ -692,31 +691,37 @@ pub(super) fn seed_ui_fixture(
         UiFixture::Loot => {
             seed_template(&mut commands, 90_117, template("Chipped Boar Tusk", 0));
             seed_template(&mut commands, 90_118, template("Ruined Pelt", 1));
-            loot.open(
-                NPC_GUID,
-                benilla_protocol::messages::loot_type::CORPSE,
-                4, // 4 copper, the coin row
-                vec![
-                    benilla_protocol::messages::LootItem {
-                        slot: 0,
-                        item_id: 90_117,
-                        count: 1,
-                        display_info_id: DISP_STONE,
-                        random_property_id: 0,
-                        random_suffix: 0,
-                        slot_type: 0,
-                    },
-                    benilla_protocol::messages::LootItem {
-                        slot: 1,
-                        item_id: 90_118,
-                        count: 3,
-                        display_info_id: DISP_FOOD,
-                        random_property_id: 0,
-                        random_suffix: 0,
-                        slot_type: 0,
-                    },
-                ],
-            );
+            let rows = vec![
+                benilla_protocol::messages::LootItem {
+                    slot: 0,
+                    item_id: 90_117,
+                    count: 1,
+                    display_info_id: DISP_STONE,
+                    random_property_id: 0,
+                    random_suffix: 0,
+                    slot_type: 0,
+                },
+                benilla_protocol::messages::LootItem {
+                    slot: 1,
+                    item_id: 90_118,
+                    count: 3,
+                    display_info_id: DISP_FOOD,
+                    random_property_id: 0,
+                    random_suffix: 0,
+                    slot_type: 0,
+                },
+            ];
+            // After the seeds land, so the set finds every record and opens at once; 4 copper is
+            // the coin row.
+            commands.queue(move |world: &mut World| {
+                crate::ui_loot::open_in_world(
+                    world,
+                    NPC_GUID,
+                    benilla_protocol::messages::loot_type::CORPSE,
+                    4,
+                    rows,
+                );
+            });
         }
         UiFixture::Bag => {
             let Some(mut script) = script else {

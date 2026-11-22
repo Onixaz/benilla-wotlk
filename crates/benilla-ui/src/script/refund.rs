@@ -90,7 +90,7 @@ fn held_at<'a>(model: &'a Model, bag: i64, slot: u32, equipped: bool) -> Option<
 /// The record a purchase verb reads: present, enchant-free and in its window, on an item no open
 /// loot window takes from (`0x5d8d80`).
 fn open_record(model: &Model, held: &Held<'_>) -> Option<(RefundView, i64)> {
-    if socket::has_enchantments(held) || held.guid() == model.loot_source {
+    if socket::has_enchantments(held) || held.guid() == super::loot::source(model) {
         return None;
     }
     let r = record(model, held.guid())?;

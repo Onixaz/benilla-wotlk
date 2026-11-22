@@ -996,6 +996,26 @@ pub trait LiveState {
         None
     }
 
+    /// The open loot window resolved at the call: its coin slot and its 18 rows, each row's record read with no callback (`0x588310`, `0x5884a0`); `Some(None)` with no loot open, `None` where no view lends it.
+    fn loot_window(&self) -> Option<Option<super::LootState>> {
+        None
+    }
+
+    /// The looted object (`[0xbfa8d8]`), 0 with no loot open; `None` where no view lends it.
+    fn loot_source(&self) -> Option<u64> {
+        None
+    }
+
+    /// Whether the last window's loot type (`[0xbfa68c]`) is fishing; `None` where no view lends it.
+    fn loot_fishing(&self) -> Option<bool> {
+        None
+    }
+
+    /// The master-loot candidate at 0-based `index` (`0x6fa770`) named off the name cache, a miss asking with the list's callback (`0x58899d` -> `0x588150`); `Some(None)` for nobody, `None` where no view lends it.
+    fn master_loot_candidate(&mut self, _index: u32) -> Option<Option<String>> {
+        None
+    }
+
     /// What the trade offer's gates read off held item `item` (`0x587aff`-`0x587bcf`, `0x5877b0`, `0x5d896d`); `None` with no item store held.
     fn trade_item_facts(&self, _item: u64) -> Option<super::TradeItemFacts> {
         None

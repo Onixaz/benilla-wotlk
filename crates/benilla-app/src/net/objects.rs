@@ -586,6 +586,12 @@ fn record_callback(sc: &mut Scene, entry: u32, landed: bool, wait: crate::items:
             .ui
             .world(move |world| crate::ui_item_text::item_record_callback(world, item, landed)),
         RecordWait::Merchant => sc.ui.world(crate::ui_merchant::record_callback),
+        RecordWait::Loot(generation) => sc
+            .ui
+            .world(move |world| crate::ui_loot::record_callback(world, entry, generation)),
+        RecordWait::ItemPush => sc
+            .ui
+            .world(move |world| crate::ui_loot::push_callback(world, entry, landed)),
         RecordWait::DressUp(pane) => sc
             .ui
             .world(move |world| crate::ui_dressup::record_callback(world, entry, landed, pane)),

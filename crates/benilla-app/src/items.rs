@@ -499,6 +499,11 @@ pub(crate) enum RecordWait {
     /// The bar's item update, linked once by a table put's slot set (`0x5aaee6`-`0x5aaf0f` ->
     /// `0x5aadb0`).
     ActionBar,
+    /// The loot window's, from a row's record read at the open or a slot change (`0x589899`,
+    /// `0x589af3` -> `0x589460`), with the window's generation.
+    Loot(u64),
+    /// An item push's, from the push handler's miss (`0x52398d` -> `0x512b60`).
+    ItemPush,
     /// A refusal's line that named the item, linked each time (`0x8086bc`, `0x80874e` ->
     /// `0x7fea80`, `0x7feb50`): it shows again, unlogged.
     CastFailure(crate::ui_action::CastFail),
@@ -529,6 +534,11 @@ impl RecordWaits {
     /// Unlink every callback `cancel` names, on any record (`0x67a0f0`).
     pub(crate) fn cancel(&mut self, cancel: impl Fn(RecordWait) -> bool) {
         self.0.retain(|&(_, wait)| !cancel(wait));
+    }
+
+    /// Unlink every callback `cancel` names on `entry`'s record (`0x67a0f0`).
+    pub(crate) fn cancel_on(&mut self, entry: u32, cancel: impl Fn(RecordWait) -> bool) {
+        self.0.retain(|&(e, wait)| e != entry || !cancel(wait));
     }
 
     /// The waits, in ask order.

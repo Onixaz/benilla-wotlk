@@ -12,7 +12,7 @@
 
 use bevy::prelude::*;
 
-use benilla_ui::script::UiScript;
+use benilla_ui::script::{ScriptValue, UiScript};
 
 use crate::ui_script::live::UiEvents;
 
@@ -23,13 +23,27 @@ use super::UiError;
 pub(crate) trait SignalSink {
     fn signal(&mut self, event: &'static str);
 
+    /// Raise `event` with `args` here, in turn with the rest.
+    fn fire(&mut self, event: &'static str, args: Vec<ScriptValue>);
+
+    /// Unlock the held item `guid` here, in turn with the rest (`0x513770`).
+    fn unlock_item(&mut self, guid: u64);
+
     /// Show `line` here: its sound, then its event or its chat line.
     fn line(&mut self, line: UiError);
 }
 
 impl SignalSink for UiEvents {
     fn signal(&mut self, event: &'static str) {
-        self.fire(event, Vec::new());
+        UiEvents::fire(self, event, Vec::new());
+    }
+
+    fn fire(&mut self, event: &'static str, args: Vec<ScriptValue>) {
+        UiEvents::fire(self, event, args);
+    }
+
+    fn unlock_item(&mut self, guid: u64) {
+        self.world(move |world| crate::ui_loot::unlock_item_now(world, guid));
     }
 
     fn line(&mut self, line: UiError) {
@@ -40,6 +54,21 @@ impl SignalSink for UiEvents {
 impl SignalSink for UiScript {
     fn signal(&mut self, event: &'static str) {
         self.fire_event(event, Vec::new());
+    }
+
+    fn fire(&mut self, event: &'static str, args: Vec<ScriptValue>) {
+        self.fire_event(event, args);
+    }
+
+    /// The unlock in the VM's turn, its edge and usable update raised into the VM there.
+    fn unlock_item(&mut self, guid: u64) {
+        benilla_ui::script::world_loan::in_turn_or_now(self, move |script| {
+            let moved = crate::ui_script::safe_world::with_world(|world| {
+                crate::ui_loot::unlock_item_args(world, guid)
+            })
+            .flatten();
+            crate::ui_items::watch::lock_moved_now(script, false, moved);
+        });
     }
 
     fn line(&mut self, line: UiError) {
@@ -61,6 +90,18 @@ impl SignalSink for QueuedSignals<'_> {
     fn signal(&mut self, event: &'static str) {
         if let Some(ui) = self.ui.as_mut() {
             ui.fire(event, Vec::new());
+        }
+    }
+
+    fn fire(&mut self, event: &'static str, args: Vec<ScriptValue>) {
+        if let Some(ui) = self.ui.as_mut() {
+            ui.fire(event, args);
+        }
+    }
+
+    fn unlock_item(&mut self, guid: u64) {
+        if let Some(ui) = self.ui.as_mut() {
+            SignalSink::unlock_item(&mut **ui, guid);
         }
     }
 
@@ -86,6 +127,14 @@ impl SignalSink for Vec<&'static str> {
         self.push(event);
     }
 
+    fn fire(&mut self, event: &'static str, _: Vec<ScriptValue>) {
+        self.push(event);
+    }
+
+    fn unlock_item(&mut self, _: u64) {
+        self.push("<unlock>");
+    }
+
     fn line(&mut self, line: UiError) {
         self.push(line.key);
     }
@@ -99,6 +148,10 @@ pub(crate) struct LinesSeen(pub(crate) Vec<UiError>);
 #[cfg(test)]
 impl SignalSink for LinesSeen {
     fn signal(&mut self, _: &'static str) {}
+
+    fn fire(&mut self, _: &'static str, _: Vec<ScriptValue>) {}
+
+    fn unlock_item(&mut self, _: u64) {}
 
     fn line(&mut self, line: UiError) {
         self.0.push(line);

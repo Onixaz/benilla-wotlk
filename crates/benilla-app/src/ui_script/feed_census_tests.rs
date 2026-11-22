@@ -42,7 +42,6 @@ const FEEDS: &[&str] = &[
     "benilla_app::ui_layout::load_layout",
     "benilla_app::ui_lfg::feed_lfg",
     "benilla_app::ui_logout::feed_logout",
-    "benilla_app::ui_loot::feed_loot",
     "benilla_app::ui_loot_roll::feed_loot_rolls",
     "benilla_app::ui_macro::load_icon_catalog",
     "benilla_app::ui_macro::load_macros",
