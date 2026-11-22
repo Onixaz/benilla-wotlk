@@ -578,6 +578,10 @@ impl Reads<'_, '_, '_> {
                     .items
                     .template(id, 0, self.commands)
                     .and_then(|t| t.use_spell);
+                // An item with no use spell is a slot with no spell: it needs our control (`0x5aa063`, `0x5aa0a7`).
+                if use_spell.is_none() && !self.control {
+                    return Usable::default();
+                }
                 let count = self.carried.get(&id).copied().unwrap_or(0);
                 let worn = (0..19).any(|i| {
                     store
@@ -1261,11 +1265,11 @@ mod tests {
         assert_eq!(pair(&world), (true, false));
     }
 
-    /// A set slot past its four tests passes on a taxi flight (`0x5aa03d`), else reads our control
-    /// like any slot with no spell (`0x5aa063`, `0x5aa0e7`); a macro casting nothing reads the same
-    /// control (`0x5aa0c5`).
+    /// A spell-less slot needs our control (`0x5aa063`): a set (taxi passes it, `0x5aa03d`), a macro, an item (`0x5aa0a7`).
     #[test]
-    fn a_set_slot_and_a_spell_less_macro_read_our_control() {
+    fn the_spell_less_slots_read_our_control() {
+        const CLOTH: u32 = 2589;
+        const CLOTH_GUID: u64 = 0x4000_0000_0000_0042;
         let mut world = world(Vec::new(), &[], &[(FIELD_UNIT_HEALTH, 100)]);
         world.resource_mut::<PlayerActions>().equipment_sets.push(
             benilla_protocol::messages::EquipmentSet {
@@ -1281,9 +1285,11 @@ mod tests {
         world.insert_resource(bound);
         {
             let mut bar = world.resource_mut::<crate::ui_action::ActionSlots>();
-            for (slot, action, kind) in
-                [(0, 3, ACTION_KIND_EQUIPMENT_SET), (1, 5, ACTION_KIND_MACRO)]
-            {
+            for (slot, action, kind) in [
+                (0, 3, ACTION_KIND_EQUIPMENT_SET),
+                (1, 5, ACTION_KIND_MACRO),
+                (2, CLOTH, ACTION_KIND_ITEM),
+            ] {
                 bar.buttons.insert(
                     slot,
                     benilla_protocol::messages::ActionButton { slot, action, kind },
@@ -1291,6 +1297,18 @@ mod tests {
             }
         }
         world.resource_mut::<UsableCaches>().sets_usable = true;
+        world
+            .resource_mut::<Items>()
+            .insert_template(CLOTH, Some(crate::items::test_template("Linen Cloth")));
+        crate::items::test_spawn_item(
+            &mut world,
+            CLOTH_GUID,
+            benilla_protocol::ObjectFields::from_pairs(&[(
+                benilla_protocol::field::FIELD_OBJECT_ENTRY,
+                CLOTH,
+            )]),
+            false,
+        );
         let usable = |world: &mut World, control: bool, flags: u32| {
             world.insert_resource(crate::net::ControlFlag(control));
             let me = world.resource::<crate::net::GuidIndex>().0[&ME];
@@ -1299,17 +1317,29 @@ mod tests {
                 .insert(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
                     (FIELD_UNIT_HEALTH, 100),
                     (benilla_protocol::field::FIELD_UNIT_FLAGS, flags),
+                    (
+                        benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD,
+                        CLOTH_GUID as u32,
+                    ),
+                    (
+                        benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD + 1,
+                        (CLOTH_GUID >> 32) as u32,
+                    ),
                 ])));
             step(Pass::Full)(world);
             fired(world);
             let slots = &world.resource::<UsableCaches>().slots;
-            (slots[0].usable, slots[1].usable)
+            (slots[0].usable, slots[1].usable, slots[2].usable)
         };
-        assert_eq!(usable(&mut world, true, 0), (true, true));
-        assert_eq!(usable(&mut world, false, 0), (false, false), "no control");
+        assert_eq!(usable(&mut world, true, 0), (true, true, true));
+        assert_eq!(
+            usable(&mut world, false, 0),
+            (false, false, false),
+            "no control"
+        );
         assert_eq!(
             usable(&mut world, false, UNIT_FLAG_TAXI_FLIGHT),
-            (true, false),
+            (true, false, false),
             "a taxi flight passes the set alone"
         );
     }
