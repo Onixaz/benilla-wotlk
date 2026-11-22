@@ -256,6 +256,29 @@ fn create_macro(
     Some(MacroIndex { per_character, pos }.lua_index())
 }
 
+/// The macro a verb's first argument names (`0x566df0`), as its 1-based index, 0 for none: a
+/// number or a numeric string is the index, truncated, and any other string the name, case blind.
+pub(crate) fn macro_index(lua: &Lua, model: &Model, arg: &Value) -> usize {
+    if !matches!(arg, Value::Integer(_) | Value::Number(_) | Value::String(_)) {
+        return 0;
+    }
+    match lua.coerce_number(arg.clone()).ok().flatten() {
+        Some(n) => usize::try_from(n.trunc() as i64).unwrap_or(0),
+        None => match lua.coerce_string(arg.clone()).ok().flatten() {
+            Some(name) => model.macros.index_by_name(&name.to_string_lossy()),
+            None => 0,
+        },
+    }
+}
+
+/// The index argument of the macro verbs, resolved against the model.
+fn index_arg(lua: &Lua, arg: Option<&Value>) -> usize {
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
+    macro_index(lua, &model, arg.unwrap_or(&Value::Nil))
+}
+
 /// `EditMacro(index, name, icon, body)` (`0x566fa0`): an omitted argument leaves its field alone, since
 /// the stock UI calls it with disjoint halves, `(sel, name, icon)` from the rename popup and
 /// `(sel, nil, nil, text)` from `MacroFrame_SaveMacro`.
@@ -349,7 +372,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     g.set(
         "GetMacroInfo",
-        lua.create_function(|lua, index: usize| {
+        lua.create_function(|lua, arg: Value| {
+            let index = index_arg(lua, Some(&arg));
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
@@ -434,9 +458,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "EditMacro",
         lua.create_function(|lua, args: MultiValue| {
             let a: Vec<Value> = args.into_iter().collect();
-            let Some(index) = a.first().and_then(|v| v.as_integer()).map(|i| i as usize) else {
-                return Ok(Value::Nil);
-            };
+            let index = index_arg(lua, a.first());
             let mut model = crate::script::model_mut_of(lua);
             // A nil icon leaves the icon alone: `MacroFrame_SaveMacro` passes nil on every save.
             let texture = match a.get(2) {
@@ -457,7 +479,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     g.set(
         "DeleteMacro",
-        lua.create_function(|lua, index: usize| {
+        lua.create_function(|lua, arg: Value| {
+            let index = index_arg(lua, Some(&arg));
             let deleted = delete_macro(&mut crate::script::model_mut_of(lua), index);
             if deleted {
                 // The gap closes, so every later index of the same set names another macro now.
@@ -474,7 +497,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     g.set(
         "PickupMacro",
-        lua.create_function(|lua, index: usize| {
+        lua.create_function(|lua, arg: Value| {
+            let index = index_arg(lua, Some(&arg));
             let mut model = crate::script::model_mut_of(lua);
             Ok(pickup_macro(&mut model, index))
         })?,

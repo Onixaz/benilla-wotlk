@@ -2417,7 +2417,7 @@ fn self_pressing_macro(stack: usize) -> Option<(u32, u32, String)> {
             rig.lua(
                 r#"local f = CreateFrame("Frame")
                 f:RegisterEvent("EXECUTE_CHAT_LINE")
-                f:SetScript("OnEvent", function(self, event, arg1) RunScript(arg1) end)
+                f:SetScript("OnEvent", function(self, event, arg1) assert(loadstring(arg1))() end)
                 seterrorhandler(function(msg) ERR = ERR or tostring(msg) end)
                 DEPTH = 0
                 MACRO_INDEX = CreateMacro("probe", 1, 'DEPTH = DEPTH + 1\nUseAction(3)')"#,
@@ -2451,7 +2451,8 @@ fn self_pressing_macro(stack: usize) -> Option<(u32, u32, String)> {
 /// A macro that presses itself recurses as 12340's runner does, which keeps no depth of its own
 /// (`0x564db0` saves and restores the running macro, nothing more): Lua's C-call limit ends it
 /// with its stack error inside the call, on a stack the size of the client's main thread, and the
-/// frame goes on.
+/// frame goes on. The handler compiles each line itself, so the recursion stays secure: a
+/// `RunScript` line runs under the macro taint, whose nested run is refused (kind 3).
 #[test]
 fn a_self_pressing_macro_ends_in_the_lua_stack_error() {
     let Some((depth, again, err)) = self_pressing_macro(crate::MAIN_THREAD_STACK) else {

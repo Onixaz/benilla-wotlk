@@ -128,7 +128,18 @@ pub(crate) fn gate_args(lua: &Lua, args: &MultiValue) -> mlua::Result<bool> {
 /// `0x513530` with a blocked frame verb: once per nesting, `MACRO_ACTION_BLOCKED` with the calling
 /// function under the macro taint, else `ADDON_ACTION_BLOCKED` with the taint and the function.
 pub(crate) fn blocked(lua: &Lua, this: &Table) {
-    feedback(lua, Some(this));
+    feedback(lua, Some(this), false);
+}
+
+/// `0x5191c0` for the kinds tainted code may never run (0 to 5, `0x10`, `0x11`: among them the
+/// macro runner and `StopMacro`): secure code passes, tainted code is refused with the forbidden
+/// feedback (`0x513530`, type 0) and the verb does nothing.
+pub(crate) fn secure_only(lua: &Lua) -> bool {
+    if running() == 0 {
+        return true;
+    }
+    feedback(lua, None, true);
+    false
 }
 
 /// `0x5191c0` for the kinds tainted code may run only while protected actions are allowed
@@ -145,13 +156,14 @@ pub(crate) fn lockdown_allows(lua: &Lua) -> bool {
         .expect("model app_data")
         .protected_actions_allowed;
     if !allowed {
-        feedback(lua, None);
+        feedback(lua, None, false);
     }
     allowed
 }
 
-/// The blocked feedback for the running function, `this` its receiver when it is a method.
-fn feedback(lua: &Lua, this: Option<&Table>) {
+/// The feedback for the running function, `this` its receiver when it is a method: the `_FORBIDDEN`
+/// pair for type 0, the `_BLOCKED` pair otherwise.
+fn feedback(lua: &Lua, this: Option<&Table>, forbidden: bool) {
     let tag = running();
     let taint = {
         let mut model = super::model_mut_of(lua);
@@ -163,11 +175,19 @@ fn feedback(lua: &Lua, this: Option<&Table>) {
     };
     let function = format!("{}()", current_function(lua, this));
     if taint == MACRO_TAINT {
-        super::event::fire_global(lua, "MACRO_ACTION_BLOCKED", &[ScriptValue::Str(function)]);
+        let event = match forbidden {
+            true => "MACRO_ACTION_FORBIDDEN",
+            false => "MACRO_ACTION_BLOCKED",
+        };
+        super::event::fire_global(lua, event, &[ScriptValue::Str(function)]);
     } else {
+        let event = match forbidden {
+            true => "ADDON_ACTION_FORBIDDEN",
+            false => "ADDON_ACTION_BLOCKED",
+        };
         super::event::fire_global(
             lua,
-            "ADDON_ACTION_BLOCKED",
+            event,
             &[ScriptValue::Str(taint), ScriptValue::Str(function)],
         );
     }

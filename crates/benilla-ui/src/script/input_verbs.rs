@@ -387,19 +387,23 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // ── The main table ──────────────────────────────────────────────────────────────────────
     // The six `TargetNearest*` shims are byte-identical but for the mode: argument 1, read as a
     // boolean with default 0, is the reverse flag, then the nearest-target call takes
-    // `(reverse, mode)`.
-    let nearest: [(&str, NearestMode); 6] = [
-        ("TargetNearestEnemy", NearestMode::Enemy),
-        ("TargetNearestEnemyPlayer", NearestMode::EnemyPlayer),
-        ("TargetNearestFriend", NearestMode::Friend),
-        ("TargetNearestFriendPlayer", NearestMode::FriendPlayer),
-        ("TargetNearestPartyMember", NearestMode::PartyMember),
-        ("TargetNearestRaidMember", NearestMode::RaidMember),
+    // `(reverse, mode)`. The enemy and friend four run once per macro (`0x525ad0` to `0x525b90`);
+    // the party and raid two have no such check (`0x525bd0`).
+    let nearest: [(&str, NearestMode, bool); 6] = [
+        ("TargetNearestEnemy", NearestMode::Enemy, true),
+        ("TargetNearestEnemyPlayer", NearestMode::EnemyPlayer, true),
+        ("TargetNearestFriend", NearestMode::Friend, true),
+        ("TargetNearestFriendPlayer", NearestMode::FriendPlayer, true),
+        ("TargetNearestPartyMember", NearestMode::PartyMember, false),
+        ("TargetNearestRaidMember", NearestMode::RaidMember, false),
     ];
-    for (name, mode) in nearest {
+    for (name, mode, once_per_macro) in nearest {
         g.set(
             name,
             lua.create_function(move |lua, reverse: Option<Value>| {
+                if once_per_macro && !super::binding_commands::take_macro_target_nearest(lua) {
+                    return Ok(());
+                }
                 let reverse = bool_or_default(reverse.as_ref(), false);
                 push_call(lua, ScriptCall::TargetNearest { mode, reverse });
                 Ok(())

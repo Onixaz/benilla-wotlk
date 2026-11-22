@@ -280,8 +280,7 @@ fn slash_command(index: SlashIndex, args: &str) -> ParsedChat {
                 }
             }
         }
-        // `SlashCmdList["MACRO"]` (`ChatFrame.lua:1112`): `ShowMacroFrame()`. Its `RunMacro`
-        // branch is commented out, and the 1.12 client registers no `RunMacro`.
+        // `SlashCmdList["MACRO"]` (`ChatFrame.lua:2074`): `ShowMacroFrame()`, whatever follows.
         S::MacroUi => ParsedChat::Lua {
             body: "ShowMacroFrame()".into(),
         },
