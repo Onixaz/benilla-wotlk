@@ -108,7 +108,7 @@ pub(crate) fn steal_mask(
         .filter_map(|&id| catalog.get(id))
         .filter(|d| d.effects[0] == 126 && d.effect_implicit_target_a[0] == 6)
         .map(|d| catalog.dispel_mask(d.effect_misc_value[0] as u32))
-        .last()
+        .next_back()
 }
 
 /// The area-aura effects (`0x76bed0`'s table): persistent area aura and the area auras.
@@ -210,7 +210,6 @@ fn aura_state(ctx: ListCtx, a: &AuraInput) -> AuraState {
             a.flags & AURA_UPDATE_FLAG_HARMFUL != 0,
         ),
         stealable: can_steal(ctx.steal_mask, display, a.flags),
-        ..Default::default()
     }
 }
 
