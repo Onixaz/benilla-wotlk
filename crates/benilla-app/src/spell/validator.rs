@@ -153,7 +153,7 @@ pub(super) fn cast_aura_refusal(
 /// `SpellMechanic.dbc` name.
 const REASON_PREVENTED_BY_MECHANIC: u8 = 0x8d;
 
-/// `SPELL_FAILED_NOT_HERE`, `_NO_MOUNTS_ALLOWED`, `_ONLY_INDOORS` and `_ONLY_OUTDOORS`.
+/// `SPELL_FAILED_NOT_HERE`, `_NO_MOUNTS_ALLOWED`, `_ONLY_INDOORS` and `_ONLY_OUTDOORS` in 3.3.5a's numbering, as the place legs pass them to the spell-failure display (`0x73a42c`).
 const REASON_NOT_HERE: u8 = 60;
 const REASON_NO_MOUNTS_ALLOWED: u8 = 83;
 const REASON_ONLY_INDOORS: u8 = 90;
@@ -164,6 +164,14 @@ const REASON_ONLY_OUTDOORS: u8 = 93;
 /// applies `SPELL_AURA_MOUNTED`, else `ONLY_OUTDOORS`), then a flyable-zone spell outside a
 /// flyable zone (`NOT_HERE`).
 pub(crate) fn cast_place_refusal(
+    spell: &SpellDisplay,
+    place: crate::spell::usable::UsablePlace,
+) -> Option<u8> {
+    place_refusal_wire(spell, place).map(benilla_protocol::messages::wotlk_cast_fail_shared)
+}
+
+/// [`cast_place_refusal`] in 3.3.5a's numbering.
+fn place_refusal_wire(
     spell: &SpellDisplay,
     place: crate::spell::usable::UsablePlace,
 ) -> Option<u8> {
@@ -385,6 +393,13 @@ mod tests {
     #[test]
     fn cast_place_refusal_names_the_mount_and_the_flyable_zone() {
         use crate::spell::usable::UsablePlace;
+        // The shared reason the failure display keys each line on: a flying mount in a no-fly zone reads "You can't do that here", not a cooldown line (`0x73a42c` passes 3.3.5a's `0x3c`).
+        let key = |name: &str| {
+            crate::ui_action::cast_fail::CAST_FAIL_KEYS
+                .iter()
+                .position(|k| *k == name)
+                .expect("a shared key") as u8
+        };
         let mount = |attributes_ex4| SpellDisplay {
             attributes: 0x1015_8110,
             attributes_ex4,
@@ -400,12 +415,12 @@ mod tests {
         assert_eq!(cast_place_refusal(&horse, at(true, false)), None);
         assert_eq!(
             cast_place_refusal(&gryphon, at(true, false)),
-            Some(REASON_NOT_HERE)
+            Some(key("SPELL_FAILED_NOT_HERE"))
         );
         // Indoors the mount reason comes first, even outside a flyable zone.
         assert_eq!(
             cast_place_refusal(&gryphon, at(false, false)),
-            Some(REASON_NO_MOUNTS_ALLOWED)
+            Some(key("SPELL_FAILED_NO_MOUNTS_ALLOWED"))
         );
         let outdoors_only = SpellDisplay {
             attributes: 0x8000,
@@ -413,7 +428,7 @@ mod tests {
         };
         assert_eq!(
             cast_place_refusal(&outdoors_only, at(false, true)),
-            Some(REASON_ONLY_OUTDOORS)
+            Some(key("SPELL_FAILED_ONLY_OUTDOORS"))
         );
         let indoors_only = SpellDisplay {
             attributes: 0x4000,
@@ -421,7 +436,7 @@ mod tests {
         };
         assert_eq!(
             cast_place_refusal(&indoors_only, at(true, true)),
-            Some(REASON_ONLY_INDOORS)
+            Some(key("SPELL_FAILED_ONLY_INDOORS"))
         );
         assert_eq!(cast_place_refusal(&indoors_only, at(false, true)), None);
     }

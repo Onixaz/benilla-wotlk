@@ -285,6 +285,7 @@ fn drain_gm_ticket(
     player: Option<Res<Player>>,
     map: Option<Res<benilla_world::world_map::CurrentMap>>,
     mut sink: crate::ui_action::MessageSink,
+    mut pending: ResMut<crate::spell::PendingCast>,
 ) {
     let Some(mut script) = script.turn() else {
         return;
@@ -297,6 +298,7 @@ fn drain_gm_ticket(
 
     for _ in 0..script.take_stuck_casts() {
         let _ = commands.0.send(ClientCommand::CastSpell {
+            count: pending.take_count(),
             spell_id: SPELL_STUCK,
             target: None,
         });

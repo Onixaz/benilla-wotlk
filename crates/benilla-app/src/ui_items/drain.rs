@@ -470,10 +470,14 @@ impl ScriptItemUse<'_, '_> {
             }
             return;
         }
-        // A Glyph-class template (16) fires `USE_GLYPH` ahead of the use (`0x5d8ad3`), which opens
-        // the glyph frame (`UIParent.lua:1053`); the direct item use has no such arm.
+        // A Glyph-class template (16) fires `USE_GLYPH` (`0x5d8ad3`), then the direct use runs after its listeners at its own step (`0x5d8ae3` -> `0x708c20`).
         if !direct && clicked.is_some_and(|c| c.class == ITEM_CLASS_GLYPH) {
             script.fire_event("USE_GLYPH", Vec::new());
+            let aim = **aim;
+            super::watch::world_in_turn(script, move |w| {
+                crate::script_calls::press_step(w, direct_use_step, (bag, slot, aim));
+            });
+            return;
         }
         // A wrapped gift unwraps with `CMSG_OPEN_ITEM`, first in the dispatcher; vmangos swaps the
         // entry back from `character_gifts`.
@@ -616,6 +620,19 @@ impl ScriptItemUse<'_, '_> {
             false,
         );
     }
+}
+
+/// The direct item use (`0x708c20`) on a bag item, at `aim` or the selection: the glyph arm's use after `USE_GLYPH`'s listeners.
+fn direct_use_step(
+    In((bag, slot, aim)): In<(i64, u32, Option<crate::spell::cast_target::Aim>)>,
+    mut script: NonSendMut<UiScript>,
+    mut items: ScriptItemUse,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
+) {
+    *items.aim = aim;
+    items.use_item(&mut script, bag, slot);
+    *items.aim = None;
+    items.ladder.press.defer(&mut ui);
 }
 
 /// The item open's auto-loot flag and sweep (`0x6dcdc7`) and the latch on the item (`0x6dcdd4`), so its

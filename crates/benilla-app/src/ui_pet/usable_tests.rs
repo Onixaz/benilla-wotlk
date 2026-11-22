@@ -928,6 +928,30 @@ fn an_order_latches_signals_and_sends_inside_the_call() {
     }
 }
 
+/// The latch signals the bar before the press sends (`0x5d300c`, `0x5d3041`, `0x5d4530` before `0x5d4556`): a press a `PET_BAR_UPDATE` listener makes goes out ahead of the press that signalled, inside the verb or through its script call.
+#[test]
+fn a_pet_bar_listeners_press_sends_before_the_press_that_signalled() {
+    for (verb, word) in [("PetFollow()", FOLLOW), ("PetAttack()", ATTACK)] {
+        let mut rig = scene_with(word, 0);
+        ui(&mut rig, |s| {
+            s.run(
+                "NESTED = nil local f = CreateFrame('Frame') f:RegisterEvent('PET_BAR_UPDATE') f:SetScript('OnEvent', function() if NESTED == nil then NESTED = 1 PetAggressiveMode() end end)",
+            )
+            .unwrap();
+            s.run(verb).unwrap();
+        });
+        let words: Vec<u32> = rig
+            .sent()
+            .into_iter()
+            .filter_map(|c| match c {
+                ClientCommand::PetAction { packed, .. } => Some(packed),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(words, [AGGRESSIVE, word], "{verb}");
+    }
+}
+
 /// `/target` then `/petfollow` in one chunk: the selection setter commits before `TargetUnit`
 /// returns (`0x524bf0`), so the follow sends at the new selection (`0x5d4240` reads it then).
 #[test]

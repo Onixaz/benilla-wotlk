@@ -516,6 +516,11 @@ impl SpellDisplay {
         self.attributes_ex3 & 0x0040_0000 != 0
     }
 
+    /// A wand requirement: `EquippedItemClass` 2 with subclass bit 19, the repeat tail's test (`0x80d9e3`, `0x80d9ec`).
+    pub fn requires_wand(&self) -> bool {
+        self.equipped_item_class == 2 && self.equipped_item_subclass_mask & (1 << 19) != 0
+    }
+
     /// `Attributes & 0x2` alone: a ranged-slot spell with no `SpellVisual` borrows the ranged
     /// weapon's `ItemDisplayInfo` visual, which is how Throw and the shots animate.
     pub fn ranged_slot(&self) -> bool {

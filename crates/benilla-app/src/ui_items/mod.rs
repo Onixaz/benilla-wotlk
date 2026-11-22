@@ -593,7 +593,7 @@ impl TestObjects {
 pub(crate) const PLAYER_ARRAY: u8 = 255;
 
 /// One resolved item-use click, as [`send_item_use`] needs it.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ItemUse {
     /// The live instance's guid; `None` falls through to a plain use.
     pub(crate) guid: Option<u64>,
@@ -758,8 +758,20 @@ pub(crate) fn send_item_use(
         )
     });
     let route = item_use_route(it, aura_cancels, disarmed_slots);
-    if matches!(route, ItemUseRoute::Cast(_)) && !leave_form_to_use(&it, ctx, ladder) {
-        return false;
+    if let ItemUseRoute::Cast(spell) = route {
+        match leave_form_to_use(&it, ctx, ladder) {
+            FormLeave::Refused => return false,
+            FormLeave::AtStep => {
+                ladder.press.item_use_rest(ItemUseRest {
+                    it,
+                    spell,
+                    unit: ctx.selection_guid,
+                    suppress,
+                });
+                return true;
+            }
+            FormLeave::Kept => {}
+        }
     }
     match route {
         ItemUseRoute::CantUseDisarmed => {
@@ -791,16 +803,8 @@ pub(crate) fn send_item_use(
                 .send(crate::net::ClientCommand::PetitionShowSignatures { item });
             true
         }
-        // The bind-on-use deferral, the last rung: every arm above has claimed the click first, so
-        // re-pressing a bind-on-use trinket to cancel its aura never asks. It covers `Nothing` too:
-        // four of the five paths into the deferral are on-use spell lookup failures, so the
-        // reference asks with no usable on-use spell.
-        ItemUseRoute::Nothing | ItemUseRoute::Cast(_)
-            if !suppress
-                && it.guid.is_some_and(|g| {
-                    gate.use_binds(&ladder.objects, &ladder.items, &ladder.commands, g)
-                }) =>
-        {
+        // The bind-on-use deferral covers `Nothing` too: four of the five paths into it are on-use spell lookup failures.
+        ItemUseRoute::Nothing if !suppress && binds_on_use(&it, ladder, gate) => {
             gate.defer_use(script, it);
             false
         }
@@ -812,33 +816,100 @@ pub(crate) fn send_item_use(
             false
         }
         ItemUseRoute::Cast(spell) => {
-            ladder.send(
-                spell,
-                ctx,
-                crate::spell::CastCommit::Item {
-                    bag_index: it.bag_index,
-                    slot: it.slot,
-                    entry: it.entry,
-                    item_guid: it.guid.unwrap_or(0),
-                    on_object: it.on_object,
-                },
-            );
-            true
+            use_past_the_form(it, spell, ctx, ladder, script, gate, suppress)
         }
     }
 }
 
-/// The item use's form leg (`0x708c20`): a shapeshifted player leaves the form unless the form
-/// (flag `0x80`, or `0x40` for gear) or the item (flag `0x800000`) allows it; `false` is refused.
+/// The bind-on-use deferral's test: the item binds when used.
+fn binds_on_use(
+    it: &ItemUse,
+    ladder: &crate::spell::CastLadder,
+    gate: &crate::ui_bind_confirm::BindGate,
+) -> bool {
+    it.guid
+        .is_some_and(|g| gate.use_binds(&ladder.objects, &ladder.items, &ladder.commands, g))
+}
+
+/// The item use past its form leave (`0x70933d`): the bind-on-use deferral, the last rung (`0x709387`), else the cast.
+fn use_past_the_form(
+    it: ItemUse,
+    spell: u32,
+    ctx: &crate::spell::cast_target::CastContext,
+    ladder: &mut crate::spell::CastLadder,
+    script: &mut benilla_ui::script::UiScript,
+    gate: &mut crate::ui_bind_confirm::BindGate,
+    suppress: bool,
+) -> bool {
+    if !suppress && binds_on_use(&it, ladder, gate) {
+        gate.defer_use(script, it);
+        return false;
+    }
+    ladder.send(
+        spell,
+        ctx,
+        crate::spell::CastCommit::Item {
+            bag_index: it.bag_index,
+            slot: it.slot,
+            entry: it.entry,
+            item_guid: it.guid.unwrap_or(0),
+            on_object: it.on_object,
+        },
+    );
+    true
+}
+
+/// The item use's rest after its form leave (`0x709338` -> `0x726ce0`), at the unit the use was given, after the drop's listeners.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ItemUseRest {
+    it: ItemUse,
+    spell: u32,
+    unit: Option<u64>,
+    suppress: bool,
+}
+
+/// [`ItemUseRest`] at its step, with the `World` lent: its edges queue behind it on `ui`.
+pub(crate) fn run_item_use_rest(
+    In(rest): In<ItemUseRest>,
+    mut script: NonSendMut<benilla_ui::script::UiScript>,
+    targeting: crate::spell::cast_target::CastTargeting,
+    mut ladder: crate::spell::CastLadder,
+    mut gate: crate::ui_bind_confirm::BindGate,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
+) {
+    let ctx = targeting.context_at(crate::spell::cast_target::Aim::Unit(rest.unit));
+    use_past_the_form(
+        rest.it,
+        rest.spell,
+        &ctx,
+        &mut ladder,
+        &mut script,
+        &mut gate,
+        rest.suppress,
+    );
+    ladder.press.defer(&mut ui);
+}
+
+/// The item use's form leg's outcome.
+enum FormLeave {
+    /// No form to leave, or its cancels went out in place.
+    Kept,
+    /// The form may not be left (`0x709391`).
+    Refused,
+    /// The drop raises at a step: the rest of the use waits for its listeners.
+    AtStep,
+}
+
+/// The item use's form leg (`0x7092e8`-`0x709338`): a shapeshifted player leaves the form unless the form (flag `0x80`, or `0x40` for gear) or the item (flag `0x800000`) allows it.
 fn leave_form_to_use(
     it: &ItemUse,
     ctx: &crate::spell::cast_target::CastContext,
     ladder: &mut crate::spell::CastLadder,
-) -> bool {
+) -> FormLeave {
     let (Some(store), Some(template)) =
         (ctx.rel.self_store, ladder.items.template_cached(it.entry))
     else {
-        return true;
+        return FormLeave::Kept;
     };
     let form = store.0.unit_shapeshift_form();
     let row = ctx.rel.types.forms.and_then(|f| f.get(&u32::from(form)));
@@ -847,24 +918,31 @@ fn leave_form_to_use(
         || (flags & 0x40 != 0 && template.inventory_type != 0)
         || template.flags & 0x80_0000 != 0;
     if !crate::spell::validator::is_shapeshifted(form, flags) || row.is_none() || exempt {
-        return true;
+        return FormLeave::Kept;
     }
     if !ctx.auto_unshift {
         debug!("ui_items: item use refused — shapeshifted");
         ladder.press.line(crate::ui_action::UiError::key(
             "ERR_NO_ITEMS_WHILE_SHAPESHIFTED",
         ));
-        return false;
+        return FormLeave::Refused;
     }
-    if let (Some(auras), Some(spells)) = (ctx.self_auras, ladder.spells.as_ref()) {
-        for spell_id in crate::ui_shapeshift::form_auras(form, auras, &spells.catalog) {
-            let _ = ladder
-                .commands
-                .0
-                .send(crate::net::ClientCommand::CancelAura { spell_id });
+    let cancels = match (ctx.self_auras, ladder.spells.as_ref()) {
+        (Some(auras), Some(spells)) => {
+            crate::ui_shapeshift::form_auras(form, auras, &spells.catalog)
         }
+        _ => Vec::new(),
+    };
+    // Each aura cancel drops the form and sends after the drop's listeners (`0x726ce0` -> `0x802f80`).
+    let at_step = !cancels.is_empty() && ladder.press.raises_at_step();
+    for spell_id in cancels {
+        ladder.cancel_aura(spell_id);
     }
-    true
+    if at_step {
+        FormLeave::AtStep
+    } else {
+        FormLeave::Kept
+    }
 }
 
 /// The active player's level, which the link builder stamps on every link (`0x61e290`), kept by

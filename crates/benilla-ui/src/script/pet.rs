@@ -253,15 +253,25 @@ pub(crate) fn live_slots() -> Vec<PetActionView> {
         .collect()
 }
 
-/// A press run inside the verb (`0x5d4210`) when no earlier script call waits, so it reads the selection those calls would move; its `PET_BAR_UPDATE` fires before the verb returns (`0x5d4530`). False leaves it to the script call: a spell or Attack, or a press behind a queued call.
+/// A plain press's latch inside the call (`0x5d448e`, `0x5d453b`): whether it signalled the bar, and the word and target it sends after that signal's listeners (`0x5d4556`), `None` past a closed gate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PetLatch {
+    pub signalled: bool,
+    pub send: Option<(u32, u64)>,
+}
+
+/// A press run inside the verb (`0x5d4210`) when no earlier script call waits, so it reads the selection those calls would move: the latch's `PET_BAR_UPDATE` (`0x5d300c`, `0x5d3041`), then the send (`0x5d4556`), so a listener's own press goes out first. False leaves it to the script call: a spell or Attack, or a press behind a queued call.
 fn press_in_call(lua: &Lua, slot: u32, order: Option<u32>) -> bool {
     if !crate::script::calls::none_waiting(lua) {
         return false;
     }
     match super::live::write_live(|l| l.pet_press(slot, order)).flatten() {
-        Some(signalled) => {
-            if signalled {
+        Some(latch) => {
+            if latch.signalled {
                 crate::script::tick::fire_event_into(lua, "PET_BAR_UPDATE", Vec::new());
+            }
+            if let Some((word, target)) = latch.send {
+                super::live::write_live(|l| l.pet_press_send(word, target));
             }
             true
         }

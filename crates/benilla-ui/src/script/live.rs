@@ -511,10 +511,13 @@ pub trait LiveState {
         None
     }
 
-    /// A press on 1-based `slot`, or the order word `order`, that writes only the bar (a reaction or a command other than Attack) and sends, inside the call (`0x5d4210`): `None` leaves it to the script call, else whether it signalled the bar (`0x5d4530`).
-    fn pet_press(&mut self, _slot: u32, _order: Option<u32>) -> Option<bool> {
+    /// A press on 1-based `slot`, or the order word `order`, that writes only the bar (a reaction or a command other than Attack), latched inside the call (`0x5d4210`): `None` leaves it to the script call, else the latch, whose send waits for its signal (`0x5d4556`).
+    fn pet_press(&mut self, _slot: u32, _order: Option<u32>) -> Option<super::PetLatch> {
         None
     }
+
+    /// The latched press's `CMSG_PET_ACTION`, under the pet held at the send (`0x5d4585`).
+    fn pet_press_send(&mut self, _word: u32, _target: u64) {}
 
     /// The bar toggle on 0-based slot `index` (`0x5d5d20`): past the usability gate (`0x5d5d3c`) a slot with bit 31 flips (`0x5d5d88`) and is sent (`0x5d5deb`); whether the gate passed.
     fn pet_toggle_autocast(&mut self, _index: u32) -> bool {

@@ -32,10 +32,10 @@ pub(crate) struct Caster<'a> {
 
 /// The player's cast state the current-spell test (`0x806030`) reads, at the call.
 pub(crate) struct CastNow<'a> {
-    /// The pending or running cast, or the queued strike (`0x805f30`).
-    pub(crate) pending: Option<u32>,
-    /// The item entry that started the pending cast (`0x805fc0`).
-    pub(crate) item: Option<u32>,
+    /// Every pending spell, the running cast and the queued strike (`0x805f30`).
+    pub(crate) pending: Vec<u32>,
+    /// The item entries whose uses are pending (`0x805fc0`).
+    pub(crate) items: Vec<u32>,
     /// The auto-repeating spell (`0x7fe130`); benilla keeps the auto-ranged-combat spell
     /// (`0x7fe180`), Auto Shot, in the same record.
     pub(crate) auto_repeat: Option<u32>,
@@ -60,8 +60,8 @@ impl CastNow<'_> {
     /// No player: nothing pending, known or worn.
     pub(crate) fn none() -> CastNow<'static> {
         CastNow {
-            pending: None,
-            item: None,
+            pending: Vec::new(),
+            items: Vec::new(),
             auto_repeat: None,
             attacking: false,
             trade_line: None,
@@ -75,16 +75,20 @@ impl CastNow<'_> {
     }
 }
 
-/// The pending cast the current-spell test names (`0x805f30`): the pending list alone, not the
-/// unit's cast state, so a held cast whose pending cast was released is not current.
-pub(crate) fn pending_spell(
+/// The spells the current-spell test finds (`0x805f30`): the pending list alone, not the unit's cast state, so a held cast whose pending cast was released is not current.
+pub(crate) fn pending_spells(
     pending: &crate::spell::PendingCast,
     queued_melee: &crate::spell::QueuedMeleeSpell,
     casting: Option<&crate::creature_anim::Casting>,
-    now: std::time::Instant,
-) -> Option<u32> {
+) -> Vec<u32> {
     let started = casting.filter(|c| c.listed).map(|c| c.spell_id);
-    crate::spell::inflight(pending, queued_melee, started, now).map(|i| i.spell_id())
+    pending
+        .records()
+        .iter()
+        .map(|r| r.spell_id)
+        .chain(started)
+        .chain(queued_melee.current())
+        .collect()
 }
 
 /// What a spell answer reads of the world as the call is made.
@@ -220,7 +224,7 @@ impl<R: CallReads + ?Sized> SpellInfoSource for Answers<'_, R> {
     }
 
     fn is_current_item(&self, item_id: u32) -> bool {
-        self.reads.cast_now().item == Some(item_id)
+        self.reads.cast_now().items.contains(&item_id)
     }
 
     fn talent_rank_spell(&self, talent_id: u32, rank: i32) -> Option<(u32, u32)> {
@@ -264,7 +268,7 @@ impl<R: CallReads + ?Sized> SpellInfoSource for Answers<'_, R> {
             return false;
         };
         let now = self.reads.cast_now();
-        if now.pending == Some(spell_id) {
+        if now.pending.contains(&spell_id) {
             return true;
         }
         if self.reads.caster(false).is_none() {
@@ -470,7 +474,7 @@ mod tests {
     /// cast was released is not current.
     #[test]
     fn a_held_cast_is_current_only_while_listed() {
-        for (listed, want) in [(true, Some(133)), (false, None)] {
+        for (listed, want) in [(true, vec![133]), (false, vec![])] {
             let casting = Casting {
                 spell_id: 133,
                 cast_count: 0,
@@ -478,11 +482,10 @@ mod tests {
                 listed,
                 hidden: false,
             };
-            let got = pending_spell(
+            let got = pending_spells(
                 &crate::spell::PendingCast::default(),
                 &crate::spell::QueuedMeleeSpell::default(),
                 Some(&casting),
-                std::time::Instant::now(),
             );
             assert_eq!(got, want);
         }

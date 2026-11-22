@@ -166,9 +166,15 @@ impl super::UiScript {
         self.model_ref().trade_skill.has_entries()
     }
 
-    /// Drains the spell ids `DoTradeSkill` cast; the repeat is the engine's (`0x5d9fa0`).
-    pub fn take_trade_skill_casts(&mut self) -> Vec<u32> {
+    /// Drains the casts `DoTradeSkill` queued, each with its repeat count; the repeat is the engine's (`0x5d9fa0`).
+    pub fn take_trade_skill_casts(&mut self) -> Vec<(u32, u32)> {
         drain_field!(self, trade_skill.casts)
+    }
+
+    /// `DoTradeSkill`'s cast of `spell_id` went: the repeat takes `times` and `UPDATE_TRADESKILL_RECAST` fires (`0x5dacc1` -> `0x5d9fa0`).
+    pub fn trade_skill_cast_sent(&mut self, spell_id: u32, times: u32) {
+        self.model_mut().trade_skill.set_recast(spell_id, times);
+        self.fire_event("UPDATE_TRADESKILL_RECAST", vec![]);
     }
 
     /// Whether `CloseTradeSkill` ran since the last drain; the close sends no packet.

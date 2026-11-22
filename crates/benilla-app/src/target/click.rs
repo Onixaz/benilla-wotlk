@@ -424,19 +424,39 @@ impl Dispatch<'_, '_> {
             .is_some_and(|s| self.checks.unshift(s, flags))
     }
 
-    /// Leaves the form: `CMSG_CANCEL_AURA` for each aura holding it.
-    fn cancel_shapeshift(&self) {
+    /// The cancelable auras holding our form, which the auto-unshift cancels.
+    fn form_cancels(&self) -> Vec<u32> {
         let form = self.form_state().0;
-        let (Some(spells), Some(auras)) = (
+        match (
             self.go_inputs.spells.as_deref(),
             self.self_auras.iter().next(),
-        ) else {
-            return;
-        };
-        for spell_id in crate::ui_shapeshift::form_auras(form, auras, &spells.catalog) {
-            debug!("leaves the form first ({spell_id})");
-            let _ = self.seam.net.0.send(ClientCommand::CancelAura { spell_id });
+        ) {
+            (Some(spells), Some(auras)) => {
+                crate::ui_shapeshift::form_auras(form, auras, &spells.catalog)
+            }
+            _ => Vec::new(),
         }
+    }
+
+    /// Leaves the form: each aura cancel's drop and its listeners, its send, then `then` (`0x80324d`, `0x803458`).
+    fn cancel_shapeshift_then(&mut self, then: Option<ClientCommand>) {
+        let cancels = self.form_cancels();
+        if cancels.is_empty() {
+            if let Some(then) = then {
+                let _ = self.seam.net.0.send(then);
+            }
+            return;
+        }
+        debug!("leaves the form first ({cancels:?})");
+        self.feedback.queue.queue(move |w: &mut World| {
+            for spell_id in cancels {
+                crate::ui_shapeshift::cancel_aura_step(w, spell_id);
+            }
+            if let Some(then) = then {
+                crate::ui_shapeshift::send_after_raises(w, then);
+            }
+            crate::ui_script::live::fire_handler_events(w);
+        });
     }
 
     /// The stand leg of a loot click (`0x731260`, `0x706010`): refused when the auto-stand check
@@ -460,22 +480,20 @@ impl Dispatch<'_, '_> {
         true
     }
 
-    /// The form leg of an NPC click (`0x6ddbb0`): refused when the form may not be left, else the
-    /// cancel, ahead of any walk.
-    fn unshift_to_talk(&mut self) -> bool {
+    /// The form leg of an NPC click (`0x6ddbb0`): `None` refused, else the form's auras the leave cancels (`0x6ddc01` -> `0x726ce0`), ahead of any walk.
+    fn unshift_to_talk(&mut self) -> Option<Vec<u32>> {
         let (form, flags) = self.form_state();
         if !crate::spell::validator::form_blocks_interact(form, flags) {
-            return true;
+            return Some(Vec::new());
         }
         if !self.can_auto_unshift() {
             debug!("right-click interact: refused, shapeshifted");
             self.feedback.errors.0.push(crate::ui_action::UiError::key(
                 "ERR_CANT_INTERACT_SHAPESHIFTED",
             ));
-            return false;
+            return None;
         }
-        self.cancel_shapeshift();
-        true
+        Some(self.form_cancels())
     }
 
     /// The mounted leg of the unit loot (`0x6dae89`): refused when the auto-dismount check says
@@ -724,10 +742,12 @@ impl Dispatch<'_, '_> {
                 if let Some(own) = self_store.filter(|_| !usable_mounted) {
                     crate::creature_anim::dismount_first(own, &self.seam.net);
                 }
+                let use_go = ClientCommand::GameObjUse { guid };
                 if leaves_form {
-                    self.cancel_shapeshift();
+                    self.cancel_shapeshift_then(Some(use_go));
+                } else {
+                    let _ = self.seam.net.0.send(use_go);
                 }
-                let _ = self.seam.net.0.send(ClientCommand::GameObjUse { guid });
             }
             // Both opener arms queue for the one cast path, as the reference reaches its cast
             // attempt from the use sender like a button press.
@@ -873,6 +893,7 @@ impl Dispatch<'_, '_> {
             }
             debug!("right-click skin: {guid:#x} (spell {spell_id})");
             let _ = self.seam.net.0.send(ClientCommand::CastSpell {
+                count: self.seam.pending.as_mut().map_or(0, |p| p.take_count()),
                 spell_id,
                 target: Some(guid),
             });
@@ -882,9 +903,29 @@ impl Dispatch<'_, '_> {
     /// `0x6ddbb0`: the NPC-service ladder. Out of the unit's interact reach it walks there when
     /// `walk`, returning before the ladder and the gesture, and otherwise sends nothing.
     fn talk(&mut self, entity: Entity, guid: u64, in_reach: bool, walk: bool) {
-        if !self.unshift_to_talk() {
+        let Some(cancels) = self.unshift_to_talk() else {
+            return;
+        };
+        if cancels.is_empty() {
+            self.talk_past_the_form(entity, guid, in_reach, walk);
             return;
         }
+        debug!("leaves the form first ({cancels:?})");
+        // Each aura cancel drops the form and sends after the drop's listeners (`0x726dca` -> `0x802f80`); the ladder goes on after them.
+        self.feedback.queue.queue(move |w: &mut World| {
+            for spell_id in cancels {
+                crate::ui_shapeshift::cancel_aura_step(w, spell_id);
+            }
+            crate::ui_script::live::in_turn(w, move |w: &mut World| {
+                let ran = w.run_system_cached_with(talk_step, (entity, guid, in_reach, walk));
+                crate::ui_cast::step_ran(ran, "an NPC talk past its form leave");
+            });
+            crate::ui_script::live::fire_handler_events(w);
+        });
+    }
+
+    /// The NPC-service ladder past its form leg (`0x6ddc06`): the walk, the service and the gesture.
+    fn talk_past_the_form(&mut self, entity: Entity, guid: u64, in_reach: bool, walk: bool) {
         if !in_reach {
             if walk {
                 let reach = self
@@ -1022,6 +1063,14 @@ impl Dispatch<'_, '_> {
                 .push(my_guid, crate::creature_anim::Gesture::Talk);
         }
     }
+}
+
+/// The NPC talk past its form leave, at its step after the drop's listeners.
+fn talk_step(
+    In((entity, guid, in_reach, walk)): In<(Entity, u64, bool, bool)>,
+    mut dispatch: Dispatch,
+) {
+    dispatch.talk_past_the_form(entity, guid, in_reach, walk);
 }
 
 /// On a clean right-click, the INTERACT leg on the press pick: select it, then [`interact`].
@@ -1351,6 +1400,18 @@ pub(super) fn act_on_interact(
             cursor_mode::classify(&set.p0(), &pick.hovered, &pick.object);
         interact(&mut set.p1(), &pick, Select::OnAttack(&mut selection));
     }
+}
+
+/// A crate's [`Interact`] on `entity`, run now.
+#[cfg(test)]
+pub(crate) fn interact_now(world: &mut World, entity: Entity) {
+    use bevy::ecs::system::RunSystemOnce;
+    world
+        .resource_mut::<Messages<Interact>>()
+        .write(Interact(entity));
+    world
+        .run_system_once(act_on_interact)
+        .expect("the interaction ran");
 }
 
 /// The verb an approach owed, once it arrived (run at the stop): the dispatcher alone, with no

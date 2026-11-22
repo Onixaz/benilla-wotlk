@@ -429,11 +429,6 @@ impl Plugin for TargetPlugin {
                     // reference's one caller of its ground-point range check feeds both.
                     reticle::update_reticle,
                     crate::ui_script::raises::then_fire(click::world_right_click_payload),
-                    // After the gated select in the press pass, which reads the targeting mode
-                    // before a commit clears it. The pending spell feeds only one of the two
-                    // legs, so their mutual order is free.
-                    crate::spell::targeting::commit_ground_cast_on_click,
-                    crate::spell::targeting::commit_object_cast_on_click,
                     // The verb a walk owes runs at its stop, ahead of this frame's click.
                     (
                         click::act_on_arrival,
@@ -484,6 +479,9 @@ impl Plugin for TargetPlugin {
                     latch_press_pick,
                     click::select_on_plate_click,
                     click::select_on_click,
+                    // After the gated select, which reads the mode a commit clears; each commit its own press, so its GCD reaches the frame's tick (`0x480410` before `0x495320`).
+                    crate::spell::targeting::commit_ground_cast_on_click,
+                    crate::spell::targeting::commit_object_cast_on_click,
                 )
                     .chain()
                     .in_set(crate::ui_script::UiPress)
@@ -499,12 +497,8 @@ impl Plugin for TargetPlugin {
                 (
                     crate::script_calls::apply_script_calls,
                     (
-                        crate::ui_script::raises::then_fire(
-                            crate::ui_action::drop_item::drop_item_on_unit,
-                        ),
-                        crate::ui_script::raises::then_fire(
-                            crate::ui_action::drop_item::drop_on_world_click,
-                        ),
+                        crate::ui_action::drop_item::drop_item_on_unit,
+                        crate::ui_action::drop_item::drop_on_world_click,
                     )
                         .chain()
                         .in_set(crate::ui_action::drop_item::DropSet),

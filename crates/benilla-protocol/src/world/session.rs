@@ -1084,7 +1084,6 @@ impl WorldSession {
                 stream: self.stream,
                 encrypter,
                 chat_language: self.chat_language,
-                cast_counter: self.cast_counter,
                 mover: self.mover,
                 warden: self.warden,
             },
@@ -1111,7 +1110,7 @@ impl WorldSession {
             chat_language: writer.chat_language,
             tutorial_flags: None,
             glue_events: Vec::new(),
-            cast_counter: writer.cast_counter,
+            cast_counter: Default::default(),
             mover: writer.mover,
             warden: writer.warden,
         };

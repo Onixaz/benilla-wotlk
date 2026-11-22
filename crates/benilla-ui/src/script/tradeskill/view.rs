@@ -74,8 +74,8 @@ pub(crate) struct TradeSkillModel {
     /// The line the filters were last reset for (`0xc235f0`).
     last_line: u32,
     recast: Recast,
-    /// `DoTradeSkill` casts for the app to send.
-    pub(crate) casts: Vec<u32>,
+    /// `DoTradeSkill` casts for the app to send, each with the repeat count it sets once sent.
+    pub(crate) casts: Vec<(u32, u32)>,
     pub(crate) close: bool,
 }
 

@@ -625,6 +625,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if let Some((bag, slot)) = find(&model, previous).map(|h| h.position()) {
                 super::container::pickup_container_item(&mut model, bag, slot);
             }
+            drop(model);
+            super::calls::press_item_picks(lua);
             Ok(())
         })?,
     )?;

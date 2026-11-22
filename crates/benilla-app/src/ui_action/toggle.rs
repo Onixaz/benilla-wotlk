@@ -12,9 +12,10 @@ use benilla_formats::{
 
 use crate::unit_auras::UnitAuras;
 
-/// The active-action predicate: a nonzero raw `ActiveIconID` and the spell's own aura live with the
-/// cancelable bit, so the press cancels instead of casting. No form guard: a warrior stance has
-/// `ActiveIconID` 0. A unit with no aura table holds none.
+/// `SPELL_EFFECT_SUMMON` (`0x802d20`).
+const SPELL_EFFECT_SUMMON: u32 = 0x1c;
+
+/// The active-action predicate: a nonzero raw `ActiveIconID` and the spell's own aura live with the cancelable bit, so the press cancels instead of casting. A unit with no aura table holds none.
 pub(crate) fn active_action_toggle(
     spell_id: u32,
     d: &SpellDisplay,
@@ -27,7 +28,7 @@ pub(crate) fn active_action_toggle(
         })
 }
 
-/// The click-spell active test (`0x802cb0`); the own-vehicle summon arm is not built.
+/// The click-spell active test (`0x802cb0`). `own_vehicle` is the entry of the vehicle the unit is seated in (`[unit+0xf60]` -> `0x747ff0`) when the active player created it.
 pub(crate) fn is_active_spell(
     spell_id: u32,
     d: &SpellDisplay,
@@ -35,10 +36,21 @@ pub(crate) fn is_active_spell(
     catalog: &SpellCatalog,
     summons: &SummonPropertiesCatalog,
     critter: Option<u64>,
+    own_vehicle: Option<u32>,
 ) -> bool {
     let kind = d.companion_kind(summons);
     if d.active_icon_id == 0 && kind.is_none() {
         return false;
+    }
+    // A summon of our own vehicle's creature, ahead of the effect's slot-5 arm (`0x802d20`-`0x802d4e`, active at `0x802dc3`).
+    if let Some(entry) = own_vehicle {
+        let summons_it = (0..3).any(|i| {
+            d.effects[i] == SPELL_EFFECT_SUMMON
+                && u32::try_from(d.effect_misc_value[i]).ok() == Some(entry)
+        });
+        if summons_it {
+            return true;
+        }
     }
     if kind == Some(CompanionKind::Critter) {
         return critter.map(crate::ui_companion::critter_entry) == Some(d.companion_creature());
@@ -151,7 +163,7 @@ mod tests {
         let catalog = SpellCatalog::from_displays([(32242, mount(27655))].into());
         let none = SummonPropertiesCatalog::default();
         let riding = UnitAuras::of(1, &[(0, 32242, 1)]);
-        let active = |auras| is_active_spell(32242, &gryphon, auras, &catalog, &none, None);
+        let active = |auras| is_active_spell(32242, &gryphon, auras, &catalog, &none, None, None);
         assert!(active(Some(&riding)));
         assert!(!active(None));
         assert!(
@@ -173,6 +185,7 @@ mod tests {
             Some(&riding),
             &catalog,
             &none,
+            None,
             None
         ));
     }
@@ -190,9 +203,32 @@ mod tests {
         let critter = catalog.get(10673).unwrap();
         let slots = SummonPropertiesCatalog::from_slots([(41, 5)]);
         let guid = |entry: u64| 0xF130_0000_0000_0000 | (entry << 24) | 7;
-        let active = |out| is_active_spell(10673, critter, None, &catalog, &slots, out);
+        let active = |out| is_active_spell(10673, critter, None, &catalog, &slots, out, None);
         assert!(active(Some(guid(7555))));
         assert!(!active(Some(guid(7556))), "another critter is out");
         assert!(!active(None), "nothing is out");
+    }
+
+    /// A summon of the vehicle we sit in and created is active (`0x802d29`-`0x802d4e`), so a second press cancels; any other vehicle is not.
+    #[test]
+    fn a_summon_of_our_own_vehicle_is_active() {
+        const SUIT: u32 = 54903;
+        const CREATURE: i32 = 29645;
+        let suit = || SpellDisplay {
+            active_icon_id: 122,
+            effects: [SPELL_EFFECT_SUMMON, 0, 0],
+            effect_misc_value: [CREATURE, 0, 0],
+            ..Default::default()
+        };
+        let catalog = SpellCatalog::from_displays([(SUIT, suit())].into());
+        let suit = suit();
+        let none = SummonPropertiesCatalog::default();
+        let active = |vehicle| is_active_spell(SUIT, &suit, None, &catalog, &none, None, vehicle);
+        assert!(
+            active(Some(CREATURE as u32)),
+            "our own vehicle of that creature"
+        );
+        assert!(!active(Some(29646)), "another creature's vehicle");
+        assert!(!active(None), "no vehicle, or one someone else created");
     }
 }

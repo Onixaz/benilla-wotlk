@@ -38,7 +38,9 @@ pub(crate) use corpse::{corpse_pick_admits, publish_corpse_pick, CorpsePick};
 pub(crate) use cursor::{drive_targeting_cursor, ground_cast_radius};
 pub(crate) use item::{commit_item_cast_on_pick, EnchantConfirmItem};
 pub(crate) use pick::{publish_unit_pick, PickChecks, UnitPick};
-pub(crate) use world::{commit_ground_cast_on_click, commit_object_cast_on_click};
+pub(crate) use world::{
+    commit_ground_cast_on_click, commit_object_cast_on_click, location_cast_takes,
+};
 
 use bevy::prelude::*;
 
@@ -253,6 +255,8 @@ struct Targeting {
     word: u32,
     /// What the pending send does ahead of the cast (`0x80ac90`), kept for the click's commit.
     prelude: super::cast_send::CastPrelude,
+    /// The pending record's `castCount`, which the click's commit sends (`0x80cda4`).
+    count: u8,
 }
 
 impl SpellTargeting {
@@ -321,7 +325,20 @@ impl SpellTargeting {
             commit,
             word,
             prelude: super::cast_send::CastPrelude::default(),
+            count: 0,
         });
+    }
+
+    /// Hold the standing cast's record `castCount` for its commit: the click re-enters the cast attempt with the record, which keeps its count (`0x80cda4`).
+    pub(crate) fn count_at_commit(&mut self, count: u8) {
+        if let Some(t) = &mut self.0 {
+            t.count = count;
+        }
+    }
+
+    /// The standing cast's record `castCount`.
+    pub(crate) fn count(&self) -> u8 {
+        self.0.as_ref().map_or(0, |t| t.count)
     }
 
     /// Hold what the standing cast's commit does first, as the pending send does (`0x80ac90`).
@@ -767,6 +784,7 @@ mod tests {
             Ok(ClientCommand::CastSpell {
                 spell_id: HEAL,
                 target: Some(ALLY),
+                ..
             })
         ));
         assert!(errors(&mut world).is_empty());
@@ -853,14 +871,13 @@ mod tests {
                 Some(ClientCommand::CastSpell {
                     spell_id: RENEW_2,
                     target: Some(ALLY),
+                    ..
                 })
             ),
             "rank 2 goes out at the ally: {sent:?}"
         );
         assert_eq!(
-            world
-                .resource::<crate::spell::PendingCast>()
-                .committed(std::time::Instant::now()),
+            world.resource::<crate::spell::PendingCast>().committed(),
             Some(RENEW_2)
         );
         assert!(errors(&mut world).is_empty());
@@ -918,6 +935,7 @@ mod tests {
                     Ok(ClientCommand::CastSpell {
                         spell_id: HEAL,
                         target: Some(ALLY),
+                        ..
                     })
                 ),
                 "{token} binds the ally"
@@ -957,6 +975,7 @@ mod tests {
             Ok(ClientCommand::CastSpell {
                 spell_id: HEAL,
                 target: Some(ALLY),
+                ..
             })
         ));
         assert!(errors(&mut world).is_empty());
@@ -1229,6 +1248,7 @@ mod tests {
                 Ok(ClientCommand::CastSpell {
                     spell_id: SPELL,
                     target: Some(sent),
+                    ..
                 }) if sent == guid
             );
             assert_eq!(clicked, binds, "{label}: the cursor's click");
@@ -1466,6 +1486,7 @@ mod tests {
                     Ok(ClientCommand::CastSpell {
                         spell_id: SPELL,
                         target: Some(sent),
+                        ..
                     }) if sent == guid
                 );
                 assert_eq!(clicked, binds, "{label}: the cursor's click");

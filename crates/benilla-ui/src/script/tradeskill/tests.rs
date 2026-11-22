@@ -395,13 +395,22 @@ fn selection_rides_the_spell() {
     );
 }
 
-/// `DoTradeSkill` casts once and latches the count; a cast start commits it, each go casts again
-/// until the count is spent, and a failure stops it.
+/// `DoTradeSkill` casts once and latches the count once the cast went; a cast start commits it, each go casts again until the count is spent, and a failure stops it.
 #[test]
 fn the_repeat_runs_on_the_cast_edges() {
     let mut s = open();
     s.run("SelectTradeSkill(8) DoTradeSkill(8, 5)").unwrap();
-    assert_eq!(s.take_trade_skill_casts(), [7421]);
+    assert_eq!(
+        s.take_trade_skill_casts(),
+        [(7421, 2)],
+        "capped by numAvailable"
+    );
+    assert_eq!(
+        s.eval::<i64>("return GetTradeskillRepeatCount()").unwrap(),
+        1,
+        "no repeat before the cast went (`0x5dacbb`)"
+    );
+    s.trade_skill_cast_sent(7421, 2);
     assert_eq!(
         s.eval::<i64>("return GetTradeskillRepeatCount()").unwrap(),
         2,
@@ -416,6 +425,9 @@ fn the_repeat_runs_on_the_cast_edges() {
     );
 
     s.run("DoTradeSkill(8, 2)").unwrap();
+    for (spell, times) in s.take_trade_skill_casts() {
+        s.trade_skill_cast_sent(spell, times);
+    }
     s.trade_skill_cast_started(7421);
     s.trade_skill_cast_failed(7421);
     assert!(!s.trade_skill_cast_done(7421));
@@ -527,6 +539,10 @@ fn links_description_and_the_closed_line() {
 fn close_trade_skill_fires_the_close() {
     let mut s = open();
     s.run("DoTradeSkill(2)").unwrap();
+    // The host's cast went, so the repeat stands for the close to stop.
+    for (spell, times) in s.take_trade_skill_casts() {
+        s.trade_skill_cast_sent(spell, times);
+    }
     s.model_mut().pending_events.clear();
     s.run("CloseTradeSkill()").unwrap();
     assert!(s.take_trade_skill_close());

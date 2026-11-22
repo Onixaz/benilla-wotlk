@@ -179,9 +179,10 @@ fn leave_for_the_flight(world: &mut World) {
         if mounted {
             let _ = net.0.send(ClientCommand::CancelMountAura);
         }
-        for spell_id in form_auras {
-            let _ = net.0.send(ClientCommand::CancelAura { spell_id });
-        }
+    }
+    // Each aura cancel: its early form drop, then its send after the drop's listeners (`0x80324d`, `0x803458`).
+    for spell_id in form_auras {
+        crate::ui_shapeshift::cancel_aura_step(world, spell_id);
     }
     if !standing {
         world.write_message(crate::player::StandStateRequest { state: 0 });

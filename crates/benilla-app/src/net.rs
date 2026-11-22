@@ -1280,6 +1280,8 @@ pub(crate) enum ClientCommand {
     /// slot. `target` is the same cast-targets block as a cast's (the sender `0x80b351` writes
     /// both).
     UseItem {
+        /// The cast attempt's record `castCount` (`0x8050dc`).
+        count: u8,
         bag_index: u8,
         slot: u8,
         spell_id: u32,
@@ -1356,22 +1358,30 @@ pub(crate) enum ClientCommand {
     },
     /// `CMSG_CAST_SPELL`; `None` is a self or implicit target.
     CastSpell {
+        /// The cast attempt's record `castCount` (`0x8050dc`).
+        count: u8,
         spell_id: u32,
         target: Option<u64>,
     },
     /// `CMSG_CAST_SPELL` at a corpse: its bit and packed guid, a resurrection on a released player.
     CastSpellCorpse {
+        /// The cast attempt's record `castCount` (`0x8050dc`).
+        count: u8,
         spell_id: u32,
         target: benilla_protocol::messages::CorpseTarget,
         corpse_guid: u64,
     },
     /// `CMSG_CAST_SPELL` with `TARGET_FLAG_DEST_LOCATION`; `dest` in WoW coordinates.
     CastSpellAtDest {
+        /// The cast attempt's record `castCount` (`0x8050dc`).
+        count: u8,
         spell_id: u32,
         dest: benilla_protocol::messages::TargetPoint,
     },
     /// `CMSG_CAST_SPELL` with `TARGET_FLAG_SOURCE_LOCATION` (bit 5); `src` in WoW coordinates.
     CastSpellAtSource {
+        /// The cast attempt's record `castCount` (`0x8050dc`).
+        count: u8,
         spell_id: u32,
         src: benilla_protocol::messages::TargetPoint,
     },
@@ -1412,6 +1422,8 @@ pub(crate) enum ClientCommand {
     /// `CMSG_PET_CAST_SPELL`: a cast with the pet as caster, through the cast ladder; the targets
     /// block is a cast's.
     PetCastSpell {
+        /// The cast attempt's record `castCount` (`0x8050dc`).
+        count: u8,
         pet_guid: u64,
         spell_id: u32,
         target: benilla_protocol::messages::UseItemTarget,
@@ -1419,6 +1431,8 @@ pub(crate) enum ClientCommand {
     /// `CMSG_PET_CAST_SPELL` for a trajectory missile: the flown shot and the mover's pose for its
     /// stop report.
     PetCastTrajectory {
+        /// The cast attempt's record `castCount` (`0x8050dc`).
+        count: u8,
         pet_guid: u64,
         spell_id: u32,
         shot: benilla_protocol::messages::TrajectoryShot,
@@ -1470,9 +1484,10 @@ pub(crate) enum ClientCommand {
     /// `CMSG_CANCEL_AUTO_REPEAT_SPELL`, sent by every local cancel; harmless when the server
     /// cancelled first.
     CancelAutoRepeat,
-    /// `CMSG_CANCEL_CAST`: from the wand auto-repeat handoff and a local cancel.
+    /// `CMSG_CANCEL_CAST`: the cancelled record's `castCount` (`0x8062de`), or 0 from a refusal's wand repeat cancel (`0x8082ad`), then the spell.
     CancelCast {
         spell_id: u32,
+        count: u8,
     },
     /// `CMSG_CANCEL_CHANNELLING`; the server ignores the spell id the client writes.
     CancelChannelling {
@@ -1822,20 +1837,28 @@ pub(crate) enum ClientCommand {
     },
     /// `CMSG_CAST_SPELL` at a GameObject: an OPEN_LOCK cast on a lock, vein or herb.
     CastSpellGameObject {
+        /// The cast attempt's record `castCount` (`0x8050dc`).
+        count: u8,
         spell_id: u32,
         go_guid: u64,
     },
     /// An item-targeted cast (`TARGET_FLAG_ITEM` and a packed guid).
     CastSpellItem {
+        /// The cast attempt's record `castCount` (`0x8050dc`).
+        count: u8,
         spell_id: u32,
         item_guid: u64,
     },
     /// A cast at the trade window's not-traded slot (`TARGET_FLAG_TRADE_ITEM`).
     CastSpellTradeItem {
+        /// The cast attempt's record `castCount` (`0x8050dc`).
+        count: u8,
         spell_id: u32,
     },
     /// A glyph-socket cast from the book (`TARGET_FLAG_GLYPH_SLOT`, no payload).
     CastSpellGlyph {
+        /// The cast attempt's record `castCount` (`0x8050dc`).
+        count: u8,
         spell_id: u32,
     },
     /// `CMSG_LOOT` on a unit; the server rejects a GameObject guid, which loots by `GameObjUse`.

@@ -276,14 +276,13 @@ impl crate::ui_spell_info::CallReads for LiveView<'_, '_> {
         let mut now = crate::ui_spell_info::CastNow::none();
         let me = self.me();
         let store = me.map(|(_, s)| s);
-        let clock = std::time::Instant::now();
         if let (Some(pending), Some(melee)) = (
             self.cast.pending.as_deref(),
             self.cast.queued_melee.as_deref(),
         ) {
             let casting = me.and_then(|(e, _)| self.casting.get(e).ok());
-            now.pending = crate::ui_spell_info::pending_spell(pending, melee, casting, clock);
-            now.item = pending.current_item(clock);
+            now.pending = crate::ui_spell_info::pending_spells(pending, melee, casting);
+            now.items = pending.records().iter().filter_map(|r| r.item).collect();
         }
         now.auto_repeat = self.cast.auto_repeat.as_deref().and_then(|a| a.0);
         now.attacking = !self.engaged.is_empty();
@@ -945,19 +944,20 @@ impl LiveState for LiveView<'_, '_> {
         }
     }
 
-    /// A reaction or non-Attack command press on the lent words inside the call (`0x5d4210`): gate, latch and signal, then the send.
-    fn pet_press(&mut self, slot: u32, order: Option<u32>) -> Option<bool> {
+    /// A reaction or non-Attack command press on the lent words inside the call (`0x5d4210`): gate and latch; the VM signals, then sends.
+    fn pet_press(&mut self, slot: u32, order: Option<u32>) -> Option<benilla_ui::script::PetLatch> {
         let entry = crate::ui_pet::plain_press_word(self.pet_bar.as_deref()?, slot, order)?;
         let selected = self.selection.as_deref().and_then(|s| s.guid);
         let pet = self.pet_unit.as_ref()?;
         let bar = self.pet_bar.as_deref_mut()?;
-        Some(crate::ui_pet::press_plain(
-            bar,
-            pet,
-            entry,
-            selected,
-            self.commands.as_deref(),
-        ))
+        Some(crate::ui_pet::press_plain(bar, pet, entry, selected))
+    }
+
+    /// The latched press's send, under the pet the bar holds now (`0x5d4585`).
+    fn pet_press_send(&mut self, word: u32, target: u64) {
+        if let (Some(bar), Some(c)) = (self.pet_bar.as_deref(), self.commands.as_deref()) {
+            crate::ui_pet::send_pet_action(bar, c, word, target);
+        }
     }
 
     /// The bar toggle (`0x5d5d20`) on the lent words: gate, flip, send, in 12340's order.
@@ -1421,7 +1421,7 @@ impl LiveState for LiveView<'_, '_> {
             .and_then(|g| self.index.as_ref()?.0.get(&g).copied())
             .and_then(|e| self.casting.get(e).ok())
             .map(|c| c.spell_id);
-        crate::spell::inflight(pending, melee, started, std::time::Instant::now()).is_some()
+        crate::spell::inflight(pending, melee, started).is_some()
     }
 
     /// The rune table and our `PLAYER_RUNE_REGEN` rates now, behind the player-mask lookup of the
@@ -2228,6 +2228,20 @@ impl UiEvents {
         self.0.retain(|e| match e {
             UiEvent::CastEdge(crate::ui_cast::CastBarEdge::Refused(f)) => {
                 out.push(*f);
+                false
+            }
+            _ => true,
+        });
+        out
+    }
+
+    /// The press steps queued (a send's rest, an attempt's rest), taken in order.
+    #[cfg(test)]
+    pub(crate) fn take_press_steps(&mut self) -> Vec<crate::ui_cast::CastBarEdge> {
+        let mut out = Vec::new();
+        self.0.retain(|e| match e {
+            UiEvent::CastEdge(edge) if edge.is_step() => {
+                out.push(edge.clone());
                 false
             }
             _ => true,

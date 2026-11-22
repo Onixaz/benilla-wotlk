@@ -619,6 +619,7 @@ fn drain_level_grant(
     mut chat: ResMut<crate::ui_chat::ChatLog>,
     mut waiting: Local<crate::ui_script::VmMemo<Vec<(u8, u64)>>>,
     mut echo: Option<ResMut<crate::console::ConsoleEcho>>,
+    mut pending: ResMut<crate::spell::PendingCast>,
 ) {
     use benilla_ui::script::UnitRequest as R;
     let Some(mut script) = script.turn() else {
@@ -656,6 +657,7 @@ fn drain_level_grant(
                     let _ = net.0.send(ClientCommand::SetSelection { guid });
                 }
                 let _ = net.0.send(ClientCommand::CastSpell {
+                    count: pending.take_count(),
                     spell_id: spell,
                     target: Some(guid),
                 });
@@ -884,6 +886,7 @@ mod tests {
         w.init_resource::<NameCache>();
         w.init_resource::<UiErrorKeys>();
         w.init_resource::<crate::ui_chat::ChatLog>();
+        w.init_resource::<crate::spell::PendingCast>();
         w.insert_resource(NetCommands(tx));
         for granter in [0x2A, 0x2B] {
             w.run_system_once_with(

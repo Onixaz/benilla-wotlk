@@ -8,7 +8,6 @@
 use bevy::prelude::*;
 
 use crate::char_select::ClientState;
-use crate::ui_script::UiDrain;
 use crate::ui_unit::UnitFeed;
 use benilla_world::schedule::WorldStage;
 
@@ -35,7 +34,8 @@ pub(crate) mod validator;
 // The one cast path: every caster takes [`CastLadder`] and commits through [`CastCommit`];
 // `send_spell_cast` is private to `cast_send`, so no second send path can exist.
 pub(crate) use cast_send::{
-    cast_speed, CastCommit, CastLadder, HeldCast, HeldForPick, TargetedBind,
+    attack_pick_step, cast_speed, run_ladder_rest, run_send_commit, run_send_tail, CastCommit,
+    CastLadder, HeldCast, HeldForPick, LadderRest, SendCommit, SendTail, TargetedBind,
 };
 pub(crate) use cast_target::{
     AutoChecks, AutoDismount, AutoPosture, AutoSelfCast, SecureAbilityToggle,
@@ -43,8 +43,8 @@ pub(crate) use cast_target::{
 pub(crate) use combo::ComboPoints;
 pub(crate) use cooldowns::Cooldowns;
 pub(crate) use inflight::{
-    inflight, ActiveChannel, AutoRepeatActive, LocalMoveStart, PendingCast, QueuedMeleeSpell,
-    SelfCancel, SPELL_INTERRUPT_MOVEMENT,
+    cancel_records, inflight, pet_setter_cancel, ActiveChannel, AutoRepeatActive, LocalMoveStart,
+    PendingCast, PendingRecord, QueuedMeleeSpell, SelfCancel, SPELL_INTERRUPT_MOVEMENT,
 };
 pub(crate) use mods::{
     track_cost_inputs, SpellModifiers, OP_CAST_TIME, OP_COST, OP_GCD, OP_RADIUS,
@@ -145,14 +145,15 @@ impl Plugin for SpellPlugin {
                     group_relation::publish_group_roster
                         .after(WorldStage::Net)
                         .before(crate::ui_script::UiPress),
-                    // The item-target commit: after the input pass so a bag click binds the same
-                    // frame; outside the target chain, as its clicks never reach the world.
-                    crate::ui_script::raises::then_fire(targeting::commit_item_cast_on_pick)
-                        .in_set(UiDrain),
+                    // The item-target commit in the press pass after the clicks, outside the target chain, so its GCD reaches the frame's tick (`0x480410` before `0x495320`).
+                    targeting::commit_item_cast_on_pick
+                        .in_set(crate::ui_script::UiPress)
+                        .after(crate::script_calls::apply_script_calls),
                 ),
             )
             .add_systems(OnEnter(ClientState::InWorld), mods::clear_on_world_enter)
             .add_systems(OnEnter(ClientState::InWorld), combo::clear_combo_points)
+            .add_systems(OnExit(ClientState::InWorld), inflight::clear_on_world_leave)
             .init_resource::<SummonSlots>()
             .init_resource::<multicast::MultiCastLists>()
             .add_systems(

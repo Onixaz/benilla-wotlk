@@ -531,7 +531,9 @@ impl Rig {
         self.sent()
             .into_iter()
             .filter_map(|c| match c {
-                ClientCommand::CastSpell { spell_id, target } => Some((spell_id, target)),
+                ClientCommand::CastSpell {
+                    spell_id, target, ..
+                } => Some((spell_id, target)),
                 _ => None,
             })
             .collect()
@@ -679,9 +681,7 @@ fn what_follows_the_script_calls_still_follows_them() {
     }
 }
 
-/// Feed Pet through `DropItemOnUnit("pet")` clears the cursor after the send's events, at the
-/// drop's raise step (`0x80b556` signals inside the send), so the world click's payload leg that
-/// follows reads an empty cursor and raises no destroy confirm for the food just fed.
+/// Feed Pet through `DropItemOnUnit("pet")` clears the cursor inside its press step (`0x80b556`), so the world click's payload leg after it raises no destroy confirm.
 #[test]
 fn a_fed_items_clear_lands_before_the_world_clicks_payload_leg() {
     use bevy::ecs::system::RunSystemOnce;
@@ -691,12 +691,7 @@ fn a_fed_items_clear_lands_before_the_world_clicks_payload_leg() {
     let g = graph_or_skip!();
     let drop = g.one("::drop_item_on_unit");
     let leg = g.one("::drop_on_world_click");
-    assert!(
-        g.succ[drop]
-            .iter()
-            .any(|&s| g.names[s].ends_with("::raises::fire_raises") && g.reaches(s, leg)),
-        "a raise step runs right after the drop and before the world click's payload leg"
-    );
+    assert!(g.reaches(drop, leg), "the drop runs before the payload leg");
     let mut rig = Rig::new(&[]).expect("names");
     let world = rig.app.world_mut();
     let index = world.resource::<GuidIndex>().0.clone();
@@ -759,13 +754,7 @@ fn a_fed_items_clear_lands_before_the_world_clicks_payload_leg() {
         .run_system_once(crate::ui_action::drop_item::drop_item_on_unit)
         .unwrap();
     world
-        .run_system_once(crate::ui_script::raises::fire_raises)
-        .unwrap();
-    world
         .run_system_once(crate::ui_action::drop_item::drop_on_world_click)
-        .unwrap();
-    world
-        .run_system_once(crate::ui_script::raises::fire_raises)
         .unwrap();
     rig.vm().tick(0.01);
     assert!(
@@ -814,14 +803,26 @@ fn the_world_clicks_resolve_against_this_frames_pick() {
     assert!(g.before("::controller::control", "::update_hover"));
     for pick in [latch, "::update_hover"] {
         for leg in [
-            "::commit_ground_cast_on_click",
-            "::commit_object_cast_on_click",
             "::act_on_arrival",
             "::act_on_right_click",
             "::act_on_interact",
         ] {
             assert!(g.before(pick, leg), "{leg} follows {pick}");
         }
+    }
+    // The cursor commits read the press latch alone, after the gated select and before the tick, as 12340's input pass commits (`0x480410`) before the paint (`0x495320`).
+    for leg in [
+        "::commit_ground_cast_on_click",
+        "::commit_object_cast_on_click",
+    ] {
+        assert!(
+            g.before(Step::WorldSelect.suffix(), leg),
+            "{leg} follows the select"
+        );
+        assert!(
+            g.before(leg, Step::Tick.suffix()),
+            "{leg} precedes the tick"
+        );
     }
 }
 
@@ -1121,6 +1122,36 @@ fn a_bag_item_use_is_sent_once_and_its_gcd_reaches_the_bar() {
 fn the_rune_regen_runs_before_the_tick() {
     let g = graph_or_skip!();
     assert!(g.before("::tick_runes", Step::Tick.suffix()));
+}
+
+/// The presses outside the script calls run in the press pass before the feed and tick (`0x480410` before `0x495320`), their GCD signals at their step (`0x805d70` -> `0x805ec3`): each shows its sweep in its press's frame.
+#[test]
+fn the_presses_outside_the_script_calls_cast_before_the_feed_and_tick() {
+    let g = graph_or_skip!();
+    for press in [
+        "::ui_tradeskill::drain_trade_skill",
+        "::targeting::item::commit_item_cast_on_pick",
+        "::death::drain_death",
+        "::commit_ground_cast_on_click",
+        "::commit_object_cast_on_click",
+    ] {
+        assert!(
+            g.before(Step::UiInput.suffix(), press),
+            "{press} follows the clicks"
+        );
+        assert!(
+            g.before(Step::ScriptCalls.suffix(), press),
+            "{press} follows the script calls"
+        );
+        assert!(
+            g.before(press, Step::UnitFeed.suffix()),
+            "{press} precedes the feed"
+        );
+        assert!(
+            g.before(press, Step::Tick.suffix()),
+            "{press} precedes the tick"
+        );
+    }
 }
 
 /// A cast pressed in a frame shows its GCD in that frame: `ACTIONBAR_UPDATE_COOLDOWN` and
@@ -1468,6 +1499,229 @@ fn a_select_from_a_sent_listener_applies_inside_it() {
     assert_eq!(rig.casts(), [(BOLT, Some(OLD))]);
 }
 
+/// A cast a `UNIT_SPELLCAST_SENT` listener makes applies inside it (`0x80b556` re-enters `0x80cce0`): the bail passes as the GCD arms after `SENT` (`0x80d36d`, `0x80b583`), so the nested press sends first.
+#[test]
+fn a_cast_from_a_sent_listener_applies_inside_it() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"SENTS = 0
+        local f = CreateFrame("Frame")
+        f:RegisterEvent("UNIT_SPELLCAST_SENT")
+        f:SetScript("OnEvent", function()
+            SENTS = SENTS + 1
+            if SENTS == 1 then
+                UseAction(1)
+                AFTER_NESTED = SENTS
+            end
+        end)
+        TICK_DO = function() UseAction(1) TICK_DO = nil end"#,
+    );
+    rig.frame();
+    let after: i64 = rig
+        .vm()
+        .eval("return AFTER_NESTED")
+        .expect("the listener ran");
+    assert_eq!(after, 2, "the nested SENT fired inside the listener");
+    assert_eq!(rig.casts(), [(BOLT, Some(OLD)), (BOLT, Some(OLD))]);
+}
+
+/// `RepopMe` sends inside the call (`0x51aab3`): the frame runs only the tick, so no press pass could have sent it.
+#[test]
+fn a_death_verb_sends_inside_its_call() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.lua(TICK_DO);
+    rig.lua("TICK_DO = function() RepopMe() end");
+    rig.frame();
+    assert!(
+        rig.sent()
+            .iter()
+            .any(|c| matches!(c, ClientCommand::RepopRequest { automatic: false })),
+        "the release went out inside the call"
+    );
+}
+
+/// `DropItemOnUnit("pet")` feeds the pet inside the call (`0x51bf26` -> `0x80dcf0`): the caller's next line reads the cursor the feed cleared, and the cast is out.
+#[test]
+fn a_drop_on_the_pet_feeds_inside_its_call() {
+    const FEED_PET: u32 = 6991;
+    const FOOD: u32 = 2287;
+    const FOOD_GUID: u64 = 0x4000_0000_0000_0077;
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    let world = rig.app.world_mut();
+    let index = world.resource::<GuidIndex>().0.clone();
+    world
+        .entity_mut(index[&ME])
+        .insert(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+            (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+            (benilla_protocol::field::FIELD_UNIT_FLAGS, 0x8),
+            (
+                benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1,
+                FOOD_GUID as u32,
+            ),
+            (
+                benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1 + 1,
+                (FOOD_GUID >> 32) as u32,
+            ),
+        ])));
+    world
+        .entity_mut(index[&PET])
+        .insert(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_UNIT_CREATED_BY_SPELL, 883),
+            (benilla_protocol::field::FIELD_UNIT_CREATEDBY, ME as u32),
+            (benilla_protocol::field::FIELD_UNIT_CREATEDBY + 1, 0),
+        ])));
+    world
+        .resource_mut::<crate::ui_action::LearnedAbilities>()
+        .feed_pet = Some(FEED_PET);
+    rig.vm().set_container(
+        0,
+        Some(benilla_ui::script::ContainerState {
+            bag_family: 0,
+            name: Some("Backpack".into()),
+            num_slots: 16,
+            slots: HashMap::from([(
+                1,
+                benilla_ui::script::ContainerSlot {
+                    item_id: FOOD,
+                    count: 1,
+                    ..Default::default()
+                },
+            )]),
+        }),
+    );
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"PickupContainerItem(0, 1)
+           TICK_DO = function() DropItemOnUnit("pet") HELD = CursorHasItem() end"#,
+    );
+    rig.frame();
+    assert!(
+        !rig.vm().eval::<bool>("return HELD").unwrap(),
+        "the next line reads the cursor the feed cleared"
+    );
+    assert!(
+        rig.sent().iter().any(|c| matches!(
+            c,
+            ClientCommand::CastSpellItem {
+                spell_id: FEED_PET,
+                item_guid: FOOD_GUID,
+                ..
+            }
+        )),
+        "Feed Pet went out at the food"
+    );
+}
+
+/// `SpellTargetItem` casts the cursor's spell at the item inside the call (`0x8008a5` -> `0x5210d0`): the caller's next line reads the cursor down and the GCD the press armed.
+#[test]
+fn an_item_pick_casts_inside_its_call() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.water_in_the_backpack();
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::spell::SpellTargeting>()
+        .enter(BOLT, crate::spell::CastCommit::Spell, 0x10);
+    rig.vm().set_container(
+        0,
+        Some(benilla_ui::script::ContainerState {
+            bag_family: 0,
+            name: Some("Backpack".into()),
+            num_slots: 16,
+            slots: HashMap::from([(
+                1,
+                benilla_ui::script::ContainerSlot {
+                    item_id: WATER,
+                    count: 5,
+                    ..Default::default()
+                },
+            )]),
+        }),
+    );
+    rig.lua(TICK_DO);
+    rig.lua(&format!(
+        "TICK_DO = function() SpellTargetItem({WATER}) UP = SpellIsTargeting() \
+         GCD = select(2, GetActionCooldown(1)) end"
+    ));
+    rig.frame();
+    assert!(
+        rig.sent().iter().any(|c| matches!(
+            c,
+            ClientCommand::CastSpellItem {
+                spell_id: BOLT,
+                item_guid: WATER_GUID,
+                ..
+            }
+        )),
+        "the cursor's spell went out at the water"
+    );
+    assert!(
+        !rig.vm().eval::<bool>("return UP == 1").unwrap(),
+        "the cursor was down by the next line"
+    );
+    let gcd: f64 = rig.vm().eval("return GCD").unwrap();
+    assert_eq!(gcd, 1.5, "the next line reads the press's GCD");
+}
+
+/// `UNIT_SPELLCAST_SENT` fires before the start visuals and the GCD arm (`0x80b556`, `0x80b573`, `0x80b583`): its listener reads no cooldown, the code after the call reads the GCD.
+#[test]
+fn a_sent_listener_reads_no_gcd_yet() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"local f = CreateFrame("Frame")
+        f:RegisterEvent("UNIT_SPELLCAST_SENT")
+        f:SetScript("OnEvent", function() AT_SENT = GetActionCooldown(1) end)
+        TICK_DO = function() UseAction(1) AFTER = GetActionCooldown(1) TICK_DO = nil end"#,
+    );
+    rig.frame();
+    assert_eq!(rig.casts(), [(BOLT, Some(OLD))]);
+    let at_sent: f64 = rig.vm().eval("return AT_SENT").expect("the listener ran");
+    let after: f64 = rig.vm().eval("return AFTER").expect("the call returned");
+    assert_eq!(at_sent, 0.0, "no GCD at SENT");
+    assert!(after > 0.0, "the press armed the GCD after SENT: {after}");
+}
+
+/// A press that stops the targeting cursor runs its rungs below after the stop's selection update (`0x80d3ce`, `0x8054f0`): that listener reads the press neither filed nor sent.
+#[test]
+fn a_stopped_cursors_selection_listener_reads_the_press_unsent() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::spell::SpellTargeting>()
+        .enter(NOVA, crate::spell::CastCommit::Spell, 0x40);
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"ORDER = {}
+        local f = CreateFrame("Frame")
+        f:RegisterEvent("CURRENT_SPELL_CAST_CHANGED")
+        f:RegisterEvent("UNIT_SPELLCAST_SENT")
+        f:SetScript("OnEvent", function(_, e)
+            if e == "CURRENT_SPELL_CAST_CHANGED" and #ORDER == 0 then
+                AT_STOP = IsCurrentAction(1) and 1 or 0
+            end
+            ORDER[#ORDER + 1] = e
+        end)
+        TICK_DO = function() UseAction(1) TICK_DO = nil end"#,
+    );
+    rig.frame();
+    assert_eq!(rig.casts(), [(BOLT, Some(OLD))]);
+    let at_stop: i64 = rig.vm().eval("return AT_STOP").expect("the listener ran");
+    assert_eq!(at_stop, 0, "the press is not filed at the stop's update");
+    let order: Vec<String> = rig.vm().eval("return ORDER").expect("the order");
+    let sent = order.iter().position(|e| e == "UNIT_SPELLCAST_SENT");
+    assert_eq!(
+        order.first().map(String::as_str),
+        Some("CURRENT_SPELL_CAST_CHANGED")
+    );
+    assert!(
+        sent.is_some_and(|at| at > 0),
+        "SENT after the stop's update: {order:?}"
+    );
+}
+
 /// A listener on `event`, raised by the call `call` makes inside an `OnUpdate`, that targets
 /// `party1` and reads the target back inside the listener: what it read, and the selection after.
 fn listener_selects(rig: &mut Rig, event: &str, call: &str) -> (Option<String>, Option<u64>) {
@@ -1513,6 +1767,492 @@ fn a_select_from_a_use_glyph_listener_applies_inside_it() {
     let (seen, selected) = listener_selects(&mut rig, "USE_GLYPH", "UseContainerItem(0, 1)");
     assert_eq!(seen, Some(format!("0x{NEW:016X}")));
     assert_eq!(selected, Some(NEW));
+}
+
+/// The direct use runs after `USE_GLYPH`'s listeners (`0x5d8ad3` before `0x5d8ae3` -> `0x708c20`): the listener's cast goes out first and the use meets its GCD.
+#[test]
+fn a_use_glyph_listeners_cast_sends_before_the_glyphs_use() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.water_in_the_backpack();
+    rig.retemplate(|t| t.class = 16);
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"local f = CreateFrame("Frame")
+        f:RegisterEvent("USE_GLYPH")
+        f:SetScript("OnEvent", function() UseAction(1) end)
+        TICK_DO = function() UseContainerItem(0, 1) TICK_DO = nil end"#,
+    );
+    rig.frame();
+    let sends: Vec<&str> = rig
+        .sent()
+        .into_iter()
+        .filter_map(|c| match c {
+            ClientCommand::CastSpell { .. } => Some("cast"),
+            ClientCommand::UseItem { .. } => Some("use"),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sends, ["cast"]);
+}
+
+/// Our aura cancel drops the form ahead of the server (`0x80324d` -> `0x721cf0`, `0x721d89`): the listener and the chunk after `CancelShapeshiftForm` read no form, and the cancel goes out.
+#[test]
+fn a_form_cancel_drops_the_form_before_the_server_answers() {
+    const BEAR: u32 = 5487;
+    const FORM: u32 = 5;
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    {
+        let world = rig.app.world_mut();
+        let me = world.resource::<GuidIndex>().0[&ME];
+        world.entity_mut(me).insert((
+            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_FLAGS, 0x8),
+                (benilla_protocol::field::FIELD_UNIT_BYTES_2, FORM << 24),
+            ])),
+            crate::unit_auras::UnitAuras::of(
+                ME,
+                &[(
+                    0,
+                    BEAR,
+                    benilla_protocol::messages::AURA_UPDATE_FLAG_CANCELABLE | 1,
+                )],
+            ),
+        ));
+        let mut spells = world.resource_mut::<crate::ui_action::Spells>();
+        let bear = SpellDisplay {
+            name: "Bear Form".into(),
+            shapeshift_form: Some(FORM),
+            ..Default::default()
+        };
+        spells.catalog = SpellCatalog::from_displays(HashMap::from([(BEAR, bear)]));
+        spells
+            .forms
+            .insert(FORM, benilla_formats::ShapeshiftForm::default());
+    }
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"local f = CreateFrame("Frame")
+        f:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
+        f:SetScript("OnEvent", function() IN_EVENT = GetShapeshiftForm() end)
+        TICK_DO = function()
+            BEFORE = GetShapeshiftForm()
+            CancelShapeshiftForm()
+            AFTER = GetShapeshiftForm()
+            TICK_DO = nil
+        end"#,
+    );
+    rig.frame();
+    let read: (i64, Option<i64>, i64) = rig
+        .vm()
+        .eval("return BEFORE, IN_EVENT, AFTER")
+        .expect("the chunk ran");
+    assert_eq!(read, (1, Some(0), 0), "(before, in the signal, after)");
+    let cancels: Vec<u32> = rig
+        .sent()
+        .into_iter()
+        .filter_map(|c| match c {
+            ClientCommand::CancelAura { spell_id } => Some(spell_id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(cancels, [BEAR]);
+}
+
+/// A cast's form drop raises before its send (`0x80af88` -> `0x80324d`, then `0x803458`, `0x80b4ee`): the listener reads the cast not current and its select goes out first.
+#[test]
+fn a_casts_form_drop_listener_runs_before_the_send() {
+    const BEAR: u32 = 5487;
+    const FORM: u32 = 5;
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    {
+        let world = rig.app.world_mut();
+        let me = world.resource::<GuidIndex>().0[&ME];
+        world.entity_mut(me).insert((
+            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_FLAGS, 0x8),
+                (benilla_protocol::field::FIELD_UNIT_BYTES_2, FORM << 24),
+            ])),
+            crate::unit_auras::UnitAuras::of(
+                ME,
+                &[(
+                    0,
+                    BEAR,
+                    benilla_protocol::messages::AURA_UPDATE_FLAG_CANCELABLE | 1,
+                )],
+            ),
+        ));
+        let mut spells = world.resource_mut::<crate::ui_action::Spells>();
+        // Bolt, `Attributes & 0x10000`: not while shapeshifted, so the send leaves the form.
+        let bolt = SpellDisplay {
+            name: "Bolt".into(),
+            attributes: 0x0001_0000,
+            implicit_target_a1: 6,
+            start_recovery_category: 133,
+            start_recovery_ms: 1500,
+            ..Default::default()
+        };
+        let bear = SpellDisplay {
+            name: "Bear Form".into(),
+            shapeshift_form: Some(FORM),
+            ..Default::default()
+        };
+        spells.catalog = SpellCatalog::from_displays(HashMap::from([(BOLT, bolt), (BEAR, bear)]));
+        spells
+            .forms
+            .insert(FORM, benilla_formats::ShapeshiftForm::default());
+    }
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"local f = CreateFrame("Frame")
+        f:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
+        f:SetScript("OnEvent", function()
+            if AT_DROP then return end
+            AT_DROP = IsCurrentAction(1) and 1 or 0
+            TargetUnit("party1")
+        end)
+        TICK_DO = function() UseAction(1) TICK_DO = nil end"#,
+    );
+    rig.frame();
+    let at_drop: i64 = rig.vm().eval("return AT_DROP").expect("the listener ran");
+    assert_eq!(at_drop, 0, "the cast is not current at its form drop");
+    let wire: Vec<&str> = rig
+        .sent()
+        .into_iter()
+        .filter_map(|c| match c {
+            ClientCommand::SetSelection { guid: NEW } => Some("select"),
+            ClientCommand::CancelAura { spell_id: BEAR } => Some("cancel"),
+            // The attempt bound its unit before the drop.
+            ClientCommand::CastSpell {
+                spell_id: BOLT,
+                target: Some(OLD),
+                ..
+            } => Some("cast"),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(wire, ["select", "cancel", "cast"]);
+}
+
+/// The not-ready refusal over a wand repeat cancels it (`0x8082cc`, `0x8082d3`) before its line (`0x808200`): a `UI_ERROR_MESSAGE` listener reads the repeat over, ahead of the code after the call.
+#[test]
+fn a_ui_error_listener_mid_press_reads_the_state_at_its_step() {
+    const SHOOT: u32 = 5019;
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    {
+        let world = rig.app.world_mut();
+        let mut spells = world.resource_mut::<crate::ui_action::Spells>();
+        spells.catalog = SpellCatalog::from_displays(HashMap::from([
+            (
+                NOVA,
+                SpellDisplay {
+                    name: "Nova".into(),
+                    ..Default::default()
+                },
+            ),
+            (
+                SHOOT,
+                SpellDisplay {
+                    name: "Shoot".into(),
+                    attributes_ex2: 0x20,
+                    attributes_ex3: 0x0040_0000,
+                    ..Default::default()
+                },
+            ),
+        ]));
+        world
+            .resource_mut::<crate::ui_action::ActionSlots>()
+            .buttons
+            .insert(
+                0,
+                ActionButton {
+                    slot: 0,
+                    action: SHOOT,
+                    kind: ACTION_KIND_SPELL,
+                },
+            );
+        world
+            .resource_mut::<crate::ui_action::PlayerActions>()
+            .spells = [SHOOT, NOVA].into();
+        world.resource_mut::<crate::spell::AutoRepeatActive>().0 = Some(SHOOT);
+    }
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"SEEN = {} ERR_SPELL_COOLDOWN = "Spell is not ready yet."
+        local f = CreateFrame("Frame")
+        f:RegisterEvent("UI_ERROR_MESSAGE")
+        f:SetScript("OnEvent", function()
+            SEEN[#SEEN + 1] = "line repeat=" .. (IsAutoRepeatAction(1) and 1 or 0)
+        end)
+        TICK_DO = function()
+            SEEN[#SEEN + 1] = "before repeat=" .. (IsAutoRepeatAction(1) and 1 or 0)
+            UseAction(2)
+            SEEN[#SEEN + 1] = "after"
+            TICK_DO = nil
+        end"#,
+    );
+    rig.frame();
+    let seen: String = rig
+        .vm()
+        .eval("return table.concat(SEEN, ' ')")
+        .expect("the chunk ran");
+    assert_eq!(seen, "before repeat=1 line repeat=0 after");
+    let cancels: Vec<(u32, u8)> = rig
+        .sent()
+        .into_iter()
+        .filter_map(|c| match c {
+            ClientCommand::CancelCast { spell_id, count } => Some((spell_id, count)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        cancels,
+        [(SHOOT, 0)],
+        "the refusal's cancel, count 0 (`0x8082ad`)"
+    );
+}
+
+/// Bear Form's spell, holding form 5 on us with its aura up and cancelable.
+const BEAR: u32 = 5487;
+
+/// Us in Bear Form (form 5, its aura up and cancelable), Bear on the first action slot, and an `UPDATE_SHAPESHIFT_FORM` listener that selects `party1` once.
+fn in_bear_form(rig: &mut Rig) {
+    const FORM: u32 = 5;
+    let world = rig.app.world_mut();
+    let me = world.resource::<GuidIndex>().0[&ME];
+    world.entity_mut(me).insert((
+        ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+            (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+            (benilla_protocol::field::FIELD_UNIT_FLAGS, 0x8),
+            (benilla_protocol::field::FIELD_UNIT_BYTES_2, FORM << 24),
+        ])),
+        crate::unit_auras::UnitAuras::of(
+            ME,
+            &[(
+                0,
+                BEAR,
+                benilla_protocol::messages::AURA_UPDATE_FLAG_CANCELABLE | 1,
+            )],
+        ),
+    ));
+    let mut spells = world.resource_mut::<crate::ui_action::Spells>();
+    let bear = SpellDisplay {
+        name: "Bear Form".into(),
+        shapeshift_form: Some(FORM),
+        effect_apply_aura: [36, 0, 0],
+        ..Default::default()
+    };
+    spells.catalog = SpellCatalog::from_displays(HashMap::from([(BEAR, bear)]));
+    spells
+        .forms
+        .insert(FORM, benilla_formats::ShapeshiftForm::default());
+    world
+        .resource_mut::<crate::ui_action::ActionSlots>()
+        .buttons
+        .insert(
+            0,
+            ActionButton {
+                slot: 0,
+                action: BEAR,
+                kind: ACTION_KIND_SPELL,
+            },
+        );
+    world
+        .resource_mut::<crate::ui_action::PlayerActions>()
+        .spells = [BEAR].into();
+    world.insert_resource(crate::ui_spellbook::SpellBook::of(SpellBookState {
+        tabs: vec![SpellTabView {
+            name: "General".into(),
+            texture: None,
+            offset: 0,
+            num_spells: 1,
+        }],
+        slots: vec![SpellSlotView {
+            spell_id: BEAR,
+            name: "Bear Form".into(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    }));
+    rig.lua(
+        r#"local f = CreateFrame("Frame")
+        f:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
+        f:SetScript("OnEvent", function()
+            if AT_DROP then return end
+            AT_DROP = 1
+            TargetUnit("party1")
+        end)"#,
+    );
+}
+
+/// The selects, our Bear cancels and gameobject uses sent since, in order.
+fn form_leave_wire(rig: &Rig) -> Vec<&'static str> {
+    rig.sent()
+        .into_iter()
+        .filter_map(|c| match c {
+            ClientCommand::SetSelection { guid: NEW } => Some("select"),
+            ClientCommand::CancelAura { spell_id: BEAR } => Some("cancel"),
+            ClientCommand::GameObjUse { .. } => Some("use"),
+            _ => None,
+        })
+        .collect()
+}
+
+/// `CancelShapeshiftForm` (`0x726ce0` -> `0x802f80`): the drop's listeners run before `CMSG_CANCEL_AURA` (`0x80324d` before `0x803458`), so a select a listener makes goes out first.
+#[test]
+fn a_form_cancels_drop_listener_sends_before_the_cancel() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    in_bear_form(&mut rig);
+    rig.lua(TICK_DO);
+    rig.lua(r#"TICK_DO = function() CancelShapeshiftForm() TICK_DO = nil end"#);
+    rig.frame();
+    assert_eq!(form_leave_wire(&rig), ["select", "cancel"]);
+}
+
+/// The spellbook's press of the active form cancels it (`0x802f80`): the drop's listeners run before the cancel's send (`0x80324d` before `0x803458`).
+#[test]
+fn a_book_forms_drop_listener_sends_before_the_cancel() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    in_bear_form(&mut rig);
+    rig.lua(TICK_DO);
+    rig.lua(r#"TICK_DO = function() CastSpellByName("Bear Form") TICK_DO = nil end"#);
+    rig.frame();
+    assert_eq!(form_leave_wire(&rig), ["select", "cancel"]);
+}
+
+/// `CancelUnitBuff` on our form's aura (`0x802f80`): its drain sends after the drop's listeners (`0x80324d` before `0x803458`).
+#[test]
+fn a_buff_cancels_drop_listener_sends_before_the_cancel() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    in_bear_form(&mut rig);
+    rig.vm()
+        .set_player_auras(vec![benilla_ui::script::AuraState {
+            spell_id: BEAR,
+            name: Some("Bear Form".into()),
+            count: 1,
+            helpful: true,
+            cancelable: true,
+            ..Default::default()
+        }]);
+    rig.lua(TICK_DO);
+    rig.lua(r#"TICK_DO = function() CancelUnitBuff("player", 1) TICK_DO = nil end"#);
+    rig.frame();
+    let mut drain = Schedule::default();
+    drain.add_systems(crate::ui_script::raises::then_fire(
+        crate::ui_aura::drain_aura_cancels,
+    ));
+    drain.run(rig.app.world_mut());
+    assert_eq!(form_leave_wire(&rig), ["select", "cancel"]);
+}
+
+/// The world click's and the meeting stone's use leave the form first: each aura cancel's drop and its listeners, its send, then the use (`0x80324d`, `0x803458`, then `CMSG_GAMEOBJ_USE`).
+#[test]
+fn a_form_leave_then_use_sends_after_the_drops_listeners() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    in_bear_form(&mut rig);
+    let world = rig.app.world_mut();
+    crate::ui_shapeshift::cancel_aura_step(world, BEAR);
+    crate::ui_shapeshift::send_after_raises(world, ClientCommand::GameObjUse { guid: 0xf1 });
+    assert!(
+        rig.sent().is_empty(),
+        "nothing goes out before the listeners"
+    );
+    crate::ui_script::live::fire_handler_events(rig.app.world_mut());
+    assert_eq!(form_leave_wire(&rig), ["select", "cancel", "use"]);
+}
+
+/// The selects, our Bear cancels, item uses and vendor lists sent since, in order.
+fn form_leave_press_wire(rig: &Rig) -> Vec<&'static str> {
+    rig.sent()
+        .into_iter()
+        .filter_map(|c| match c {
+            ClientCommand::SetSelection { guid: NEW } => Some("select"),
+            ClientCommand::CancelAura { spell_id: BEAR } => Some("cancel"),
+            ClientCommand::UseItem { .. } => Some("use"),
+            ClientCommand::ListInventory { .. } => Some("list"),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The item use leaves the form (`0x709338` -> `0x726ce0` -> `0x802f80`) before its cast (`0x70933d`): the drop's listener sends ahead of the cancel (`0x80324d` before `0x803458`) and of `CMSG_USE_ITEM`.
+#[test]
+fn an_item_uses_form_drop_listener_sends_before_the_cancel_and_the_use() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.water_in_the_backpack();
+    in_bear_form(&mut rig);
+    let world = rig.app.world_mut();
+    let me = world.resource::<GuidIndex>().0[&ME];
+    world
+        .entity_mut(me)
+        .insert(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+            (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+            (benilla_protocol::field::FIELD_UNIT_FLAGS, 0x8),
+            (benilla_protocol::field::FIELD_UNIT_BYTES_2, 5 << 24),
+            (
+                benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1,
+                WATER_GUID as u32,
+            ),
+            (
+                benilla_protocol::field::FIELD_PLAYER_PACK_SLOT_1 + 1,
+                (WATER_GUID >> 32) as u32,
+            ),
+        ])));
+    let mut spells = world.resource_mut::<crate::ui_action::Spells>();
+    let bear = SpellDisplay {
+        name: "Bear Form".into(),
+        shapeshift_form: Some(5),
+        effect_apply_aura: [36, 0, 0],
+        ..Default::default()
+    };
+    let drink = SpellDisplay {
+        name: "Drink".into(),
+        ..Default::default()
+    };
+    spells.catalog = SpellCatalog::from_displays(HashMap::from([(BEAR, bear), (DRINK, drink)]));
+    rig.lua(TICK_DO);
+    rig.lua(r#"TICK_DO = function() UseContainerItem(0, 1) TICK_DO = nil end"#);
+    rig.frame();
+    assert_eq!(form_leave_press_wire(&rig), ["select", "cancel", "use"]);
+}
+
+/// The NPC-service ladder leaves the form (`0x6ddc01` -> `0x726ce0` -> `0x802f80`) before the service (`0x6ddc06`): the drop's listener sends ahead of the cancel (`0x80324d` before `0x803458`) and of the vendor's list.
+#[test]
+fn an_npc_talks_form_drop_listener_sends_before_the_cancel_and_the_service() {
+    const VENDOR: u64 = 0xF130_0000_0000_0077;
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    in_bear_form(&mut rig);
+    let world = rig.app.world_mut();
+    let vendor = world
+        .spawn((
+            Guid(VENDOR),
+            Transform::from_xyz(1.0, 0.0, 0.0),
+            GlobalTransform::from_translation(Vec3::new(1.0, 0.0, 0.0)),
+            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_NPC_FLAGS, 0x80),
+            ])),
+            crate::net::NetEntity {
+                kind: benilla_protocol::EntityKind::Unit,
+                display_id: None,
+                scale: 1.0,
+            },
+        ))
+        .id();
+    world.resource_mut::<GuidIndex>().0.insert(VENDOR, vendor);
+    world.init_resource::<crate::player::Player>();
+    crate::target::click::interact_now(world, vendor);
+    assert_eq!(form_leave_press_wire(&rig), ["select", "cancel", "list"]);
 }
 
 /// A lootable item's lock edge (`0x6dcded` -> `0x706feb`) raises as `UseContainerItem` returns:
