@@ -2506,3 +2506,55 @@ fn cast_pet_action_then_get_pet_action_cooldown_in_one_chunk() {
     let start: f64 = rig.vm().eval("return READ").expect("a start");
     assert!(start > 0.0, "the pet's GCD reads in the same call: {start}");
 }
+
+/// `SMSG_SPELL_FAILURE` for our sent cast: the end's listeners read the cast still pending, and the finish releases it after them (`0x809db3` -> `0x7fecc0`, then `0x809dc1` -> `0x8054f0`, `0x8055a2`).
+#[test]
+fn a_spell_failures_end_listener_reads_the_cast_still_pending() {
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"SEEN = {}
+        local f = CreateFrame("Frame")
+        f:RegisterEvent("UNIT_SPELLCAST_FAILED")
+        f:SetScript("OnEvent", function(_, e, unit)
+            SEEN[#SEEN + 1] = e .. " " .. unit .. " current=" .. (IsCurrentAction(1) and 1 or 0)
+        end)
+        TICK_DO = function() UseAction(1) TICK_DO = nil end"#,
+    );
+    rig.frame();
+    let count = rig
+        .sent()
+        .into_iter()
+        .find_map(|c| match c {
+            ClientCommand::CastSpell {
+                spell_id: BOLT,
+                count,
+                ..
+            } => Some(count),
+            _ => None,
+        })
+        .expect("the press sent the cast");
+    let before: String = crate::ui_script::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval("return tostring(IsCurrentAction(1) and 1 or 0)")
+    })
+    .unwrap()
+    .unwrap();
+    assert_eq!(before, "1", "the sent cast is pending");
+    crate::net::handlers::dispatch(
+        rig.app.world_mut(),
+        vec![benilla_protocol::SessionEvent::SpellFailed {
+            other: false,
+            caster: ME,
+            cast_count: count,
+            spell_id: BOLT,
+            reason: 0x28,
+            wire_reason: 0x28,
+        }],
+    );
+    let seen: String = crate::ui_script::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval("return table.concat(SEEN, ',') .. ' after=' .. (IsCurrentAction(1) and 1 or 0)")
+    })
+    .unwrap()
+    .unwrap();
+    assert_eq!(seen, "UNIT_SPELLCAST_FAILED player current=1 after=0");
+}

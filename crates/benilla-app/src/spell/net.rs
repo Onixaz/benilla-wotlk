@@ -456,12 +456,7 @@ pub(crate) struct Reply<'w, 's> {
 ///
 /// The chained cast goes out at the null target guid (`ebx = 0`), so it binds through the target
 /// resolve's ordinary walk ([`CastTargeting::context`]) and takes every rung a press takes.
-fn on_cast_result(
-    In(ev): In<SessionEvent>,
-    mut ladder: CastLadder,
-    targeting: CastTargeting,
-    mut r: Reply,
-) {
+fn on_cast_result(In(ev): In<SessionEvent>, mut ladder: CastLadder, mut r: Reply) {
     if let SessionEvent::CastResult {
         cast_count,
         spell_id,
@@ -554,25 +549,33 @@ fn on_cast_result(
         if !success && reason != Some(0x3c) && on_event {
             cooldown_site(&mut r.ui, true, Tail::Bags);
         }
+        // The chain is the routine's last call (`0x808b7f` -> `0x8054f0`): a step after the
+        // listeners of the failure's line and its cast end.
         if let Some(next) = chained {
-            let ctx = targeting.context();
-            ladder.send(next, &ctx, CastCommit::Spell);
-            // The chained send's `UNIT_SPELLCAST_SENT`, in this handler's turn (`0x80b556`).
-            ladder.press.defer(&mut r.ui);
+            r.ui.world(move |world| {
+                crate::net::handlers::step(world, send_chained, next);
+            });
         }
     }
+}
+
+/// The `modalNextSpell` chain's send at the null target guid, through every rung a press takes; its `UNIT_SPELLCAST_SENT` in the handler's turn (`0x80b556`).
+fn send_chained(
+    In(next): In<u32>,
+    mut ladder: CastLadder,
+    targeting: CastTargeting,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
+) {
+    let ctx = targeting.context();
+    ladder.send(next, &ctx, CastCommit::Spell);
+    ladder.press.defer(&mut ui);
 }
 
 /// Our own `SMSG_SPELL_GO` as the cast's success. 12340 sends no success verdict
 /// (`SMSG_CAST_FAILED` carries refusals only); its GO handler runs the `modalNextSpell` chain
 /// (`0x80e666 call 0x8054f0`) that 1.12.1 ran from the verdict, so the success arm of
 /// [`cast_result`] runs here, ahead of [`on_spell_go`].
-fn on_own_spell_go(
-    In(ev): In<SessionEvent>,
-    mut ladder: CastLadder,
-    targeting: CastTargeting,
-    mut r: Reply,
-) {
+fn on_own_spell_go(In(ev): In<SessionEvent>, mut ladder: CastLadder, mut r: Reply) {
     let SessionEvent::SpellGo {
         caster, spell_id, ..
     } = ev
@@ -601,10 +604,9 @@ fn on_own_spell_go(
         &mut *r.ui,
     );
     if let Some(next) = chained {
-        let ctx = targeting.context();
-        ladder.send(next, &ctx, CastCommit::Spell);
-        // The chained send's `UNIT_SPELLCAST_SENT`, in this handler's turn (`0x80b556`).
-        ladder.press.defer(&mut r.ui);
+        r.ui.world(move |world| {
+            crate::net::handlers::step(world, send_chained, next);
+        });
     }
 }
 
@@ -816,15 +818,6 @@ fn on_spell_failed(
         }
         // Both handlers end the cast through `0x7fecc0` with the packet's reason (`0x809db3`,
         // `0x806bb0`), and finish ours with the selection update (`0x809dc1`, `0x806bbe`).
-        l.ui.cast_edge(CastBarEdge::Failed {
-            caster,
-            spell_id,
-            cast_count,
-            reason,
-        });
-        if l.self_guid.0 == Some(caster) && cast_count != 0 {
-            crate::ui_action::signals::selection(&mut l.ui);
-        }
         spell_failed_other(
             other,
             caster,
@@ -834,11 +827,35 @@ fn on_spell_failed(
             &sc.casting,
             &mut sc.cast_events,
             &l.self_guid,
-            &mut l.pending,
-            &mut l.queued_melee,
             l.play_seq.next(),
         );
+        l.ui.cast_edge(CastBarEdge::Failed {
+            caster,
+            spell_id,
+            cast_count,
+            reason,
+        });
+        // Ours: the finish releases the pending record after the end's listeners (`0x809dc1` -> `0x8054f0`, `0x8055a2`).
+        if l.self_guid.0 == Some(caster) {
+            l.ui.world(move |world| {
+                crate::net::handlers::step(world, release_failed, (spell_id, cast_count));
+            });
+            if cast_count != 0 {
+                crate::ui_action::signals::selection(&mut l.ui);
+            }
+        }
     }
+}
+
+/// Our failed cast's pending record and the queued strike it was, released (`0x8055a2`).
+fn release_failed(
+    In((spell_id, cast_count)): In<(u32, u8)>,
+    mut pending: ResMut<PendingCast>,
+    mut queued_melee: ResMut<QueuedMeleeSpell>,
+) {
+    pending.release(spell_id, cast_count);
+    // The melee-slot interrupt's other half, beside the failing CAST_RESULT.
+    queued_melee.clear_if(spell_id);
 }
 
 fn on_spell_delayed(In(ev): In<SessionEvent>, mut l: Lifecycle) {
@@ -2114,25 +2131,17 @@ fn spell_failed_other(
     casting: &Query<&Casting>,
     cast_events: &mut MessageWriter<CastEvent>,
     self_guid: &SelfGuid,
-    pending: &mut PendingCast,
-    queued_melee: &mut QueuedMeleeSpell,
     seq: u64,
 ) {
     debug!("net: spell failed (other={other}) {spell_id} by {caster:#x}");
-    // Only the cast the bar shows turns it red "Interrupted" (keyed to `Casting`); the guard opens
-    // either way.
-    if self_guid.0 == Some(caster) {
+    // Only the cast the bar shows turns it red "Interrupted" (keyed to `Casting`).
+    if self_guid.0 == Some(caster) && *crate::net::CAST_TRACE {
         let interrupts_our_cast = index.0.get(&caster).is_some_and(|&e| {
             casting
                 .get(e)
                 .is_ok_and(|c| c.ended_by(spell_id, cast_count))
         });
-        if *crate::net::CAST_TRACE {
-            info!("cast-trace: RECV SPELL_FAILED_OTHER — spell {spell_id} (self); interrupts_bar={interrupts_our_cast}");
-        }
-        pending.release(spell_id, cast_count);
-        // The melee-slot interrupt's other half, beside the failing CAST_RESULT.
-        queued_melee.clear_if(spell_id);
+        info!("cast-trace: RECV SPELL_FAILED_OTHER — spell {spell_id} (self); interrupts_bar={interrupts_our_cast}");
     }
     // The end clears the held state of this spell and count alone (`0x7fed81`).
     if let Some(&e) = index.0.get(&caster) {

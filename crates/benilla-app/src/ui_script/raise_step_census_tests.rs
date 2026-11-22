@@ -13,17 +13,10 @@ use crate::test_support::{fn_items, rel_path, rust_files, src_dir};
 
 /// The handlers that raise before a later write: (file, handler, the #1245 part that converts it).
 const RAISES_BEFORE_A_WRITE: &[(&str, &str, u16)] = &[
-    ("creature_anim/net.rs", "on_attack_stop", 1281),
     ("death/net.rs", "on_death_refresh", 1274),
-    ("spell/net.rs", "on_cast_result", 1281),
-    ("spell/net.rs", "on_channel", 1281),
-    ("spell/net.rs", "on_cooldown_packet", 1281),
-    ("spell/net.rs", "on_own_spell_go", 1281),
-    ("spell/net.rs", "on_spell_failed", 1281),
     ("spell/net.rs", "on_spell_go", 1281),
     ("spell/net.rs", "on_spell_learned", 1281),
     ("spell/net.rs", "on_spell_removed", 1281),
-    ("spell/net.rs", "on_spell_start", 1281),
     ("spell/net.rs", "on_spell_superceded", 1281),
     ("ui_arena_team.rs", "on_packet", 1275),
     ("ui_barber.rs", "on_enable", 1279),
@@ -45,6 +38,36 @@ const RAISES_BEFORE_A_WRITE: &[(&str, &str, u16)] = &[
     ("ui_trade/net.rs", "on_trade_status", 1280),
     ("ui_trade/net.rs", "on_trade_status_extended", 1280),
     ("ui_transfer.rs", "on_transfer_pending", 1286),
+];
+
+/// The walker's rows read by hand against 12340: every write it sees after the first raise is at
+/// the reference's place. (file, handler, why).
+const READ_AT_THEIR_STEP: &[(&str, &str, &str)] = &[
+    (
+        "creature_anim/net.rs",
+        "on_attack_stop",
+        "the helper writes, then raises PLAYER_LEAVE_COMBAT last",
+    ),
+    (
+        "spell/net.rs",
+        "on_channel",
+        "each arm writes the channel, then its edge; the walker reads the two arms as one",
+    ),
+    (
+        "spell/net.rs",
+        "on_cooldown_packet",
+        "the store's write runs before the site's signals; the bundle is handed to the write alone",
+    ),
+    (
+        "spell/net.rs",
+        "on_spell_failed",
+        "the end's state clear applies before the signals (0x7fed9f before 0x7fee2c), the cast          event is the animation's, and the pending release is the finish's step (0x8055a2)",
+    ),
+    (
+        "spell/net.rs",
+        "on_spell_start",
+        "the cast state's insert applies before the start edge fires, as 0x8053ea precedes the          signal 0x8054b8",
+    ),
 ];
 
 /// The #1245 parts a row may name.
@@ -446,7 +469,9 @@ fn every_handler_that_raises_before_a_write_is_listed_by_its_part() {
     }
     let listed: BTreeSet<(String, String)> = RAISES_BEFORE_A_WRITE
         .iter()
-        .map(|&(f, h, _)| (f.to_string(), h.to_string()))
+        .map(|&(f, h, _)| (f, h))
+        .chain(READ_AT_THEIR_STEP.iter().map(|&(f, h, _)| (f, h)))
+        .map(|(f, h)| (f.to_string(), h.to_string()))
         .collect();
     let rows: String = found
         .iter()
@@ -470,6 +495,18 @@ fn every_handler_that_raises_before_a_write_is_listed_by_its_part() {
 
 #[test]
 fn the_list_is_sorted_unique_and_names_a_part() {
+    assert!(
+        READ_AT_THEIR_STEP
+            .windows(2)
+            .all(|w| (w[0].0, w[0].1) < (w[1].0, w[1].1)),
+        "the read rows sorted by file then handler, each once"
+    );
+    for (f, h, _) in READ_AT_THEIR_STEP {
+        assert!(
+            !RAISES_BEFORE_A_WRITE.iter().any(|r| (r.0, r.1) == (*f, *h)),
+            "{f} `{h}` is listed twice"
+        );
+    }
     assert!(
         RAISES_BEFORE_A_WRITE
             .windows(2)
