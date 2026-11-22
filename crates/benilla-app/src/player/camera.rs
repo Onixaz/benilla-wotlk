@@ -649,6 +649,32 @@ impl PivotGlide {
     }
 }
 
+/// A vehicle's camera fade window ([`CameraControl::vehicle_fade`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct VehicleFade {
+    pub(crate) vehicle: Entity,
+    /// The model's world position.
+    pub(crate) at: Vec3,
+    /// Fully faded at or inside this distance past the near plane.
+    pub(crate) gone: f32,
+    /// Opaque at or past this one.
+    pub(crate) whole: f32,
+}
+
+/// `0x606f90`'s vehicle fade: the cosine ramp from gone to whole (`OrganicSmooth`) over the
+/// camera's distance to the model past the near plane.
+pub(crate) fn vehicle_fade_alpha(fade: &VehicleFade, eye: Vec3, nearclip: f32) -> f32 {
+    let near = eye.distance(fade.at) - nearclip;
+    if near >= fade.whole {
+        return 1.0;
+    }
+    if fade.gone >= near {
+        return 0.0;
+    }
+    let t = (near - fade.gone) / (fade.whole - fade.gone);
+    (1.0 - (t * std::f32::consts::PI).cos()) * 0.5
+}
+
 /// The camera rig's state: the zoom, the collided arm, the mouse-look session and the pose
 /// channels. `pub(crate)` so [`crate::cursor`] can hide the cursor while looking.
 #[derive(Resource, Default)]
@@ -673,6 +699,13 @@ pub(crate) struct CameraControl {
     /// The vehicle's camera yaw offset as it eases in: the arm swings that far about the pivot
     /// while the view keeps its yaw (`0x600730`). Written by the seat camera.
     pub(crate) vehicle_yaw_offset: f32,
+    /// Seated in a vehicle whose record fades it near the camera (`flags & 0x80000`): the camera
+    /// fades by its distance to the vehicle's model over the record's scalars of the model's radius,
+    /// in place of the self window, and the vehicle fades with us (`0x606f90`). Written by the
+    /// seat camera.
+    pub(crate) vehicle_fade: Option<VehicleFade>,
+    /// The vehicle the fade last reached, to hand back opaque.
+    pub(super) vehicle_faded: Option<Entity>,
     /// The mouse buttons the world owns this frame, latched by [`latch_world_mouse`].
     pub(super) world_mouse: WorldMouse,
     /// Logical cursor position captured when look began, to restore on release.
@@ -1522,11 +1555,14 @@ pub(super) fn seat_camera(
 
     // Fade by the realized camera-to-pivot distance from the seated eye, not the bobbed one, and
     // the live `nearclip`: the fade finishes where the near plane starts cutting.
-    rig.self_fade_alpha = self_model_fade_alpha(
-        (seated - pivot).length(),
-        dynamics.nearclip,
-        SELF_FADE_WINDOW,
-    );
+    rig.self_fade_alpha = match rig.vehicle_fade {
+        Some(fade) => vehicle_fade_alpha(&fade, seated, dynamics.nearclip),
+        None => self_model_fade_alpha(
+            (seated - pivot).length(),
+            dynamics.nearclip,
+            SELF_FADE_WINDOW,
+        ),
+    };
 }
 
 /// Apply the self-avatar fade ([`CameraControl::self_fade_alpha`]) to the body parts and every
@@ -1537,7 +1573,7 @@ pub(super) fn seat_camera(
 /// `Visibility` left to the card's hidden-owner mirror.
 #[allow(clippy::type_complexity)] // one Bevy system's full input set
 pub(crate) fn apply_self_model_fade(
-    rig: Res<CameraControl>,
+    mut rig: ResMut<CameraControl>,
     self_player: Query<(Entity, Option<&crate::aura_visual::AuraNodes>), With<Embodied>>,
     children_of: Query<&Children>,
     mut parts: Query<
@@ -1572,7 +1608,36 @@ pub(crate) fn apply_self_model_fade(
     mut reauthor: ResMut<benilla_world::interior::InteriorReauthor>,
     mut was_fading: Local<bool>,
 ) {
+    // The vehicle fades with us; one left behind, or no longer fading, is handed back opaque.
+    let vehicle = rig.vehicle_fade.map(|f| f.vehicle);
+    let left = rig.vehicle_faded.filter(|&v| Some(v) != vehicle);
+    if let Some(old) = left {
+        let mut walked = EntityHashSet::default();
+        apply_self_fade_to_descendants(
+            old,
+            1.0,
+            &children_of,
+            &mut parts,
+            &far_twins,
+            &mut reauthor,
+            &mut walked,
+        );
+        rig.vehicle_faded = None;
+    }
     let fading = rig.self_fade_alpha < 1.0;
+    if let Some(v) = vehicle.filter(|_| fading || rig.vehicle_faded.is_some()) {
+        let mut walked = EntityHashSet::default();
+        apply_self_fade_to_descendants(
+            v,
+            rig.self_fade_alpha,
+            &children_of,
+            &mut parts,
+            &far_twins,
+            &mut reauthor,
+            &mut walked,
+        );
+        rig.vehicle_faded = fading.then_some(v);
+    }
     if !fading && !*was_fading {
         // Steady opaque: nothing to author and nothing to release.
         return;
@@ -1810,6 +1875,21 @@ mod tests {
     }
 
     /// The arm's two speeds: in at once on a hit, out over the fixed span on the cosine.
+    /// A vehicle's fade runs from gone to whole past the near plane on the cosine ramp.
+    #[test]
+    fn a_vehicle_fades_by_the_camera_s_distance_to_its_model() {
+        let fade = VehicleFade {
+            vehicle: Entity::PLACEHOLDER,
+            at: Vec3::ZERO,
+            gone: 4.0,
+            whole: 6.0,
+        };
+        let at = |d: f32| vehicle_fade_alpha(&fade, Vec3::new(d, 0.0, 0.0), 0.1);
+        assert_eq!(at(4.0), 0.0);
+        assert!((at(5.1) - 0.5).abs() < 1e-5);
+        assert_eq!(at(6.5), 1.0);
+    }
+
     #[test]
     fn the_arm_pulls_in_at_once_and_returns_over_two_seconds() {
         let mut arm = CollisionArm::at(6.0);

@@ -13,8 +13,12 @@
 //!   entering, `0x80` exiting: its delay, then its duration), else over the passenger's motion
 //!   (`0x75af00`), else at once (`0x75aac0`).
 //!
-//! Not built: the seat camera's own position and facing chasers (columns 53-54), the vehicle's
-//! camera fade, the tracking style, and the hierarchy of vehicle cameras a nested vehicle chains.
+//! - seated in a vehicle whose record fades it (`flags & 0x80000`), the camera fades it, and us,
+//!   by its distance to the vehicle's model over the record's scalars of the model's radius
+//!   (columns 15-16, `0x606f90`).
+//!
+//! Not built: the seat camera's own position and facing chasers (columns 53-54), the tracking
+//! style, and the hierarchy of vehicle cameras a nested vehicle chains.
 
 use bevy::prelude::*;
 
@@ -152,9 +156,10 @@ pub(super) fn feed_vehicle_camera(
     zoom: Option<ResMut<VehicleSeatZoom>>,
     focus: Option<ResMut<VehicleFocus>>,
     mut memory: Local<CameraMemory>,
-    (rig, time): (
+    (rig, time, models): (
         Option<ResMut<crate::player::CameraControl>>,
         Res<Time<Real>>,
+        Query<(&GlobalTransform, &benilla_assets::ModelAnimations)>,
     ),
 ) {
     let (Some(limit), Some(mut zoom), Some(mut focus)) = (limit, zoom, focus) else {
@@ -226,6 +231,28 @@ pub(super) fn feed_vehicle_camera(
         }
     }
     if let Some(mut rig) = rig {
+        // Seated in a vehicle whose record fades it near the camera (`flags & 0x80000`): the
+        // window is the record's scalars of its model's radius (`0x606f90`).
+        let fade =
+            seat.filter(|(p, ..)| p.state == super::SEATED)
+                .and_then(|(_, vehicle, id, _)| {
+                    let rec = tables.vehicle(id).filter(|r| r.flags & 0x8_0000 != 0)?;
+                    let (tf, anims) = models.get(vehicle).ok()?;
+                    let radius = anims
+                        .clips
+                        .iter()
+                        .find(|c| c.seq_index == 0)
+                        .map(|c| c.bounds_radius)?;
+                    Some(crate::player::VehicleFade {
+                        vehicle,
+                        at: tf.translation(),
+                        gone: rec.camera_fade_dist_scalar_min * radius,
+                        whole: rec.camera_fade_dist_scalar_max * radius,
+                    })
+                });
+        if rig.vehicle_fade != fade {
+            rig.vehicle_fade = fade;
+        }
         let (pitch, yaw) = (memory.pitch.at(now), memory.yaw.at(now));
         if rig.vehicle_pitch_offset != pitch || rig.vehicle_yaw_offset != yaw {
             rig.vehicle_pitch_offset = pitch;
