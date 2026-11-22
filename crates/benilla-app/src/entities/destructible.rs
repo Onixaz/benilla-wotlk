@@ -273,9 +273,32 @@ pub(crate) fn state_sets(
 pub(crate) struct BuildingSets<'w> {
     templates: Option<Res<'w, crate::go_templates::GameObjectTemplates>>,
     destructibles: Option<Res<'w, Destructibles>>,
+    gameobjects: Option<Res<'w, super::GameObjects>>,
 }
 
 impl BuildingSets<'_> {
+    /// The display the building shows now: its state's model once the template has landed,
+    /// `GAMEOBJECT_DISPLAYID` before that, as the display swap reads it.
+    fn shown_display(&self, guid: u64, store: &ObjectStore) -> Option<u32> {
+        self.gameobjects
+            .as_deref()
+            .and_then(|g| {
+                live_state_display(
+                    store,
+                    self.templates.as_deref()?.get(guid),
+                    self.destructibles.as_deref(),
+                    &g.catalog,
+                )
+            })
+            .or_else(|| {
+                store
+                    .0
+                    .gameobject_displayid()
+                    .filter(|&d| d > 0)
+                    .map(|d| d as u32)
+            })
+    }
+
     /// The building's row, `None` for any other object or before its template lands.
     fn row(&self, guid: u64, store: &ObjectStore) -> Option<&DestructibleModel> {
         if store.0.gameobject_type_id() != GO_TYPE_DESTRUCTIBLE_BUILDING {
@@ -314,7 +337,7 @@ pub(super) fn track_building_states(
         (
             Entity,
             &Guid,
-            &NetEntity,
+            &mut NetEntity,
             Ref<ObjectStore>,
             Option<&mut BuildingState>,
         ),
@@ -322,7 +345,7 @@ pub(super) fn track_building_states(
     >,
 ) {
     let templates_new = sets.templates.as_ref().is_some_and(|t| t.is_changed());
-    for (entity, guid, net, store, seen) in &mut buildings {
+    for (entity, guid, mut net, store, seen) in &mut buildings {
         if !store.is_changed() && !templates_new && seen.is_some() {
             continue;
         }
@@ -340,9 +363,11 @@ pub(super) fn track_building_states(
             });
             continue;
         };
-        // The template landed after the visual was built: build it again with its sets.
+        // The template landed after the visual was built: build it again with its state's model
+        // and sets, in one rebuild, the display swap having nothing left to do.
         if has_row && !seen.has_row {
             seen.has_row = true;
+            net.display_id = sets.shown_display(guid.0, &store).or(net.display_id);
             super::live_display::rebuild_visual(&mut commands, entity);
         }
         if seen.flags == flags {
@@ -360,13 +385,19 @@ pub(super) fn track_building_states(
         }
         if state != seen.state {
             info!(
-                "destructible building: guid {:016x} state {} -> {state} (display {:?})",
-                guid.0, seen.state, net.display_id
+                "destructible building: guid {:016x} state {} -> {state} (display {:?} -> {:?})",
+                guid.0,
+                seen.state,
+                net.display_id,
+                sets.shown_display(guid.0, &store)
             );
             commands.entity(entity).insert(BuildingTransition {
                 from: seen.state,
                 from_display: net.display_id,
             });
+            // The rebuild takes the new state's model at once: rebuilt on the old one, it would
+            // spend the transition there and leave the swap a second, bare rebuild.
+            net.display_id = sets.shown_display(guid.0, &store).or(net.display_id);
             // The old model stays up beside the new one: until it is built, or through the rise.
             if let Some(old) = swaps.get(entity).ok().and_then(|s| s.ghost) {
                 commands.entity(old).despawn();

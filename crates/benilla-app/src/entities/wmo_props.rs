@@ -122,6 +122,18 @@ pub(super) fn resolve_wmo_gameobject_props(
         // change plays, the previous model's sets included.
         if let (Some(store), Some(guid)) = (store, guid) {
             let sets = buildings.state_sets(guid.0, store, transition);
+            if !sets.is_empty() || transition.is_some() {
+                info!(
+                    "destructible building: guid {:016x} display {:?} spawns sets {:?} (transition \
+                     {:?})",
+                    guid.0,
+                    net.display_id,
+                    sets.iter()
+                        .map(|s| (s.set, s.role, s.from_display))
+                        .collect::<Vec<_>>(),
+                    transition
+                );
+            }
             if transition.is_some() {
                 commands
                     .entity(entity)
