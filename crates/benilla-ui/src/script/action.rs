@@ -81,10 +81,13 @@ pub(crate) struct StoredActionState {
     pub(crate) cooldown: Option<(f64, f64, bool)>,
 }
 
+/// A stand-in's state and its cooldown in `GetTime` seconds.
+type StandIn = (ActionState, Option<(f64, f64, bool)>);
+
 /// The stand-in state a test or fixture pushed for `action`, which the verbs read with no view
 /// lent; none in the player build.
 #[cfg(any(test, feature = "fixtures"))]
-fn stand_in(lua: &Lua, action: u32) -> Option<(ActionState, Option<(f64, f64, bool)>)> {
+fn stand_in(lua: &Lua, action: u32) -> Option<StandIn> {
     let model = lua
         .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data");
@@ -95,7 +98,7 @@ fn stand_in(lua: &Lua, action: u32) -> Option<(ActionState, Option<(f64, f64, bo
 }
 
 #[cfg(not(any(test, feature = "fixtures")))]
-fn stand_in(_: &Lua, _: u32) -> Option<(ActionState, Option<(f64, f64, bool)>)> {
+fn stand_in(_: &Lua, _: u32) -> Option<StandIn> {
     None
 }
 
