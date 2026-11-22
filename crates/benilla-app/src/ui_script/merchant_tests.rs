@@ -973,15 +973,12 @@ fn trade_recipient_money_renders_the_digit_not_ellipsis() {
     let mut s = stock_ui(1024.0, 768.0);
     s.set_text_measurer(Box::new(super::FixedWidthFont(6.0)));
 
-    let target = benilla_ui::script::TradeSideState {
-        gold: 5, // a partner offering 5 copper → the recipient trio should show "5"
+    // A partner offering 5 copper → the recipient trio should show "5".
+    s.set_trade_cells(benilla_ui::script::TradeCells {
+        target_gold: 5,
         ..Default::default()
-    };
-    s.set_trade(Some(benilla_ui::script::TradeState {
-        target,
-        ..Default::default()
-    }));
-    s.fire_event("TRADE_SHOW", vec![]);
+    });
+    s.open_trade_partner(0x7, false);
     s.resolve();
     assert!(s.errors().is_empty(), "errors: {:?}", s.errors());
     let quads = s.extract();

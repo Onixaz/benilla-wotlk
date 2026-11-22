@@ -185,6 +185,11 @@ local VERBS = {
     { "itnext", function() return ItemTextHasNextPage() end },
     { "merchantn", function() return GetMerchantNumItems() end },
     { "npc", function() return UnitGUID("npc") end },
+    { "tt1", function() return (GetTradeTargetItemInfo(1)) end },
+    { "tt1n", function() return (select(3, GetTradeTargetItemInfo(1))) end },
+    { "tt3", function() return (GetTradeTargetItemInfo(3)) end },
+    { "tgold", function() return GetTargetTradeMoney() end },
+    { "pgold", function() return GetPlayerTradeMoney() end },
     { "npcname", function() return UnitName("npc") end },
     { "buybackn", function() return GetNumBuybackItems() end },
     { "repaircost", function() return GetRepairAllCost() end },
@@ -7763,4 +7768,144 @@ fn the_vehicle_token_reads_the_seat_at_the_call() {
         .entity_mut(me)
         .remove::<crate::vehicle::Passenger>();
     assert_eq!(rig.live_now().line(&["veh"]), "NOW | veh=nil");
+}
+
+/// A trade from open to cancel: the partner's offer, the partner's accept, a template that lands
+/// late and the cancel, each event with the trade verbs' answers at it. The window's state is the
+/// VM's (`0xbfa400`-`0xbfa684`), written in each handler's turn; the verbs read it and the wire's
+/// cells at the call. Against the per-frame feed this replaced:
+/// - an empty slot answers `nil, nil, 0, 0` (`0x587e6e`-`0x587e8d`), so its count reads 0, not nil;
+/// - the offer fires no `TRADE_UPDATE`: the offer update signals each slot that moved and the coins
+///   (`0x586f96`, `0x587092`), and `TRADE_UPDATE` is the record callback's (`0x586080`), once per
+///   read that missed (four here, the observer reading slot 3 at each event);
+/// - the late record fires no `TRADE_TARGET_ITEM_CHANGED`: the window's copy did not move;
+/// - the cancel's `PLAYER_MONEY` reads the wire's coins already zeroed (`0x704594`, `0x7045ab`),
+///   `TRADE_CLOSED` reads no `"npc"` (`0x5870f7` before `0x58710e`), its line follows the close
+///   (`0x58751d`), and the partner's copy stays until the next open (`0x58716d`).
+#[test]
+fn a_trade_fires_from_its_handlers_with_the_offer_read_at_the_call() {
+    use benilla_protocol::messages::{TradeItem, TradeStatus, TradeStatusExtended};
+    const PARTNER: u64 = 0x0000_0000_0000_0777;
+    const GEM: u32 = 0x7_1001;
+    const LATE: u32 = 0x7_1002;
+    let human = (benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE, 1);
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER, human]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    rig.packets(
+        vec![
+            player_create_with(PARTNER, &[human]),
+            SessionEvent::ItemTemplate {
+                entry: GEM,
+                info: Some(Box::new(crate::items::test_template("Charz Gem"))),
+            },
+        ],
+        2,
+    );
+    const EVENTS: &[&str] = &[
+        "TRADE_SHOW",
+        "TRADE_UPDATE",
+        "TRADE_TARGET_ITEM_CHANGED",
+        "TRADE_PLAYER_ITEM_CHANGED",
+        "TRADE_ACCEPT_UPDATE",
+        "TRADE_MONEY_CHANGED",
+        "PLAYER_TRADE_MONEY",
+        "PLAYER_MONEY",
+        "TRADE_REQUEST_CANCEL",
+        "TRADE_CLOSED",
+        "UI_INFO_MESSAGE",
+    ];
+    const VERBS: &[&str] = &["npc", "tt1", "tt1n", "tt3", "tgold", "pgold"];
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::ui_trade::TradeSession>()
+        .begin(PARTNER);
+    let open = rig.packets(
+        vec![SessionEvent::TradeStatus {
+            status: TradeStatus::OpenWindow { trade_id: 1 },
+        }],
+        3,
+    );
+    let item = |entry: u32, count: u32| TradeItem {
+        entry,
+        display_id: 1,
+        count,
+        wrapped: false,
+        gift_creator: 0,
+        perm_enchant: 0,
+        socket_enchants: [0; 3],
+        creator: 0,
+        charges: 0,
+        suffix_factor: 0,
+        random_prop_id: 0,
+        lock_id: 0,
+        max_durability: 0,
+        durability: 0,
+    };
+    let mut slots: [Option<TradeItem>; 7] = Default::default();
+    slots[0] = Some(item(GEM, 3));
+    slots[2] = Some(item(LATE, 1));
+    let offer = rig.packets(
+        vec![SessionEvent::TradeStatusExtended {
+            state: Box::new(TradeStatusExtended {
+                their_window: true,
+                trade_id: 1,
+                state_index: 1,
+                side_state: 2,
+                gold: 500,
+                enchant_spell_id: 0,
+                slots,
+            }),
+        }],
+        3,
+    );
+    let accept = rig.packets(
+        vec![SessionEvent::TradeStatus {
+            status: TradeStatus::Accept,
+        }],
+        3,
+    );
+    let late = rig.packets(
+        vec![SessionEvent::ItemTemplate {
+            entry: LATE,
+            info: Some(Box::new(crate::items::test_template("Charz Late"))),
+        }],
+        3,
+    );
+    let cancel = rig.packets(
+        vec![SessionEvent::TradeStatus {
+            status: TradeStatus::Canceled,
+        }],
+        3,
+    );
+    let got: Vec<Vec<String>> = [open, offer, accept, late, cancel]
+        .iter()
+        .map(|seen| pin(seen, EVENTS, VERBS))
+        .collect();
+    let at = |s: &str| format!("{s} | npc=0x0000000000000777 tt1=Charz Gem tt1n=3");
+    assert_eq!(
+        got,
+        vec![
+            vec!["TRADE_SHOW | npc=0x0000000000000777 tt1=nil tt1n=0 tt3=nil tgold=0 pgold=0".to_string()],
+            vec![
+                at("TRADE_TARGET_ITEM_CHANGED 1") + " tt3=nil tgold=500 pgold=0",
+                at("TRADE_TARGET_ITEM_CHANGED 3") + " tt3=nil tgold=500 pgold=0",
+                at("TRADE_MONEY_CHANGED") + " tt3=nil tgold=500 pgold=0",
+            ],
+            vec![at("TRADE_ACCEPT_UPDATE 0 1") + " tt3=nil tgold=500 pgold=0"],
+            vec![at("TRADE_UPDATE") + " tt3=Charz Late tgold=500 pgold=0"; 4],
+            vec![
+                at("PLAYER_MONEY") + " tt3=Charz Late tgold=0 pgold=0",
+                at("TRADE_REQUEST_CANCEL") + " tt3=Charz Late tgold=0 pgold=0",
+                "PLAYER_TRADE_MONEY | npc=nil tt1=Charz Gem tt1n=3 tt3=Charz Late tgold=0 pgold=0"
+                    .to_string(),
+                "TRADE_CLOSED | npc=nil tt1=Charz Gem tt1n=3 tt3=Charz Late tgold=0 pgold=0"
+                    .to_string(),
+                "UI_INFO_MESSAGE Trade cancelled. | npc=nil tt1=Charz Gem tt1n=3 tt3=Charz Late tgold=0 pgold=0"
+                    .to_string(),
+            ],
+        ]
+    );
 }

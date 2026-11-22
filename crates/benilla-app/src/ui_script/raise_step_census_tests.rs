@@ -35,7 +35,6 @@ const RAISES_BEFORE_A_WRITE: &[(&str, &str, u16)] = &[
     ("ui_quest_watch.rs", "on_quest_poi", 1276),
     ("ui_stable/net.rs", "on_session_end", 1277),
     ("ui_tabard.rs", "on_save_result", 1279),
-    ("ui_trade/net.rs", "on_trade_status", 1280),
     ("ui_trade/net.rs", "on_trade_status_extended", 1280),
     ("ui_transfer.rs", "on_transfer_pending", 1286),
 ];

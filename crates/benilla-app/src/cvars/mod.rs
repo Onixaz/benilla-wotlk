@@ -774,7 +774,12 @@ fn session_values(world: &World) -> Vec<(&'static str, Option<String>)> {
 fn load_config(world: &mut World) {
     let session = session_values(world);
     let stored = stored_config();
-    let extra = startup_extras();
+    // A test app leaves the install's realmlist out without blanking `$WOW_DATA` for the tests beside it.
+    #[cfg(test)]
+    let install = !world.contains_resource::<tests::NoInstallRealmlist>();
+    #[cfg(not(test))]
+    let install = true;
+    let extra = startup_extras(install);
     let events = {
         let mut cvars = world.resource_mut::<Cvars>();
         for (name, value) in session {
@@ -882,9 +887,9 @@ fn stored_config() -> StoredConfig {
 /// The `SET`s that run after `Config.wtf` at startup: each `WTF\RunOnce*.wtf`, names sorted
 /// case-blind (`0x406740`), then `Data\<locale>\realmlist.wtf` and the root's `realmlist.wtf`
 /// (`0x6b0bf0`).
-fn startup_extras() -> Vec<(String, String)> {
+fn startup_extras(install: bool) -> Vec<(String, String)> {
     let mut files = crate::local_state::run_once_files();
-    if let Some(data) = benilla_formats::wow_data() {
+    if let Some(data) = install.then(benilla_formats::wow_data).flatten() {
         if let Ok(locale) = benilla_formats::data_locale(&data) {
             files.push(data.join(locale).join("realmlist.wtf"));
         }
@@ -1904,7 +1909,6 @@ mod tests {
         let _f = EnvGuard::unset("WOW_FARCLIP");
         let _d = EnvGuard::unset("WOW_CLUTTER_DENSITY");
         let _h = EnvGuard::set("BENILLA_HOME", tmp.to_str().unwrap());
-        let _w = EnvGuard::set("WOW_DATA", "");
 
         let mut app = cvar_app();
         app.update();
@@ -1940,7 +1944,6 @@ mod tests {
         let _f = EnvGuard::unset("WOW_FARCLIP");
         let _d = EnvGuard::unset("WOW_CLUTTER_DENSITY");
         let _h = EnvGuard::set("BENILLA_HOME", tmp.to_str().unwrap());
-        let _w = EnvGuard::set("WOW_DATA", "");
         crate::local_state::write_atomic(
             &tmp.join("WTF/Config.wtf"),
             "SET Sound_MusicVolume \"0.1\"\n",
@@ -1996,9 +1999,14 @@ mod tests {
 
     /// A client with a real CVar host: every knob resource an observer writes, every observer,
     /// [`CvarPlugin`] and a VM for the mirror.
+    /// Startup reads no `realmlist.wtf` from the install: the machine's own would add its `SET`s.
+    #[derive(Resource)]
+    pub(super) struct NoInstallRealmlist;
+
     fn cvar_app() -> App {
         let mut app = App::new();
         app.add_plugins(bevy::MinimalPlugins)
+            .insert_resource(NoInstallRealmlist)
             .insert_resource(SoundConfig::default())
             .insert_resource(UiScaleCvar(1.0))
             .insert_resource(UiScaleSetting {
@@ -2176,7 +2184,6 @@ mod tests {
         let _d = EnvGuard::unset("WOW_CLUTTER_DENSITY");
         let _w = EnvGuard::unset("WOW_CHAR");
         let _h = EnvGuard::set("BENILLA_HOME", tmp.to_str().unwrap());
-        let _w = EnvGuard::set("WOW_DATA", "");
         let roster = || {
             (1..=4)
                 .map(|g| crate::char_select::test_character(g, &format!("Char{g}")))
@@ -2640,7 +2647,6 @@ mod tests {
         let _d = EnvGuard::unset("WOW_CLUTTER_DENSITY");
         let _m = EnvGuard::unset("WOW_MSAA");
         let _h = EnvGuard::set("BENILLA_HOME", tmp.to_str().unwrap());
-        let _w = EnvGuard::set("WOW_DATA", "");
         crate::local_state::write_atomic(
             &tmp.join("WTF/Config.wtf"),
             "SET Sound_MusicVolume \"0.1\"\nSET gxMultisample \"4\"\n",

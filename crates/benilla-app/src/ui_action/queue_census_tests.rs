@@ -23,8 +23,6 @@ const HOLDERS: &[(&str, usize)] = &[
     ("ui_party/feed.rs", 1),
     ("ui_party/net.rs", 18),
     ("ui_stable/net.rs", 3),
-    ("ui_trade/mod.rs", 2),
-    ("ui_trade/net.rs", 3),
 ];
 
 /// Where the queues are defined, drained and registered, which the count leaves out.

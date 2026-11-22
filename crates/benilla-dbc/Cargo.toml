@@ -3,7 +3,7 @@ name = "benilla-dbc"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "WDBC (client DBC) reader for WoW 1.12.1 (build 5875)"
+description = "WDBC (client DBC) reader for WoW 3.3.5a (build 12340)"
 
 [lints]
 workspace = true

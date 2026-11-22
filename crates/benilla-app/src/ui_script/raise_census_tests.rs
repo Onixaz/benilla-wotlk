@@ -138,7 +138,6 @@ const ON_THE_QUEUE: &[(&str, &str)] = &[
     ("ui_title.rs", "feed_titles"),
     ("ui_tooltip/mod.rs", "drive_mouseover_tooltip"),
     ("ui_trade/mod.rs", "drain_trade"),
-    ("ui_trade/mod.rs", "feed_trade"),
     ("ui_tradeskill.rs", "feed_trade_skill"),
     ("ui_transfer.rs", "feed_difficulty_notices"),
     ("ui_transfer.rs", "feed_transfer_aborts"),
