@@ -1,4 +1,4 @@
-//! A BLP2 texture decoder for WoW 1.12.1, which ships Direct content in three shapes:
+//! A BLP2 texture decoder for WoW 3.3.5a, which ships Direct content in three shapes:
 //! - Raw1: a 256-entry BGRA palette and 1-byte indices, then a 0, 1, 4 or 8-bit alpha block.
 //! - Raw3: uncompressed BGRA8.
 //! - DXTC: S3TC blocks, `alpha_type` selecting DXT1 (0), DXT3 (1) or DXT5 (7).
