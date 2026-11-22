@@ -2375,6 +2375,85 @@ mod tests {
     use super::*;
     use crate::spell::learn_place::Learner;
 
+    /// Both of our finishes reach the `modalNextSpell` chain's send through the client's own handlers, with no client data: `SMSG_CAST_FAILED` (`0x808b7f` -> `0x80559a`) and our `SMSG_SPELL_GO` (`0x80fe9d` -> `0x80559a`).
+    #[test]
+    fn the_cast_failure_and_our_go_send_the_chained_spell() {
+        const ME: u64 = 0x10;
+        const BOLT: u32 = 133;
+        const NOVA: u32 = 122;
+        let chained = |ev: fn(u8) -> SessionEvent| {
+            let mut app = crate::game_plugins::schedule_tests::headless_client();
+            let world = app.world_mut();
+            let (tx, rx) = crossbeam_channel::unbounded();
+            world.insert_resource(NetCommands(tx));
+            world.insert_resource(SelfGuid(Some(ME)));
+            let mut spells = Spells::empty_for_tests();
+            spells.catalog = benilla_formats::SpellCatalog::from_displays(
+                [
+                    (
+                        BOLT,
+                        benilla_formats::SpellDisplay {
+                            modal_next_spell: NOVA,
+                            ..Default::default()
+                        },
+                    ),
+                    (NOVA, benilla_formats::SpellDisplay::default()),
+                ]
+                .into_iter()
+                .collect(),
+            );
+            world.insert_resource(spells);
+            world
+                .resource_mut::<PendingCast>()
+                .file(crate::spell::PendingRecord::player(BOLT, 5, ME));
+            crate::net::handlers::dispatch(world, vec![ev(5)]);
+            rx.try_iter().any(|c| {
+                matches!(
+                    c,
+                    crate::net::ClientCommand::CastSpell {
+                        spell_id: NOVA,
+                        ..
+                    }
+                )
+            })
+        };
+        assert!(
+            chained(|count| SessionEvent::CastResult {
+                cast_count: count,
+                spell_id: BOLT,
+                success: false,
+                reason: Some(0x28),
+                arg: None,
+                arg2: None,
+                wire_reason: Some(0x28),
+            }),
+            "the failure's finish chains"
+        );
+        assert!(
+            chained(|count| SessionEvent::SpellGo {
+                caster: ME,
+                cast_count: count,
+                spell_id: BOLT,
+                cast_flags: 0,
+                server_time: 0,
+                hits: vec![],
+                misses: vec![],
+                reflects: vec![],
+                target: None,
+                go_target: None,
+                target_mask: 0,
+                src: None,
+                dest: None,
+                ammo: None,
+                item_caster: None,
+                trajectory: None,
+                dest_counter: 0,
+                points: vec![],
+            }),
+            "our go's finish chains"
+        );
+    }
+
     /// The finish's release unlinks the failed record alone (`0x8055a2` -> `0x805100`): a strike a failure listener queued again, under a new count, stays queued.
     #[test]
     fn the_release_keeps_a_strike_a_listener_queued_again() {
@@ -4289,10 +4368,7 @@ mod tests {
             "somebody else's Backstab is not our attack-start"
         );
     }
-    /// The finish's `modalNextSpell` chain (`0x80551e`-`0x80559a`), the same for a go and a failure:
-    /// - a sting chains Auto Shot, its record still held;
-    /// - Auto Shot already running sends nothing;
-    /// - a reply for a spell not in flight chains nothing.
+    /// The finish's `modalNextSpell` chain (`0x80551e`-`0x80559a`), the same for a go and a failure: a sting chains Auto Shot with its record still held, a running Auto Shot sends nothing, a reply for a spell not in flight chains nothing.
     #[test]
     fn a_hunter_shots_cast_result_chains_auto_shot_exactly_once() {
         const SERPENT_STING: u32 = 1978;
