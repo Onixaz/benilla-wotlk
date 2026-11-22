@@ -685,12 +685,13 @@ pub trait LiveState {
         None
     }
 
-    /// A macro edit's parse (`0x565c40` -> `0x5650c0`): each macro's bound spell off the book,
-    /// stored where the bar reads it, and returned keyed by 1-based index for the VM's copy;
-    /// `None` without a view.
+    /// A macro verb's binding change: a parsed macro's bound spell off the book (`0x565c40` ->
+    /// `0x5650c0`), or a deleted one's binding dropped, stored where the bar reads it; every
+    /// binding is returned keyed by 1-based index for the VM's copy. `None` without a view.
     fn macros_changed(
         &mut self,
         _macros: &super::MacroState,
+        _change: super::MacroChange,
     ) -> Option<std::collections::HashMap<u32, super::MacroBinding>> {
         None
     }

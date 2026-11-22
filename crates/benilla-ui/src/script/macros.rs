@@ -50,6 +50,17 @@ pub struct MacroBinding {
     pub pet_book: bool,
 }
 
+/// What a macro verb did to the table, for the binding it owes: a body set parses that macro alone
+/// (`0x5663a0` -> `0x565c40`), and a delete drops its node and leaves the others' bindings as they
+/// are (`0x566d50`), which by index shifts the later ones of its set down by one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MacroChange {
+    /// The 1-based index whose body was set.
+    Parsed(u32),
+    /// The 1-based index deleted.
+    Deleted(u32),
+}
+
 /// The macro table: the account and character lists.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MacroState {
@@ -200,11 +211,11 @@ impl super::UiScript {
     }
 }
 
-/// The edit's parse binds the macros' spells at the call (`0x565c40` -> `0x5650c0`), before the
-/// bar's macro update signals their slots.
-fn rebind(lua: &mlua::Lua) {
+/// A verb's binding change at the call, before the bar's macro update signals the slots: a body
+/// set parses its macro alone (`0x565c40` -> `0x5650c0`), a delete drops one binding.
+fn rebind(lua: &mlua::Lua, change: MacroChange) {
     let macros = crate::script::model_mut_of(lua).macros.clone();
-    if let Some(bindings) = super::write_live(|l| l.macros_changed(&macros)).flatten() {
+    if let Some(bindings) = super::write_live(|l| l.macros_changed(&macros, change)).flatten() {
         crate::script::model_mut_of(lua).macro_bindings = bindings;
     }
 }
@@ -458,7 +469,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(i) = made else {
                 return Ok(Value::Nil);
             };
-            rebind(lua);
+            // The create sets its body always (`0x568105`).
+            rebind(lua, MacroChange::Parsed(i as u32));
             signal_macro_slots(lua, |m| m as usize == i);
             Ok(Value::Integer(i as i64))
         })?,
@@ -477,12 +489,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             let name = opt_string(a.get(1));
             let body = opt_string(a.get(3));
+            let parses = body.is_some();
             let edited = edit_macro(&mut model, index, name, texture, body);
             drop(model);
             let Some(i) = edited else {
                 return Ok(Value::Nil);
             };
-            rebind(lua);
+            // Only a passed body is set and parsed (`0x566d1a`, `0x566d20`): a rename binds nothing.
+            if parses {
+                rebind(lua, MacroChange::Parsed(i as u32));
+            }
             signal_macro_slots(lua, |m| m as usize == i);
             Ok(Value::Integer(i as i64))
         })?,
@@ -494,7 +510,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let index = index_arg(lua, Some(&arg));
             let deleted = delete_macro(&mut crate::script::model_mut_of(lua), index);
             if deleted {
-                rebind(lua);
+                rebind(lua, MacroChange::Deleted(index as u32));
                 // The gap closes, so every later index of the same set names another macro now.
                 let last = if index <= MAX_ACCOUNT_MACROS {
                     MAX_ACCOUNT_MACROS

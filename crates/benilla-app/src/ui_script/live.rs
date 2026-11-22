@@ -1293,12 +1293,12 @@ impl LiveState for LiveView<'_, '_> {
     fn macros_changed(
         &mut self,
         macros: &benilla_ui::script::MacroState,
+        change: benilla_ui::script::MacroChange,
     ) -> Option<std::collections::HashMap<u32, benilla_ui::script::MacroBinding>> {
         let (table, book) = (self.macro_table.as_deref()?, self.book.as_deref()?);
-        let fresh = crate::ui_macro::bind_all(table, macros, &book.live.book);
-        let vm = crate::ui_macro::vm_bindings(&fresh);
-        self.bound.as_deref_mut()?.0 = fresh;
-        Some(vm)
+        let bound = &mut self.bound.as_deref_mut()?.0;
+        crate::ui_macro::apply_change(table, macros, &book.live.book, bound, change);
+        Some(crate::ui_macro::vm_bindings(bound))
     }
 
     fn bar_usable_update(&mut self, sets_usable: bool) -> Option<bool> {
