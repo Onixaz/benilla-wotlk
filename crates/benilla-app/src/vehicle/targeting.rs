@@ -76,8 +76,10 @@ pub(crate) struct TrajectoryTargeting {
     /// The spell the preview last drew, set too by a trajectory cast's send (`0x6fbf90`).
     spell: u32,
     /// A trajectory cast the reference would hold until its cast animation releases the missile
-    /// (`0x809f80`, sent by `0x80de60`), which the cast leg reads (`0x7fe500`). benilla sends at
-    /// the press, so the hold runs from the send to that cast's own go or refusal instead.
+    /// (`0x809f80`, sent by `0x80de60` from the release `0x72df00`), which the cast leg reads
+    /// (`0x7fe500`). benilla sends at the press and parks the go's missile on the caster until the
+    /// animation's release event, so the hold runs from the send to that release, or to a
+    /// refusal: the reference's span, later by the go's round trip.
     held_cast: Option<HeldCast>,
     /// This frame's opacity, 0 when nothing draws.
     alpha: f32,
@@ -90,13 +92,21 @@ pub(crate) struct TrajectoryTargeting {
     decal_key: Option<DecalKey>,
 }
 
-/// A sent trajectory cast awaiting its go: the caster, its `castCount` and spell.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A sent trajectory cast awaiting its release: the caster, its `castCount` and spell, and once
+/// its go has come, when, and whether its missile has been seen parked on the caster.
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct HeldCast {
     caster: u64,
     count: u8,
     spell: u32,
+    went_s: Option<f32>,
+    parked: bool,
 }
+
+/// How long after its go a held cast waits for its missile to be parked before it lets go: the
+/// router queues it within a frame or two, and a go that parks nothing (no cast animation, no
+/// missile) releases at once in the reference's terms.
+const PARK_GRACE_S: f32 = 0.25;
 
 /// An impact model's root, which only the preview moves.
 #[derive(Component)]
@@ -202,19 +212,27 @@ impl TrajectoryTargeting {
             caster,
             count,
             spell,
+            went_s: None,
+            parked: false,
         });
     }
 
-    /// The cast `ev` answers, if it is the held one: it launched or was refused.
-    fn answered(&self, ev: &SessionEvent) -> bool {
+    /// What `ev` does to the held cast: its go starts the wait for the release, a refusal ends it.
+    fn answer(&self, ev: &SessionEvent) -> Answer {
         let Some(h) = self.held_cast else {
-            return false;
+            return Answer::None;
         };
-        match *ev {
+        let refused = match *ev {
             SessionEvent::SpellGo {
                 caster, cast_count, ..
+            } => {
+                return if caster == h.caster && cast_count == h.count {
+                    Answer::Went
+                } else {
+                    Answer::None
+                };
             }
-            | SessionEvent::SpellFailed {
+            SessionEvent::SpellFailed {
                 caster, cast_count, ..
             } => caster == h.caster && cast_count == h.count,
             SessionEvent::PetCastFailed {
@@ -229,6 +247,27 @@ impl TrajectoryTargeting {
                 ..
             } => cast_count == h.count && spell_id == h.spell,
             _ => false,
+        };
+        if refused {
+            Answer::Refused
+        } else {
+            Answer::None
+        }
+    }
+
+    /// The held cast's release: its go has come and its missile has left the caster, or was never
+    /// parked within [`PARK_GRACE_S`].
+    fn release_held(&mut self, now_s: f32, parked: impl Fn(u32) -> bool) {
+        let Some(h) = self.held_cast.as_mut() else {
+            return;
+        };
+        let Some(went) = h.went_s else {
+            return;
+        };
+        if parked(h.spell) {
+            h.parked = true;
+        } else if h.parked || now_s - went > PARK_GRACE_S {
+            self.held_cast = None;
         }
     }
 
@@ -322,7 +361,12 @@ type MoverRow<'a> = (
 pub(super) fn update_trajectory_targeting(
     mut commands: Commands,
     mut state: ResMut<TrajectoryTargeting>,
-    (time, asset_server, models): (Res<Time>, Res<AssetServer>, Res<Assets<M2Model>>),
+    (time, asset_server, models, pending): (
+        Res<Time>,
+        Res<AssetServer>,
+        Res<Assets<M2Model>>,
+        Option<Res<crate::entities::PendingMissiles>>,
+    ),
     mover: Query<MoverRow, With<crate::net::ActiveMover>>,
     vehicles: Query<&super::Vehicle>,
     index: Option<Res<crate::net::GuidIndex>>,
@@ -395,6 +439,10 @@ pub(super) fn update_trajectory_targeting(
             (def.missile != 0).then_some(())?;
             visuals.as_deref()?.0.missile(def.missile)
         };
+        // A held cast lets go as its missile leaves the caster.
+        state.release_held(time.elapsed_secs(), |spell| {
+            pending.as_deref().is_some_and(|p| p.queues(entity, spell))
+        });
         // The cast leg: the mover's cast, else the held trajectory cast, when its spell has a
         // missile row.
         let cast = casting
@@ -512,13 +560,28 @@ pub(super) fn may_sync_facing(
     !prevented
 }
 
-/// The held trajectory cast ends with its go or its refusal.
+/// What a cast's answer does to the held one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Answer {
+    None,
+    Went,
+    Refused,
+}
+
+/// The held trajectory cast waits for its release from its go, and ends with a refusal.
 pub(super) fn on_trajectory_cast_answer(
     In(ev): In<SessionEvent>,
+    time: Res<Time>,
     mut state: ResMut<TrajectoryTargeting>,
 ) {
-    if state.answered(&ev) {
-        state.held_cast = None;
+    match state.answer(&ev) {
+        Answer::Went => {
+            if let Some(h) = state.held_cast.as_mut() {
+                h.went_s.get_or_insert(time.elapsed_secs());
+            }
+        }
+        Answer::Refused => state.held_cast = None,
+        Answer::None => {}
     }
 }
 
@@ -834,9 +897,10 @@ mod tests {
             dest_counter: 0,
             points: Vec::new(),
         };
-        assert!(!s.answered(&go(0xF150_0000_0000_0001, 4)), "another count");
-        assert!(!s.answered(&go(7, 3)), "another caster");
-        assert!(s.answered(&go(0xF150_0000_0000_0001, 3)));
+        const CAT: u64 = 0xF150_0000_0000_0001;
+        assert_eq!(s.answer(&go(CAT, 4)), Answer::None, "another count");
+        assert_eq!(s.answer(&go(7, 3)), Answer::None, "another caster");
+        assert_eq!(s.answer(&go(CAT, 3)), Answer::Went);
         let refused = SessionEvent::PetCastFailed {
             cast_count: 3,
             spell_id: 66218,
@@ -844,10 +908,34 @@ mod tests {
             arg: None,
             wire_reason: 0,
         };
-        assert!(s.answered(&refused));
+        assert_eq!(s.answer(&refused), Answer::Refused);
         // A cast the reference sends at once holds nothing.
-        s.sent(0xF150_0000_0000_0001, 5, 66218, false);
-        assert!(!s.answered(&go(0xF150_0000_0000_0001, 5)));
+        s.sent(CAT, 5, 66218, false);
+        assert_eq!(s.answer(&go(CAT, 5)), Answer::None);
+    }
+
+    /// The hold outlives the go while the missile waits on the caster, and lets go at its
+    /// release; a go that parks nothing lets go after the grace.
+    #[test]
+    fn the_held_cast_lets_go_at_the_release() {
+        let mut s = state();
+        s.sent(1, 3, 66218, true);
+        s.release_held(0.0, |_| false);
+        assert!(s.held_cast.is_some(), "no go yet");
+        s.held_cast.as_mut().unwrap().went_s = Some(1.0);
+        s.release_held(1.01, |_| false);
+        assert!(s.held_cast.is_some(), "the missile is not parked yet");
+        s.release_held(1.05, |spell| spell == 66218);
+        s.release_held(1.6, |_| true);
+        assert!(s.held_cast.is_some(), "the throw winds up past the grace");
+        s.release_held(1.7, |_| false);
+        assert!(s.held_cast.is_none(), "released");
+        s.sent(1, 4, 66218, true);
+        s.held_cast.as_mut().unwrap().went_s = Some(2.0);
+        s.release_held(2.2, |_| false);
+        assert!(s.held_cast.is_some());
+        s.release_held(2.3, |_| false);
+        assert!(s.held_cast.is_none(), "nothing parked within the grace");
     }
 
     /// The reference holds a cast whose missile visual's cast kit animates, unless a cast runs.
