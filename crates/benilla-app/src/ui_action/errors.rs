@@ -309,10 +309,11 @@ pub(super) fn show_one(
         sounds.push(record);
     }
     match kind {
-        // The display's chat arm adds the line on its row's chat type in the caller's turn (`0x521814` -> `0x509dd0`); with no chat log lent the chat feed takes it.
+        // The display's chat arm on its row's chat type (`0x521814` -> `0x509dd0`), through the chat
+        // feed, in order with the caller's other chat lines there (#1354).
         MsgKind::Chat => {
             let chat_type = record.map_or(0, |r| r.chat_type);
-            if let (Some(text), Some(chat)) = (script.add_chat_text(chat_type, text), chat) {
+            if let Some(chat) = chat {
                 chat.push_event(ChatEvent::text_only(
                     crate::ui_chat::kind_of_type(chat_type),
                     text,
@@ -1058,11 +1059,10 @@ mod chat_arm_tests {
 
     use super::{show_line_in_world, UiError};
 
-    /// A handler's chat-kind line is added in its turn on its row's chat type (`0x521814` ->
-    /// `0x509dd0`): a type-26 row fires `CHAT_MSG_SKILL` as the handler's events fire, not a
-    /// `CHAT_MSG_SYSTEM` line from the chat feed a frame later.
+    /// A handler's chat-kind line goes out on its row's chat type (`0x521814` -> `0x509dd0`): a
+    /// type-26 row is a `CHAT_MSG_SKILL` line, not `CHAT_MSG_SYSTEM`.
     #[test]
-    fn a_skill_rows_line_is_added_in_turn_as_a_skill_line() {
+    fn a_skill_rows_line_goes_out_as_a_skill_line() {
         let mut world = World::new();
         world.init_resource::<crate::ui_script::live::UiEvents>();
         world.init_resource::<crate::ui_chat::ChatWindows>();
@@ -1089,7 +1089,13 @@ mod chat_arm_tests {
             .non_send_resource::<UiScript>()
             .eval("return table.concat(SEEN, ',')")
             .unwrap();
-        assert_eq!(seen, "CHAT_MSG_SKILL:You have gained the Swords skill.");
-        assert_eq!(world.resource::<crate::ui_chat::ChatLog>().pending_len(), 0);
+        assert_eq!(seen, "");
+        assert_eq!(
+            world.resource::<crate::ui_chat::ChatLog>().pending_events(),
+            [(
+                Some(crate::ui_chat::ChatEventKind::Skill),
+                "You have gained the Swords skill.".to_string()
+            )]
+        );
     }
 }
