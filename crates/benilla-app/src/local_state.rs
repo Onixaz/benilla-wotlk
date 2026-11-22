@@ -527,7 +527,9 @@ mod tests {
         assert_eq!(config_path(), None);
     }
 
-    /// A missing or wrong `$WOW_DATA` does not move or lose the state folder.
+    /// The state folder is not found through the install, so a missing or wrong `$WOW_DATA` does
+    /// not move or lose it. Read against the run's own install: setting `$WOW_DATA` here would
+    /// hide the install from the data tests running beside this one.
     #[test]
     fn the_state_folder_no_longer_depends_on_finding_the_install() {
         let _l = ENV_LOCK
@@ -535,14 +537,18 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _c = EnvGuard::unset("WOW_CAPTURE");
         let _h = EnvGuard::unset("BENILLA_HOME");
-        let _d = EnvGuard::set("WOW_DATA", "/nonexistent/benilla-test/Data");
         let h =
             resident_home().expect("a broken install path must not cost the player their config");
-        assert!(
-            !h.starts_with("/nonexistent"),
-            "home() still reads $WOW_DATA: {}",
-            h.display()
-        );
+        if let Some(install) =
+            benilla_formats::wow_data().and_then(|d| d.parent().map(Path::to_path_buf))
+        {
+            assert!(
+                !h.starts_with(&install),
+                "home() resolves inside the install at {}: {}",
+                install.display(),
+                h.display()
+            );
+        }
         assert!(h.ends_with(STATE_DIR), "{}", h.display());
     }
 
