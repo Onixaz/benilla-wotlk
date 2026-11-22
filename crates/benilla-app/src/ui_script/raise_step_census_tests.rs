@@ -32,7 +32,6 @@ const RAISES_BEFORE_A_WRITE: &[(&str, &str, u16)] = &[
     ("ui_battlefield.rs", "on_status", 1275),
     ("ui_battlefield_score.rs", "on_pvp_log_data", 1275),
     ("ui_companion.rs", "on_creature_answer", 1277),
-    ("ui_items/net.rs", "on_inventory_failure", 1278),
     ("ui_loot/net.rs", "on_error", 1280),
     ("ui_loot/net.rs", "on_release_response", 1280),
     ("ui_loot/net.rs", "on_response", 1280),
