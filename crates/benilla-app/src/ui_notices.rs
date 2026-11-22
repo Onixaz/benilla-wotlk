@@ -253,8 +253,7 @@ fn afk_report(result: u8, enabled: bool) -> Option<(&'static str, &'static str)>
     }
 }
 
-/// The notices' handlers (`0x526642`, `0x526eca`, `0x6e3fe5`, ...): each event, chat line and
-/// refusal line at its step in the handler, with the `World` lent.
+/// The notices' handlers (`0x526642`, `0x526eca`, `0x6e3fe5`, ...): each event, chat line and refusal line at its step in the handler, with the `World` lent.
 fn on_notice(In(ev): In<SessionEvent>, world: &mut World) {
     let SessionEvent::Notice(notice) = ev else {
         return;
@@ -742,8 +741,7 @@ mod tests {
             .unwrap()
     }
 
-    /// The handlers' events fire inside the handler (`0x526642`, `0x526eca`), and the AFK report's
-    /// switch adds its chat line there too (`0x6e3fe5`, `0x509dd0`), not from a later feed.
+    /// The handlers' events fire inside the handler (`0x526642`, `0x526eca`), and the AFK report's switch adds its chat line there too (`0x6e3fe5`, `0x509dd0`), not from a later feed.
     #[test]
     fn a_notices_event_and_chat_line_fire_in_the_handlers_turn() {
         let mut app = notice_client(&[

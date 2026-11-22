@@ -32,8 +32,7 @@ pub(crate) trait CastRefusals {
         });
     }
 
-    /// The pet's `SMSG_PET_CAST_FAILED` refusal; its handler (`0x806c30`) passes both argument
-    /// words to the pet's display (`0x806d60`).
+    /// The pet's `SMSG_PET_CAST_FAILED` refusal; its handler (`0x806c30`) passes both argument words to the pet's display (`0x806d60`).
     fn push_pet(&mut self, spell_id: u32, reason: u8, arg: Option<u32>, arg2: Option<u32>) {
         self.refuse(CastFail {
             arg,
@@ -248,9 +247,7 @@ impl CastFailShow<'_, '_> {
             ..name_tables.args(spells)
         };
         let template = |key: &str| get(key).filter(|s| !s.is_empty());
-        // 29-31 (`0x8085dd`): the class and mask the wire's two words name, through
-        // `ItemSubClassMask.dbc` on the exact pair, else the first masked subclass (`0x7fea30`);
-        // a local refusal passes the spell's own. No name shows the template as is.
+        // 29-31 (`0x8085dd`): the class and mask the wire's two words name, through `ItemSubClassMask.dbc` on the exact pair, else the first masked subclass (`0x7fea30`); a local refusal passes the spell's own. No name shows the template as is.
         if let (0x19..=0x1b, Some(subs)) = (reason, sub_classes.as_deref()) {
             let pair = match (fail.arg, fail.arg2) {
                 (Some(class), Some(mask)) => Some((class, mask)),
@@ -268,8 +265,7 @@ impl CastFailShow<'_, '_> {
                 return None;
             }
         }
-        // 54 (`0x80865d`): the first subclass of class 6 (Projectile) under `1 << word`, the shift
-        // masked to five bits as x86 `shl` masks it, with no mask-group stage. The player's arm only.
+        // 54 (`0x80865d`): the first subclass of class 6 (Projectile) under `1 << word`, the shift masked to five bits as x86 `shl` masks it, with no mask-group stage. The player's arm only.
         if let (false, 0x31, Some(arg), Some(subs)) =
             (pet, reason, fail.arg, sub_classes.as_deref())
         {
@@ -283,8 +279,7 @@ impl CastFailShow<'_, '_> {
                     .map(|t| cast_fail::CastFailLine::passthrough(t.replace("%s", name)));
             }
         }
-        // 100's word `-2` (`0x80869a`): message 0, `ERR_INV_FULL`, with an empty argText, so the
-        // log reads the shown line (`0x808b23`).
+        // 100's word `-2` (`0x80869a`): message 0, `ERR_INV_FULL`, with an empty argText, so the log reads the shown line (`0x808b23`).
         if !pet && reason == 0x5c && fail.arg == Some(0xFFFF_FFFE) {
             return template("ERR_INV_FULL").map(|text| cast_fail::CastFailLine {
                 key: "ERR_INV_FULL",
@@ -293,8 +288,7 @@ impl CastFailShow<'_, '_> {
                 logs: true,
             });
         }
-        // 129 (`0x808a86`): a positive word names an `ItemLimitCategory.dbc` row, shown on message
-        // `0x272` with its quantity and name (`0x8080b1`, `0x808aa5`), the log reading the shown line.
+        // 129 (`0x808a86`): a positive word names an `ItemLimitCategory.dbc` row, shown on message `0x272` with its quantity and name (`0x8080b1`, `0x808aa5`), the log reading the shown line.
         if let (false, 0x77, Some(id)) = (pet, reason, fail.arg.filter(|&a| a as i32 > 0)) {
             let row = name_tables.limits.as_deref().and_then(|l| l.0.get(id));
             if let Some(row) = row {
@@ -313,8 +307,7 @@ impl CastFailShow<'_, '_> {
                 });
             }
         }
-        // 131 and 100 (`0x808695`), the player's arms only: the item the wire's word names; a
-        // local refusal names the first missing tool or short reagent, as the pre-send check finds it.
+        // 131 and 100 (`0x808695`), the player's arms only: the item the wire's word names; a local refusal names the first missing tool or short reagent, as the pre-send check finds it.
         if !pet && (reason == 0x78 || reason == 0x5c) {
             let d = d?;
             let failing = match fail.arg {
@@ -390,8 +383,7 @@ impl CastFailShow<'_, '_> {
     }
 }
 
-/// Show `fail` from a world step: a handler's refusal in its turn. Whether the display took its
-/// silent exit (`0x8086ff`).
+/// Show `fail` from a world step: a handler's refusal in its turn. Whether the display took its silent exit (`0x8086ff`).
 pub(crate) fn show_refusal(world: &mut World, fail: CastFail) -> bool {
     if let Some(mut seen) = world.get_resource_mut::<RefusalsSeen>() {
         seen.0.push(fail);
@@ -421,8 +413,7 @@ fn show_refusal_now(
     }
 }
 
-/// `0x808200` for our own failure: the line, then the cast's end on the wire reason, or on
-/// `DONT_REPORT` (wire 27) when the display took its silent exit (`0x808705`, `0x808b6c`).
+/// `0x808200` for our own failure: the line, then the cast's end on the wire reason, or on `DONT_REPORT` (wire 27) when the display took its silent exit (`0x808705`, `0x808b6c`).
 pub(crate) fn refuse_then_end(world: &mut World, fail: CastFail, caster: u64, cast_count: u8) {
     const DONT_REPORT: u8 = 0x17;
     let quiet = show_refusal(world, fail);

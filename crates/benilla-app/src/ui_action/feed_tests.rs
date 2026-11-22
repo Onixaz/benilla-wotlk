@@ -108,8 +108,7 @@ fn is_consumable_is_ammo_thrown_or_a_negative_charge_use_block() {
     assert!(!proc_item.is_consumable());
 }
 
-/// A resolved line ([`TextSink`]) end to end into the stock `UIErrorsFrame`, in the handler's turn:
-/// an `SMSG_NOTIFICATION` draws red, an `SMSG_AREA_TRIGGER_MESSAGE` yellow.
+/// A resolved line ([`TextSink`]) end to end into the stock `UIErrorsFrame`, in the handler's turn: an `SMSG_NOTIFICATION` draws red, an `SMSG_AREA_TRIGGER_MESSAGE` yellow.
 #[test]
 fn pre_resolved_lines_land_on_the_errors_frame_in_the_arms_colour() {
     benilla_formats::wow_data_or_skip!();
@@ -502,10 +501,7 @@ fn a_tame_failure_composes_the_reason_string_into_err_tame_failed() {
     );
 }
 
-/// 12340's arms read the wire's words, not our bags: 100 names the item its word names and its
-/// word `-2` shows message 0 (`0x80869a`, `0x8086b2`); 129 names its `ItemLimitCategory.dbc` row on
-/// message `0x272` (`0x8080b1`, `0x808a86`); 176 names the casting item off the record's caster
-/// (`0x808a0a`-`0x808a66`). Each logs the shown line.
+/// 12340's arms read the wire's words, not our bags: 100 names the item its word names and its word `-2` shows message 0 (`0x80869a`, `0x8086b2`); 129 names its `ItemLimitCategory.dbc` row on message `0x272` (`0x8080b1`, `0x808a86`); 176 names the casting item off the record's caster (`0x808a0a`-`0x808a66`). Each logs the shown line.
 #[test]
 fn the_reagent_limit_and_glyph_arms_name_what_12340_names() {
     use crate::ui_action::Spells;
@@ -637,8 +633,7 @@ fn the_reagent_limit_and_glyph_arms_name_what_12340_names() {
     );
 }
 
-/// 29-31 name the class and mask the wire's two words carry, not the spell's (`0x8085dd`-`0x808613`);
-/// 54 the first class-6 subclass under `1 << word` (`0x80865d` -> `0x7fea30`).
+/// 29-31 name the class and mask the wire's two words carry, not the spell's (`0x8085dd`-`0x808613`); 54 the first class-6 subclass under `1 << word` (`0x80865d` -> `0x7fea30`).
 #[test]
 fn the_equipped_item_arms_name_the_wire_words() {
     use crate::ui_action::Spells;
@@ -706,9 +701,7 @@ fn the_equipped_item_arms_name_the_wire_words() {
     );
 }
 
-/// The silent exit (`0x8086ff`): arm 4 with no player and a reagent not yet cached show no line
-/// and end the cast on `DONT_REPORT` (`0x808705` -> `0x8055c0`), `UNIT_SPELLCAST_FAILED_QUIET`; a
-/// shown line ends it on the wire's reason (`0x808b6c`).
+/// The silent exit (`0x8086ff`): arm 4 with no player and a reagent not yet cached show no line and end the cast on `DONT_REPORT` (`0x808705` -> `0x8055c0`), `UNIT_SPELLCAST_FAILED_QUIET`; a shown line ends it on the wire's reason (`0x808b6c`).
 #[test]
 fn a_silent_exit_ends_the_cast_quietly() {
     use crate::ui_action::Spells;

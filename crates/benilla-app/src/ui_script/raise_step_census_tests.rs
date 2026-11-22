@@ -1,9 +1,4 @@
-//! The handlers' raise census (#1364): every packet handler that raises into the VM before a later
-//! write of its own. 12340 fires each event (`0x703e50`) and line (`0x5216f0`) at its step inside
-//! the handler, so a listener reads the state as of that step; a handler here raises at its step
-//! once it runs the write after the raise as a later step ([`super::live::UiEvents::world`], or an
-//! exclusive handler's [`crate::net::handlers::step`]). The list only falls: each #1245 part
-//! converts its own rows and strikes them.
+//! The handlers' raise census (#1364): every packet handler that raises into the VM before a later write of its own. 12340 fires each event (`0x703e50`) and line (`0x5216f0`) at its step inside the handler, so a listener reads the state as of that step; a handler here raises at its step once it runs the write after the raise as a later step ([`super::live::UiEvents::world`], or an exclusive handler's [`crate::net::handlers::step`]). The list only falls: each #1245 part converts its own rows and strikes them.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -27,8 +22,7 @@ const RAISES_BEFORE_A_WRITE: &[(&str, &str, u16)] = &[
     ("ui_transfer.rs", "on_transfer_pending", 1286),
 ];
 
-/// The walker's rows read by hand against 12340: every write it sees after the first raise is at
-/// the reference's place. (file, handler, why).
+/// The walker's rows read by hand against 12340: every write it sees after the first raise is at the reference's place. (file, handler, why).
 const READ_AT_THEIR_STEP: &[(&str, &str, &str)] = &[
     (
         "creature_anim/net.rs",
@@ -267,8 +261,7 @@ fn params_of(params: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// `body` with the argument of each later step blanked: a `ui.world(..)` step, `in_turn(..)`,
-/// `after_raises(..)` and a turn's `lent(..)` run after the raises queued before them fire.
+/// `body` with the argument of each later step blanked: a `ui.world(..)` step, `in_turn(..)`, `after_raises(..)` and a turn's `lent(..)` run after the raises queued before them fire.
 fn without_later_steps(body: &str) -> String {
     let later =
         Regex::new(r"\.world\(|\bin_turn\(|\bafter_raises\(|\.lent\(|\bstep\(world,").unwrap();
@@ -324,8 +317,7 @@ fn queue_bundles(files: &BTreeMap<String, String>) -> BTreeSet<String> {
     }
 }
 
-/// Whether the handler raises before a later write of its own: the first raise, then a write to
-/// one of its parameters; a helper handed a bundle that holds the queue counts as both.
+/// Whether the handler raises before a later write of its own: the first raise, then a write to one of its parameters; a helper handed a bundle that holds the queue counts as both.
 fn raises_before_a_write(params: &str, body: &str, bundles: &BTreeSet<String>) -> bool {
     let body = without_later_steps(body);
     let mut queues = Vec::new();
@@ -463,8 +455,7 @@ fn sources() -> BTreeMap<String, String> {
         .collect()
 }
 
-/// The walker's rows are the list's, and every row names a part: a new handler that raises before
-/// a write fails, and a converted one is struck.
+/// The walker's rows are the list's, and every row names a part: a new handler that raises before a write fails, and a converted one is struck.
 #[test]
 fn every_handler_that_raises_before_a_write_is_listed_by_its_part() {
     let files = sources();
@@ -537,8 +528,7 @@ fn the_list_is_sorted_unique_and_names_a_part() {
     }
 }
 
-/// The walker reads a handler's order: a raise then a write is listed; a write then a raise, or the
-/// write as a later step, is not.
+/// The walker reads a handler's order: a raise then a write is listed; a write then a raise, or the write as a later step, is not.
 #[test]
 fn the_walker_reads_a_raise_before_a_write_and_not_a_later_step() {
     let bundles = BTreeSet::new();

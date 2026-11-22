@@ -2500,8 +2500,7 @@ fn fire_batch(world: &mut World, batch: &mut Vec<UiEvent>, lines: &mut Vec<Strin
             }
         }
     });
-    // The chat log takes the batch's lines before the next step runs, so a nested step's lines
-    // follow them, as the chat feed's other system lines go.
+    // The chat log takes the batch's lines before the next step runs, so a nested step's lines follow them, as the chat feed's other system lines go.
     if let Some(mut chat) = world.get_resource_mut::<crate::ui_chat::ChatLog>() {
         for line in lines.drain(..) {
             crate::ui_chat::away::push_system(&mut chat, line);

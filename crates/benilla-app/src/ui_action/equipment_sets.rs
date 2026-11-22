@@ -92,8 +92,7 @@ fn on_equipment_set_saved(In(ev): In<SessionEvent>, world: &mut World) {
     }
 }
 
-/// `SMSG_EQUIPMENT_SET_USE_RESULT` (`0x5af710`): its events fire with the `World` lent, each at its
-/// step, then the bar's usable update.
+/// `SMSG_EQUIPMENT_SET_USE_RESULT` (`0x5af710`): its events fire with the `World` lent, each at its step, then the bar's usable update.
 fn on_equipment_set_use_result(In(ev): In<SessionEvent>, world: &mut World) {
     let SessionEvent::EquipmentSetUseResult { result } = ev else {
         return;

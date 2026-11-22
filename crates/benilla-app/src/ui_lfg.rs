@@ -367,8 +367,7 @@ fn feed_lfg(
     let name_of = |guid: u64| names.resolve(guid, &commands).map(str::to_string);
     let mut shown = false;
     for item in std::mem::take(&mut feed.pending) {
-        // Once one has raised or shown a line, the next applies as a step after its listeners,
-        // which read the model as of their raise.
+        // Once one has raised or shown a line, the next applies as a step after its listeners, which read the model as of their raise.
         if script.has_raised() || shown {
             if let Some(ui) = script.queue() {
                 ui.world(move |world| apply_pending_step(world, item, me));

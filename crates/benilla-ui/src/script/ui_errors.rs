@@ -70,10 +70,7 @@ impl super::UiScript {
         }
     }
 
-    /// The display's chat arm for a resolved line (`0x521814` -> `0x509dd0`): added to the chat log
-    /// on `chat_type` in the caller's turn, its event fired with the `World` lent (`0x50a8a5`,
-    /// `0x4fdd5c`); inside a host step's turn it is added at that step's raise. With no chat log
-    /// lent the text comes back for the app's chat feed.
+    /// The display's chat arm for a resolved line (`0x521814` -> `0x509dd0`): added to the chat log on `chat_type` in the caller's turn, its event fired with the `World` lent (`0x50a8a5`, `0x4fdd5c`); inside a host step's turn it is added at that step's raise. With no chat log lent the text comes back for the app's chat feed.
     pub fn add_chat_text(&mut self, chat_type: u8, text: String) -> Option<String> {
         if super::world_loan::in_turn(self.lua()) {
             super::world_loan::in_turn_or_now(self, move |s| {
@@ -324,8 +321,7 @@ mod show_now_tests {
         );
     }
 
-    /// A chat row sounds as a red or yellow one does, its sound queued before its line is added
-    /// (`0x52172d`, `0x521765` ahead of `0x521814`), from a verb and from an app handler alike.
+    /// A chat row sounds as a red or yellow one does, its sound queued before its line is added (`0x52172d`, `0x521765` ahead of `0x521814`), from a verb and from an app handler alike.
     #[test]
     fn a_chat_rows_sound_goes_first() {
         let mut s = crate::script::UiScript::new().unwrap();

@@ -148,10 +148,7 @@ impl UiError {
 #[derive(Resource, Default)]
 pub(crate) struct UiErrorKeys(pub Vec<UiError>);
 
-/// Where a line that arrives already resolved shows, with no key and no catalog record: the
-/// reference's message sink called as `(text, flag)` without the error display, flag 1 firing
-/// `UI_ERROR_MESSAGE` and 0 `UI_INFO_MESSAGE`, in the caller's turn. `SMSG_NOTIFICATION` passes
-/// 1, `SMSG_AREA_TRIGGER_MESSAGE` passes 0.
+/// Where a line that arrives already resolved shows, with no key and no catalog record: the reference's message sink called as `(text, flag)` without the error display, flag 1 firing `UI_ERROR_MESSAGE` and 0 `UI_INFO_MESSAGE`, in the caller's turn. `SMSG_NOTIFICATION` passes 1, `SMSG_AREA_TRIGGER_MESSAGE` passes 0.
 pub(crate) trait TextSink {
     fn text_line(&mut self, kind: MsgKind, text: String);
 }
@@ -171,8 +168,7 @@ impl TextSink for Vec<(String, MsgKind)> {
     }
 }
 
-/// Show a resolved line now with the `World` lent: no record, so no sound; a chat line is added on
-/// the system type.
+/// Show a resolved line now with the `World` lent: no record, so no sound; a chat line is added on the system type.
 pub(crate) fn show_text_in_world(world: &mut World, kind: MsgKind, text: String) {
     let event = match kind {
         MsgKind::Error => "UI_ERROR_MESSAGE",
@@ -312,8 +308,7 @@ pub(super) fn show_one(
         sounds.push(record);
     }
     match kind {
-        // The display's chat arm on its row's chat type (`0x521814` -> `0x509dd0`), through the chat
-        // feed, in order with the caller's other chat lines there (#1354).
+        // The display's chat arm on its row's chat type (`0x521814` -> `0x509dd0`), through the chat feed, in order with the caller's other chat lines there (#1354).
         MsgKind::Chat => {
             let chat_type = record.map_or(0, |r| r.chat_type);
             if let Some(chat) = chat {
@@ -1076,8 +1071,7 @@ mod chat_arm_tests {
 
     use super::{show_line_in_world, UiError};
 
-    /// A handler's chat-kind line goes out on its row's chat type (`0x521814` -> `0x509dd0`): a
-    /// type-26 row is a `CHAT_MSG_SKILL` line, not `CHAT_MSG_SYSTEM`.
+    /// A handler's chat-kind line goes out on its row's chat type (`0x521814` -> `0x509dd0`): a type-26 row is a `CHAT_MSG_SKILL` line, not `CHAT_MSG_SYSTEM`.
     #[test]
     fn a_skill_rows_line_goes_out_as_a_skill_line() {
         let mut world = World::new();

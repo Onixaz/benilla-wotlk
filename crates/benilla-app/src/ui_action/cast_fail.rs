@@ -259,8 +259,7 @@ pub(super) struct FailArgs<'a> {
     pub(super) totems: Option<&'a TotemCategoryCatalog>,
     /// `PowerDisplay.dbc`, for `0x4d`.
     pub(super) power_displays: Option<&'a benilla_formats::PowerDisplayCatalog>,
-    /// Our own power type (`UNIT_FIELD_BYTES_0` byte 3, `0x808990`), for `0x02`; `None` with no
-    /// player.
+    /// Our own power type (`UNIT_FIELD_BYTES_0` byte 3, `0x808990`), for `0x02`; `None` with no player.
     pub(super) own_power: Option<u8>,
     /// The casting item's name, else the spell's (`0x808a0a`-`0x808a66`), for `0xb6`.
     pub(super) item_name: Option<&'a str>,
@@ -488,9 +487,7 @@ pub(super) fn cast_fail_text(
         // The player's overrides.
         Caster::Player => match reason {
             0x01 => return get_display("ERR_SPELL_FAILED_ALREADY_AT_FULL_HEALTH"),
-            // 12340's 4 (`0x808982`): our own power type's token; no player, a type past 6 or an
-            // empty token fails the cast with no line (`0x808984`, `0x808997`, `0x8089b5` ->
-            // `0x8086ff`).
+            // 12340's 4 (`0x808982`): our own power type's token; no player, a type past 6 or an empty token fails the cast with no line (`0x808984`, `0x808997`, `0x8089b5` -> `0x8086ff`).
             0x02 => {
                 let power = args.own_power.filter(|&p| p <= 6)?;
                 let name = get_text(POWER_TOKENS[usize::from(power)])?;
@@ -541,8 +538,7 @@ pub(super) fn cast_fail_text(
     }
     let text = raw?;
     let line = CastFailLine::passthrough;
-    // 12340's 176 and 181, the player's arms (`0x8089f3`, `0x808acd`): the template printed with
-    // the casting item's name, and with the first word as a number.
+    // 12340's 176 and 181, the player's arms (`0x8089f3`, `0x808acd`): the template printed with the casting item's name, and with the first word as a number.
     if caster == Caster::Player {
         match reason {
             UNIQUE_GLYPH => {
@@ -1029,8 +1025,7 @@ mod tests {
         assert_eq!(line.logged(), "Rage");
     }
 
-    /// 12340's 4 (`0x808982`): runic power is type 6's token; no player or a type past 6 shows
-    /// nothing (`0x808997` -> `0x8086ff`).
+    /// 12340's 4 (`0x808982`): runic power is type 6's token; no player or a type past 6 shows nothing (`0x808997` -> `0x8086ff`).
     #[test]
     fn full_power_names_our_power_through_the_seven_tokens() {
         let mut m = gs();
@@ -1061,8 +1056,7 @@ mod tests {
         assert_eq!(at(None), None);
     }
 
-    /// 12340's 176 (`0x8089f3`) names the casting item, else the spell; 181 (`0x808acd`) prints
-    /// the first word as a number.
+    /// 12340's 176 (`0x8089f3`) names the casting item, else the spell; 181 (`0x808acd`) prints the first word as a number.
     #[test]
     fn a_unique_glyph_names_the_item_and_fishing_prints_its_word() {
         let mut m = gs();
@@ -1566,18 +1560,12 @@ mod tests {
             None,
             "the pet's arm shows nothing"
         );
-        for caster in [Caster::Player] {
-            let line = say(caster, Some(83)).expect("the numbered row");
-            assert_eq!(line.text, "A fire totem line", "{caster:?}");
-            assert_eq!(line.key, PASSTHROUGH);
-            assert!(!line.logs, "the custom arm skips the combat log");
-            assert_eq!(
-                say(caster, None),
-                None,
-                "{caster:?}: no word asks for `_-1`"
-            );
-            assert_eq!(say(caster, Some(14)), None, "{caster:?}: no plain row");
-        }
+        let line = say(Caster::Player, Some(83)).expect("the numbered row");
+        assert_eq!(line.text, "A fire totem line");
+        assert_eq!(line.key, PASSTHROUGH);
+        assert!(!line.logs, "the custom arm skips the combat log");
+        assert_eq!(say(Caster::Player, None), None, "no word asks for `_-1`");
+        assert_eq!(say(Caster::Player, Some(14)), None, "no plain row");
         // The missing word prints signed.
         let m = HashMap::from([("SPELL_FAILED_CUSTOM_ERROR_-1", "A minus-one line")]);
         let g = getter(&m);

@@ -127,9 +127,7 @@ fn drain_title_sets(mut script: crate::ui_script::InTurn, commands: Res<NetComma
     }
 }
 
-/// `SMSG_TITLE_EARNED` (`0x50c520`): `NEW_TITLE_EARNED` or `OLD_TITLE_LOST` around the title
-/// filled with the player's name, added to the chat log in the handler (`0x50c70c` -> `0x509dd0`).
-/// Nothing for a mask no row has or with no player. The earn effect plays in `creature_anim`.
+/// `SMSG_TITLE_EARNED` (`0x50c520`): `NEW_TITLE_EARNED` or `OLD_TITLE_LOST` around the title filled with the player's name, added to the chat log in the handler (`0x50c70c` -> `0x509dd0`). Nothing for a mask no row has or with no player. The earn effect plays in `creature_anim`.
 fn on_title_earned(In(ev): In<SessionEvent>, world: &mut World) {
     let SessionEvent::TitleEarned { mask_id, earned } = ev else {
         return;

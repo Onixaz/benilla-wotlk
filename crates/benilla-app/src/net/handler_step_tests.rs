@@ -1,5 +1,4 @@
-//! A handler's raise at its step: a listener reads the state as of that step and its own writes
-//! reach the rest of the handler, as 12340's handler runs the listeners inside it (`0x703e50`).
+//! A handler's raise at its step: a listener reads the state as of that step and its own writes reach the rest of the handler, as 12340's handler runs the listeners inside it (`0x703e50`).
 
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use benilla_ui::script::UiScript;
@@ -92,8 +91,7 @@ fn seen(app: &App) -> String {
         .unwrap()
 }
 
-/// A listener on an event raised mid-handler reads the flag as that step left it, not as the
-/// handler's later write leaves it; on the queue it read the later write.
+/// A listener on an event raised mid-handler reads the flag as that step left it, not as the handler's later write leaves it; on the queue it read the later write.
 #[test]
 fn a_listener_on_a_mid_handler_event_reads_the_state_at_its_step() {
     let mut app = client(LISTENER);
@@ -115,8 +113,7 @@ fn a_listener_on_a_mid_handler_event_reads_the_state_at_its_step() {
     );
 }
 
-/// A listener's write, the bank window `CloseBankFrame` closes, is what the handler's next step
-/// reads; on the queue the handler had read past it.
+/// A listener's write, the bank window `CloseBankFrame` closes, is what the handler's next step reads; on the queue the handler had read past it.
 #[test]
 fn a_listeners_write_reaches_the_rest_of_the_handler() {
     let mut app = client(LISTENER);
@@ -158,8 +155,7 @@ fn a_step_fires_what_the_handler_queued_before_it_first() {
     assert_eq!(seen(&app), "PLAYER_CONTROL_GAINED,PLAYER_CONTROL_LOST");
 }
 
-/// A step nested in a handler's world step hands its system lines on after the lines the handler
-/// queued before it, in wire and step order.
+/// A step nested in a handler's world step hands its system lines on after the lines the handler queued before it, in wire and step order.
 #[test]
 fn a_nested_steps_lines_follow_the_handlers_earlier_lines() {
     fn later(mut ui: ResMut<UiEvents>) {
@@ -184,8 +180,7 @@ fn a_nested_steps_lines_follow_the_handlers_earlier_lines() {
     );
 }
 
-/// A step that raised both in turn on the VM and on the handler queue loses their order: a hard
-/// failure in a debug build.
+/// A step that raised both in turn on the VM and on the handler queue loses their order: a hard failure in a debug build.
 #[test]
 #[cfg_attr(debug_assertions, should_panic(expected = "their order is lost"))]
 fn a_step_never_raises_on_both_lists() {

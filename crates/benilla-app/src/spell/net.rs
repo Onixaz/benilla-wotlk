@@ -448,8 +448,7 @@ pub(crate) struct Reply<'w, 's> {
     play_seq: ResMut<'w, crate::creature_anim::PlaySeq>,
 }
 
-/// The cast-failed handler (`0x808200`): its line, its cast's end, then its finish
-/// ([`finish_ours`]), whose `modalNextSpell` chain goes out before the next packet.
+/// The cast-failed handler (`0x808200`): its line, its cast's end, then its finish ([`finish_ours`]), whose `modalNextSpell` chain goes out before the next packet.
 fn on_cast_result(In(ev): In<SessionEvent>, mut ladder: CastLadder, mut r: Reply) {
     if let SessionEvent::CastResult {
         cast_count,
@@ -557,8 +556,7 @@ fn on_cast_result(In(ev): In<SessionEvent>, mut ladder: CastLadder, mut r: Reply
             cast_count,
             failed_ours && cast_count != 0,
         );
-        // Past the routine, a failure other than not-ready of a cooldown-on-event spell drops its
-        // on-hold record, then signals (`0x809bd5`-`0x809c05`).
+        // Past the routine, a failure other than not-ready of a cooldown-on-event spell drops its on-hold record, then signals (`0x809bd5`-`0x809c05`).
         if !success && reason != Some(0x3c) && on_event {
             cooldown_site(&mut r.ui, true, Tail::Bags);
         }
@@ -1501,8 +1499,7 @@ fn superceded_spell(
     tab_flash.0.push(new_spell_id);
 }
 
-/// The verdict on our cast: a refusal (`SMSG_CAST_FAILED`, benilla's `SMSG_CAST_RESULT`); the
-/// finish, with its `modalNextSpell` chain, is [`finish_ours`].
+/// The verdict on our cast: a refusal (`SMSG_CAST_FAILED`, benilla's `SMSG_CAST_RESULT`); the finish, with its `modalNextSpell` chain, is [`finish_ours`].
 fn cast_result(
     (spell_id, cast_count, wire_reason): (u32, u8, u8),
     success: bool,
@@ -1568,8 +1565,7 @@ fn cast_result(
         if *crate::net::CAST_TRACE {
             info!("cast-trace: RECV CAST_RESULT failure — spell {spell_id} reason={reason:?}; fails_bar={fails_our_cast}");
         }
-        // A caller without the finish's step releases here; a queued on-next-swing strike dies with
-        // the record (the melee-slot interrupt arrives as a failure).
+        // A caller without the finish's step releases here; a queued on-next-swing strike dies with the record (the melee-slot interrupt arrives as a failure).
         if release {
             pending.release(spell_id, cast_count);
             queued_melee.clear_if(spell_id);
@@ -1827,8 +1823,7 @@ fn spell_go(
     // A source or dest on a transport not here ends the GO at the pending cast's release: no
     // feed edge, cooldown, swing, latch or visual (`0x80e647`-`0x80e686`).
     let (cooldowns, spells, items, net_commands, pet_bar, spell_mods) = cooldown_ctx;
-    // Ours ends in the finish (chain, release, selection), a hidden go in the release alone
-    // (`0x80e650`-`0x80e686`, `0x80fe86`-`0x80fea9`).
+    // Ours ends in the finish (chain, release, selection), a hidden go in the release alone (`0x80e650`-`0x80e686`, `0x80fe86`-`0x80fea9`).
     let ours = self_guid.0 == Some(caster);
     let finish = |ui: &mut crate::ui_script::live::UiEvents,
                   pending: &mut PendingCast,
@@ -2380,8 +2375,7 @@ mod tests {
     use super::*;
     use crate::spell::learn_place::Learner;
 
-    /// The finish's release unlinks the failed record alone (`0x8055a2` -> `0x805100`): a strike a
-    /// failure listener queued again, under a new count, stays queued.
+    /// The finish's release unlinks the failed record alone (`0x8055a2` -> `0x805100`): a strike a failure listener queued again, under a new count, stays queued.
     #[test]
     fn the_release_keeps_a_strike_a_listener_queued_again() {
         use bevy::ecs::system::RunSystemOnce;
@@ -3222,8 +3216,7 @@ mod tests {
             vec![go(6136), go(133)]
         );
 
-        // A dest on a transport not here (`0x80e647`): the finish releases the pending cast
-        // (`0x80e666`), the cast state stays, and no feed edge.
+        // A dest on a transport not here (`0x80e647`): the finish releases the pending cast (`0x80e666`), the cast state stays, and no feed edge.
         app.world_mut().entity_mut(self_e).insert(Casting {
             spell_id: 10,
             cast_count: 0,
@@ -4344,8 +4337,7 @@ mod tests {
             radii: Default::default(),
         };
 
-        // The finish's test for `spell_id`'s record, with `in_flight` held and `running` the live
-        // repeat: what it chains.
+        // The finish's test for `spell_id`'s record, with `in_flight` held and `running` the live repeat: what it chains.
         let fire = |spell_id: u32, in_flight: Option<u32>, running: Option<u32>| {
             let mut pending = PendingCast::default();
             if let Some(id) = in_flight {
