@@ -28,8 +28,6 @@ const HOLDERS: &[(&str, usize)] = &[
     ("ui_party/net.rs", 18),
     ("ui_socket.rs", 2),
     ("ui_stable/net.rs", 3),
-    ("ui_trade/mod.rs", 2),
-    ("ui_trade/net.rs", 3),
     ("ui_transfer.rs", 3),
 ];
 

@@ -1169,7 +1169,9 @@ mod tests {
         /// The cancel of a cast an item started releases the trade's enchanting item ahead of the cast's end (`0x806258`); another item's cast leaves it locked (`0x80624d`).
         #[test]
         fn cancelling_an_items_cast_releases_the_trades_enchanting_item() {
-            use benilla_ui::script::{ContainerSlot, ContainerState, TradeItemFacts, TradeState};
+            use benilla_ui::script::{
+                ContainerSlot, ContainerState, TradeCells, TradeItemFacts, TradeTargetItem,
+            };
             const SCROLL: u64 = 0x4000_0000_0000_0001;
             let cancelled = |cast_item: u64| {
                 let (mut app, _rx) = harness(HashMap::new());
@@ -1189,9 +1191,11 @@ mod tests {
                         slots: HashMap::from([(1, slot)]),
                     }),
                 );
-                let mut trade = TradeState::default();
-                trade.target.slots[6] = Some(Default::default());
-                script.set_trade(Some(trade));
+                // A partner whose seventh slot holds an item (`0x5d897e`).
+                script.open_trade_partner(0x7, false);
+                let mut target = [TradeTargetItem::default(); 7];
+                target[6].item_id = 6217;
+                script.trade_updated(target, TradeCells::default());
                 let facts = TradeItemFacts {
                     enchants_on_use: true,
                     ..Default::default()
