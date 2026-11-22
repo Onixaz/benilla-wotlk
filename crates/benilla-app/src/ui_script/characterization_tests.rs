@@ -7919,14 +7919,13 @@ fn a_trade_fires_from_its_handlers_with_the_offer_read_at_the_call() {
 
 /// A corpse's loot from open to its last row: a record that lands late, a slot redrawn with a new
 /// item, two rows and the coins taken, each event with the loot verbs' answers at it. The window is
-/// the client's (`0xbfa690`), moved and signalled by each handler at its step and read at the call.
-/// Against the per-frame feed this replaced:
-/// - the changed slot's record callback opens the window again once none is pending (`0x5894ac`,
-///   then `0x589511`);
+/// the client's (`0xbfa690`), moved and signalled by each handler at its step and read at the call:
+/// - the window opens at its last record's callback (`0x589511`), and the changed slot's callback
+///   signals its row, then opens the window again once none is pending (`0x5894ac`, `0x589511`);
 /// - `GetNumLootItems` counts through the last row with an item, plus the coin slot (`0x588190`),
-///   so the last row's `LOOT_SLOT_CLEARED` reads 1, the window still open at its signal; the
-///   close follows it (`0x5899c4`, then `0x589a19`), and the looted row reads quality -1 there
-///   (`0x588310` on item 0).
+///   and taken coins answer `""` (`0x588459`);
+/// - the last row's `LOOT_SLOT_CLEARED` reads the window still open (`0x5899c4`), its looted row at
+///   quality -1 (`0x588310` on item 0), and the close follows it (`0x589a19`).
 #[test]
 fn a_loot_window_fires_from_its_handlers_with_the_rows_read_at_the_call() {
     use benilla_protocol::messages::{LootItem, LootSlotChanged};

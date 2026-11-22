@@ -41,9 +41,10 @@ const MOVING_CLOSES_LOOT: u32 = {
 };
 
 /// The loot response handler's item shape (`0x6d53b0`): an object we do not hold is released
-/// (`0x6d560f`), one we hold is latched (`0x6d56c8`), targeted, and the window let go and set
-/// (`0x5264f0`), the set in turn after the outgoing window's `LOOT_CLOSED`; a window that opens
-/// while we move closes as a movement start does (`0x6d57b5`).
+/// (`0x6d560f`), an item we hold locked (`0x6d56af`), one we hold latched (`0x6d56c8`),
+/// targeted, and the window let go and set (`0x5264f0`), the set in turn after the outgoing
+/// window's `LOOT_CLOSED`; a window that opens while we move closes as a movement start does
+/// (`0x6d57b5`).
 fn on_response(
     In(ev): In<SessionEvent>,
     mut select: crate::target::SelectCommit,
@@ -76,6 +77,9 @@ fn on_response(
         let _ = seam.net.0.send(ClientCommand::LootRelease { guid });
         return;
     }
+    if benilla_protocol::guid::is_item(guid) {
+        ui.world(move |world| super::lock_item_now(world, guid));
+    }
     seam.loot_latch.0 = Some(guid);
     items.truncate(MAX_LOOT_ROWS);
     debug!(
@@ -83,7 +87,7 @@ fn on_response(
         items.len()
     );
     select.select_unit(guid, &mut *ui);
-    select.seam.loot.let_go(guid, &mut *ui);
+    select.seam.loot.let_go(&mut *ui);
     let moving = player
         .is_some_and(|p| p.foreign_mover.is_none() && p.move_flags() & MOVING_CLOSES_LOOT != 0);
     ui.world(move |world| super::set_window(world, guid, loot_type, gold, items, moving));
@@ -110,17 +114,25 @@ fn on_error(
     }
 }
 
-/// `SMSG_LOOT_REMOVED` (`0x6d58bd` -> `0x589920`): a row was taken, by anyone; an emptied window's
-/// close follows its signal.
+/// `SMSG_LOOT_REMOVED` (`0x6d5860`): a row was taken, by anyone. Only while the latched object is
+/// held (`0x6d588c`) does the wire slot zero (`0x6d58a1`-`0x6d58ba`) and the window clear it
+/// (`0x6d58bd` -> `0x5124e0` -> `0x589920`); a window it leaves with no loot closes after the
+/// signal.
 fn on_removed(
     In(ev): In<SessionEvent>,
     mut loot: ResMut<LootState>,
+    latch: Res<LootLatch>,
+    index: Res<crate::net::GuidIndex>,
     mut waits: NonSendMut<RecordWaits>,
     mut ui: ResMut<UiEvents>,
 ) {
     if let SessionEvent::LootRemoved { slot } = ev {
         debug!("net: loot slot {slot} removed");
-        if loot.remove_slot(slot, &mut waits, &mut *ui) {
+        if !latch.0.is_some_and(|g| index.0.contains_key(&g)) {
+            return;
+        }
+        let held = loot.source().is_some_and(|g| index.0.contains_key(&g));
+        if loot.remove_slot(slot, held, &mut waits, &mut *ui) {
             ui.world(super::close_emptied);
         }
     }
@@ -161,10 +173,16 @@ fn on_money_notify(
 
 /// `SMSG_LOOT_CLEAR_MONEY` (`0x589100`): the coin row goes, for every looter; an emptied window's
 /// close follows its signal.
-fn on_clear_money(In(ev): In<SessionEvent>, mut loot: ResMut<LootState>, mut ui: ResMut<UiEvents>) {
+fn on_clear_money(
+    In(ev): In<SessionEvent>,
+    mut loot: ResMut<LootState>,
+    index: Res<crate::net::GuidIndex>,
+    mut ui: ResMut<UiEvents>,
+) {
     if let SessionEvent::LootClearMoney = ev {
         debug!("net: loot coin line cleared");
-        if loot.clear_money(&mut *ui) {
+        let held = loot.source().is_some_and(|g| index.0.contains_key(&g));
+        if loot.clear_money(held, &mut *ui) {
             ui.world(super::close_emptied);
         }
     }
@@ -431,7 +449,7 @@ fn loot_release_response(
     super::close_interaction(loot, latch, net, false, sink)
 }
 
-/// `SMSG_LOOT_MASTER_LIST`, staged: it lands just ahead of the response it belongs to.
+/// `SMSG_LOOT_MASTER_LIST` (`0x6fa690`): the list replaced, open window or none.
 fn loot_master_list(candidates: Vec<u64>, loot: &mut LootState) {
     debug!("net: master-loot candidates: {} eligible", candidates.len());
     loot.set_master_candidates(candidates);
@@ -1591,6 +1609,43 @@ mod tests {
         }
     }
 
+    /// A response on an item we hold locks it (`0x6d56af`) ahead of the set, so a server-started
+    /// window on a bag item shows its slot grey.
+    #[test]
+    fn a_response_on_an_item_locks_it() {
+        let (mut world, _rx) = tabbed_world();
+        let e = world.spawn_empty().id();
+        world
+            .resource_mut::<crate::net::GuidIndex>()
+            .0
+            .insert(LOCKBOX, e);
+        world.resource_mut::<LootLatch>().0 = Some(LOCKBOX);
+        respond(&mut world, LOCKBOX, 4);
+        assert!(world.resource::<PendingItemOps>().is_locked(LOCKBOX));
+        assert_eq!(world.resource::<LootState>().source(), Some(LOCKBOX));
+    }
+
+    /// A removal acts only while the latched object is held (`0x6d588c`).
+    #[test]
+    fn a_removal_with_no_latched_object_held_clears_nothing() {
+        let (mut world, _rx) = tabbed_world();
+        world.resource_mut::<LootLatch>().0 = Some(CORPSE);
+        respond(&mut world, CORPSE, 1);
+        world
+            .resource_mut::<LootState>()
+            .slot_changed_for_test(CORPSE, 0, 117);
+        world.resource_mut::<LootLatch>().0 = None;
+        world
+            .run_system_once_with(on_removed, SessionEvent::LootRemoved { slot: 0 })
+            .expect("the handler runs as a one-shot system");
+        assert!(world.resource::<UiEvents>().is_empty(), "no clear raised");
+        world.resource_mut::<LootLatch>().0 = Some(CORPSE);
+        world
+            .run_system_once_with(on_removed, SessionEvent::LootRemoved { slot: 0 })
+            .expect("the handler runs as a one-shot system");
+        assert_eq!(world.resource::<UiEvents>().names()[0], "LOOT_SLOT_CLEARED");
+    }
+
     /// Only a releasing arm reaches the item unlock, through the tail.
     #[test]
     fn a_releasing_loot_error_on_the_opened_item_unlocks_it() {
@@ -1693,6 +1748,11 @@ mod tests {
             .insert_template(LINEN, Some(crate::items::test_template("Linen Cloth")));
         super::super::push_callback(&mut world, LINEN, true);
         assert_eq!(world.resource::<LootState>().pending_receive_count(), 0);
+        assert_eq!(
+            world.resource::<UiEvents>().names(),
+            ["ITEM_PUSH"],
+            "fired whatever the icon resolves to (`0x523a60`)"
+        );
         let lines = world.resource::<crate::ui_chat::ChatLog>().pending_lines();
         assert_eq!(lines.len(), 1, "{lines:?}");
         assert!(lines[0].contains("[Linen Cloth]"), "{lines:?}");
