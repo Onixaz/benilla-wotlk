@@ -167,8 +167,8 @@ fn the_generation_moves_on_every_write_and_is_not_drained() {
     assert_ne!(s.macros_generation(), after_seed);
 }
 
-/// In 1.12 the event is the whole mechanism; `ChatFrame1`'s registration is only the default UI's
-/// use of it.
+/// The event is the whole mechanism (`0x564db0`); `ChatFrame1`'s registration is only the default
+/// UI's use of it.
 #[test]
 fn a_registered_frame_sees_every_macro_line_as_an_event() {
     benilla_formats::wow_data_or_skip!();
@@ -205,6 +205,62 @@ fn a_registered_frame_sees_every_macro_line_as_an_event() {
         vec!["Incoming!".to_string()]
     );
     assert_eq!(s.take_emote_requests().len(), 1);
+    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+}
+
+/// The stock `SECURE_ACTIONS.macro` (`SecureTemplates.lua`) runs a button's `macro` through
+/// `RunMacro` and its `macrotext` through `RunMacroText`, each under the clicking button, which
+/// `[button:]` reads; in combat too, the click being secure. An addon's own run is refused
+/// (`0x564db0`, kind 3) and the stock `UIParent.lua` shows its forbidden popup.
+#[test]
+fn stock_secure_buttons_run_a_macro_and_macro_text() {
+    benilla_formats::wow_data_or_skip!();
+    let mut s = ui();
+    s.set_macros(MacroState {
+        account: vec![macro_view("Greet", "/stopmacro [button:2]\n/say left")],
+        character: Vec::new(),
+    });
+    s.run(
+        r#"
+        local function button(name)
+            local b = CreateFrame("Button", name, UIParent, "SecureActionButtonTemplate")
+            b:RegisterForClicks("AnyUp")
+            b:SetAttribute("type", "macro")
+            return b
+        end
+        button("MacroButton"):SetAttribute("macro", 1)
+        button("TextButton"):SetAttribute("macrotext", "/stopmacro [button:1]\n/say right")
+        "#,
+    )
+    .unwrap();
+    let said = |s: &mut UiScript| -> Vec<String> {
+        s.take_chat_sends().into_iter().map(|c| c.text).collect()
+    };
+    s.set_regen_enabled(false);
+    s.run(r#"MacroButton:Click("LeftButton") MacroButton:Click("RightButton")"#)
+        .unwrap();
+    assert_eq!(said(&mut s), ["left"], "{:?}", s.errors());
+    s.run(r#"TextButton:Click("LeftButton") TextButton:Click("RightButton")"#)
+        .unwrap();
+    assert_eq!(said(&mut s), ["right"]);
+    s.set_regen_enabled(true);
+
+    s.with_addon_owner("TaintTest", || {
+        s.run(r#"RunMacro(1, "LeftButton") RunMacroText("/say right", "RightButton")"#)
+    })
+    .unwrap();
+    assert!(said(&mut s).is_empty(), "an addon's run sends no line");
+    assert_eq!(
+        s.eval::<Option<String>>(
+            "local d = StaticPopup_Visible('ADDON_ACTION_FORBIDDEN') \
+             return d and _G[d .. 'Text']:GetText()"
+        )
+        .unwrap()
+        .as_deref()
+        .map(|t| t.contains("TaintTest")),
+        Some(true),
+        "the stock popup names the addon"
+    );
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 

@@ -405,6 +405,10 @@ pub(crate) struct Model {
     pub(crate) override_bindings: super::binding_commands::OverrideBindings,
     /// A macro is running (`[0xbeaf4c]`); `StopMacro` clears it.
     pub(crate) macro_running: bool,
+    /// The actions the running macro may still take (`[0xbeaf44]`), each a bit, all set as an
+    /// outermost run starts: a nearest-target cycle clears
+    /// [`MACRO_TARGET_NEAREST`](super::binding_commands::MACRO_TARGET_NEAREST).
+    pub(crate) macro_actions: u32,
     /// The addons that hold a GC owner tag, a tag being the position here plus one.
     pub(crate) addon_owners: Vec<String>,
     /// The running tag, restored as a nested load ends.
@@ -1574,6 +1578,7 @@ impl Model {
             roll_requests: Vec::new(),
             override_bindings: Default::default(),
             macro_running: false,
+            macro_actions: u32::MAX,
             addon_owners: Vec::new(),
             addon_owner: 0,
             protected_actions_allowed: true,

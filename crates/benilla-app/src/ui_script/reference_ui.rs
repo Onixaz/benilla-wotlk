@@ -2055,15 +2055,6 @@ mod tests {
             ("VOICE_STATUS_UPDATE", R_6),
             ("VOICE_STOP", R_6),
             (
-                "ADDON_ACTION_FORBIDDEN",
-                "UIParent.lua — the protected-function refusal; no protected function asks \
-                 the taint yet (#1227)",
-            ),
-            (
-                "MACRO_ACTION_FORBIDDEN",
-                "UIParent.lua — the macro half of ADDON_ACTION_FORBIDDEN, same reason",
-            ),
-            (
                 "BILLING_NAG_DIALOG",
                 "UIParent.lua — the subscription-time nag; vmangos never sends it",
             ),
