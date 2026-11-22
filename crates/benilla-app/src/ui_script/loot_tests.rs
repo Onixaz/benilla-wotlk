@@ -43,6 +43,7 @@ fn text_color(quads: &[ExtractedQuad], t: &str) -> Option<[f32; 4]> {
 
 fn coin_and_two_items() -> LootState {
     LootState {
+        coin_slot: false,
         source_unit: false,
         source_level: 0,
         fishing: false,
@@ -256,6 +257,7 @@ fn the_empty_open_sound_reads_the_previous_windows_count() {
     benilla_formats::wow_data_or_skip!();
     let mut s = stock_ui(1024.0, 768.0);
     let empty = || LootState {
+        coin_slot: false,
         source_unit: false,
         source_level: 0,
         fishing: false,
@@ -355,6 +357,7 @@ fn shipped_loot_frame_pages_five_items() {
         })
         .collect();
     s.set_loot(Some(LootState {
+        coin_slot: false,
         source_unit: false,
         source_level: 0,
         fishing: false,
@@ -396,6 +399,7 @@ fn shipped_loot_frame_pages_five_items() {
     cleared[1] = None;
     cleared[2] = None;
     s.set_loot(Some(LootState {
+        coin_slot: false,
         source_unit: false,
         source_level: 0,
         fishing: false,
@@ -523,6 +527,7 @@ fn ctrl_and_shift_on_a_loot_row_preview_and_post_without_looting() {
     let mut s = stock_ui(1024.0, 768.0);
 
     s.set_loot(Some(LootState {
+        coin_slot: false,
         source_unit: false,
         source_level: 0,
         fishing: false,
@@ -643,6 +648,7 @@ fn ctrl_and_shift_on_a_loot_row_preview_and_post_without_looting() {
         );
         s.fire_event("LOOT_CLOSED", vec![]);
         s.set_loot(Some(LootState {
+            coin_slot: false,
             source_unit: false,
             source_level: 0,
             fishing: false,
@@ -697,6 +703,7 @@ fn shipped_loot_frame_hands_a_master_row_to_a_candidate() {
         })
     };
     s.set_loot(Some(LootState {
+        coin_slot: false,
         source_unit: false,
         source_level: 0,
         fishing: false,
@@ -832,6 +839,7 @@ fn the_master_loot_menu_groups_raid_candidates_by_subgroup() {
     candidates[1] = Some("Cairne".to_string());
     candidates[10] = Some("Sylvanas".to_string());
     s.set_loot(Some(LootState {
+        coin_slot: false,
         source_unit: false,
         source_level: 0,
         fishing: false,
@@ -995,6 +1003,7 @@ fn loot_row_awaiting_its_template_opens_clean() {
 
     // One row in flight: the wire gives the icon (by display id) and the count, nothing else.
     s.set_loot(Some(LootState {
+        coin_slot: false,
         source_unit: false,
         source_level: 0,
         fishing: false,
@@ -1058,6 +1067,7 @@ fn loot_row_awaiting_its_template_opens_clean() {
     // `LOOT_OPENED` as the pending count falls to zero.
     s.fire_event("LOOT_CLOSED", vec![]);
     s.set_loot(Some(LootState {
+        coin_slot: false,
         source_unit: false,
         source_level: 0,
         fishing: false,

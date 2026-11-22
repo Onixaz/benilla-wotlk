@@ -190,6 +190,13 @@ local VERBS = {
     { "tt3", function() return (GetTradeTargetItemInfo(3)) end },
     { "tgold", function() return GetTargetTradeMoney() end },
     { "pgold", function() return GetPlayerTradeMoney() end },
+    { "lootn", function() return GetNumLootItems() end },
+    { "l1", function() return (select(2, GetLootSlotInfo(1))) end },
+    { "l2", function() return (select(2, GetLootSlotInfo(2))) end },
+    { "l3", function() return (select(2, GetLootSlotInfo(3))) end },
+    { "l3q", function() return (select(4, GetLootSlotInfo(3))) end },
+    { "coin1", function() return LootSlotIsCoin(1) end },
+    { "item2", function() return LootSlotIsItem(2) end },
     { "npcname", function() return UnitName("npc") end },
     { "buybackn", function() return GetNumBuybackItems() end },
     { "repaircost", function() return GetRepairAllCost() end },
@@ -7905,6 +7912,133 @@ fn a_trade_fires_from_its_handlers_with_the_offer_read_at_the_call() {
                     .to_string(),
                 "UI_INFO_MESSAGE Trade cancelled. | npc=nil tt1=Charz Gem tt1n=3 tt3=Charz Late tgold=0 pgold=0"
                     .to_string(),
+            ],
+        ]
+    );
+}
+
+/// A corpse's loot from open to its last row: a record that lands late, a slot redrawn with a new
+/// item, two rows and the coins taken, each event with the loot verbs' answers at it. The window is
+/// the client's (`0xbfa690`), moved and signalled by each handler at its step and read at the call.
+/// Against the per-frame feed this replaced:
+/// - the changed slot's record callback opens the window again once none is pending (`0x5894ac`,
+///   then `0x589511`);
+/// - `GetNumLootItems` counts through the last row with an item, plus the coin slot (`0x588190`),
+///   so the last row's `LOOT_SLOT_CLEARED` reads 1, the window still open at its signal; the
+///   close follows it (`0x5899c4`, then `0x589a19`), and the looted row reads quality -1 there
+///   (`0x588310` on item 0).
+#[test]
+fn a_loot_window_fires_from_its_handlers_with_the_rows_read_at_the_call() {
+    use benilla_protocol::messages::{LootItem, LootSlotChanged};
+    const CORPSE: u64 = 0x0000_0000_0000_0888;
+    const GEM: u32 = 0x8_1001;
+    const LATE: u32 = 0x8_1002;
+    const NEW: u32 = 0x8_1003;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let template = |entry: u32, name: &str| SessionEvent::ItemTemplate {
+        entry,
+        info: Some(Box::new(crate::items::test_template(name))),
+    };
+    rig.packets(
+        vec![
+            player_create_with(CORPSE, &[(FIELD_UNIT_HEALTH, 0)]),
+            template(GEM, "Charz Gem"),
+        ],
+        2,
+    );
+    const EVENTS: &[&str] = &[
+        "LOOT_OPENED",
+        "LOOT_SLOT_CLEARED",
+        "LOOT_SLOT_CHANGED",
+        "LOOT_CLOSED",
+        "LOOT_BIND_CONFIRM",
+    ];
+    const VERBS: &[&str] = &["lootn", "l1", "l2", "l3", "l3q", "coin1", "item2"];
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::ui_loot::LootLatch>()
+        .0 = Some(CORPSE);
+    let row = |slot: u8, item_id: u32, count: u32| LootItem {
+        slot,
+        item_id,
+        count,
+        display_info_id: 1,
+        random_property_id: 0,
+        random_suffix: 0,
+        slot_type: 0,
+    };
+    let open = rig.packets(
+        vec![SessionEvent::LootResponse {
+            guid: CORPSE,
+            loot_type: 1,
+            gold: 250,
+            items: vec![row(0, GEM, 2), row(1, LATE, 1)],
+        }],
+        3,
+    );
+    let late = rig.packets(vec![template(LATE, "Charz Late")], 3);
+    let changed = rig.packets(
+        vec![SessionEvent::LootSlotChanged(LootSlotChanged {
+            looted_target: CORPSE,
+            slot: 1,
+            item_id: NEW,
+            display_info_id: 1,
+            random_suffix: 0,
+            random_property_id: 0,
+            count: 4,
+        })],
+        3,
+    );
+    let landed = rig.packets(vec![template(NEW, "Charz New")], 3);
+    let taken = rig.packets(vec![SessionEvent::LootRemoved { slot: 0 }], 3);
+    let coins = rig.packets(vec![SessionEvent::LootClearMoney], 3);
+    let last = rig.packets(vec![SessionEvent::LootRemoved { slot: 1 }], 3);
+    let got: Vec<Vec<String>> = [open, late, changed, landed, taken, coins, last]
+        .iter()
+        .map(|seen| pin(seen, EVENTS, VERBS))
+        .collect();
+    let at = |e: &str, rest: &str| format!("{e} | {rest}");
+    let full = "lootn=3 l1=2 Silver 50 Copper l2=Charz Gem";
+    assert_eq!(
+        got,
+        vec![
+            vec![],
+            vec![at(
+                "LOOT_OPENED 0",
+                &format!("{full} l3=Charz Late l3q=1 coin1=1 item2=1")
+            )],
+            vec![],
+            vec![
+                at(
+                    "LOOT_SLOT_CHANGED 3",
+                    &format!("{full} l3=Charz New l3q=1 coin1=1 item2=1")
+                ),
+                at(
+                    "LOOT_OPENED 0",
+                    &format!("{full} l3=Charz New l3q=1 coin1=1 item2=1")
+                ),
+            ],
+            vec![at(
+                "LOOT_SLOT_CLEARED 2",
+                "lootn=3 l1=2 Silver 50 Copper l2= l3=Charz New l3q=1 coin1=1 item2=nil"
+            )],
+            vec![at(
+                "LOOT_SLOT_CLEARED 1",
+                "lootn=3 l1= l2= l3=Charz New l3q=1 coin1=nil item2=nil"
+            )],
+            vec![
+                at(
+                    "LOOT_SLOT_CLEARED 3",
+                    "lootn=1 l1= l2= l3= l3q=-1 coin1=nil item2=nil"
+                ),
+                at(
+                    "LOOT_CLOSED",
+                    "lootn=0 l1= l2= l3= l3q=0 coin1=nil item2=nil"
+                ),
             ],
         ]
     );

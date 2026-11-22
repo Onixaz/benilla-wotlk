@@ -2011,8 +2011,6 @@ pub(crate) mod schedule_tests {
          "both packets answer the `CMSG_LOGOUT_REQUEST`/cancel the game menu sent"),
         ("ui_loot/mod.rs", "drain_loot_asks", Because::Deliberate,
          "the pre-VM take of `LootMoveStart` is documented at the line and publishes nothing to the VM; the event-firing takes are Lua's queues"),
-        ("ui_loot/mod.rs", "feed_loot", Because::PlayerRoundTrip,
-         "it takes `LootMoveStart` only on a window it has just opened, which answers a loot click"),
         ("ui_loot_roll.rs", "drain_loot_rolls", Because::FilledByVm,
          "only a Need/Greed/Pass click queues a confirm or vote, held in the VM"),
         ("ui_loot_roll.rs", "feed_loot_rolls", Because::PlayerRoundTrip,

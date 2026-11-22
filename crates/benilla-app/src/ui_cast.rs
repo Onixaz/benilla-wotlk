@@ -79,6 +79,10 @@ pub(crate) enum CastBarEdge {
     Selection,
     /// A plain signal a write inside the press raised, such as the auto-repeat spell's.
     Signal(&'static str),
+    /// A signal with its arguments, raised inside the press.
+    Event(&'static str, Vec<benilla_ui::script::ScriptValue>),
+    /// A held item unlocked inside the press (`0x513770`).
+    ItemUnlocked(u64),
     /// A cancelled cast's item, which the trade's enchanting item is released against, ahead of the cancel's send and end (`0x806258`).
     CastItemCancelled(u64),
     /// A refusal's line, shown where it is raised (`0x808200`).
@@ -117,6 +121,7 @@ impl CastBarEdge {
                 | Self::AuraCancel(_)
                 | Self::ItemUseRest(_)
                 | Self::PendingBail
+                | Self::ItemUnlocked(_)
         )
     }
 
@@ -142,6 +147,18 @@ impl crate::ui_action::signals::SignalSink for PressSignals<'_, '_> {
     fn signal(&mut self, event: &'static str) {
         if let Some(edges) = self.edges.as_mut() {
             edges.0.push(CastBarEdge::Signal(event));
+        }
+    }
+
+    fn fire(&mut self, event: &'static str, args: Vec<benilla_ui::script::ScriptValue>) {
+        if let Some(edges) = self.edges.as_mut() {
+            edges.0.push(CastBarEdge::Event(event, args));
+        }
+    }
+
+    fn unlock_item(&mut self, guid: u64) {
+        if let Some(edges) = self.edges.as_mut() {
+            edges.0.push(CastBarEdge::ItemUnlocked(guid));
         }
     }
 
@@ -465,6 +482,7 @@ impl PressSignals<'_, '_> {
                 }
                 CastBarEdge::Selection => crate::ui_action::signals::selection_now(script),
                 CastBarEdge::Signal(event) => script.fire_event(event, Vec::new()),
+                CastBarEdge::Event(event, args) => script.fire_event(event, args),
                 CastBarEdge::CastItemCancelled(item) => script.cast_item_cancelled(item),
                 // A harness's in-place fire: the usable update's reads are the press's own
                 // writes, so it runs at the step with the `World` ([`apply_edge`]).
@@ -484,6 +502,7 @@ impl PressSignals<'_, '_> {
                 | CastBarEdge::FormCancel(_)
                 | CastBarEdge::AuraCancel(_)
                 | CastBarEdge::ItemUseRest(_)
+                | CastBarEdge::ItemUnlocked(_)
                 | CastBarEdge::PendingBail => {}
                 // Shown in place by `fire`.
                 CastBarEdge::Refused(_) | CastBarEdge::Line(_) => {}
@@ -834,6 +853,10 @@ pub(crate) fn apply_edge(world: &mut World, edge: CastBarEdge) {
         }
         _ => {}
     }
+    if let CastBarEdge::ItemUnlocked(guid) = edge {
+        crate::ui_loot::unlock_item_now(world, guid);
+        return;
+    }
     if let CastBarEdge::CastItemCancelled(item) = edge {
         if let Some(mut ui) = world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
             ui.write(move |script| script.cast_item_cancelled(item));
@@ -968,9 +991,11 @@ fn edge_system(
         | CastBarEdge::FormCancel(_)
         | CastBarEdge::AuraCancel(_)
         | CastBarEdge::ItemUseRest(_)
+        | CastBarEdge::ItemUnlocked(_)
         | CastBarEdge::PendingBail => {}
         CastBarEdge::Selection => crate::ui_action::signals::selection(&mut ui),
         CastBarEdge::Signal(event) => ui.fire(event, Vec::new()),
+        CastBarEdge::Event(event, args) => ui.fire(event, args),
         CastBarEdge::Sent { spell_id, target } => {
             ui.fire(
                 "UNIT_SPELLCAST_SENT",

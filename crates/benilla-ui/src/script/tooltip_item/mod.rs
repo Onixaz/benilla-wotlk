@@ -1185,7 +1185,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let h = frame_handle_of(lua, &this)?;
             let found = {
                 let model = crate::script::model_mut_of(lua);
-                model.loot.as_ref().and_then(|l| {
+                crate::script::loot::window(&model).and_then(|l| {
                     let row = slot.checked_sub(1).and_then(|n| l.rows.get(n))?.clone()?;
                     (!row.is_coin && row.item_id != 0).then_some((row, l.source_level))
                 })

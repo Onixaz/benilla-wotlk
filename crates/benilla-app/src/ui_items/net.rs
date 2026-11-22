@@ -49,7 +49,8 @@ fn on_inventory_failure(
             crate::ui_action::signals::SignalSink::line(&mut *ui, line);
         }
         inventory_failure(f, &mut ui);
-        loot.inventory_failed(f.item, &mut latch, &net);
+        let closed = loot.inventory_failed(f.item, &mut latch, &net, &mut *ui);
+        crate::ui_loot::deselect_dead_in_turn(&mut ui, closed);
     }
 }
 
@@ -237,23 +238,28 @@ mod tests {
         let (tx, rx) = crossbeam_channel::unbounded();
         let net = crate::net::NetCommands(tx);
         let mut loot = crate::ui_loot::LootState::default();
-        loot.open(LOCKBOX, 1, 5, Vec::new());
+        loot.open_for_test(LOCKBOX, 1, 5, Vec::new());
         let mut latch = LootLatch(Some(LOCKBOX));
 
         // An unrelated item's failure must not end the session.
-        loot.inventory_failed(0x1234, &mut latch, &net);
+        loot.inventory_failed(0x1234, &mut latch, &net, &mut Vec::new());
         assert_eq!(latch.0, Some(LOCKBOX));
         assert_eq!(loot.source(), Some(LOCKBOX));
         assert!(rx.try_recv().is_err());
 
-        loot.inventory_failed(LOCKBOX, &mut latch, &net);
+        let mut raised: Vec<&'static str> = Vec::new();
+        loot.inventory_failed(LOCKBOX, &mut latch, &net, &mut raised);
         assert_eq!(latch.0, None);
         assert_eq!(loot.source(), None);
         assert!(matches!(
             rx.try_recv(),
             Ok(crate::net::ClientCommand::LootRelease { guid }) if guid == LOCKBOX
         ));
-        assert_eq!(loot.take_unlocks(), [LOCKBOX], "the close unlocks its item");
+        assert_eq!(
+            raised,
+            ["<unlock>", "LOOT_CLOSED"],
+            "the close unlocks its item, then lets the window go"
+        );
     }
     /// Driven through the real registration.
     #[test]

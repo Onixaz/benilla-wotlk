@@ -152,6 +152,8 @@ pub(crate) struct LiveView<'w, 's> {
     item_text: crate::ui_item_text::ItemTextLive<'w, 's>,
     /// The merchant globals and what its rows, costs and sends read.
     merchant: Option<crate::ui_merchant::MerchantLive<'w, 's>>,
+    /// The loot window and what its rows, names and source read.
+    loot: Option<crate::ui_loot::LootLive<'w, 's>>,
     /// The taxi map's globals and what its fares and activates read.
     taxi: Option<crate::ui_taxi::TaxiLive<'w, 's>>,
     /// The trainer window and what its gates, descriptions and buys read.
@@ -1887,6 +1889,22 @@ impl LiveState for LiveView<'_, '_> {
         ))
     }
 
+    fn loot_window(&self) -> Option<Option<benilla_ui::script::LootState>> {
+        Some(self.loot.as_ref()?.window())
+    }
+
+    fn loot_source(&self) -> Option<u64> {
+        Some(self.loot.as_ref()?.source())
+    }
+
+    fn loot_fishing(&self) -> Option<bool> {
+        Some(self.loot.as_ref()?.fishing())
+    }
+
+    fn master_loot_candidate(&mut self, index: u32) -> Option<Option<String>> {
+        Some(self.loot.as_mut()?.master_candidate(index))
+    }
+
     fn trade_cells(&self) -> Option<benilla_ui::script::TradeCells> {
         Some(self.trade_cells.as_deref()?.cells())
     }
@@ -2474,6 +2492,21 @@ pub(crate) fn in_turn(world: &mut World, step: impl FnOnce(&mut World) + Send + 
         Some(mut ui) => ui.world(step),
         None => step(world),
     }
+}
+
+/// Fire `events`, raised where no event queue is held, once the system's commands apply, with the
+/// `World` lent.
+pub(crate) fn fire_after(ecs: &mut Commands, events: UiEvents) {
+    if events.is_empty() {
+        return;
+    }
+    ecs.queue(move |world: &mut World| {
+        let Some(mut ui) = world.get_resource_mut::<UiEvents>() else {
+            return;
+        };
+        ui.0.extend(events.0);
+        fire_handler_events(world);
+    });
 }
 
 /// Fires what the handler that just ran queued, in its order, with the `World` lent; it runs after

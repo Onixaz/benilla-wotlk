@@ -761,14 +761,16 @@ fn on_spell_go_inner(ev: SessionEvent, l: &mut Lifecycle, sc: &mut Scene, arm: &
         // After the chest arm, the effect loop arms the auto-loot flag (`0x80f780`).
         let display = l.spells.as_deref().and_then(|s| s.catalog.get(spell_id));
         if let (true, Some(d)) = (l.self_guid.0 == Some(caster), display) {
-            crate::ui_loot::arm_on_spell_go(
+            let closed = crate::ui_loot::arm_on_spell_go(
                 &d.effects,
                 &mut arm.loot,
                 &arm.cfg,
                 arm.script.as_deref(),
-                &sc.loot_latch,
+                &mut sc.loot_latch,
                 &l.net,
+                &mut *l.ui,
             );
+            crate::ui_loot::deselect_dead_in_turn(&mut l.ui, closed);
         }
     }
 }
@@ -2483,6 +2485,10 @@ mod tests {
 
     impl crate::ui_action::signals::SignalSink for LearnOrder {
         fn signal(&mut self, _: &'static str) {}
+
+        fn fire(&mut self, _: &'static str, _: Vec<benilla_ui::script::ScriptValue>) {}
+
+        fn unlock_item(&mut self, _: u64) {}
 
         fn line(&mut self, line: UiError) {
             self.0.push(line.key.to_string());

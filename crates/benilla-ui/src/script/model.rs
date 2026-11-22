@@ -7,9 +7,9 @@ use crate::widget::{FrameHandle, RegionHandle, WidgetArena};
 
 use super::{
     auction, backdrop, bind_confirm, calendar, camera_view, char_stats, chat_window, colorselect,
-    combat_log, container, cursor, death, duel, follow, guild, inspect, lfg, loot, loot_roll,
-    macros, mail, mirror_timer, parse_unit_token, party, petition, pvp, quest, quest_log,
-    reputation, session, simplehtml, skills, slider, social, stable, trade, tradeskill, unit_menu,
+    combat_log, container, cursor, death, duel, follow, guild, inspect, lfg, loot_roll, macros,
+    mail, mirror_timer, parse_unit_token, party, petition, pvp, quest, quest_log, reputation,
+    session, simplehtml, skills, slider, social, stable, trade, tradeskill, unit_menu,
     weapon_enchant, FontObject, MusicRequest, RegionData, ScriptValue, SoundRequest, UnitState,
     UnitTokenParse,
 };
@@ -667,7 +667,8 @@ pub(crate) struct Model {
     pub(crate) played_time: Option<(u32, f64)>,
     /// `ContainerRefundItemPurchase` sends, item guids, for the app.
     pub(crate) refund_sends: Vec<u64>,
-    /// The open loot window's object (`[0xbfa8d8]`), 0 with none.
+    /// A fixture's looted object, 0 with none, read where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) loot_source: u64,
     /// `CharTitles.dbc`'s rows in file order.
     pub(crate) title_rows: Vec<super::title::TitleRow>,
@@ -832,8 +833,10 @@ pub(crate) struct Model {
     pub(crate) pending_equip_answers: Vec<bind_confirm::PendingEquipAnswer>,
     pub(crate) bind_on_use_confirms: u32,
 
-    /// The open loot, the `LootSlot` takes and whether `CloseLoot` ran, with its `noUI` flag.
-    pub(crate) loot: Option<loot::LootState>,
+    /// A fixture's open loot, read where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) loot: Option<super::loot::LootState>,
+    /// The `LootSlot` takes and whether `CloseLoot` ran, with its `noUI` flag.
     pub(crate) loot_picks: Vec<u32>,
     /// `ConfirmLootSlot(slot)` rows, 1-based, for its pending-slot gate (`0x589300`).
     pub(crate) loot_confirms: Vec<u32>,
@@ -1712,6 +1715,7 @@ impl Model {
             bound_trade_stamps: HashMap::new(),
             played_time: None,
             refund_sends: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             loot_source: 0,
             title_rows: Vec::new(),
             player_titles: None,
@@ -1788,6 +1792,7 @@ impl Model {
             trade_skill: Default::default(),
             lfg: Default::default(),
             calendar: Default::default(),
+            #[cfg(any(test, feature = "fixtures"))]
             loot: None,
             pending_equip_answers: Vec::new(),
             bind_on_use_confirms: 0,

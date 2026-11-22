@@ -146,6 +146,7 @@ fn a_looted_heirloom_reads_the_source_units_level() {
     crate::script::live::lending(&mut tables_v, || {
         let read = |s: &mut UiScript, source_unit: bool, source_level: u32| {
             s.set_loot(Some(LootState {
+                coin_slot: false,
                 source_unit,
                 source_level,
                 master_candidates: Vec::new(),
