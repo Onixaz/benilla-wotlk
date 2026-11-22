@@ -403,7 +403,7 @@ pub(super) fn control(
         }
         // After `apply_server_moves`, so this frame's root edge is already in `modes`.
         let may_translate = mover.may_translate(player.modes.rooted);
-        let axes = input::move_axes(
+        let mut axes = input::move_axes(
             binds,
             &buttons,
             &mut player,
@@ -452,6 +452,17 @@ pub(super) fn control(
             let rate = turn_rate * if slowed { TURN_RATE_MOVING } else { 1.0 };
             turn_delta = turn * rate * dt;
             player.face_yaw += turn_delta;
+            // A vehicle's key turn runs to its facing limit and stops there (`0x6f0f70`).
+            if let Some(limit) = rig
+                .vehicle_facing
+                .and_then(|r| crate::vehicle::facing::clamp(player.face_yaw, r))
+            {
+                let past = wrap_pi(player.face_yaw - limit);
+                player.face_yaw -= past;
+                turn_delta -= past;
+                axes.turn_left = false;
+                axes.turn_right = false;
+            }
         }
         // The drunk veer: while moving, the wobble adds to the facing every frame and commits
         // through the facing setter, so it streams like a turn; a held keyboard turn skips it. Both

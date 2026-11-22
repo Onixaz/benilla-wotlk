@@ -667,6 +667,10 @@ pub(crate) struct CameraControl {
     pub(crate) hold_pitch_for_aim: bool,
     /// The pitch the held look would have turned the camera by, for the vehicle aim to take.
     pub(crate) aim_pitch_delta: f32,
+    /// The driven vehicle's legal facings, in world yaw ([`crate::vehicle::facing`]): a key turn
+    /// stops at a limit and a synced mouse-look holds the camera's yaw there. Set each frame by
+    /// the vehicle aim.
+    pub(crate) vehicle_facing: Option<(f32, f32)>,
     /// The mouse buttons the world owns this frame, latched by [`latch_world_mouse`].
     pub(super) world_mouse: WorldMouse,
     /// Logical cursor position captured when look began, to restore on release.
@@ -1093,6 +1097,13 @@ pub(super) fn run_look_session(
             cam.pitch = (cam.pitch + d_pitch).clamp(-CAM_PITCH_LIMIT, CAM_PITCH_LIMIT);
         }
         if syncs {
+            // The sync clamps the camera's yaw into the vehicle's range with the body (`0x6023d0`).
+            if let Some(limit) = rig
+                .vehicle_facing
+                .and_then(|r| crate::vehicle::facing::clamp(cam.yaw, r))
+            {
+                cam.yaw -= super::wrap_pi(cam.yaw - limit);
+            }
             *face_yaw = cam.yaw;
         }
     }

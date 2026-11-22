@@ -646,6 +646,11 @@ impl Player {
         self.face_yaw
     }
 
+    /// The yaw of the deck we ride, 0 off one: the facing less it is the transport-relative facing.
+    pub(crate) fn transport_yaw(&self) -> f32 {
+        self.ride.as_ref().map_or(0.0, |r| r.boat_yaw)
+    }
+
     /// The stand state this client has committed: its local prediction until the server's echo
     /// of `UNIT_FIELD_BYTES_1` lands, then that byte (`[player+0x1d68]`).
     pub(crate) fn committed_stand_state(&self, echoed: u8) -> u8 {
