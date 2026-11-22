@@ -298,8 +298,9 @@ impl TrajectoryTargeting {
             _ => self.rec.mouse_lingering,
         };
         let fade = (0.5 * linger).min(FADE_CAP);
-        let hold = ((linger - fade) * 1000.0) as i32;
-        let fade_ms = (fade * 1000.0) as i32;
+        // Both spans round to the millisecond, as the reference's float-to-int conversion does.
+        let hold = ((linger - fade) * 1000.0).round_ties_even() as i32;
+        let fade_ms = (fade * 1000.0).round_ties_even() as i32;
         let elapsed = now.wrapping_sub(self.fade_start.wrapping_add(hold as u32)) as i32;
         if elapsed < 0 {
             return Some(1.0);
