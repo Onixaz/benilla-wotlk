@@ -231,6 +231,11 @@ const CALLS_NO_LUA: &[(&str, &str, &str)] = &[
         "the glyph arm's direct use as a press, its raises queued in turn; `press_step` fires them          with the `World` lent",
     ),
     (
+        "ui_items/mod.rs",
+        "run_item_use_rest",
+        "the item use's rest past its form leave, a cast edge's step: the bind deferral queues its event on the VM, no call into Lua; its edges fire with the `World` lent",
+    ),
+    (
         "ui_action/drain.rs",
         "go_opener",
         "one GameObject opener as a press, its raises queued in turn; `press_step` fires them with          the `World` lent",
