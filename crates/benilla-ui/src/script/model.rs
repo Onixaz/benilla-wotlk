@@ -922,9 +922,19 @@ pub(crate) struct Model {
     /// The sell slot's item, resolved to its guid when `StartAuction` fires.
     pub(crate) auction_sell_item: Option<cursor::CursorItem>,
 
-    /// The open trade and its calls: `InitiateTrade` tokens, the accept, unaccept and cancel flags,
-    /// and `SetTradeMoney` copper (`CMSG_SET_TRADE_GOLD`).
-    pub(crate) trade: Option<trade::TradeState>,
+    /// The trade partner (`0xbfa658`), set by the partner setter's open (`0x58713d`) and zeroed by
+    /// its close (`0x587102`) and `CloseTrade` (`0x5879b0`).
+    pub(crate) trade_partner: Option<u64>,
+    /// The partner's offer as the window keeps it (`0xbfa400`-`0xbfa5c0`), copied at each offer
+    /// update (`0x586dc0`); the open zeroes only each slot's id, count and enchant (`0x58716d`-`0x5871d1`).
+    pub(crate) trade_target: [trade::TradeTargetItem; trade::TRADE_SLOTS],
+    /// The enchant spells last signalled, our window's then the partner's (`0xbfa668`, `0xbfa66c`).
+    pub(crate) trade_last_enchants: [u32; 2],
+    /// The coins last signalled, ours then the partner's (`0xbfa670`, `0xbfa674`).
+    pub(crate) trade_last_money: [u32; 2],
+    /// A fixture's stand-in for the trade's network cells, read where no view is lent.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) trade_cells: trade::TradeCells,
     pub(crate) trade_initiates: Vec<String>,
     /// The accept sends in call order: `true` `CMSG_ACCEPT_TRADE`, `false` `CMSG_UNACCEPT_TRADE`.
     pub(crate) trade_accept_sends: Vec<bool>,
@@ -1830,7 +1840,12 @@ impl Model {
             auction_cancel_sell: false,
             auction_close: false,
             auction_sell_item: None,
-            trade: None,
+            trade_partner: None,
+            trade_target: Default::default(),
+            trade_last_enchants: [0; 2],
+            trade_last_money: [0; 2],
+            #[cfg(any(test, feature = "fixtures"))]
+            trade_cells: Default::default(),
             trade_initiates: Vec::new(),
             trade_accept_sends: Vec::new(),
             trade_accepts: (false, false),

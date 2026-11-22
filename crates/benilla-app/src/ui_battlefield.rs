@@ -867,8 +867,9 @@ pub(crate) fn queue_enter_world(commands: &mut Commands) {
         // battlefield's (`0x528230`).
         crate::ui_action::bonus::enter_world(world);
         crate::ui_items::watch::enter_world(world);
-        // The merchant's (`0x5281ea`).
+        // The merchant's (`0x5281ea`), then the trade window's (`0x5281ef`).
         crate::ui_merchant::enter_world(world);
+        crate::ui_trade::enter_world(world);
         // The registrar's, the petition window's and the vendor's (`0x528217`, `0x528221`, `0x528258`).
         crate::ui_petition::enter_world(world);
         if let Err(e) = world.run_system_cached(enter_world) {

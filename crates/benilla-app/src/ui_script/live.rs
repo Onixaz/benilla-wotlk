@@ -35,6 +35,8 @@ pub(crate) struct LiveView<'w, 's> {
     quest_rows: crate::ui_quest_log::rows::QuestRowLive<'w, 's>,
     net: Option<Res<'w, crate::net::NetCommands>>,
     bank_prices: Option<Res<'w, crate::ui_bank::BankPrices>>,
+    /// The trade's network cells (`0xca0b68`-`0xca0ff8`), the trade verbs' wire reads.
+    trade_cells: Option<Res<'w, crate::ui_trade::TradeSession>>,
     item_tables: Option<Res<'w, crate::ui_items::feed::ItemTablesLive>>,
     /// The enchant catalog a bound item's trade stamp tests for a binding enchant (`0x708b40`).
     enchants: Option<Res<'w, crate::items::Enchants>>,
@@ -1855,6 +1857,10 @@ impl LiveState for LiveView<'_, '_> {
             bag,
             slot,
         ))
+    }
+
+    fn trade_cells(&self) -> Option<benilla_ui::script::TradeCells> {
+        Some(self.trade_cells.as_deref()?.cells())
     }
 
     fn trade_item_facts(&self, item: u64) -> Option<benilla_ui::script::TradeItemFacts> {

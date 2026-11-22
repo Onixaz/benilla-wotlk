@@ -2199,10 +2199,11 @@ fn own_player_watches(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
     let mut teams_done = false;
     let mut buyback_done = false;
     for (at, &(index, old, new)) in edges.iter().enumerate() {
-        // The coinage watch (`0x6da070`): the trainer's re-evaluation (`0x6da085`), then `PLAYER_MONEY` (`0x6da091`); its coin sound plays from [`crate::sound`].
+        // The coinage watch (`0x6da070`): the trainer's re-evaluation (`0x6da085`), then `PLAYER_MONEY` (`0x6da091`), then an offer past the new purse trimmed to it (`0x6da104`); its coin sound plays from [`crate::sound`].
         if index == benilla_protocol::field::FIELD_PLAYER_FIELD_COINAGE {
             sc.ui.world(crate::ui_trainer::refresh);
             sc.ui.fire("PLAYER_MONEY", Vec::new());
+            sc.ui.write(move |script| script.trim_trade_offer(new));
             continue;
         }
         // The skill slots' value, max and permanent-bonus halves, each its own watch re-evaluating the trainer (`0x6da5f3`, `0x6cddb0`).
