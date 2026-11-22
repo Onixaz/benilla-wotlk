@@ -89,11 +89,27 @@ pub(crate) enum CastBarEdge {
     /// The cast attempt's rungs below the targeting cursor's stop, run after the stop's selection
     /// update (`0x80d3ce`, `0x8054f0`).
     LadderRest(crate::spell::LadderRest),
+    /// The cast attempt's attack pick (`0x80d661`), its rest queued behind its setter's signals.
+    AttackPick(crate::spell::LadderRest),
+    /// The pending send from its form drop on: the drop's aura cancels, the packet and what
+    /// follows it, after the drop's listeners (`0x80324d`, `0x803458`, `0x80b4ee`).
+    SendCommit(crate::spell::SendCommit),
     /// The attempt's pending bail: the refusal kit, with `Sound_EnableErrorSpeech` on
     /// (`0x80d385`-`0x80d3c1`).
     PendingBail,
     /// Our aura cancel's early form drop for this spell (`0x80324d` -> `0x721cf0`).
     FormCancel(u32),
+}
+
+impl CastBarEdge {
+    /// A press's rest that runs as a step of its own after the listeners before it.
+    #[cfg(test)]
+    pub(crate) fn is_step(&self) -> bool {
+        matches!(
+            self,
+            Self::SendTail(_) | Self::LadderRest(_) | Self::AttackPick(_) | Self::SendCommit(_)
+        )
+    }
 }
 
 /// The kit the pending bail plays (`0x80d3b2`).
@@ -134,9 +150,7 @@ impl PressEdges {
     pub(crate) fn run_tails(world: &mut World) {
         loop {
             let step = world.get_resource_mut::<PressEdges>().and_then(|mut e| {
-                let at = e.0.iter().position(|e| {
-                    matches!(e, CastBarEdge::SendTail(_) | CastBarEdge::LadderRest(_))
-                })?;
+                let at = e.0.iter().position(CastBarEdge::is_step)?;
                 Some(e.0.remove(at))
             });
             let Some(step) = step else { return };
@@ -148,6 +162,10 @@ impl PressEdges {
                 CastBarEdge::LadderRest(rest) => world
                     .run_system_cached_with(crate::spell::run_ladder_rest, rest)
                     .expect("the ladder's rest runs"),
+                CastBarEdge::AttackPick(rest) => crate::spell::attack_pick_step(world, rest),
+                CastBarEdge::SendCommit(commit) => world
+                    .run_system_cached_with(crate::spell::run_send_commit, commit)
+                    .expect("the send's commit runs"),
                 _ => unreachable!(),
             }
             // A step the step queued runs next; its other raises wait on the queue unfired.
@@ -164,6 +182,16 @@ impl PressEdges {
     #[cfg(test)]
     pub(crate) fn waiting(&self) -> &[CastBarEdge] {
         &self.0
+    }
+
+    /// The press steps waiting, taken in order; the other edges stay.
+    #[cfg(test)]
+    pub(crate) fn take_steps(&mut self) -> Vec<CastBarEdge> {
+        let (steps, rest) = std::mem::take(&mut self.0)
+            .into_iter()
+            .partition(CastBarEdge::is_step);
+        self.0 = rest;
+        steps
     }
 
     /// The refusals waiting, taken.
@@ -268,6 +296,20 @@ impl PressSignals<'_, '_> {
     pub(crate) fn ladder_rest(&mut self, rest: crate::spell::LadderRest) {
         if let Some(edges) = self.edges.as_mut() {
             edges.0.push(CastBarEdge::LadderRest(rest));
+        }
+    }
+
+    /// The cast attempt's attack pick, then its rungs below after the setter's listeners.
+    pub(crate) fn attack_pick(&mut self, rest: crate::spell::LadderRest) {
+        if let Some(edges) = self.edges.as_mut() {
+            edges.0.push(CastBarEdge::AttackPick(rest));
+        }
+    }
+
+    /// The pending send's packet and what follows it, after its form drop's listeners.
+    pub(crate) fn send_commit(&mut self, commit: crate::spell::SendCommit) {
+        if let Some(edges) = self.edges.as_mut() {
+            edges.0.push(CastBarEdge::SendCommit(commit));
         }
     }
 
@@ -746,6 +788,16 @@ pub(crate) fn apply_edge(world: &mut World, edge: CastBarEdge) {
         }
         return;
     }
+    if let CastBarEdge::AttackPick(rest) = edge {
+        crate::spell::attack_pick_step(world, rest);
+        return;
+    }
+    if let CastBarEdge::SendCommit(commit) = edge {
+        if let Err(e) = world.run_system_cached_with(crate::spell::run_send_commit, commit) {
+            warn!("ui_cast: a cast send's commit did not run: {e}");
+        }
+        return;
+    }
     if let CastBarEdge::FormCancel(spell_id) = edge {
         crate::ui_shapeshift::preempt_form_cancel(world, spell_id);
         return;
@@ -830,6 +882,8 @@ fn edge_system(
         | CastBarEdge::Line(_)
         | CastBarEdge::SendTail(_)
         | CastBarEdge::LadderRest(_)
+        | CastBarEdge::AttackPick(_)
+        | CastBarEdge::SendCommit(_)
         | CastBarEdge::FormCancel(_)
         | CastBarEdge::PendingBail => {}
         CastBarEdge::Selection => crate::ui_action::signals::selection(&mut ui),

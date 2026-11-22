@@ -2240,10 +2240,7 @@ impl UiEvents {
     pub(crate) fn take_press_steps(&mut self) -> Vec<crate::ui_cast::CastBarEdge> {
         let mut out = Vec::new();
         self.0.retain(|e| match e {
-            UiEvent::CastEdge(
-                edge @ (crate::ui_cast::CastBarEdge::SendTail(_)
-                | crate::ui_cast::CastBarEdge::LadderRest(_)),
-            ) => {
+            UiEvent::CastEdge(edge) if edge.is_step() => {
                 out.push(edge.clone());
                 false
             }

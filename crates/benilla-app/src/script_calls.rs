@@ -280,12 +280,14 @@ fn apply_one(
                 cast_as_pet(&mut appliers.p3(), out);
             }
         }
-        // The cast attempt's attack pick can move the selection mid-cast, so a press held there is
-        // picked and resumed before the next call reads the selection.
+        // A harness without the press's step queue holds the attack pick here; with it, the pick
+        // and the rungs below it are steps of their own ([`crate::spell::attack_pick_step`]).
         if let Some(held) = appliers.p3().ladder.take_held() {
-            if appliers.p7().pick_for_cast(held, ui) {
+            if let Some(unit) = appliers.p7().pick_for_cast(held, ui) {
                 let mut cast = appliers.p3();
-                let ctx = cast.targeting.context();
+                let ctx = cast
+                    .targeting
+                    .context_at(crate::spell::cast_target::Aim::Unit(Some(unit)));
                 cast.ladder.resume_after_pick(held, &ctx);
             }
         }
@@ -1263,5 +1265,79 @@ mod tests {
         assert_eq!(selected(&f), None);
         assert_eq!(errors(&mut f), vec!["ERR_NO_ATTACK_TARGET"]);
         assert!(crate::ui_action::take_refusals(f.app.world_mut()).is_empty());
+    }
+
+    /// The pick's target setter fires inside the attempt, before the rungs below the pick run
+    /// (`0x80d661` -> `0x72bdb0` -> `0x524bf0`, then `0x80d6ad` and the send `0x80b4ee`): a
+    /// `PLAYER_TARGET_CHANGED` listener reads the strike not yet current, and a select it makes
+    /// goes out before the strike.
+    #[test]
+    fn a_strikes_pick_listener_runs_before_the_rest_of_the_attempt() {
+        let mut f = frame(false);
+        spawn_mob(&mut f, &[]);
+        with_strike(&mut f);
+        run(
+            &mut f,
+            r#"local l = CreateFrame("Frame")
+               l:RegisterEvent("PLAYER_TARGET_CHANGED")
+               l:SetScript("OnEvent", function()
+                   if AT_PICK then return end
+                   AT_PICK = IsCurrentAction(1) and 1 or 0
+                   TargetUnit("party1")
+               end)
+               UseAction(1)"#,
+        );
+        let at_pick = f
+            .app
+            .world()
+            .non_send_resource::<UiScript>()
+            .eval::<i64>("return AT_PICK")
+            .unwrap();
+        assert_eq!(at_pick, 0, "the strike is not current at its pick's signal");
+        // The attempt's guid argument stays the unit the pick bound (`0x80d65e`).
+        assert_eq!(
+            strike_wire(&f),
+            vec![
+                ("select", MOB),
+                ("select", NEW),
+                ("cast", MOB),
+                ("swing", MOB)
+            ]
+        );
+    }
+
+    /// A strike held at its pick takes one `castCount`, at its attempt's top (`0x80cda8` ->
+    /// `0x8050dc`); its rest below the pick keeps it.
+    #[test]
+    fn a_picked_strike_takes_one_count() {
+        let mut f = frame(false);
+        spawn_mob(&mut f, &[]);
+        with_strike(&mut f);
+        let next = f
+            .app
+            .world()
+            .resource::<crate::spell::PendingCast>()
+            .next_count();
+        run(&mut f, "UseAction(1)");
+        let counts: Vec<u8> =
+            f.rx.try_iter()
+                .filter_map(|c| match c {
+                    ClientCommand::CastSpell {
+                        spell_id: SINISTER_STRIKE,
+                        count,
+                        ..
+                    } => Some(count),
+                    _ => None,
+                })
+                .collect();
+        assert_eq!(counts, [next]);
+        assert_eq!(
+            f.app
+                .world()
+                .resource::<crate::spell::PendingCast>()
+                .next_count(),
+            next.wrapping_add(1).max(1),
+            "one count taken"
+        );
     }
 }

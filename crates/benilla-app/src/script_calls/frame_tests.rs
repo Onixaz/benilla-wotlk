@@ -1883,6 +1883,86 @@ fn a_form_cancel_drops_the_form_before_the_server_answers() {
     assert_eq!(cancels, [BEAR]);
 }
 
+/// A cast's form drop raises before its send (`0x80af88` -> `0x80324d` -> `0x721d89`, then the
+/// aura cancel `0x803458` and the packet `0x80b4ee`): an `UPDATE_SHAPESHIFT_FORM` listener reads
+/// the cast not yet current, and a select it makes goes out ahead of the cancel and the cast.
+#[test]
+fn a_casts_form_drop_listener_runs_before_the_send() {
+    const BEAR: u32 = 5487;
+    const FORM: u32 = 5;
+    let mut rig = rig_or_skip!(&[Step::Tick]);
+    {
+        let world = rig.app.world_mut();
+        let me = world.resource::<GuidIndex>().0[&ME];
+        world.entity_mut(me).insert((
+            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_FLAGS, 0x8),
+                (benilla_protocol::field::FIELD_UNIT_BYTES_2, FORM << 24),
+            ])),
+            crate::unit_auras::UnitAuras::of(
+                ME,
+                &[(
+                    0,
+                    BEAR,
+                    benilla_protocol::messages::AURA_UPDATE_FLAG_CANCELABLE | 1,
+                )],
+            ),
+        ));
+        let mut spells = world.resource_mut::<crate::ui_action::Spells>();
+        // Bolt, `Attributes & 0x10000`: not while shapeshifted, so the send leaves the form.
+        let bolt = SpellDisplay {
+            name: "Bolt".into(),
+            attributes: 0x0001_0000,
+            implicit_target_a1: 6,
+            start_recovery_category: 133,
+            start_recovery_ms: 1500,
+            ..Default::default()
+        };
+        let bear = SpellDisplay {
+            name: "Bear Form".into(),
+            shapeshift_form: Some(FORM),
+            ..Default::default()
+        };
+        spells.catalog = SpellCatalog::from_displays(HashMap::from([(BOLT, bolt), (BEAR, bear)]));
+        spells
+            .forms
+            .insert(FORM, benilla_formats::ShapeshiftForm::default());
+    }
+    rig.lua(TICK_DO);
+    rig.lua(
+        r#"local f = CreateFrame("Frame")
+        f:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
+        f:SetScript("OnEvent", function()
+            if AT_DROP then return end
+            AT_DROP = IsCurrentAction(1) and 1 or 0
+            TargetUnit("party1")
+        end)
+        TICK_DO = function() UseAction(1) TICK_DO = nil end"#,
+    );
+    rig.frame();
+    let at_drop: i64 = rig.vm().eval("return AT_DROP").expect("the listener ran");
+    assert_eq!(at_drop, 0, "the cast is not current at its form drop");
+    let wire: Vec<&str> = rig
+        .sent()
+        .into_iter()
+        .filter_map(|c| match c {
+            ClientCommand::SetSelection { guid: NEW } => Some("select"),
+            ClientCommand::CancelAura { spell_id: BEAR } => Some("cancel"),
+            // The attempt bound its unit before the drop.
+            ClientCommand::CastSpell {
+                spell_id: BOLT,
+                target: Some(OLD),
+                ..
+            } => Some("cast"),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(wire, ["select", "cancel", "cast"]);
+}
+
 /// A lootable item's lock edge (`0x6dcded` -> `0x706feb`) raises as `UseContainerItem` returns:
 /// its listener's `TargetUnit` applies inside it.
 #[test]

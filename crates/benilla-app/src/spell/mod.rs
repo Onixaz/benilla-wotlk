@@ -34,8 +34,8 @@ pub(crate) mod validator;
 // The one cast path: every caster takes [`CastLadder`] and commits through [`CastCommit`];
 // `send_spell_cast` is private to `cast_send`, so no second send path can exist.
 pub(crate) use cast_send::{
-    cast_speed, run_ladder_rest, run_send_tail, CastCommit, CastLadder, HeldCast, HeldForPick,
-    LadderRest, SendTail, TargetedBind,
+    attack_pick_step, cast_speed, run_ladder_rest, run_send_commit, run_send_tail, CastCommit,
+    CastLadder, HeldCast, HeldForPick, LadderRest, SendCommit, SendTail, TargetedBind,
 };
 pub(crate) use cast_target::{
     AutoChecks, AutoDismount, AutoPosture, AutoSelfCast, SecureAbilityToggle,

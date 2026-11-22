@@ -202,15 +202,15 @@ impl AttackPress<'_, '_> {
         );
     }
 
-    /// The cast attempt's attack pick for a spell press held there ([`crate::spell::HeldForPick`]):
-    /// the validator alone, with no swing after it. Whether the cast goes on, at the unit the pick
-    /// left selected.
+    /// The cast attempt's attack pick for a spell press held there (`0x80d661`): the validator
+    /// alone, with no swing after it. The unit it bound into the attempt's guid argument
+    /// (`0x80d65e`), or `None` when the attempt ends.
     pub(crate) fn pick_for_cast(
         &mut self,
         held: crate::spell::HeldCast,
         sink: &mut dyn crate::ui_action::signals::SignalSink,
-    ) -> bool {
-        self.validate(held.passed, false, sink).is_some()
+    ) -> Option<u64> {
+        self.validate(held.passed, false, sink)
     }
 
     /// The attack validator: its actor checks, then its target pick. `check_range` is on for the
