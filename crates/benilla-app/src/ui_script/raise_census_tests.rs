@@ -184,7 +184,7 @@ const ON_THE_QUEUE: &[(&str, &str)] = &[
 const RAISE_STEPS: usize = 70;
 
 /// `source` with every inline test module cut out, to its closing brace.
-fn production(source: &str) -> String {
+pub(super) fn production(source: &str) -> String {
     let test_module =
         regex::Regex::new(r"\r?\n#\[cfg\(test\)\]\r?\n(?:#\[[^\n]*\]\r?\n)*mod \w+ \{")
             .expect("a valid pattern");
