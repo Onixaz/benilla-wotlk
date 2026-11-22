@@ -259,7 +259,23 @@ pub(super) struct FailArgs<'a> {
     pub(super) totems: Option<&'a TotemCategoryCatalog>,
     /// `PowerDisplay.dbc`, for `0x4d`.
     pub(super) power_displays: Option<&'a benilla_formats::PowerDisplayCatalog>,
+    /// Our own power type (`UNIT_FIELD_BYTES_0` byte 3, `0x808990`), for `0x02`; `None` with no
+    /// player.
+    pub(super) own_power: Option<u8>,
+    /// The casting item's name, else the spell's (`0x808a0a`-`0x808a66`), for `0xb6`.
+    pub(super) item_name: Option<&'a str>,
 }
+
+/// The power tokens by power type (`0x7fe4b0`); a type past 6 has none.
+const POWER_TOKENS: [&str; 7] = [
+    "MANA",
+    "RAGE",
+    "FOCUS",
+    "ENERGY",
+    "HAPPINESS",
+    "RUNES",
+    "RUNIC_POWER",
+];
 
 /// What an argument arm produced, and when nothing, which exit the reference takes: every arm but
 /// `0x56` declines to the shared default, which still displays the template, while `0x56` spends
@@ -472,10 +488,13 @@ pub(super) fn cast_fail_text(
         // The player's overrides.
         Caster::Player => match reason {
             0x01 => return get_display("ERR_SPELL_FAILED_ALREADY_AT_FULL_HEALTH"),
+            // 12340's 4 (`0x808982`): our own power type's token; no player, a type past 6 or an
+            // empty token fails the cast with no line (`0x808984`, `0x808997`, `0x8089b5` ->
+            // `0x8086ff`).
             0x02 => {
+                let power = args.own_power.filter(|&p| p <= 6)?;
+                let name = get_text(POWER_TOKENS[usize::from(power)])?;
                 let t = get_display("ERR_SPELL_FAILED_ALREADY_AT_FULL_POWER_S")?;
-                let power = spell.map_or(0, |d| d.power_type);
-                let name = get_text(power_keys(power).1).unwrap_or_default();
                 // The reference puts only the power noun in the argText buffer: the log reads the
                 // bare word.
                 return Some(CastFailLine {
@@ -522,6 +541,27 @@ pub(super) fn cast_fail_text(
     }
     let text = raw?;
     let line = CastFailLine::passthrough;
+    // 12340's 176 and 181, the player's arms (`0x8089f3`, `0x808acd`): the template printed with
+    // the casting item's name, and with the first word as a number.
+    if caster == Caster::Player {
+        match reason {
+            UNIQUE_GLYPH => {
+                let name = args
+                    .item_name
+                    .or(spell.map(|d| d.name.as_str()))
+                    .unwrap_or_default();
+                return Some(line(text.replace("%s", name)));
+            }
+            FISHING_TOO_LOW => {
+                let word = args.arg.map_or(-1, |w| w as i32);
+                return Some(line(benilla_ui::strings::fill(
+                    &text,
+                    &[benilla_ui::strings::Arg::D(i64::from(word))],
+                )));
+            }
+            _ => {}
+        }
+    }
     // The argument arms.
     match args.fill(caster, reason, spell) {
         Fill::Filled(name) => return Some(line(text.replace("%s", &name))),
@@ -534,6 +574,12 @@ pub(super) fn cast_fail_text(
 
 /// 12340's `SPELL_FAILED_CUSTOM_ERROR` (wire 172) in the shared numbering.
 pub(crate) const CUSTOM_ERROR: u8 = 0xB2;
+
+/// 12340's `SPELL_FAILED_UNIQUE_GLYPH` (wire 176) in the shared numbering.
+const UNIQUE_GLYPH: u8 = 0xB6;
+
+/// 12340's `SPELL_FAILED_FISHING_TOO_LOW` (wire 181) in the shared numbering.
+const FISHING_TOO_LOW: u8 = 0xBB;
 
 /// A spell that teaches the pet: `Effect[0]` 57, or 36 on implicit target 5 (`0x808481`).
 fn teaches_pet(d: &SpellDisplay) -> bool {
@@ -954,11 +1000,85 @@ mod tests {
         );
         m.insert("RAGE", "Rage");
         let g = getter(&m);
-        let rage = spell(1, 0, 0);
-        let line =
-            cast_fail_text(Caster::Player, 0x02, Some(&rage), FailArgs::default(), &g).unwrap();
+        // The spell costs mana; our own power type is rage (`0x808990`).
+        let mana = spell(0, 0, 0);
+        let ours = |p| FailArgs {
+            own_power: Some(p),
+            ..FailArgs::default()
+        };
+        let line = cast_fail_text(Caster::Player, 0x02, Some(&mana), ours(1), &g).unwrap();
         assert_eq!(line.text, "You are already at full Rage.");
         assert_eq!(line.logged(), "Rage");
+    }
+
+    /// 12340's 4 (`0x808982`): runic power is type 6's token; no player or a type past 6 shows
+    /// nothing (`0x808997` -> `0x8086ff`).
+    #[test]
+    fn full_power_names_our_power_through_the_seven_tokens() {
+        let mut m = gs();
+        m.insert(
+            "ERR_SPELL_FAILED_ALREADY_AT_FULL_POWER_S",
+            "You are already at full %s.",
+        );
+        m.insert("RUNIC_POWER", "Runic Power");
+        let g = getter(&m);
+        let at = |p: Option<u8>| {
+            cast_fail_text(
+                Caster::Player,
+                0x02,
+                None,
+                FailArgs {
+                    own_power: p,
+                    ..FailArgs::default()
+                },
+                &g,
+            )
+            .map(|l| l.text)
+        };
+        assert_eq!(
+            at(Some(6)).as_deref(),
+            Some("You are already at full Runic Power.")
+        );
+        assert_eq!(at(Some(7)), None);
+        assert_eq!(at(None), None);
+    }
+
+    /// 12340's 176 (`0x8089f3`) names the casting item, else the spell; 181 (`0x808acd`) prints
+    /// the first word as a number.
+    #[test]
+    fn a_unique_glyph_names_the_item_and_fishing_prints_its_word() {
+        let mut m = gs();
+        m.insert(
+            "SPELL_FAILED_UNIQUE_GLYPH",
+            "%s: That glyph is already inscribed.",
+        );
+        m.insert("SPELL_FAILED_FISHING_TOO_LOW", "Requires Fishing %d");
+        let g = getter(&m);
+        let mut glyph = spell(0, 0, 0);
+        glyph.name = "Glyph of Fire".into();
+        let item = FailArgs {
+            item_name: Some("Glyph of Fireball"),
+            ..FailArgs::default()
+        };
+        let text = |reason, d: Option<&SpellDisplay>, args| {
+            cast_fail_text(Caster::Player, reason, d, args, &g).map(|l| l.text)
+        };
+        assert_eq!(
+            text(UNIQUE_GLYPH, Some(&glyph), item).as_deref(),
+            Some("Glyph of Fireball: That glyph is already inscribed.")
+        );
+        assert_eq!(
+            text(UNIQUE_GLYPH, Some(&glyph), FailArgs::default()).as_deref(),
+            Some("Glyph of Fire: That glyph is already inscribed.")
+        );
+        let word = FailArgs {
+            arg: Some(225),
+            ..FailArgs::default()
+        };
+        assert_eq!(
+            text(FISHING_TOO_LOW, None, word).as_deref(),
+            Some("Requires Fishing 225")
+        );
     }
 
     fn forms<const N: usize>(
@@ -1266,6 +1386,8 @@ mod tests {
             forms: Some(&forms),
             totems: Some(&totems),
             power_displays: None,
+            own_power: None,
+            item_name: None,
         };
         // `TOTEM_CATEGORY` names the tool category: 165 is the Mining Pick. The pet's table has no
         // such arm, and a word with no row shows nothing.

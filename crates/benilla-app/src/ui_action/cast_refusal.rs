@@ -113,6 +113,8 @@ impl FailNameTables<'_> {
             forms: spells.map(|s| &s.forms),
             totems: self.totems.as_deref().map(|t| &t.0),
             power_displays: spells.map(|s| &s.power_displays),
+            own_power: None,
+            item_name: None,
         }
     }
 }
@@ -213,7 +215,10 @@ impl CastFailShow<'_, '_> {
         let items = &*self.items;
         let commands = &*self.commands;
         let name_tables = &self.name_tables;
-        let fail_args = name_tables.args(spells);
+        let fail_args = cast_fail::FailArgs {
+            own_power: self_store.map(|s| s.0.unit_power_type()),
+            ..name_tables.args(spells)
+        };
         // `0x19`-`0x1b`: the singular subclass name, "Must have a Wand equipped"; a
         // multi-bit mask names its `ItemSubClassMask.dbc` group, else the first subclass,
         // where the tooltip uses the plural and joins. The pet's table fills it too.
