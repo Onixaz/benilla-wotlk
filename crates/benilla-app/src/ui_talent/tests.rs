@@ -228,3 +228,28 @@ fn a_login_after_a_logout_rebuilds_the_tabs() {
     state.enter_world(|| Some(one_tab()));
     assert_eq!(state.pages(TalentSide::Player).tabs.len(), 1);
 }
+
+/// A prerequisite slot names the spell at the needed rank (`0x622585`), and that spell's name is
+/// the tooltip's requirement line.
+#[test]
+fn a_prerequisite_names_the_spell_at_the_needed_rank() {
+    benilla_formats::wow_data_or_skip!();
+    let (catalog, spells) = catalogs();
+    let pages = player_pages(&catalog, &spells, 1, 8);
+    let prereqs: Vec<_> = pages
+        .talents
+        .iter()
+        .flatten()
+        .flat_map(|t| &t.prereqs)
+        .collect();
+    assert!(!prereqs.is_empty());
+    for p in prereqs {
+        let rec = catalog.talent_by_id(p.talent).unwrap();
+        assert_eq!(p.spell, rec.ranks[p.rank as usize], "talent {}", p.talent);
+        assert_eq!(
+            p.name.as_deref(),
+            spells.get(p.spell).map(|d| d.name.as_str())
+        );
+        assert!(p.name.is_some());
+    }
+}

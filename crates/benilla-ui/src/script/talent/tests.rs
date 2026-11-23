@@ -38,7 +38,8 @@ fn pages() -> TalentPages {
             talent: 10,
             rank: 2,
             seat: Some((1, 1)),
-            name: "A".into(),
+            spell: 1,
+            name: Some("A".into()),
         }],
         ..Default::default()
     };

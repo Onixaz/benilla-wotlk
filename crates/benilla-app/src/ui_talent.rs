@@ -245,14 +245,17 @@ fn pages_of(
                     .iter()
                     .map(|&(id, rank)| {
                         let rec = catalog.talent_by_id(id);
+                        // The spell at the needed rank or the first later one (`0x622585`).
+                        let spell = rec
+                            .and_then(|r| r.ranks.iter().skip(rank as usize).find(|&&s| s != 0))
+                            .copied()
+                            .unwrap_or(0);
                         TalentPrereqView {
                             talent: id,
                             rank,
                             seat: rec.map(|r| (r.row + 1, r.col + 1)),
-                            name: rec
-                                .and_then(|r| spells.get(r.ranks[0]))
-                                .map(|d| d.name.clone())
-                                .unwrap_or_default(),
+                            spell,
+                            name: spells.get(spell).map(|d| d.name.clone()),
                         }
                     })
                     .collect(),

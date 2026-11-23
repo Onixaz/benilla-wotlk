@@ -125,7 +125,8 @@ fn fixture(points_spent: u32) -> (TalentPages, Vec<(u32, u8)>) {
             talent: 1,
             rank: 2,
             seat: Some((1, 3)),
-            name: "Improved Rend".into(),
+            spell: 1,
+            name: Some("Improved Rend".into()),
         }],
         ..Default::default()
     };

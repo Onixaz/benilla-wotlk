@@ -52,8 +52,11 @@ pub struct TalentPrereqView {
     /// The named record's 1-based tier and column, `None` when the id names no record (the slot
     /// is skipped, `0x5c7feb`; a zero id is skipped at `0x5c7fd6`).
     pub seat: Option<(u32, u32)>,
-    /// The named talent's first rank's spell name, the tooltip's requirement line.
-    pub name: String,
+    /// The named talent's spell at the needed rank, or the first later rank that has one; 0 for
+    /// none, and the tooltip shows no line for the slot (`0x622585`, `0x6225a5`).
+    pub spell: u32,
+    /// That spell's name, `None` when it names no spell record (`0x6225c4`).
+    pub name: Option<String>,
 }
 
 /// One talent button's record.
@@ -307,43 +310,52 @@ fn tooltip_lines(lua: &Lua, args: &MultiValue) -> Option<(u32, TalentLines)> {
                 ],
             )
         });
+        // The requirement lines (`0x6224f0`), only while no rank is held (`0x627085`, `0x623b64`);
+        // `met` is its answer, cleared by a slot whose spell is found even with no line shown.
         let mut reqs = Vec::new();
-        let tab_points = group.and_then(|g| g.tab(t_index)).map_or(0, |gt| {
-            if use_preview {
-                gt.spent + gt.preview_spent
-            } else {
-                gt.spent
+        let mut met = true;
+        let held = rank >= 0;
+        // The prerequisite slots first (`0x622520`-`0x62267d`): a slot held at its rank, the
+        // preview's under isPreview (`0x62256d`), shows nothing; without a group every slot shows.
+        for p in t.prereqs.iter().filter(|_| !held) {
+            if p.seat.is_none() || p.spell == 0 || rank_of(p.talent) >= p.rank as i32 {
+                continue;
             }
-        });
-        let per_tier = if pet { 3 } else { 5 };
-        let need = per_tier * (t.tier as i32 - 1);
-        if need > tab_points {
-            reqs.extend(get("TOOLTIP_TALENT_TIER_POINTS").map(|f| {
+            met = false;
+            let Some(name) = &p.name else { continue };
+            // The key is read with no ordinal (`0x622626`), as `GetText` reads -1.
+            let tmpl = super::get_text::get_text(lua, "TOOLTIP_TALENT_PREREQ", -1, 0)
+                .ok()
+                .map(|s| s.to_string_lossy().to_string())
+                .filter(|s| !s.is_empty());
+            reqs.extend(tmpl.map(|f| {
                 crate::strings::fill(
                     &f,
                     &[
-                        crate::strings::Arg::D(need.into()),
-                        crate::strings::Arg::S(&view.name),
+                        crate::strings::Arg::D((p.rank + 1).into()),
+                        crate::strings::Arg::S(name),
                     ],
                 )
             }));
         }
-        for p in &t.prereqs {
-            if p.seat.is_none() || rank_of(p.talent) >= p.rank as i32 {
-                continue;
-            }
-            let need = p.rank + 1;
-            reqs.extend(
-                crate::strings::plural("TOOLTIP_TALENT_PREREQ", Some(need), &get).map(|f| {
+        // Then the tier line, only with a group (`0x62268b`): the group tab's spent plus preview
+        // points whatever isPreview (`0x6226d6`, `0x6226d9`), 5 a tier or 3 for the pet (`0x6226ea`).
+        if let Some(g) = group.filter(|_| !held) {
+            let tab_points = g.tab(t_index).map_or(0, |gt| gt.spent + gt.preview_spent);
+            let per_tier = if pet { 3 } else { 5 };
+            let need = per_tier * (t.tier as i32 - 1);
+            if need > tab_points {
+                met = false;
+                reqs.extend(get("TOOLTIP_TALENT_TIER_POINTS").map(|f| {
                     crate::strings::fill(
                         &f,
                         &[
                             crate::strings::Arg::D(need.into()),
-                            crate::strings::Arg::S(&p.name),
+                            crate::strings::Arg::S(&view.name),
                         ],
                     )
-                }),
-            );
+                }));
+            }
         }
         // The required spell (`0x622759` into `0x5c60c0`): an inspected player knows it; else our
         // player or the pet, asked at the call (`0x5c6128`, `0x5c6134`).
@@ -354,8 +366,9 @@ fn tooltip_lines(lua: &Lua, args: &MultiValue) -> Option<(u32, TalentLines)> {
                 live.spell_known_or_higher(spell)
             }
         };
-        if !inspect && t.required_spell != 0 && !knows(t.required_spell) {
+        if !held && !inspect && t.required_spell != 0 && !knows(t.required_spell) {
             if let Some(name) = &t.required_spell_name {
+                met = false;
                 reqs.extend(
                     get("ITEM_REQ_SKILL")
                         .map(|f| crate::strings::fill(&f, &[crate::strings::Arg::S(name)])),
@@ -363,12 +376,12 @@ fn tooltip_lines(lua: &Lua, args: &MultiValue) -> Option<(u32, TalentLines)> {
             }
         }
         // The closing hints (`0x622800`), for the learning group alone: the talent can be learned
-        // when it holds a rank or every requirement line is met (`0x6224f0`); then, without
+        // when it holds a rank or every requirement is met (`0x6224f0`); then, without
         // preview, points unspent and a rank to go show the learn line, and with preview each move
         // that would pass.
         let learning = !inspect && group_index == if pet { 0 } else { info.active_group() };
         let mut hints = Vec::new();
-        if (rank >= 0 || reqs.is_empty()) && learning {
+        if (held || met) && learning {
             if let Some(g) = group {
                 if !use_preview {
                     if g.unspent != 0 && rank + 1 < max {

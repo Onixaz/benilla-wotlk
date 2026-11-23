@@ -50,7 +50,8 @@ fn one_tab_pages() -> TalentPages {
                         talent: 26,
                         rank: 4,
                         seat: Some((1, 1)),
-                        name: "Improved Fireball".into(),
+                        spell: 11068 + 4,
+                        name: Some("Improved Fireball".into()),
                     }],
                     ..Default::default()
                 },
@@ -322,6 +323,98 @@ fn set_talent_locked_reqs_and_a_missing_view() {
             if t.starts_with("Requires 5") && (c[0] - 1.0).abs() < 1e-6 && c[1] < 0.2)
         });
         assert!(red, "the requirement line is red");
+    });
+    assert!(s.take_errors().is_empty());
+}
+
+/// The requirement lines in 12340's order (`0x6224f0`): the prerequisite slots (`0x622660`), then
+/// the tier line (`0x622739`). The tier compares the tab's spent plus preview points whatever
+/// isPreview (`0x6226d9`), shows only with a group (`0x62268b`), and a held rank shows no line
+/// (`0x627085`).
+#[test]
+fn set_talent_lists_the_prerequisites_before_the_tier_line() {
+    let mut s = script();
+    seed_talent_strings(&mut s);
+    s.run(r#"TOOLTIP_TALENT_TIER_POINTS = "Requires %d points in %s Talents""#)
+        .unwrap();
+    let mut v = state_over(one_tab_pages());
+    live::lending(&mut v, || {
+        s.set_spell_tooltip(11119, passive_body("Ignite."));
+        s.run(
+        r#"
+        local a = CreateFrame("Button", "TB6"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
+        local tt = CreateFrame("GameTooltip", "TT6")
+        local function lines(...)
+            tt:SetOwner(a, "ANCHOR_RIGHT")
+            tt:SetTalent(...)
+            local out = {}
+            for i = 1, tt:NumLines() do
+                local t = getglobal("TT6TextLeft" .. i):GetText()
+                if t and string.find(t, "^Requires") then table.insert(out, t) end
+            end
+            return table.concat(out, "|")
+        end
+        local both = "Requires 5 points in Improved Fireball|Requires 5 points in Fire Talents"
+        local got = lines(1, 2)
+        assert(got == both, "prerequisite first: " .. got)
+        -- No group 3: the prerequisite shows, the tier line does not.
+        got = lines(1, 2, false, false, 3)
+        assert(got == "Requires 5 points in Improved Fireball", "no group: " .. got)
+        -- Two preview points make the tab's 5 for the tier line with isPreview off.
+        AddPreviewTalentPoints(1, 1, 2)
+        got = lines(1, 2)
+        assert(got == "Requires 5 points in Improved Fireball", "preview counts: " .. got)
+    "#,
+    )
+    .unwrap();
+    });
+    assert!(s.take_errors().is_empty());
+}
+
+/// A talent that holds a rank shows no requirement line (`0x627085`), even with its prerequisite
+/// short.
+#[test]
+fn set_talent_on_a_held_rank_shows_no_requirement() {
+    let mut s = script();
+    seed_talent_strings(&mut s);
+    s.run(r#"TOOLTIP_TALENT_TIER_POINTS = "Requires %d points in %s Talents""#)
+        .unwrap();
+    let mut info = TalentInfo::default();
+    info.update_talent_data(
+        &TalentPacket {
+            unspent: 2,
+            active: 0,
+            groups: vec![TalentPacketGroup {
+                talents: vec![(26, 2), (34, 0)],
+                glyphs: Vec::new(),
+            }],
+        },
+        &|_, _| true,
+    );
+    info.enter_world(|| Some(one_tab_pages()));
+    let mut v = live::TestView {
+        talent_info: Some(info),
+        talent_units: (Some(ME), None),
+        player: Some(ME),
+        ..Default::default()
+    };
+    live::lending(&mut v, || {
+        s.set_spell_tooltip(11119, passive_body("Ignite."));
+        s.set_spell_tooltip(11120, passive_body("Ignite more."));
+        s.run(
+        r#"
+        local a = CreateFrame("Button", "TB7"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
+        local tt = CreateFrame("GameTooltip", "TT7")
+        tt:SetOwner(a, "ANCHOR_RIGHT")
+        tt:SetTalent(1, 2)
+        assert(TT7TextLeft2:GetText() == "[RANK 1/5]", tostring(TT7TextLeft2:GetText()))
+        for i = 1, tt:NumLines() do
+            local t = getglobal("TT7TextLeft" .. i):GetText() or ""
+            assert(not string.find(t, "^Requires %d"), "line " .. i .. ": " .. t)
+        end
+    "#,
+    )
+    .unwrap();
     });
     assert!(s.take_errors().is_empty());
 }
