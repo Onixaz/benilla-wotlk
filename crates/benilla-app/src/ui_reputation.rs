@@ -8,8 +8,8 @@
 //! the table (`0x5d01f0`), and its world-entry build keeps the factions whose race/class slot fits
 //! the player (`0x5d2bc0`). Flag `0x08` is `HEADER`, not "force invisible".
 //!
-//! The wire standing excludes the race/class base, so the pane's total is base plus wire
-//! (`0x5d05b0`). The rank is [`benilla_formats::reputation_rank`], shared with the unit-reaction
+//! The wire standing excludes the race/class base, so the pane's total is the base the world
+//! entry stores in the slot plus the wire (`0x5d05b0`). The rank is [`benilla_formats::reputation_rank`], shared with the unit-reaction
 //! decode; the pane shows it uncapped.
 
 use bevy::prelude::*;
@@ -36,6 +36,33 @@ const FACTION_FLAG_RANK_SHOWN: u8 = 0x80;
 #[derive(Resource, Default)]
 pub(crate) struct ReputationList(pub(crate) FactionList);
 
+/// The reputation store's two other columns per slot (`0xc22b70`, 16 bytes a slot): the faction
+/// id (`+0x0`) and the race/class base (`+0x8`). Only the list's world entry writes them
+/// (`0x5d2d1f`, `0x5d2d6e`) and the game shutdown zeroes them (`0x5d15ba`); every reader takes
+/// them from here, so before the first world entry a slot names faction 0 with base 0.
+#[derive(Resource)]
+pub(crate) struct FactionSlots(
+    pub(crate) [(u32, i32); benilla_protocol::messages::FACTION_LIST_LEN],
+);
+
+impl Default for FactionSlots {
+    fn default() -> Self {
+        Self([(0, 0); benilla_protocol::messages::FACTION_LIST_LEN])
+    }
+}
+
+impl FactionSlots {
+    /// The faction a slot names, 0 past the store (`0x5d2155`).
+    fn faction(&self, slot: usize) -> u32 {
+        self.0.get(slot).map_or(0, |s| s.0)
+    }
+
+    /// The base a slot carries, 0 past the store.
+    fn base(&self, slot: usize) -> i32 {
+        self.0.get(slot).map_or(0, |s| s.1)
+    }
+}
+
 /// The reputation handlers and the list's game-shutdown clear.
 pub(crate) struct UiReputationPlugin;
 
@@ -43,6 +70,7 @@ impl Plugin for UiReputationPlugin {
     fn build(&self, app: &mut App) {
         use SessionEventKind as K;
         app.init_resource::<ReputationList>()
+            .init_resource::<FactionSlots>()
             // After the UI shutdown's `PLAYER_LEAVING_WORLD` and `PLAYER_LOGOUT`, which still read
             // the list (`0x529160`: `0x528f00`, then `0x5d14f0` at `0x5291b3`).
             .add_systems(
@@ -57,27 +85,34 @@ impl Plugin for UiReputationPlugin {
 }
 
 /// The game shutdown's clear (`0x5d14f0`): no rows, no headers, no selection (`0x5d14f9`), then
-/// every slot's flags and standing zeroed (`0x5d15ba`).
-fn shutdown(mut list: ResMut<ReputationList>, store: Option<ResMut<Reputations>>) {
+/// every slot's faction, flags, base and standing zeroed (`0x5d15ba`).
+fn shutdown(
+    mut list: ResMut<ReputationList>,
+    mut slots: ResMut<FactionSlots>,
+    store: Option<ResMut<Reputations>>,
+) {
     *list = ReputationList::default();
+    *slots = FactionSlots::default();
     if let Some(mut store) = store {
         store.0.fill((0, 0));
     }
 }
 
 /// One faction's record with its slot as it stands, or `None` without a reputation slot or a
-/// name; an unmet faction is still a record, with `visible: false`.
+/// name; an unmet faction is still a record, with `visible: false`. `base` is the slot's stored
+/// base (`0x5d05b0`); `player` the active player's race and class, `None` without one, where the
+/// has-reputation test answers `false` (`0x5d0d05`).
 pub(crate) fn reputation_row(
     faction_id: u32,
     info: &FactionInfo,
     catalog: &FactionCatalog,
     flags: u8,
     wire_standing: i32,
-    race: u8,
-    class: u8,
+    base: i32,
+    player: Option<(u8, u8)>,
 ) -> Option<FactionEntry> {
     use benilla_formats::faction_flags as flag;
-    let standing = info.base_for(race, class) + wire_standing;
+    let standing = base + wire_standing;
     let rank = benilla_formats::reputation_rank(standing);
     Some(FactionEntry {
         faction_id,
@@ -92,13 +127,13 @@ pub(crate) fn reputation_row(
         standing_id: rank + 1,
         bar_min: RANK_BOUNDS[rank as usize],
         bar_max: RANK_BOUNDS[rank as usize + 1],
-        fits_player: info.slot_for(race, class).is_some(),
+        fits_player: player.is_some_and(|(r, c)| info.slot_for(r, c).is_some()),
         visible: flags & flag::VISIBLE != 0,
         is_header: flags & flag::HEADER != 0,
         at_war: flags & flag::AT_WAR != 0,
         peace_forced: flags & flag::PEACE_FORCED != 0,
         inactive: flags & flag::INACTIVE != 0,
-        has_rep: info.header_has_rep_for(race, class),
+        has_rep: player.is_some_and(|(r, c)| info.header_has_rep_for(r, c)),
     })
 }
 
@@ -120,6 +155,8 @@ fn reputation_slot(list_id: u32, opcode: &str) -> Option<usize> {
 /// player's descriptor and the wire.
 pub(crate) struct AppFactions<'a> {
     pub(crate) store: &'a mut Reputations,
+    /// The store's faction and base columns.
+    pub(crate) slots: &'a FactionSlots,
     pub(crate) catalog: Option<&'a FactionCatalog>,
     /// The active player's descriptor, `None` before our create.
     pub(crate) player: Option<&'a ObjectFields>,
@@ -129,33 +166,39 @@ pub(crate) struct AppFactions<'a> {
 }
 
 impl AppFactions<'_> {
-    fn race_class(&self) -> (u8, u8) {
-        self.player.map_or((0, 0), |p| {
-            (p.unit_race().unwrap_or(0), p.unit_class().unwrap_or(0))
-        })
+    fn race_class(&self) -> Option<(u8, u8)> {
+        self.player
+            .map(|p| (p.unit_race().unwrap_or(0), p.unit_class().unwrap_or(0)))
     }
 
+    /// A record read against its slot's stored flags, standing and base (`0x5d05b0`: `0x5d05ea`).
     fn record(&self, faction_id: u32, info: &FactionInfo) -> Option<FactionEntry> {
-        let (flags, wire) = usize::try_from(info.rep_index)
-            .ok()
+        let slot = usize::try_from(info.rep_index).ok();
+        let (flags, wire) = slot
             .and_then(|i| self.store.0.get(i))
             .copied()
             .unwrap_or((0, 0));
-        let (race, class) = self.race_class();
-        reputation_row(faction_id, info, self.catalog?, flags, wire, race, class)
+        let base = slot.map_or(0, |i| self.slots.base(i));
+        reputation_row(
+            faction_id,
+            info,
+            self.catalog?,
+            flags,
+            wire,
+            base,
+            self.race_class(),
+        )
     }
 
-    /// The faction a slot names, with the race/class base its rank reads (`0x5d0600`).
+    /// The faction the store names at a slot (`0x5d2155`), with its name and the stored base its
+    /// rank reads (`0x5d0600`: `0x5d063a`); `None` for faction 0 or one without a record.
     fn slot_base(&self, list_id: u32) -> Option<(String, i32)> {
         let catalog = self.catalog?;
-        let slot = i32::try_from(list_id).ok()?;
-        let (id, f) = catalog
-            .reputation_factions()
-            .find(|(_, f)| f.rep_index == slot)?;
-        let (race, class) = self.race_class();
+        let id = self.slots.faction(usize::try_from(list_id).ok()?);
+        let f = catalog.reputation_faction(id)?;
         Some((
             catalog.faction_name(id).unwrap_or_default().to_string(),
-            f.base_for(race, class),
+            self.slots.base(usize::try_from(f.rep_index).ok()?),
         ))
     }
 }
@@ -166,20 +209,19 @@ impl FactionTable for AppFactions<'_> {
         self.record(id, self.catalog?.reputation_faction(id)?)
     }
 
+    /// The store's faction id at the slot (`0x5d0913`, `0x5d1285`), read as [`Self::faction`].
     fn slot_faction(&self, rep_list_id: u32) -> Option<FactionEntry> {
-        let slot = i32::try_from(rep_list_id).ok()?;
-        let (id, info) = self
-            .catalog?
-            .reputation_factions()
-            .find(|(_, f)| f.rep_index == slot)?;
-        self.record(id, info)
+        let id = self.slots.faction(usize::try_from(rep_list_id).ok()?);
+        self.record(id, self.catalog?.reputation_faction(id)?)
     }
 
     fn met_slots(&self) -> Vec<u32> {
         let Some(catalog) = self.catalog else {
             return Vec::new();
         };
-        let (race, class) = self.race_class();
+        let Some((race, class)) = self.race_class() else {
+            return Vec::new();
+        };
         let mut met: Vec<(u32, u32)> = catalog
             .reputation_factions()
             .filter(|(_, f)| f.slot_for(race, class).is_some())
@@ -267,6 +309,7 @@ fn with_table<R>(
         return None;
     }
     world.init_resource::<ReputationList>();
+    world.init_resource::<FactionSlots>();
     Some(
         world.resource_scope(|world, mut list: Mut<ReputationList>| {
             world.resource_scope(|world, mut store: Mut<Reputations>| {
@@ -274,6 +317,7 @@ fn with_table<R>(
                 // flag marks the store changed for the reaction readers.
                 let mut table = AppFactions {
                     store: store.bypass_change_detection(),
+                    slots: world.resource::<FactionSlots>(),
                     catalog: world.get_resource::<Factions>().map(|f| f.catalog()),
                     player: active_player(world),
                     net: world.get_resource::<NetCommands>(),
@@ -309,10 +353,48 @@ fn sort(world: &mut World) {
     }
 }
 
+/// The world entry's column writes (`0x5d2bc0`), `false` without the active player (`0x5d2be6`):
+/// walking the table from its end, every record with a slot below 128 writes its id to the slot
+/// (`0x5d2d1f`), and each of its four race/class slots that fits the player its base
+/// (`0x5d2d6e`), the last fitting one standing; a slot no fitting record names keeps its base.
+fn write_slot_columns(world: &mut World) -> bool {
+    let Some((race, class)) =
+        active_player(world).map(|p| (p.unit_race().unwrap_or(0), p.unit_class().unwrap_or(0)))
+    else {
+        return false;
+    };
+    world.init_resource::<FactionSlots>();
+    world.resource_scope(|world, mut slots: Mut<FactionSlots>| {
+        let Some(catalog) = world.get_resource::<Factions>().map(|f| f.catalog()) else {
+            return;
+        };
+        let mut records: Vec<(u32, &FactionInfo)> = catalog.reputation_factions().collect();
+        records.sort_by_key(|&(id, _)| std::cmp::Reverse(id));
+        for (id, info) in records {
+            let Some(slot) = usize::try_from(info.rep_index)
+                .ok()
+                .filter(|&i| i < slots.0.len())
+            else {
+                continue;
+            };
+            slots.0[slot].0 = id;
+            if info.slot_for(race, class).is_some() {
+                slots.0[slot].1 = info.base_for(race, class);
+            }
+        }
+    });
+    true
+}
+
 /// The list's world entry (`0x5d2bc0`), which the UI's (`0x528208`) and the initialize handler
-/// (`0x5d2e84`) run: nothing without the active player; else the build, the "Inactive" header's
-/// fold (`0x5d2e0f`) and the sort (`0x5d2e17`), each sort raising `UPDATE_FACTION` (`0x5d1bfa`).
+/// (`0x5d2e84`) run: nothing without the active player; else the slot columns, the build, the
+/// "Inactive" header's fold (`0x5d2e0f`) and the sort (`0x5d2e17`), each sort raising
+/// `UPDATE_FACTION` (`0x5d1bfa`). The build reads the columns of every record the walk has
+/// written, so writing them all first answers the same.
 pub(crate) fn enter_world(world: &mut World) {
+    if !write_slot_columns(world) {
+        return;
+    }
     let built = with_table(world, |list, t| {
         t.player.is_some().then(|| list.enter_world(t))
     });
@@ -476,7 +558,7 @@ fn on_standing(In(ev): In<SessionEvent>, world: &mut World) {
         } else {
             None
         };
-        // A faction without a record ranks Neutral at both reads (`0x5d0600`: `0x5d0625`).
+        // The store's faction 0, or one without a record, ranks Neutral at both reads (`0x5d0625`).
         let rank = |standing: i32| {
             record
                 .as_ref()

@@ -8857,6 +8857,51 @@ fn reputation_handlers_fire_at_their_steps_with_the_list_read_at_the_call() {
     );
 }
 
+/// A login's `SMSG_INITIALIZE_FACTIONS` lands before our create, so its world entry returns
+/// without the player (`0x5d2be6`) and the store's faction and base columns stay zero until the
+/// UI's world entry runs it after `PLAYER_ENTERING_WORLD` (`0x5281a6`, then `0x528208` ->
+/// `0x5d2bc0`, which writes them at `0x5d2d1f` and `0x5d2d6e`). Up to then a faction read by id
+/// answers the wire standing alone (`0x5d05ea`) and the watched slot names no faction
+/// (`0x5d1285`); the entry's two `UPDATE_FACTION`s (`0x5d2e0f`, `0x5d2e17` -> `0x5d1bfa`) read
+/// the base and the name.
+#[test]
+fn a_pre_player_faction_store_reads_without_its_columns_until_the_world_entry() {
+    use benilla_protocol::field::{FIELD_PLAYER_WATCHED_FACTION_INDEX, FIELD_UNIT_BYTES_0};
+    let stormwind = {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).unwrap();
+        let cat = benilla_formats::load_faction_catalog(&mut chain).unwrap();
+        cat.reputation_faction(72).unwrap().rep_index as u32
+    };
+    let mut standings = vec![(0u8, 0i32); 128];
+    standings[stormwind as usize] = (benilla_formats::faction_flags::VISIBLE, 5100);
+    // A Human Warrior watching Stormwind.
+    let Some(mut rig) = Rig::login_after(
+        vec![SessionEvent::Reputations { standings }],
+        &[
+            OBJECT_TYPE_PLAYER,
+            (FIELD_UNIT_BYTES_0, 1 | 1 << 8),
+            (FIELD_PLAYER_WATCHED_FACTION_INDEX, stormwind),
+        ],
+    ) else {
+        return;
+    };
+    let seen = rig.take();
+    assert_eq!(
+        pin(
+            &seen,
+            &["PLAYER_LOGIN", "PLAYER_ENTERING_WORLD", "UPDATE_FACTION"],
+            &["repn", "repsw", "repwatch"],
+        ),
+        vec![
+            "PLAYER_LOGIN | repn=0 repsw=5100 repwatch=nil",
+            "PLAYER_ENTERING_WORLD | repn=0 repsw=5100 repwatch=nil",
+            "UPDATE_FACTION | repn=3 repsw=9100 repwatch=Stormwind",
+            "UPDATE_FACTION | repn=3 repsw=9100 repwatch=Stormwind",
+        ]
+    );
+}
+
 /// The faction list outlives the UI shutdown's `PLAYER_LEAVING_WORLD` (`0x528edc`) and
 /// `PLAYER_LOGOUT` (`0x52902a`): the game shutdown runs the UI's (`0x529163` -> `0x528f00`) before
 /// the list's clear (`0x5291b3` -> `0x5d14f0`), so an addon saving reputation at logout reads it.

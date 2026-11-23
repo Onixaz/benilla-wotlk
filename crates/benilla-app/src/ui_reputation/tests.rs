@@ -49,7 +49,7 @@ fn every_parent_faction_reaches_the_bindings_named() {
         let info = cat
             .reputation_faction(id)
             .unwrap_or_else(|| panic!("parent {id} has a reputation slot"));
-        let row = reputation_row(id, info, &cat, 0, 0, 1, 8)
+        let row = reputation_row(id, info, &cat, 0, 0, info.base_for(1, 8), Some((1, 8)))
             .unwrap_or_else(|| panic!("parent {id} resolves"));
         assert!(!row.name.is_empty(), "parent {id} is named");
     }
@@ -71,7 +71,8 @@ fn the_3_3_5a_tree_nests_and_every_row_reads_whole() {
             let seed = u8::try_from(info.default_flags_for(race, class)).ok()?;
             let hidden = seed & (flag::HIDDEN | flag::HEADER) != 0;
             let flags = if hidden { seed } else { seed | flag::VISIBLE };
-            reputation_row(id, info, &cat, flags, 0, race, class)
+            let base = info.base_for(race, class);
+            reputation_row(id, info, &cat, flags, 0, base, Some((race, class)))
         })
         .collect();
 
@@ -100,8 +101,9 @@ fn the_3_3_5a_tree_nests_and_every_row_reads_whole() {
     assert!(s.errors().is_empty(), "{:#?}", s.errors());
 }
 
-/// A world with the install's faction table and a level-80 Human Warrior held, no VM: the lines
-/// fall to the chat feed's queue, where they are counted.
+/// A world with the install's faction table and a level-80 Human Warrior held, past the list's
+/// world entry's column writes, no VM: the lines fall to the chat feed's queue, where they are
+/// counted.
 fn standing_world() -> Option<(World, FactionCatalog)> {
     let data = benilla_formats::wow_data_or_skip!(None);
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -122,6 +124,7 @@ fn standing_world() -> Option<(World, FactionCatalog)> {
     world.init_resource::<crate::ui_chat::ChatLog>();
     world.init_resource::<crate::ui_quest::QuestStatuses>();
     world.insert_non_send_resource(UniqueSignals::default());
+    assert!(write_slot_columns(&mut world));
     Some((world, cat))
 }
 
@@ -341,5 +344,67 @@ fn a_reveal_announces_its_rank_and_silences_every_later_rank_line() {
         lines(&world),
         2 + 2,
         "Gnomeregan's change line, Ironforge's rank"
+    );
+}
+
+/// Between a pre-player `SMSG_INITIALIZE_FACTIONS` and the UI's world entry (`0x528208`), the
+/// store's faction and base columns are still zero: only the list's world entry writes them
+/// (`0x5d2d1f`, `0x5d2d6e`, after its player test at `0x5d2be6`). A faction read by id answers the
+/// wire standing alone (`0x5d05ea`), a slot names no faction (`0x5d1285`), and a standing packet
+/// ranks both reads Neutral and prints no line (`0x5d2161`, `0x5d21c1`). The world entry fills
+/// them; the game shutdown zeroes them again (`0x5d15ba`).
+#[test]
+fn the_slot_columns_are_zero_until_the_world_entry_writes_them() {
+    use benilla_formats::faction_flags as flag;
+    let Some((mut world, cat)) = standing_world() else {
+        return;
+    };
+    world.insert_resource(FactionSlots::default());
+    let stormwind = slot(&cat, "Stormwind");
+    world.resource_mut::<Reputations>().0[stormwind as usize] = (flag::VISIBLE, 5100);
+    let read = |world: &mut World| {
+        with_table(world, |_, t| {
+            (
+                t.faction(72).map(|e| (e.standing, e.standing_id)),
+                t.slot_faction(stormwind).map(|e| e.name),
+            )
+        })
+        .unwrap()
+    };
+    assert_eq!(
+        read(&mut world),
+        (Some((5100, 5)), None),
+        "the wire alone ranks Friendly, the slot names nothing"
+    );
+
+    // 5100 -> 9500 crosses Honored on base 4000; on base 0 both read Neutral at the handler.
+    standing(&mut world, vec![(stormwind, 5500)]);
+    assert_eq!(lines(&world), 0, "faction 0 prints no change or rank line");
+    assert!(!quests_owed(&mut world), "no rank move");
+    assert_eq!(
+        world.resource::<Reputations>().0[stormwind as usize].1,
+        5500
+    );
+
+    enter_world(&mut world);
+    assert_eq!(
+        read(&mut world),
+        (Some((9500, 6)), Some("Stormwind".to_string())),
+        "base 4000 and the named slot after the world entry"
+    );
+    assert_eq!(
+        world.resource::<FactionSlots>().0[stormwind as usize],
+        (72, 4000)
+    );
+
+    world.init_resource::<ReputationList>();
+    world.run_system_cached(shutdown).unwrap();
+    assert!(
+        world
+            .resource::<FactionSlots>()
+            .0
+            .iter()
+            .all(|&s| s == (0, 0)),
+        "zeroed at the game shutdown"
     );
 }
