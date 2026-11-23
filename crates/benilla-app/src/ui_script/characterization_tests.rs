@@ -57,6 +57,7 @@ local VERBS = {
     { "known1", function() return IsTitleKnown(1) end },
     { "known70", function() return IsTitleKnown(70) end },
     { "titlename", function() return GetTitleName(1) end },
+    { "rep5", function() return (GetFactionInfo(5)) end },
     { "control", function() return HasFullControl() end },
     { "dead", function() return UnitIsDeadOrGhost("player") end },
     { "isdead", function() return UnitIsDead("player") end },
@@ -225,6 +226,12 @@ local VERBS = {
     { "l3q", function() return (select(4, GetLootSlotInfo(3))) end },
     { "coin1", function() return LootSlotIsCoin(1) end },
     { "item2", function() return LootSlotIsItem(2) end },
+    { "mailn", function() local n, t = GetInboxNumItems() return n .. "/" .. t end },
+    { "m1from", function() return (select(3, GetInboxHeaderInfo(1))) end },
+    { "m1money", function() return (select(5, GetInboxHeaderInfo(1))) end },
+    { "m1read", function() return (select(9, GetInboxHeaderInfo(1))) end },
+    { "m2subj", function() return (select(4, GetInboxHeaderInfo(2))) end },
+    { "hasnew", function() return HasNewMail() end },
     { "npcname", function() return UnitName("npc") end },
     { "buybackn", function() return GetNumBuybackItems() end },
     { "repaircost", function() return GetRepairAllCost() end },
@@ -4000,10 +4007,7 @@ fn only_an_open_reaching_the_setter_closes_the_bank() {
     assert!(closes(&seen, "NPC_PVPQUEUE_ANYWHERE"));
     open(&mut rig);
 
-    rig.app
-        .world_mut()
-        .resource_mut::<crate::ui_mail::MailOpen>()
-        .click(BANKER + 7);
+    crate::ui_mail::talk_to_mailbox(rig.app.world_mut(), BANKER + 7);
     let seen = rig.packets(Vec::new(), 2);
     assert!(
         closes(&seen, "MAIL_SHOW"),
@@ -4993,8 +4997,8 @@ fn the_world_entry_looks_the_possess_spell_up_after_entering_the_world() {
             ],
             &["possess", "possname"]
         ),
-        // No faction packet before the entry, so no feed push ahead of it; the faction list's
-        // world entry raises twice, its fold's sort and its own (`0x5d2e0f`, `0x5d2e17` -> `0x5d1bfa`).
+        // The faction list's world entry raises at its fold's sort and at its own sort (`0x5d2e0f`,
+        // `0x5d2e17` -> `0x5d1bfa`).
         vec![
             "PLAYER_ENTERING_WORLD | possess=false possname=nil",
             "PET_BAR_UPDATE | possess=false possname=nil",
@@ -5894,7 +5898,7 @@ fn currency_triggers_build_the_list_and_fire_from_their_handlers() {
             "UPDATE_FACTION",
             "CURRENCY_DISPLAY_UPDATE"
         ],
-        "no faction packet came; the list's world entry raises its fold's sort and its own          (`0x5d2e0f`, `0x5d2e17` -> `0x5d1bfa`)"
+        "the faction list's world entry raises at its fold's sort and at its own sort (`0x5d2e0f`, `0x5d2e17` -> `0x5d1bfa`)"
     );
     let bit = rig
         .app
@@ -8726,8 +8730,9 @@ fn achievement_packets_fire_from_their_handlers_with_the_lists_read_at_the_call(
 /// `0x5d1bfa`), then its own (`0x5d2e90`); a standing's change line (`0x5d21b2`), its `FACTION`
 /// combat text (`0x50b9f4`), rank line (`0x5d2243`) and closing `UPDATE_FACTION` (`0x5d2342`)
 /// read the new standing and not the combat flag a later packet of the frame sets, which the
-/// other order reads; a reveal announces
-/// the rank (`0x5d09f2`) before the sort grows the count (`0x5d208e`); the war flag reads set at its
+/// other order reads; a reveal announces the rank (`0x5d09f2`) with the sort's count
+/// (`0x5cff24`) and the uncounted row in reach (`0x5d11a5`), before the sort grows the count
+/// (`0x5d208e`); the war flag reads set at its
 /// `UPDATE_FACTION` (`0x5d0898`); the watched field's watch raises with `"player"` (`0x6cdde1`);
 /// a fold verb raises inside its call (`0x5d1dd3` -> `0x5d1bfa`).
 #[test]
@@ -8756,6 +8761,16 @@ fn reputation_handlers_fire_at_their_steps_with_the_list_read_at_the_call() {
         "QUEST_LOG_UPDATE",
     ];
     const VERBS: &[&str] = &["repn", "repsw", "repwar", "repwatch", "combat"];
+    let rep5 = |seen: &[Seen]| -> Vec<String> {
+        seen.iter()
+            .filter(|s| ["CHAT_MSG_SYSTEM", "UPDATE_FACTION"].contains(&s.event.as_str()))
+            .map(|s| {
+                let mut s = s.clone();
+                s.args.clear();
+                s.line(&["repn", "rep5"])
+            })
+            .collect()
+    };
     let lines = |seen: &[Seen]| -> Vec<String> {
         seen.iter()
             .filter(|s| EVENTS.contains(&s.event.as_str()))
@@ -8848,6 +8863,15 @@ fn reputation_handlers_fire_at_their_steps_with_the_list_read_at_the_call() {
             "UPDATE_FACTION | repn=4 repsw=9200 repwar=nil repwatch=nil combat=nil",
         ]
     );
+    // Rows Classic, Alliance, Stormwind, Inactive, then Ironforge's: at the announce the fifth row
+    // is the added one; the sort files it under Alliance and moves "Inactive" there.
+    assert_eq!(
+        rep5(&reveal),
+        vec![
+            "CHAT_MSG_SYSTEM | repn=3 rep5=Ironforge",
+            "UPDATE_FACTION | repn=4 rep5=Inactive",
+        ]
+    );
     assert_eq!(
         lines(&war),
         vec!["UPDATE_FACTION | repn=4 repsw=9200 repwar=1 repwatch=nil combat=nil"]
@@ -8904,6 +8928,136 @@ fn a_pre_player_faction_store_reads_without_its_columns_until_the_world_entry() 
             "UPDATE_FACTION | repn=3 repsw=9100 repwatch=Stormwind",
             "UPDATE_FACTION | repn=3 repsw=9100 repwatch=Stormwind",
         ]
+    );
+}
+
+/// `GetFactionInfoByID` on a `Faction.dbc` record without a reputation slot answers through the
+/// helper's record path (`0x5d0dd8`): its name and description, standingID 4 with the Neutral
+/// bounds and value 0 (`0x5d062d`, `0x5d05dd`), no war (`0x5d04dd`), war toggleable
+/// (`0x5d0e7d`, `0x5d052d`), no header, and watched exactly while the field holds -1, the
+/// record's slot read as `0xFFFFFFFF` (`0x5d0c9d`, `0x5d0cc5`).
+#[test]
+fn a_faction_without_a_slot_answers_by_id_neutral_and_watched_with_the_field_at_none() {
+    use benilla_protocol::field::{FIELD_PLAYER_WATCHED_FACTION_INDEX, FIELD_UNIT_BYTES_0};
+    let Some(mut rig) = Rig::login(&[
+        OBJECT_TYPE_PLAYER,
+        (FIELD_UNIT_BYTES_0, 1 | 1 << 8),
+        (FIELD_PLAYER_WATCHED_FACTION_INDEX, u32::MAX),
+    ]) else {
+        return;
+    };
+    let (id, name, stormwind) = {
+        let data = benilla_formats::wow_data().expect("install");
+        let mut chain = benilla_formats::open_chain(&data).unwrap();
+        let cat = benilla_formats::load_faction_catalog(&mut chain).unwrap();
+        let id = (1..4000u32)
+            .find(|&id| {
+                cat.faction_row(id).is_some_and(|f| f.rep_index < 0)
+                    && cat.faction_name(id).is_some_and(|n| !n.is_empty())
+            })
+            .expect("a named record without a slot");
+        (
+            id,
+            cat.faction_name(id).unwrap().to_string(),
+            cat.reputation_faction(72).unwrap().rep_index as u32,
+        )
+    };
+    let mut standings = vec![(0u8, 0i32); 128];
+    standings[stormwind as usize] = (benilla_formats::faction_flags::VISIBLE, 5100);
+    rig.packets(vec![SessionEvent::Reputations { standings }], 2);
+    let chunk = format!(
+        "local t = {{GetFactionInfoByID({id})}} for i = 1, 13 do t[i] = tostring(t[i]) end          return table.concat(t, '|')"
+    );
+    let read = |rig: &mut Rig| {
+        super::live::with_live_world(rig.app.world_mut(), |s| s.eval::<String>(&chunk))
+            .expect("a VM")
+            .unwrap()
+    };
+    let desc = |line: &str| line.split('|').nth(1).unwrap_or_default().to_string();
+    let none = read(&mut rig);
+    let d = desc(&none);
+    assert_eq!(
+        none,
+        format!("{name}|{d}|4|0|3000|0|nil|1|nil|nil|nil|1|nil"),
+        "watching nothing"
+    );
+    rig.packets(
+        vec![self_values(&[(
+            FIELD_PLAYER_WATCHED_FACTION_INDEX,
+            stormwind,
+        )])],
+        2,
+    );
+    assert_eq!(
+        read(&mut rig),
+        format!("{name}|{d}|4|0|3000|0|nil|1|nil|nil|nil|nil|nil"),
+        "watching Stormwind"
+    );
+}
+
+/// The standing handler shows tutorial 15, raised 1-based, to a player of level 10 or more
+/// (`0x5d2328`, `0x5d2333`), after its lines and before its closing `UPDATE_FACTION` (`0x5d2342`); at level 9
+/// it shows nothing.
+#[test]
+fn a_standing_shows_tutorial_15_from_level_10_before_its_update_faction() {
+    use benilla_protocol::field::FIELD_UNIT_BYTES_0;
+    let stormwind = {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).unwrap();
+        let cat = benilla_formats::load_faction_catalog(&mut chain).unwrap();
+        cat.reputation_faction(72).unwrap().rep_index as u32
+    };
+    let Some(mut rig) = Rig::login_after(
+        vec![SessionEvent::TutorialFlags(vec![0; 32])],
+        &[
+            OBJECT_TYPE_PLAYER,
+            (FIELD_UNIT_BYTES_0, 1 | 1 << 8),
+            (FIELD_UNIT_LEVEL, 9),
+        ],
+    ) else {
+        return;
+    };
+    let mut standings = vec![(0u8, 0i32); 128];
+    standings[stormwind as usize] = (benilla_formats::faction_flags::VISIBLE, 0);
+    rig.packets(vec![SessionEvent::Reputations { standings }], 2);
+    let delta = |standing: i32| SessionEvent::ReputationDelta {
+        bonus: 0.0,
+        show_effect: false,
+        standings: vec![(stormwind, standing)],
+    };
+    let events = &[
+        "CHAT_MSG_COMBAT_FACTION_CHANGE",
+        "TUTORIAL_TRIGGER",
+        "UPDATE_FACTION",
+    ];
+    let shown = |seen: &[Seen]| -> Vec<String> {
+        seen.iter()
+            .filter(|s| events.contains(&s.event.as_str()))
+            .map(|s| {
+                let mut s = s.clone();
+                if s.event.starts_with("CHAT_MSG") {
+                    s.args.clear();
+                }
+                s.line(&[])
+            })
+            .collect()
+    };
+    let at_9 = rig.packets(vec![delta(100)], 2);
+    assert_eq!(
+        shown(&at_9),
+        vec!["CHAT_MSG_COMBAT_FACTION_CHANGE", "UPDATE_FACTION"],
+        "level 9"
+    );
+    rig.packets(vec![self_values(&[(FIELD_UNIT_LEVEL, 10)])], 2);
+    let at_10 = rig.packets(vec![delta(200)], 2);
+    assert_eq!(
+        shown(&at_10),
+        vec![
+            "CHAT_MSG_COMBAT_FACTION_CHANGE",
+            "TUTORIAL_TRIGGER 16",
+            "UPDATE_FACTION"
+        ],
+        "level 10"
     );
 }
 
@@ -9070,6 +9224,211 @@ fn group_loot_rolls_fire_from_their_handlers_with_the_rolls_read_at_the_call() {
             vec![
                 "CANCEL_LOOT_ROLL 1 | roll0=nil roll1=nil roll2=nil rleft1=false".to_string(),
                 "CHAT_MSG_LOOT Everyone passed on: |cffffffff|Hitem:593922:0:0:0:0:0:0:0:80|h[Charz Late]|h|r      0 0  0 3  0 | roll0=nil roll1=nil roll2=nil rleft1=false".to_string(),
+            ],
+        ]
+    );
+}
+
+/// A mailbox from open to its close: a sender's name and an auction notice's item in flight at
+/// the list, each landing; a money take, then one that purges the emptied notice; the next-mail
+/// reply; a mark-as-read from the text read; a return, on the wire inside its call; and the close,
+/// each event with the inbox verbs' answers at it.
+#[test]
+fn a_mailbox_fires_from_its_handlers_with_the_inbox_read_at_the_call() {
+    use benilla_protocol::messages::{
+        mail_action, MailAttachment, MailEnchant, MailList, MailListEntry, MailResult, MailSender,
+    };
+    const MAILBOX: u64 = 0xF110_0000_0000_0999;
+    const SENDER: u64 = 0x0000_0000_0000_0777;
+    const GEM: u32 = 0x8_2001;
+    const LATE: u32 = 0x8_2002;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let template = |entry: u32, name: &str| SessionEvent::ItemTemplate {
+        entry,
+        info: Some(Box::new(crate::items::test_template(name))),
+    };
+    rig.packets(vec![template(GEM, "Charz Gem")], 2);
+    const EVENTS: &[&str] = &[
+        "MAIL_SHOW",
+        "MAIL_INBOX_UPDATE",
+        "CLOSE_INBOX_ITEM",
+        "MAIL_SUCCESS",
+        "MAIL_FAILED",
+        "UPDATE_PENDING_MAIL",
+        "MAIL_CLOSED",
+    ];
+    const VERBS: &[&str] = &["mailn", "m1from", "m1money", "m1read", "m2subj", "hasnew"];
+    let mail =
+        |message_id: u32, message_type: u8, money: u32, subject: &str, body: &str| MailListEntry {
+            message_id,
+            message_type,
+            sender_guid: if message_type == 0 { SENDER } else { 0 },
+            sender_entry: if message_type == 0 { 0 } else { 7 },
+            cod: 0,
+            package: 0,
+            stationery: 41,
+            money,
+            flags: 0,
+            expire_days: 29.0,
+            mail_template_id: 0,
+            subject: subject.into(),
+            body: body.into(),
+            attachments: Vec::new(),
+        };
+    let mut letter = mail(11, 0, 100, "Charz letter", "hi");
+    letter.attachments.push(MailAttachment {
+        slot: 0,
+        item_guid_low: 0x31,
+        entry: GEM,
+        enchants: [MailEnchant::default(); 7],
+        random_property_id: 0,
+        suffix_factor: 0,
+        count: 2,
+        spell_charges: 0,
+        max_durability: 0,
+        durability: 0,
+    });
+    let notice = mail(12, 2, 500, &format!("{LATE}:0:0"), "");
+    let taken = |mail_id: u32| {
+        SessionEvent::SendMailResult(MailResult {
+            mail_id,
+            action: mail_action::MONEY_TAKEN,
+            error: 0,
+            equip_error: None,
+            item: None,
+        })
+    };
+    let open = rig.packets(vec![SessionEvent::ShowMailbox { mailbox: MAILBOX }], 3);
+    let list = rig.packets(
+        vec![SessionEvent::MailList(MailList {
+            total: 2,
+            mails: vec![letter, notice],
+        })],
+        3,
+    );
+    let name = rig.packets(
+        vec![SessionEvent::PlayerName {
+            guid: SENDER,
+            name: "Charzsend".into(),
+            realm: String::new(),
+            race: 1,
+            gender: 0,
+            class: 1,
+            declensions: None,
+        }],
+        3,
+    );
+    let late = rig.packets(vec![template(LATE, "Charz Late")], 3);
+    let money = rig.packets(vec![taken(11)], 3);
+    let purge = rig.packets(vec![taken(12)], 3);
+    let next = rig.packets(
+        vec![SessionEvent::NextMailTime {
+            seconds: 0.0,
+            senders: vec![MailSender {
+                guid: SENDER,
+                entry: 0,
+                message_type: 0,
+                stationery: 41,
+                delay: 0.0,
+            }],
+        }],
+        3,
+    );
+    rig.take();
+    super::live::with_live_world(rig.app.world_mut(), |s| s.run("GetInboxText(1)"))
+        .expect("a VM")
+        .expect("the text read runs");
+    rig.run(3);
+    let read = rig.take();
+    // `ReturnInboxItem` sends inside its call (`0x56f115`): the packet is out before it returns.
+    while rx.try_recv().is_ok() {}
+    super::live::with_live_world(rig.app.world_mut(), |s| s.run("ReturnInboxItem(1)"))
+        .expect("a VM")
+        .expect("the return runs");
+    let sent: Vec<_> = rx.try_iter().collect();
+    assert!(
+        matches!(
+            sent.as_slice(),
+            [crate::net::ClientCommand::MailReturnToSender {
+                mailbox: MAILBOX,
+                mail_id: 11,
+                sender: SENDER,
+            }]
+        ),
+        "the return on the wire inside the call, got {sent:?}"
+    );
+    super::live::with_live_world(rig.app.world_mut(), |s| s.run("CloseMail()"))
+        .expect("a VM")
+        .expect("the close runs");
+    rig.run(3);
+    let closed = rig.take();
+    let got: Vec<Vec<String>> = [open, list, name, late, money, purge, next, read, closed]
+        .iter()
+        .map(|seen| pin(seen, EVENTS, VERBS))
+        .collect();
+    let at = |event: &str, verbs: &str| format!("{event} | {verbs}");
+    let before_name = "mailn=2/2 m1from=nil m1money=100 m1read=nil m2subj= hasnew=nil";
+    let named = "mailn=2/2 m1from=Charzsend m1money=100 m1read=nil m2subj= hasnew=nil";
+    let subject =
+        "mailn=2/2 m1from=Charzsend m1money=100 m1read=nil m2subj=Outbid on Charz Late hasnew=nil";
+    let taken =
+        "mailn=2/2 m1from=Charzsend m1money=0 m1read=nil m2subj=Outbid on Charz Late hasnew=nil";
+    let pending =
+        "mailn=2/2 m1from=Charzsend m1money=0 m1read=nil m2subj=Outbid on Charz Late hasnew=1";
+    let read = "mailn=2/2 m1from=Charzsend m1money=0 m1read=1 m2subj=Outbid on Charz Late hasnew=1";
+    assert_eq!(
+        got,
+        vec![
+            vec![at(
+                "MAIL_SHOW",
+                "mailn=0/0 m1from=nil m1money=0 m1read=nil m2subj=nil hasnew=nil"
+            )],
+            // The list's handler raises the update (`0x5721f3`) with the sender's name still in
+            // flight: each header read of row 1 links a name callback (`0x56d9a0`, once flag 0).
+            vec![at("MAIL_INBOX_UPDATE", before_name)],
+            // Four reads missed the name (the observer's three and the inbox frame's): each
+            // callback queues the unique update (`0x56d46e`) and raises the pending signal
+            // (`0x56d47a`); the update fires once, at the frame's end.
+            vec![
+                at("UPDATE_PENDING_MAIL", named),
+                at("UPDATE_PENDING_MAIL", named),
+                at("UPDATE_PENDING_MAIL", named),
+                at("UPDATE_PENDING_MAIL", named),
+                at("MAIL_INBOX_UPDATE", named),
+            ],
+            // The notice's subject item lands: its callback (`0x56f4e0`) queues the unique update.
+            vec![at("MAIL_INBOX_UPDATE", subject)],
+            // The money taken (`0x56f770`): the update, then the result (`0x571997`).
+            vec![at("MAIL_INBOX_UPDATE", taken), at("MAIL_SUCCESS", taken)],
+            // The notice emptied: deleted and closed (`0x56f890`), the row listed until the next
+            // list.
+            vec![
+                at("CLOSE_INBOX_ITEM 2", taken),
+                at("MAIL_INBOX_UPDATE", taken),
+                at("MAIL_SUCCESS", taken),
+            ],
+            vec![at("UPDATE_PENDING_MAIL", pending)],
+            // `GetInboxText` marks the letter read inside the call (`0x56fe30`): the pending
+            // signal (`0x56ff23`), then the update (`0x56ff31`).
+            vec![
+                at("UPDATE_PENDING_MAIL", read),
+                at("MAIL_INBOX_UPDATE", read)
+            ],
+            // `CloseMail` on the mailbox the show made the interact target (`0x56dbe2`): the
+            // target's clear (`0x571a5e`) runs the mail close (`0x51302d` -> `0x571730`), its
+            // `MAIL_CLOSED` (`0x571795`) and the query the reply deferred (`0x5717a7`), which
+            // stamps "no mail" (`0x56ffb5`, read by `HasNewMail` at `0x56f353`); then the verb's
+            // own `MAIL_CLOSED` (`0x571a88`). The rows stay listed until a world change.
+            vec![
+                at("MAIL_CLOSED", read),
+                at(
+                    "MAIL_CLOSED",
+                    "mailn=2/2 m1from=Charzsend m1money=0 m1read=1 m2subj=Outbid on Charz Late hasnew=nil"
+                ),
             ],
         ]
     );

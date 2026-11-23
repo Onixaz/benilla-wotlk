@@ -102,8 +102,7 @@ fn the_3_3_5a_tree_nests_and_every_row_reads_whole() {
 }
 
 /// A world with the install's faction table and a level-80 Human Warrior held, past the list's
-/// world entry's column writes, no VM: the lines fall to the chat feed's queue, where they are
-/// counted.
+/// world entry, no VM: the lines fall to the chat feed's queue, where they are counted.
 fn standing_world() -> Option<(World, FactionCatalog)> {
     let data = benilla_formats::wow_data_or_skip!(None);
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -124,7 +123,11 @@ fn standing_world() -> Option<(World, FactionCatalog)> {
     world.init_resource::<crate::ui_chat::ChatLog>();
     world.init_resource::<crate::ui_quest::QuestStatuses>();
     world.insert_non_send_resource(UniqueSignals::default());
-    assert!(write_slot_columns(&mut world));
+    enter_world(&mut world);
+    assert!(
+        world.resource::<FactionSlots>().0.iter().any(|s| s.0 != 0),
+        "the walk wrote the columns"
+    );
     Some((world, cat))
 }
 
@@ -407,4 +410,57 @@ fn the_slot_columns_are_zero_until_the_world_entry_writes_them() {
             .all(|&s| s == (0, 0)),
         "zeroed at the game shutdown"
     );
+}
+
+fn reasks(world: &World) -> u32 {
+    world
+        .resource::<crate::ui_quest::QuestStatuses>()
+        .reask_epoch()
+}
+
+/// The questgivers' status is re-asked by the player's reaction refresh (`0x71f94b`) alone: the
+/// standing handler's after a war bit's change or a rank move (`0x5d221c`, `0x5d2256` ->
+/// `0x5d22b7`), the at-war handler's after its `UPDATE_FACTION` (`0x5d08c0`), and the at-war set's
+/// after its send (`0x5d0b68`); an in-rank change re-asks nothing.
+#[test]
+fn the_reaction_refresh_reasks_the_questgivers_on_a_war_or_rank_move() {
+    use benilla_formats::faction_flags as flag;
+    let Some((mut world, cat)) = standing_world() else {
+        return;
+    };
+    let stormwind = slot(&cat, "Stormwind");
+    world.resource_mut::<Reputations>().0[stormwind as usize].0 = flag::VISIBLE;
+    let before = reasks(&world);
+    standing(&mut world, vec![(stormwind, 100)]);
+    assert_eq!(reasks(&world), before, "an in-rank change");
+    standing(&mut world, vec![(stormwind, 5100)]);
+    assert_eq!(reasks(&world), before + 1, "a rank move");
+    world
+        .run_system_cached_with(
+            on_at_war,
+            SessionEvent::ReputationAtWar {
+                list_id: stormwind,
+                at_war: true,
+            },
+        )
+        .unwrap();
+    assert_eq!(reasks(&world), before + 2, "the at-war handler");
+    with_table(&mut world, |_, t| {
+        t.send(benilla_ui::script::ReputationSend::Inactive {
+            rep_list_id: stormwind,
+            inactive: true,
+        })
+    });
+    assert_eq!(
+        reasks(&world),
+        before + 2,
+        "the inactive set refreshes nothing"
+    );
+    with_table(&mut world, |_, t| {
+        t.send(benilla_ui::script::ReputationSend::AtWar {
+            rep_list_id: stormwind,
+            at_war: false,
+        })
+    });
+    assert_eq!(reasks(&world), before + 3, "the at-war set");
 }

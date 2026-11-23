@@ -598,6 +598,15 @@ fn record_callback(sc: &mut Scene, entry: u32, landed: bool, wait: crate::items:
         RecordWait::ItemPush => sc
             .ui
             .world(move |world| crate::ui_loot::push_callback(world, entry, landed)),
+        // A found record queues `MAIL_INBOX_UPDATE` with the frame's unique signals (`0x56d4be`);
+        // an auction notice's subject reads its name at the call.
+        RecordWait::MailInbox => {
+            if landed {
+                sc.signals.unique_signal("MAIL_INBOX_UPDATE");
+            }
+        }
+        // Found or not, one fewer in flight (`0x571520`).
+        RecordWait::MailStationery => sc.ui.world(crate::ui_mail::stationery_callback),
         RecordWait::DressUp(pane) => sc
             .ui
             .world(move |world| crate::ui_dressup::record_callback(world, entry, landed, pane)),

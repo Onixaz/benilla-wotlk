@@ -16,7 +16,7 @@ mod feed;
 mod local_who;
 mod query;
 
-pub(crate) use feed::{drain_social, feed_social};
+pub(crate) use feed::feed_social;
 
 /// The friend array's slots (the friend list's `+0x0`).
 const MAX_FRIENDS: usize = 100;

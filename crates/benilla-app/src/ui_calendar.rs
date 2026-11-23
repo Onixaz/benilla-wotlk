@@ -307,7 +307,11 @@ fn feed_calendar(
             Some(c) => {
                 let _ = commands.0.send(ClientCommand::Calendar(c));
             }
-            None => mail.arrive(0.0, "calendar"),
+            None => {
+                if mail.arrive(0.0, "calendar") {
+                    script.fire_event("UPDATE_PENDING_MAIL", Vec::new());
+                }
+            }
         }
     }
     push_names(&mut script, &source, memory, true);
