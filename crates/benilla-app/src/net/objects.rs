@@ -2122,7 +2122,7 @@ fn is_buyback_watch(index: u16) -> bool {
     (first..first + 24).contains(&index)
 }
 
-/// A skill slot's second or third word, whose halves the skill watches cover (`0x6e5426`, `0x6e5450`, `0x6e546a`).
+/// A skill slot's second or third word, whose halves the skill watches cover (`0x6e5426`, `0x6e5450`, `0x6e546a`, `0x6e548c`).
 fn is_skill_watch(index: u16) -> bool {
     let first = benilla_protocol::field::FIELD_PLAYER_SKILL_INFO_1_1;
     index.checked_sub(first).is_some_and(|r| {
@@ -2130,7 +2130,7 @@ fn is_skill_watch(index: u16) -> bool {
     })
 }
 
-/// A moved skill word's watches in offset order, each its own handler step: the second word's value half (`0x6da4a0`) then max half (`0x6cddb0`), the third word's temporary-bonus half (`0x6d1bc0`) then permanent-bonus half (`0x6cddb0`).
+/// A moved skill word's watches in registration order (`0x6e5426`, `0x6e5450`, `0x6e546a`, `0x6e548c`), each its own handler step: the second word's value half (`0x6da4a0`) then max half (`0x6cddb0`), the third word's permanent-bonus half (`0x6cddb0`) then temporary-bonus half (`0x6d1bc0`).
 fn skill_watches(sc: &mut Scene, index: u16, old: u32, new: u32) {
     let first = benilla_protocol::field::FIELD_PLAYER_SKILL_INFO_1_1;
     let slot = ((index - first) / 3) as u8;
@@ -2147,11 +2147,11 @@ fn skill_watches(sc: &mut Scene, index: u16, old: u32, new: u32) {
             sc.ui.world(crate::ui_char::skill_max_watch);
         }
     } else {
-        if low {
-            sc.ui.world(crate::ui_char::skill_temp_watch);
-        }
         if high {
             sc.ui.world(crate::ui_char::skill_max_watch);
+        }
+        if low {
+            sc.ui.world(crate::ui_char::skill_temp_watch);
         }
     }
 }

@@ -9921,7 +9921,7 @@ fn a_mailbox_fires_from_its_handlers_with_the_inbox_read_at_the_call() {
     );
 }
 
-/// The character sheet's watches (`0x6e5180`): a skill value fires the three stat events, rebuilds the list and fires `SKILL_LINES_CHANGED` (`0x6da509`, `0x6da531`); a rating fires `COMBAT_RATING_UPDATE` then the rebuild (`0x6cddf0`); the damage mods `PLAYER_DAMAGE_DONE_MODS` (`0x6cddd0`); each verb reads the fields at the call, so a packet behind in the same frame is not yet seen.
+/// The character sheet's watches (`0x6e5180`): a skill value fires the three stat events, rebuilds the list and fires `SKILL_LINES_CHANGED` (`0x6da509`, `0x6da531`); a bonus word's two halves run permanent then temporary, in registration order (`0x6e546a`, `0x6e548c`); a rating fires `COMBAT_RATING_UPDATE` then the rebuild (`0x6cddf0`); the damage mods `PLAYER_DAMAGE_DONE_MODS` (`0x6cddd0`); each verb reads the fields at the call, so a packet behind in the same frame is not yet seen.
 #[test]
 fn sheet_watches_fire_in_the_values_handler_with_the_fields_read_at_the_call() {
     use benilla_protocol::field::{
@@ -9977,6 +9977,31 @@ fn sheet_watches_fire_in_the_values_handler_with_the_fields_read_at_the_call() {
             "UNIT_DEFENSE player",
             "UNIT_RANGED_ATTACK_POWER player",
             "SKILL_LINES_CHANGED",
+        ]
+    );
+    // Both halves of the third word in one packet: the watches run in registration order, the
+    // permanent half's (`0x6e546a` -> `0x6cddb0`, the rebuild) before the temporary half's
+    // (`0x6e548c` -> `0x6d1bc0`), each reading the written word.
+    let both = rig.packets(vec![self_values(&[(SKILL + 2, pair(6, 3))])], 2);
+    assert_eq!(
+        pin(&both, EVENTS, &["skill2"]),
+        vec![
+            "SKILL_LINES_CHANGED | skill2=104",
+            "UNIT_ATTACK player | skill2=104",
+            "UNIT_DEFENSE player | skill2=104",
+            "UNIT_RANGED_ATTACK_POWER player | skill2=104",
+            "SKILL_LINES_CHANGED | skill2=104",
+        ]
+    );
+    let cleared = rig.packets(vec![self_values(&[(SKILL + 2, 0)])], 2);
+    assert_eq!(
+        pin(&cleared, EVENTS, &["skill2"]),
+        vec![
+            "SKILL_LINES_CHANGED | skill2=101",
+            "UNIT_ATTACK player | skill2=101",
+            "UNIT_DEFENSE player | skill2=101",
+            "UNIT_RANGED_ATTACK_POWER player | skill2=101",
+            "SKILL_LINES_CHANGED | skill2=101",
         ]
     );
     // A rating ahead of a skill value in one frame reads the old value; behind it, the new.
