@@ -2,21 +2,22 @@
 //! (`0x625d00` → `0x622ba0`). Two sources meet in them, as in the reference: a talent group's
 //! glyphs from `SMSG_TALENTS_INFO` ([`super::TalentGroupView::glyphs`], group `+0x3c`), which the
 //! window and the tooltip read, and the player's own fields, the sockets, the inscribed glyphs and
-//! the unlocked mask ([`GlyphSockets`]), which the placement gate reads.
+//! the unlocked mask ([`GlyphSockets`]), which the placement gate reads. Both, the glyph tables and
+//! the targeting cast are read at the call through the lent view.
 //!
 //! A socket index is the Lua argument less one, compared unsigned against 6, so 0 and below wrap
 //! past every socket. `PlaceGlyphInSocket` judges the targeting cast here, as the glyph click
-//! (`0x80c3e0`) does, and queues [`super::ScriptCall::PlaceGlyph`] with the verdict for the app's
-//! cursor to bind or fail.
+//! (`0x80c3e0`) does, and hands [`super::ScriptCall::PlaceGlyph`] with the verdict to the app's
+//! cursor to bind or fail inside the call.
 
 use std::collections::HashMap;
 
 use mlua::{Lua, MultiValue, Table, Value};
 
 use super::binding_abi::{flag, number_arg};
+use super::live::{read_live, write_live};
 use super::object::frame_handle_of;
 use super::tooltip::{append_line, clear_content, fire_cleared};
-use super::Model;
 
 /// The glyph sockets, `GetNumGlyphSockets` (`0x5b71e0`).
 pub const NUM_GLYPH_SOCKETS: usize = 6;
@@ -47,7 +48,7 @@ pub struct GlyphSlotView {
     pub tooltip: u32,
 }
 
-/// Both glyph tables, pushed once.
+/// Both glyph tables, as a view holds them.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GlyphCatalogView {
     pub glyphs: HashMap<u32, GlyphView>,
@@ -82,41 +83,60 @@ pub enum GlyphPlacement {
 }
 
 impl GlyphCatalogView {
-    fn glyph(&self, id: u32) -> Option<&GlyphView> {
+    /// The `GlyphProperties.dbc` row `id`.
+    pub fn glyph(&self, id: u32) -> Option<&GlyphView> {
         self.glyphs.get(&id)
     }
 
-    fn slot(&self, id: u32) -> Option<&GlyphSlotView> {
+    /// The `GlyphSlot.dbc` row `id`.
+    pub fn slot(&self, id: u32) -> Option<&GlyphSlotView> {
         self.slots.get(&id)
-    }
-
-    /// The glyph link (`0x61e650`): "" unless the slot, the glyph and its spell have rows.
-    fn link(&self, slot_id: u32, glyph_id: u32) -> String {
-        let name = self
-            .slot(slot_id)
-            .and(self.glyph(glyph_id))
-            .and_then(|g| g.name.as_deref());
-        match name {
-            Some(name) => format!("|cff66bbff|Hglyph:{slot_id}:{glyph_id}|h[{name}]|h|r"),
-            None => String::new(),
-        }
     }
 }
 
-/// The verdict for `socket` (0-based, below 6), `None` without a targeting cast: the socket must be
-/// unlocked; then the first effect 74 whose glyph and socket both have rows decides, a type
-/// mismatch (`0x80c53f`) or a glyph already in the fields (`0x80c557`) failing it; no such effect
-/// fails it as invalid (`0x80c510`).
-pub(crate) fn placement(model: &Model, socket: usize) -> Option<GlyphPlacement> {
-    let targeting = model.glyph_targeting?;
-    let sockets = &model.glyph_sockets;
+/// The glyph row `id` through the view lent at the call.
+fn glyph_row(id: u32) -> Option<GlyphView> {
+    read_live(|l| l.glyph(id)).flatten()
+}
+
+/// The glyph slot row `id` through the view lent at the call.
+fn slot_row(id: u32) -> Option<GlyphSlotView> {
+    read_live(|l| l.glyph_slot(id)).flatten()
+}
+
+/// The active player's glyph fields at the call; `None` without the active player, which every
+/// glyph verb but the count looks up first (`0x5b72de`).
+fn sockets() -> Option<GlyphSockets> {
+    read_live(|l| l.glyph_sockets()).flatten()
+}
+
+/// The targeting cast's glyph effects at the call; `None` without one.
+fn targeting() -> Option<GlyphTargeting> {
+    read_live(|l| l.glyph_targeting()).flatten()
+}
+
+/// The glyph link (`0x61e650`): "" unless the slot, the glyph and its spell have rows.
+fn link(slot_id: u32, glyph_id: u32) -> String {
+    let name = slot_row(slot_id)
+        .and(glyph_row(glyph_id))
+        .and_then(|g| g.name);
+    match name {
+        Some(name) => format!("|cff66bbff|Hglyph:{slot_id}:{glyph_id}|h[{name}]|h|r"),
+        None => String::new(),
+    }
+}
+
+/// The verdict for `socket` (0-based, below 6) over our fields, `None` without a targeting cast:
+/// the socket must be unlocked; then the first effect 74 whose glyph and socket both have rows
+/// decides, a type mismatch (`0x80c53f`) or a glyph already in the fields (`0x80c557`) failing it;
+/// no such effect fails it as invalid (`0x80c510`).
+pub(crate) fn placement(sockets: &GlyphSockets, socket: usize) -> Option<GlyphPlacement> {
+    let targeting = targeting()?;
     if sockets.enabled & (1 << socket) == 0 {
         return Some(GlyphPlacement::Fail(GLYPH_FAILED_LOCKED));
     }
-    let catalog = &model.glyph_catalog;
     for misc in targeting.glyphs.into_iter().flatten() {
-        let (Some(glyph), Some(slot)) = (catalog.glyph(misc), catalog.slot(sockets.slots[socket]))
-        else {
+        let (Some(glyph), Some(slot)) = (glyph_row(misc), slot_row(sockets.slots[socket])) else {
             continue;
         };
         if slot.slot_type != glyph.slot_type {
@@ -130,33 +150,6 @@ pub(crate) fn placement(model: &Model, socket: usize) -> Option<GlyphPlacement> 
     Some(GlyphPlacement::Fail(GLYPH_FAILED_INVALID))
 }
 
-impl super::UiScript {
-    /// Push `GlyphProperties.dbc` and `GlyphSlot.dbc`.
-    pub fn set_glyph_catalog(&mut self, catalog: GlyphCatalogView) {
-        set_field!(self, glyph_catalog, catalog);
-    }
-
-    /// Push the player's glyph fields.
-    pub fn set_glyph_sockets(&mut self, sockets: GlyphSockets) {
-        set_field!(self, glyph_sockets, sockets);
-    }
-
-    /// Push the targeting cast's glyph reading, `None` while no cast is targeting.
-    pub fn set_glyph_targeting(&mut self, targeting: Option<GlyphTargeting>) {
-        set_field!(self, glyph_targeting, targeting);
-    }
-
-    /// Take the `RemoveGlyphFromSocket` sends, 0-based sockets in call order.
-    pub fn take_glyph_removes(&mut self) -> Vec<u32> {
-        drain_field!(self, glyph_removes)
-    }
-}
-
-/// The player object exists, as every glyph verb but the count first asks.
-fn has_player(model: &Model) -> bool {
-    model.unit("player").is_some_and(|u| u.exists)
-}
-
 /// `index - 1` as the reference's unsigned compare reads it.
 fn socket_of(index: i32) -> usize {
     (index as u32).wrapping_sub(1) as usize
@@ -165,7 +158,7 @@ fn socket_of(index: i32) -> usize {
 /// The group a verb's `talentGroup` names (`0x5c57d0`), its glyph at `socket` (`0x5c5770`), read
 /// from the talent state at the call; `None` for a group not there (`0x5c6080`).
 fn group_glyph(group: &Value, socket: usize) -> Option<u32> {
-    super::read_live(|l| {
+    read_live(|l| {
         let info = l.talent_info()?;
         let g = info.group(
             super::TalentSide::Player,
@@ -203,7 +196,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // GetGlyphSocketInfo(index[, talentGroup]) (`0x5b7260`): enabled (1/nil), the socket's type + 1
     // (1 major, 2 minor), the group's glyph spell and its icon; nothing for a socket past 6, a
-    // group not there or no player.
+    // group not there or no player. Our fields and the group are read at the call.
     g.set(
         "GetGlyphSocketInfo",
         lua.create_function(|lua, args: MultiValue| {
@@ -213,21 +206,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 "Usage: GetGlyphSocketInfo(index[, talentGroup])",
             )?;
             let socket = socket_of(index);
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
             let glyph_id = group_glyph(&arg(&args, 1), socket);
-            let (true, Some(glyph_id), true) =
-                (socket < NUM_GLYPH_SOCKETS, glyph_id, has_player(&model))
+            let (true, Some(glyph_id), Some(sockets)) =
+                (socket < NUM_GLYPH_SOCKETS, glyph_id, sockets())
             else {
                 return Ok(MultiValue::new());
             };
-            let sockets = &model.glyph_sockets;
-            let catalog = &model.glyph_catalog;
-            let slot_type = catalog
-                .slot(sockets.slots[socket])
+            let slot_type = slot_row(sockets.slots[socket])
                 .map_or(Value::Nil, |s| Value::Integer(i64::from(s.slot_type) + 1));
-            let (spell, icon) = match catalog.glyph(glyph_id) {
+            let (spell, icon) = match glyph_row(glyph_id) {
                 Some(g) => (
                     Value::Integer(i64::from(g.spell)),
                     string_or_nil(lua, g.icon.as_deref())?,
@@ -252,23 +239,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, index: Value| {
             let index = number_arg(lua, index, "Usage: GlyphMatchesSocket(socketIndex)")?;
             let socket = socket_of(index);
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            if !has_player(&model) {
+            let Some(sockets) = sockets() else {
                 return Ok(MultiValue::from_vec(vec![Value::Nil]));
-            }
-            let Some(targeting) = model.glyph_targeting else {
+            };
+            let Some(targeting) = targeting() else {
                 return Ok(MultiValue::new());
             };
-            let catalog = &model.glyph_catalog;
-            let slot = model
-                .glyph_sockets
-                .slots
-                .get(socket)
-                .and_then(|&id| catalog.slot(id));
+            let slot = sockets.slots.get(socket).and_then(|&id| slot_row(id));
             for misc in targeting.glyphs.into_iter().flatten() {
-                let (Some(glyph), Some(slot)) = (catalog.glyph(misc), slot) else {
+                let (Some(glyph), Some(slot)) = (glyph_row(misc), slot) else {
                     continue;
                 };
                 if slot.slot_type != glyph.slot_type {
@@ -280,25 +259,19 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // PlaceGlyphInSocket(index) (`0x5b75a0`): nothing past the six or without the player; else 1
-    // when the targeting cast takes the socket and its word wanted one, nil otherwise.
+    // PlaceGlyphInSocket(index) (`0x5b75a0`): nothing past the six or without the player; else the
+    // glyph click (`0x80c3e0`) runs inside the call, and the answer is 1 when the targeting cast
+    // takes the socket and its word wanted one, nil otherwise.
     g.set(
         "PlaceGlyphInSocket",
         lua.create_function(|lua, index: Value| {
             let index = number_arg(lua, index, "Usage: PlaceGlyphInSocket(index)")?;
             let socket = socket_of(index);
-            // Read first: the mutable borrow is taken only to queue a verdict.
-            let (verdict, wants) = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                if socket >= NUM_GLYPH_SOCKETS || !has_player(&model) {
-                    return Ok(MultiValue::new());
-                }
-                let wants = model.glyph_targeting.is_some_and(|t| t.wants_socket);
-                (placement(&model, socket), wants)
+            let Some(sockets) = sockets().filter(|_| socket < NUM_GLYPH_SOCKETS) else {
+                return Ok(MultiValue::new());
             };
-            let Some(verdict) = verdict else {
+            let wants = targeting().is_some_and(|t| t.wants_socket);
+            let Some(verdict) = placement(&sockets, socket) else {
                 return Ok(MultiValue::from_vec(vec![Value::Nil]));
             };
             super::calls::make(
@@ -314,25 +287,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // RemoveGlyphFromSocket(index) (`0x5b7660`): `CMSG_REMOVE_GLYPH` for a socket below 6 that
-    // the player's fields name, inscribed or not; no return.
+    // RemoveGlyphFromSocket(index) (`0x5b7660`): `CMSG_REMOVE_GLYPH` inside the call (`0x5b76ea`)
+    // for a socket below 6 that our fields name, inscribed or not; no return.
     g.set(
         "RemoveGlyphFromSocket",
         lua.create_function(|lua, index: Value| {
             let index = number_arg(lua, index, "Usage: RemoveGlyphFromSocket(index)")?;
             let socket = socket_of(index);
-            let sends = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                socket < NUM_GLYPH_SOCKETS
-                    && has_player(&model)
-                    && model.glyph_sockets.slots[socket] != 0
-            };
-            if sends {
-                crate::script::model_mut_of(lua)
-                    .glyph_removes
-                    .push(socket as u32);
+            if socket < NUM_GLYPH_SOCKETS && sockets().is_some_and(|s| s.slots[socket] != 0) {
+                write_live(|l| l.send_remove_glyph(socket as u32));
             }
             Ok(())
         })?,
@@ -350,18 +313,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 "Usage: GetGlyphLink(index[, talentGroup])",
             )?;
             let socket = socket_of(index);
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
             let glyph_id = group_glyph(&arg(&args, 1), socket);
-            let (true, true, Some(glyph_id)) =
-                (socket < NUM_GLYPH_SOCKETS, has_player(&model), glyph_id)
+            let (true, Some(sockets), Some(glyph_id)) =
+                (socket < NUM_GLYPH_SOCKETS, sockets(), glyph_id)
             else {
                 return Ok(MultiValue::new());
             };
-            let link = model
-                .glyph_catalog
-                .link(model.glyph_sockets.slots[socket], glyph_id);
+            let link = link(sockets.slots[socket], glyph_id);
             Ok(MultiValue::from_vec(vec![Value::String(
                 lua.create_string(&link)?,
             )]))
@@ -371,13 +329,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // SpellCanTargetGlyph() (`0x7fdd60`): 1 while the targeting word wants a socket, else nil.
     g.set(
         "SpellCanTargetGlyph",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
+        lua.create_function(|_, ()| {
             Ok(flag(
-                super::spellbook::targeting().active
-                    && model.glyph_targeting.is_some_and(|t| t.wants_socket),
+                super::spellbook::targeting().active && targeting().is_some_and(|t| t.wants_socket),
             ))
         })?,
     )?;
@@ -409,15 +363,8 @@ fn set_glyph(
     hide_remove: bool,
 ) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
-    let (slot, glyph) = {
-        let mut model = crate::script::model_mut_of(lua);
-        clear_content(&mut model, h);
-        let catalog = &model.glyph_catalog;
-        (
-            catalog.slot(slot_id).copied(),
-            catalog.glyph(glyph_id).cloned(),
-        )
-    };
+    clear_content(&mut crate::script::model_mut_of(lua), h);
+    let (slot, glyph) = (slot_row(slot_id), glyph_row(glyph_id));
     fire_cleared(lua, h);
     let text = |key: &str| crate::strings::global(lua, key);
     let spell = glyph
@@ -513,23 +460,16 @@ pub(super) fn install_tooltip_method(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 "Usage: GameTooltip:SetGlyph(glyphSlot[, groupIndex])",
             )?;
             let socket = socket_of(index);
-            let (slot_id, glyph_id, enabled) = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                let Some(glyph_id) = group_glyph(&arg(&args, 1), socket) else {
-                    return Ok(());
-                };
-                if !has_player(&model) {
-                    return Ok(());
-                }
-                let sockets = &model.glyph_sockets;
-                (
-                    sockets.slots.get(socket).copied().unwrap_or(0),
-                    glyph_id,
-                    socket < 32 && sockets.enabled & (1 << socket) != 0,
-                )
+            let Some(glyph_id) = group_glyph(&arg(&args, 1), socket) else {
+                return Ok(());
             };
+            let Some(sockets) = sockets() else {
+                return Ok(());
+            };
+            let (slot_id, enabled) = (
+                sockets.slots.get(socket).copied().unwrap_or(0),
+                socket < 32 && sockets.enabled & (1 << socket) != 0,
+            );
             set_glyph(lua, &this, slot_id, glyph_id, enabled, false)
         })?,
     )?;
@@ -539,52 +479,20 @@ pub(super) fn install_tooltip_method(lua: &Lua, m: &Table) -> mlua::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::script::live::{TestTargeting, TestView};
-    use crate::script::{TalentInfo, TalentPacket, TalentPacketGroup, UiScript, UnitState};
+    use crate::script::live::{test_view, TestTargeting, TestView};
+    use crate::script::{TalentInfo, TalentPacket, TalentPacketGroup, UiScript};
 
     const ICON: &str = r"Interface\Icons\INV_Glyph_MajorHunter";
 
-    /// A present player with sockets 21-26 unlocked but the sixth, glyph 181 (major) in socket 1
-    /// of group 1, and glyph 182 a minor.
-    fn script() -> UiScript {
-        let mut s = UiScript::new().unwrap();
-        s.set_unit(
-            "player",
-            Some(UnitState {
-                exists: true,
-                ..Default::default()
-            }),
-        );
-        let glyph = |slot_type, name: &str| GlyphView {
-            spell: 1000 + slot_type,
-            slot_type,
-            icon: Some(ICON.into()),
-            name: Some(name.into()),
-        };
-        s.set_glyph_catalog(GlyphCatalogView {
-            glyphs: HashMap::from([(181, glyph(0, "Glyph of A")), (182, glyph(1, "Glyph of B"))]),
-            slots: (21..=26)
-                .map(|id| {
-                    let slot_type = u32::from(matches!(id, 22 | 23 | 25));
-                    (
-                        id,
-                        GlyphSlotView {
-                            slot_type,
-                            tooltip: id - 20,
-                        },
-                    )
-                })
-                .collect(),
-        });
-        s.set_glyph_sockets(GlyphSockets {
-            slots: [21, 22, 23, 24, 25, 26],
-            glyphs: [181, 0, 0, 0, 0, 0],
-            enabled: 0x1f,
-        });
-        s
-    }
+    /// Our fields: sockets 21-26 unlocked but the sixth, glyph 181 inscribed in socket 1.
+    const SOCKETS: GlyphSockets = GlyphSockets {
+        slots: [21, 22, 23, 24, 25, 26],
+        glyphs: [181, 0, 0, 0, 0, 0],
+        enabled: 0x1f,
+    };
 
-    /// A view lending one talent group whose first glyph is 181, the packet's (`0x5c987b`).
+    /// A view lending the glyph tables, our fields, and one talent group whose first glyph is 181,
+    /// the packet's (`0x5c987b`); glyph 181 a major, 182 a minor.
     fn glyph_view() -> TestView {
         let mut info = TalentInfo::default();
         info.update_talent_data(
@@ -598,8 +506,33 @@ mod tests {
             },
             &|_, _| true,
         );
+        let glyph = |slot_type, name: &str| GlyphView {
+            spell: 1000 + slot_type,
+            slot_type,
+            icon: Some(ICON.into()),
+            name: Some(name.into()),
+        };
         TestView {
             talent_info: Some(info),
+            glyph_catalog: GlyphCatalogView {
+                glyphs: HashMap::from([
+                    (181, glyph(0, "Glyph of A")),
+                    (182, glyph(1, "Glyph of B")),
+                ]),
+                slots: (21..=26)
+                    .map(|id| {
+                        let slot_type = u32::from(matches!(id, 22 | 23 | 25));
+                        (
+                            id,
+                            GlyphSlotView {
+                                slot_type,
+                                tooltip: id - 20,
+                            },
+                        )
+                    })
+                    .collect(),
+            },
+            glyph_sockets: Some(SOCKETS),
             ..Default::default()
         }
     }
@@ -607,7 +540,7 @@ mod tests {
     #[test]
     fn socket_info_reads_the_group_glyph_and_the_fields() {
         crate::script::live::lending(&mut glyph_view(), || {
-            let s = script();
+            let s = UiScript::new().unwrap();
             let first: (i64, i64, i64, String) = s.eval("return GetGlyphSocketInfo(1)").unwrap();
             assert_eq!(first, (1, 1, 1000, ICON.into()));
             let locked: (Option<i64>, i64, Option<i64>, Option<String>) =
@@ -626,14 +559,27 @@ mod tests {
                 "no group 2"
             );
             assert!(s.run("GetGlyphSocketInfo()").is_err(), "usage");
+            // The fields move under the VM: the next call reads them.
+            test_view(|v| {
+                v.glyph_sockets = Some(GlyphSockets {
+                    enabled: 0x3f,
+                    ..SOCKETS
+                })
+            });
+            assert_eq!(
+                s.eval::<Option<i64>>("return (GetGlyphSocketInfo(6))")
+                    .unwrap(),
+                Some(1),
+                "socket 6 unlocked at the call"
+            );
         });
     }
 
     #[test]
     fn without_the_player_the_verbs_answer_nothing() {
         crate::script::live::lending(&mut glyph_view(), || {
-            let mut s = script();
-            s.set_unit("player", None);
+            let s = UiScript::new().unwrap();
+            test_view(|v| v.glyph_sockets = None);
             let count = |s: &UiScript, call: &str| {
                 s.eval::<i64>(&format!("return select('#', {call})"))
                     .unwrap()
@@ -643,28 +589,35 @@ mod tests {
             assert_eq!(count(&s, "PlaceGlyphInSocket(1)"), 0);
             assert_eq!(count(&s, "GlyphMatchesSocket(1)"), 1, "an explicit nil");
             s.run("RemoveGlyphFromSocket(1)").unwrap();
-            assert!(s.take_glyph_removes().is_empty());
+            assert!(test_view(|v| v.glyph_removes.is_empty()));
         });
     }
 
-    /// A socket the fields name sends, inscribed or not; past the six, nothing.
+    /// A socket the fields name sends inside the call, inscribed or not; past the six, nothing
+    /// (`0x5b76ea`).
     #[test]
-    fn remove_sends_for_any_named_socket() {
+    fn remove_sends_inside_the_call_for_any_named_socket() {
         crate::script::live::lending(&mut glyph_view(), || {
-            let mut s = script();
-            s.run("RemoveGlyphFromSocket(1) RemoveGlyphFromSocket(3) RemoveGlyphFromSocket(7)")
-                .unwrap();
-            assert_eq!(s.take_glyph_removes(), vec![0, 2]);
-            s.set_glyph_sockets(GlyphSockets::default());
+            let s = UiScript::new().unwrap();
+            let sent: Vec<u32> = {
+                s.run("RemoveGlyphFromSocket(1) RemoveGlyphFromSocket(3) RemoveGlyphFromSocket(7)")
+                    .unwrap();
+                test_view(|v| std::mem::take(&mut v.glyph_removes))
+            };
+            assert_eq!(sent, [0, 2]);
+            test_view(|v| v.glyph_sockets = Some(GlyphSockets::default()));
             s.run("RemoveGlyphFromSocket(1)").unwrap();
-            assert!(s.take_glyph_removes().is_empty(), "no socket in the fields");
+            assert!(
+                test_view(|v| v.glyph_removes.is_empty()),
+                "no socket in the fields"
+            );
         });
     }
 
     #[test]
     fn the_link_names_the_slot_and_the_glyph() {
         crate::script::live::lending(&mut glyph_view(), || {
-            let s = script();
+            let s = UiScript::new().unwrap();
             assert_eq!(
                 s.eval::<String>("return GetGlyphLink(1)").unwrap(),
                 "|cff66bbff|Hglyph:21:181|h[Glyph of A]|h|r"
@@ -675,12 +628,12 @@ mod tests {
         });
     }
 
-    /// Without a targeting cast nothing matches or places; with one, the verdict is queued and
-    /// the answer is 1 only for a bind the word wanted.
+    /// Without a targeting cast nothing matches or places; with one, the verdict is made inside
+    /// the call and the answer is 1 only for a bind the word wanted.
     #[test]
     fn placement_needs_a_targeting_glyph_cast() {
         crate::script::live::lending(&mut glyph_view(), || {
-            let mut s = script();
+            let mut s = UiScript::new().unwrap();
             assert_eq!(
                 s.eval::<i64>("return select('#', GlyphMatchesSocket(4))")
                     .unwrap(),
@@ -692,13 +645,15 @@ mod tests {
                 None
             );
             assert!(s.take_script_calls().is_empty());
-            let arm = |s: &mut UiScript, glyph, wants_socket| {
-                s.set_glyph_targeting(Some(GlyphTargeting {
-                    glyphs: [None, Some(glyph), None],
-                    wants_socket,
-                }));
+            let arm = |glyph, wants_socket| {
+                test_view(|v| {
+                    v.glyph_targeting = Some(GlyphTargeting {
+                        glyphs: [None, Some(glyph), None],
+                        wants_socket,
+                    })
+                });
             };
-            arm(&mut s, 182, true);
+            arm(182, true);
             assert_eq!(
                 s.eval::<Option<i64>>("return GlyphMatchesSocket(2)")
                     .unwrap(),
@@ -714,7 +669,7 @@ mod tests {
                     .unwrap(),
                 Some(1)
             );
-            arm(&mut s, 182, false);
+            arm(182, false);
             assert_eq!(
                 s.eval::<Option<i64>>("return PlaceGlyphInSocket(3)")
                     .unwrap(),
@@ -748,46 +703,43 @@ mod tests {
                 None
             );
             s.set_spell_targeting(true);
-            arm(&mut s, 182, true);
+            arm(182, true);
             assert_eq!(
                 s.eval::<Option<i64>>("return SpellCanTargetGlyph()")
                     .unwrap(),
                 Some(1)
             );
+            s.set_spell_targeting(false);
         });
     }
 
-    /// The glyph frame polls `GlyphMatchesSocket` and `GetGlyphSocketInfo` every frame and the
-    /// app drains the removes every frame: none of it moves the mutation count, so the UI extract
-    /// keeps skipping.
+    /// The glyph frame polls `GlyphMatchesSocket` and `GetGlyphSocketInfo` every frame: none of it
+    /// moves the mutation count, so the UI extract keeps skipping.
     #[test]
     fn the_per_frame_glyph_reads_leave_the_mutation_count_standing() {
         crate::script::live::lending(&mut glyph_view(), || {
-            let mut s = script();
+            let mut s = UiScript::new().unwrap();
             s.set_spell_targeting(true);
-            s.set_glyph_targeting(Some(GlyphTargeting {
-                glyphs: [Some(182), None, None],
-                wants_socket: true,
-            }));
-            let poll = "for i = 1, 7 do GlyphMatchesSocket(i) GetGlyphSocketInfo(i) GetGlyphLink(i) end                     SpellCanTargetGlyph() PlaceGlyphInSocket(9) RemoveGlyphFromSocket(9)                     RemoveGlyphFromSocket(6 + 1)";
+            test_view(|v| {
+                v.glyph_targeting = Some(GlyphTargeting {
+                    glyphs: [Some(182), None, None],
+                    wants_socket: true,
+                })
+            });
+            let poll =
+                "for i = 1, 7 do GlyphMatchesSocket(i) GetGlyphSocketInfo(i) GetGlyphLink(i) end \
+                        SpellCanTargetGlyph() PlaceGlyphInSocket(9) RemoveGlyphFromSocket(9) \
+                        RemoveGlyphFromSocket(6 + 1)";
             s.run(poll).unwrap();
             let settled = s.visual_epoch();
             s.run(poll).unwrap();
-            assert!(s.take_glyph_removes().is_empty());
-            s.set_glyph_sockets(GlyphSockets {
-                slots: [21, 22, 23, 24, 25, 26],
-                glyphs: [181, 0, 0, 0, 0, 0],
-                enabled: 0x1f,
-            });
-            s.set_glyph_targeting(Some(GlyphTargeting {
-                glyphs: [Some(182), None, None],
-                wants_socket: true,
-            }));
+            assert!(test_view(|v| v.glyph_removes.is_empty()));
             assert_eq!(
                 s.visual_epoch(),
                 settled,
                 "an idle glyph frame writes nothing"
             );
+            s.set_spell_targeting(false);
         });
     }
 }
