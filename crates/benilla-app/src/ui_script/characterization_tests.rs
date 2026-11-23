@@ -52,6 +52,11 @@ local VERBS = {
     { "repsw", function() return (select(6, GetFactionInfoByID(72))) end },
     { "repwar", function() return (select(7, GetFactionInfoByID(72))) end },
     { "repwatch", function() return (GetWatchedFactionInfo()) end },
+    { "titles", function() return GetNumTitles() end },
+    { "titlecur", function() return GetCurrentTitle() end },
+    { "known1", function() return IsTitleKnown(1) end },
+    { "known70", function() return IsTitleKnown(70) end },
+    { "titlename", function() return GetTitleName(1) end },
     { "control", function() return HasFullControl() end },
     { "dead", function() return UnitIsDeadOrGhost("player") end },
     { "isdead", function() return UnitIsDead("player") end },
@@ -9068,4 +9073,107 @@ fn group_loot_rolls_fire_from_their_handlers_with_the_rolls_read_at_the_call() {
             ],
         ]
     );
+}
+
+/// The known-titles watches fire `KNOWN_TITLES_UPDATE` with `"player"` from the values handler,
+/// once per moved u64 field (registered once per u64 at `0x6e53cf`, the event at `0x6cdde1`), with
+/// the whole update applied; a chosen-title update has no such watch. A handler of the event reads
+/// the title fields at its packet's step: a later packet in the same frame is not yet applied.
+#[test]
+fn known_titles_watches_fire_per_field_with_the_fields_read_at_the_call() {
+    use benilla_protocol::field::{FIELD_PLAYER_CHOSEN_TITLE, FIELD_PLAYER_KNOWN_TITLES};
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER, (FIELD_PLAYER_KNOWN_TITLES, 1 << 1)])
+    else {
+        return;
+    };
+    const VERBS: &[&str] = &["titlecur", "known1", "known70"];
+    let lines = |seen: &[Seen]| pin(seen, &["KNOWN_TITLES_UPDATE"], VERBS);
+    let rows: i64 = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval::<i64>("return GetNumTitles()")
+    })
+    .expect("a VM")
+    .unwrap();
+    assert!(rows > 100, "CharTitles.dbc's row count plus 1: {rows}");
+    assert_eq!(
+        rig.live_now()
+            .line(&["titlecur", "known1", "known70", "titlename"]),
+        "NOW | titlecur=0 known1=1 known70=0 titlename=Private "
+    );
+    // Both halves of the first u64 and the low half of the second: two watches, one each.
+    let both = rig.packets(
+        vec![self_values(&[
+            (FIELD_PLAYER_KNOWN_TITLES, 1 << 1 | 1 << 5),
+            (FIELD_PLAYER_KNOWN_TITLES + 1, 1),
+            (FIELD_PLAYER_KNOWN_TITLES + 2, 1 << 6),
+        ])],
+        2,
+    );
+    let chosen = rig.packets(vec![self_values(&[(FIELD_PLAYER_CHOSEN_TITLE, 1)])], 2);
+    // The known update ahead of a chosen-title update in one frame, then behind one.
+    let known_first = rig.packets(
+        vec![
+            self_values(&[(FIELD_PLAYER_KNOWN_TITLES + 2, 0)]),
+            self_values(&[(FIELD_PLAYER_CHOSEN_TITLE, 0)]),
+        ],
+        2,
+    );
+    let chosen_first = rig.packets(
+        vec![
+            self_values(&[(FIELD_PLAYER_CHOSEN_TITLE, 1)]),
+            self_values(&[(FIELD_PLAYER_KNOWN_TITLES + 2, 1 << 6)]),
+        ],
+        2,
+    );
+    assert_eq!(
+        lines(&both),
+        vec![
+            "KNOWN_TITLES_UPDATE player | titlecur=0 known1=1 known70=1",
+            "KNOWN_TITLES_UPDATE player | titlecur=0 known1=1 known70=1",
+        ]
+    );
+    assert!(lines(&chosen).is_empty(), "{chosen:?}");
+    assert_eq!(
+        lines(&known_first),
+        vec!["KNOWN_TITLES_UPDATE player | titlecur=1 known1=1 known70=0"],
+        "the chosen title's packet is not yet applied"
+    );
+    assert_eq!(
+        lines(&chosen_first),
+        vec!["KNOWN_TITLES_UPDATE player | titlecur=1 known1=1 known70=1"]
+    );
+    assert_eq!(
+        rig.live_now().line(VERBS),
+        "NOW | titlecur=1 known1=1 known70=1"
+    );
+}
+
+/// `SetCurrentTitle` (`0x522e30`) sends `CMSG_SET_TITLE` with the mask inside the call (`0x522efb`),
+/// "None" as -1, before the calling chunk goes on; the chosen title moves only when the server's
+/// field update lands.
+#[test]
+fn set_current_title_sends_inside_the_call() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let sends = |rx: &crossbeam_channel::Receiver<crate::net::ClientCommand>| {
+        rx.try_iter()
+            .filter_map(|c| match c {
+                crate::net::ClientCommand::SetTitle { mask_id } => Some(mask_id),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let cur = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval::<i64>("SetCurrentTitle(1) SetCurrentTitle(-1.7) return GetCurrentTitle()")
+    })
+    .expect("a VM")
+    .unwrap();
+    assert_eq!(
+        sends(&rx),
+        vec![1, -1],
+        "both sent before the chunk returned"
+    );
+    assert_eq!(cur, 0, "the field waits for the server");
 }

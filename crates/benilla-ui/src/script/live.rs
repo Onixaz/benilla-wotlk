@@ -1033,6 +1033,24 @@ pub trait LiveState {
     /// `CMSG_QUERY_INSPECT_ACHIEVEMENTS` for `guid`, sent in the call (`0x5b1ab0`).
     fn query_inspect_achievements(&mut self, _guid: u64) {}
 
+    /// `CharTitles.dbc`'s row count (`[0xad337c]`), 0 before the table loads.
+    fn char_title_count(&self) -> usize {
+        0
+    }
+
+    /// The `CharTitles.dbc` row whose mask id is `mask`, the first in file order (`0x719900`).
+    fn char_title(&self, _mask: i64) -> Option<super::TitleRow> {
+        None
+    }
+
+    /// The active player's title fields at the call, `None` with no active player held (`0x51b440`).
+    fn player_titles(&self) -> Option<super::PlayerTitles> {
+        None
+    }
+
+    /// `CMSG_SET_TITLE` with `mask`, sent in the call (`0x522efb`).
+    fn send_set_title(&mut self, _mask: i32) {}
+
     /// The trade's network cells at the call: the partner's offered coins (`0xca0b78`) and each window's enchant spell (`0xca0ff0`); `None` where no view lends them.
     fn trade_cells(&self) -> Option<super::TradeCells> {
         None
@@ -1660,6 +1678,10 @@ pub(crate) struct TestView {
     pub inspect_achievement_queries: Vec<u64>,
     /// Each held player's PvP faction index; a guid absent here is no held player.
     pub player_factions: std::collections::HashMap<u64, i32>,
+    /// `CharTitles.dbc`'s rows, our title fields, and the `CMSG_SET_TITLE` masks sent, in order.
+    pub char_titles: Vec<super::TitleRow>,
+    pub player_titles: Option<super::PlayerTitles>,
+    pub title_sends: Vec<i32>,
 }
 
 /// The gossip globals a test view lends.
@@ -1754,6 +1776,22 @@ impl LiveState for TestView {
 
     fn query_inspect_achievements(&mut self, guid: u64) {
         self.inspect_achievement_queries.push(guid);
+    }
+
+    fn char_title_count(&self) -> usize {
+        self.char_titles.len()
+    }
+
+    fn char_title(&self, mask: i64) -> Option<super::TitleRow> {
+        super::title_row(&self.char_titles, mask).cloned()
+    }
+
+    fn player_titles(&self) -> Option<super::PlayerTitles> {
+        self.player_titles.clone()
+    }
+
+    fn send_set_title(&mut self, mask: i32) {
+        self.title_sends.push(mask);
     }
 
     fn unit_cast(&self, guid: u64, channel: bool) -> Option<super::UnitCast> {

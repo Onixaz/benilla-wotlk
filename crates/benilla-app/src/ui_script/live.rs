@@ -37,6 +37,8 @@ pub(crate) struct LiveView<'w, 's> {
     bank_prices: Option<Res<'w, crate::ui_bank::BankPrices>>,
     /// The achievement tables and lists, and the name cache the criteria and links read.
     achievements: crate::ui_achievement::AchievementLive<'w>,
+    /// `CharTitles.dbc`, the title verbs' rows (`0x719900`).
+    char_titles: Option<Res<'w, crate::ui_quest::rewards::QuestRewardTablesRes>>,
     /// The trade's network cells (`0xca0b68`-`0xca0ff8`), the trade verbs' wire reads.
     trade_cells: Option<Res<'w, crate::ui_trade::TradeSession>>,
     item_tables: Option<Res<'w, crate::ui_items::feed::ItemTablesLive>>,
@@ -1952,6 +1954,33 @@ impl LiveState for LiveView<'_, '_> {
 
     fn query_inspect_achievements(&mut self, guid: u64) {
         self.achievements.query_inspect(guid);
+    }
+
+    fn char_title_count(&self) -> usize {
+        self.char_titles
+            .as_ref()
+            .map_or(0, |t| t.0.char_titles().len())
+    }
+
+    fn char_title(&self, mask: i64) -> Option<benilla_ui::script::TitleRow> {
+        let tables = self.char_titles.as_ref()?;
+        crate::ui_title::title_row(&tables.0, mask)
+    }
+
+    fn player_titles(&self) -> Option<benilla_ui::script::PlayerTitles> {
+        let entity = self.player_entity(self.active_player()?)?;
+        Some(crate::ui_title::player_titles(
+            &self.stores.get(entity).ok()?.0,
+        ))
+    }
+
+    fn send_set_title(&mut self, mask: i32) {
+        debug!("ui_title: set title {mask}");
+        if let Some(commands) = self.commands.as_deref() {
+            let _ = commands
+                .0
+                .send(crate::net::ClientCommand::SetTitle { mask_id: mask });
+        }
     }
 
     fn trade_cells(&self) -> Option<benilla_ui::script::TradeCells> {

@@ -670,12 +670,7 @@ pub(crate) struct Model {
     /// A fixture's looted object, 0 with none, read where no view is lent.
     #[cfg(any(test, feature = "fixtures"))]
     pub(crate) loot_source: u64,
-    /// `CharTitles.dbc`'s rows in file order.
-    pub(crate) title_rows: Vec<super::title::TitleRow>,
-    /// The active player's title fields, `None` with no player.
-    pub(crate) player_titles: Option<super::title::PlayerTitles>,
-    /// `SetCurrentTitle` sends, `CMSG_SET_TITLE` bodies, for the app to send.
-    pub(crate) title_sets: Vec<i32>,
+    /// `SetCurrentTitle`'s send count and window (`[0xacc600]`, `[0xbd0cb8]`).
     pub(crate) title_throttle: super::title::TitleThrottle,
     /// What `GetSpellInfo` asks; absent before the app installs it.
     pub(crate) spell_info: Option<std::rc::Rc<dyn super::spell_info::SpellInfoSource>>,
@@ -1712,9 +1707,6 @@ impl Model {
             refund_sends: Vec::new(),
             #[cfg(any(test, feature = "fixtures"))]
             loot_source: 0,
-            title_rows: Vec::new(),
-            player_titles: None,
-            title_sets: Vec::new(),
             title_throttle: Default::default(),
             spell_info: None,
             threat: Default::default(),

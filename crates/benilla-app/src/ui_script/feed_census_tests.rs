@@ -62,7 +62,6 @@ const FEEDS: &[&str] = &[
     "benilla_app::ui_talent::feed_inspect_talents",
     "benilla_app::ui_talent::feed_talents",
     "benilla_app::ui_threat::feed_threat",
-    "benilla_app::ui_title::feed_titles",
     "benilla_app::ui_tooltip::drive_mouseover_tooltip",
     "benilla_app::ui_tradeskill::feed_trade_skill",
     "benilla_app::ui_transfer::feed_difficulty_notices",
