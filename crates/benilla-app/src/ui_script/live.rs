@@ -85,6 +85,8 @@ pub(crate) struct LiveView<'w, 's> {
     pages: Option<Res<'w, crate::ui_action::TempActionBar>>,
     /// The talent tables a talent link's rank reads.
     talents: Option<Res<'w, crate::ui_talent::Talents>>,
+    /// The talent state the talent verbs read and write, and the pet reads they make.
+    talent: crate::ui_talent::TalentLive<'w>,
     /// The bind point and subclass names a spell tooltip reads.
     tooltip: crate::ui_tooltip::spell_view::TooltipTables<'w>,
     /// Our auto-attack lock (`[player+0xa20]`) and auras, the current-spell test's reads.
@@ -227,6 +229,22 @@ impl LiveView<'_, '_> {
         let fields = &self.stores.get(entity).ok()?.0;
         (fields.object_type() == Some(benilla_protocol::messages::ObjectType::Player))
             .then_some(entity)
+    }
+
+    /// The talent target set (`0x5c9f70`) to `guid`, its class's tabs when it is a held player.
+    fn set_talent_target(&mut self, guid: u64) {
+        let class = (guid != 0).then(|| self.player_class(guid)).flatten();
+        let catalog = self.talents.as_deref().map(|t| t.catalog.clone());
+        let Some(state) = self.talent.state.as_deref_mut() else {
+            return;
+        };
+        crate::ui_talent::set_inspect_target(
+            &mut state.0,
+            guid,
+            class,
+            catalog.as_deref(),
+            self.spells.as_deref(),
+        );
     }
 
     /// A held player's `(race, class)`, the talent target's lookup with the player type mask (`0x5c9f8f`).
@@ -792,12 +810,18 @@ impl LiveState for LiveView<'_, '_> {
         self.positions.request();
     }
 
-    fn notify_inspect(&self, guid: u64) -> bool {
-        self.inspect.notify(guid, || self.player_class(guid))
+    fn notify_inspect(&mut self, guid: u64) -> bool {
+        let moved = self.inspect.notify(guid);
+        if moved {
+            self.set_talent_target(guid);
+        }
+        moved
     }
 
-    fn clear_inspect_target(&self) {
-        self.inspect.clear();
+    fn clear_inspect_target(&mut self) {
+        if self.inspect.clear() {
+            self.set_talent_target(0);
+        }
     }
 
     fn companion_spells(&self, ty: benilla_ui::script::CompanionType) -> Vec<u32> {
@@ -1991,6 +2015,89 @@ impl LiveState for LiveView<'_, '_> {
         let entity = self.player_entity(self.active_player()?)?;
         Some(crate::ui_title::player_titles(
             &self.stores.get(entity).ok()?.0,
+        ))
+    }
+
+    fn talent_info(&self) -> Option<&benilla_ui::script::TalentInfo> {
+        self.talent.state.as_deref().map(|s| &s.0)
+    }
+
+    fn talent_info_mut(&mut self) -> Option<&mut benilla_ui::script::TalentInfo> {
+        self.talent.state.as_deref_mut().map(|s| &mut s.0)
+    }
+
+    fn talent_unit(&self, pet: bool) -> Option<u64> {
+        if pet {
+            // The pet list's first guid held as a unit.
+            let head = self.talent.pets.as_deref()?.head()?;
+            let &entity = self.index.as_ref()?.0.get(&head)?;
+            self.stores.get(entity).ok()?.0.is_unit().then_some(head)
+        } else {
+            let me = self.active_player()?;
+            self.player_entity(me).map(|_| me)
+        }
+    }
+
+    fn pet_family_category(&self) -> Option<i32> {
+        let head = self.talent_unit(true)?;
+        let &entity = self.index.as_ref()?.0.get(&head)?;
+        let entry = self
+            .stores
+            .get(entity)
+            .ok()?
+            .0
+            .object_entry()
+            .filter(|&e| e != 0)?;
+        let family = self
+            .talent
+            .names
+            .as_ref()?
+            .creature_record(entry)?
+            .pet_family;
+        Some(
+            self.talent
+                .families
+                .as_ref()?
+                .families
+                .get(family)?
+                .category,
+        )
+    }
+
+    fn send_learn_talent(&mut self, pet: Option<u64>, talent_id: u32, rank: u32) {
+        debug!("ui_talent: learn talent {talent_id} rank {rank} (pet {pet:?})");
+        let Some(commands) = self.commands.as_deref() else {
+            return;
+        };
+        let _ = commands.0.send(match pet {
+            Some(pet_guid) => crate::net::ClientCommand::PetLearnTalent {
+                pet_guid,
+                talent_id,
+                rank,
+            },
+            None => crate::net::ClientCommand::LearnTalent { talent_id, rank },
+        });
+    }
+
+    fn send_learn_preview_talents(&mut self, pet: Option<u64>, talents: Vec<(u32, u32)>) {
+        debug!("ui_talent: learn preview talents {talents:?} (pet {pet:?})");
+        let Some(commands) = self.commands.as_deref() else {
+            return;
+        };
+        let _ = commands.0.send(match pet {
+            Some(pet_guid) => {
+                crate::net::ClientCommand::LearnPreviewTalentsPet { pet_guid, talents }
+            }
+            None => crate::net::ClientCommand::LearnPreviewTalents { talents },
+        });
+    }
+
+    fn character_points(&self) -> Option<(u32, u32)> {
+        let entity = self.player_entity(self.active_player()?)?;
+        let fields = &self.stores.get(entity).ok()?.0;
+        Some((
+            fields.player_talent_points().unwrap_or(0),
+            fields.player_free_professions().unwrap_or(0),
         ))
     }
 

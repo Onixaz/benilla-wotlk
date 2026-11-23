@@ -270,6 +270,7 @@ mod stdlib;
 pub use stdlib::lua_message;
 mod summon;
 mod talent;
+mod talent_info;
 mod taxi;
 mod threat;
 mod tick;
@@ -500,8 +501,10 @@ pub use spellbook::{
 pub use stable::{
     StableCallback, StableFamily, StableIntent, StableList, StableRow, NUM_STABLE_SLOTS,
 };
-pub use talent::{
-    TalentGroupView, TalentPrereqView, TalentRankView, TalentTabView, TalentUiState, TalentView,
+pub use talent::{TalentPrereqView, TalentRankView, TalentTabView, TalentView};
+pub use talent_info::{
+    GroupTab, PreviewLearn, TalentGroup, TalentInfo, TalentItem, TalentPacket, TalentPacketGroup,
+    TalentPages, TalentSide,
 };
 pub use taxi::{TaxiAct, TaxiNodeType, TaxiOutcome, TaxiUiNode, TaxiUiState};
 pub use threat::{ThreatEntry, ThreatList, ThreatReading, ThreatView};

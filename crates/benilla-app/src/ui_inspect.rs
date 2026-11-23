@@ -29,29 +29,30 @@ pub(crate) struct InspectTarget {
 
 /// The inspect target (`0xc24220`): set by `NotifyInspect` (`0x5e76cb`) and cleared by `ClearInspectPlayer` (`0x5e78ae`) when called.
 #[derive(Resource, Default)]
-pub(crate) struct InspectGuid(std::sync::atomic::AtomicU64);
+pub(crate) struct InspectGuid(u64);
 
 impl InspectGuid {
     pub(crate) fn get(&self) -> u64 {
-        self.0.load(std::sync::atomic::Ordering::Relaxed)
+        self.0
     }
 
     /// Set the target; whether it moved (`0x5e76c1`).
-    pub(crate) fn set(&self, guid: u64) -> bool {
-        self.0.swap(guid, std::sync::atomic::Ordering::Relaxed) != guid
+    pub(crate) fn set(&mut self, guid: u64) -> bool {
+        std::mem::replace(&mut self.0, guid) != guid
     }
 }
 
 /// The world leave's inspect part (`0x5eaf70`): a held target, its honor reply, latch, teams and talent target go (`0x5eaff5`-`0x5eb022`).
 pub(crate) fn leave_world(world: &mut World) {
     if !world
-        .get_resource::<InspectGuid>()
-        .is_some_and(|g| g.set(0))
+        .get_resource_mut::<InspectGuid>()
+        .is_some_and(|mut g| g.set(0))
     {
         return;
     }
-    if let Some(talents) = world.get_resource::<crate::ui_talent::InspectTalentClass>() {
-        talents.set(None);
+    // The talent target's reset with no player (`0x5eb022`).
+    if let Some(mut talents) = world.get_resource_mut::<crate::ui_talent::TalentState>() {
+        talents.0.set_inspect_target(0, None);
     }
     if let Some(mut ui) = world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
         ui.write(|s| {
@@ -61,38 +62,25 @@ pub(crate) fn leave_world(world: &mut World) {
     }
 }
 
-/// What the inspect verbs reach when called: the target, the talent target and the send.
+/// What the inspect verbs reach when called: the target and the send.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct InspectLive<'w> {
-    guid: Option<Res<'w, InspectGuid>>,
-    talents: Option<Res<'w, crate::ui_talent::InspectTalentClass>>,
+    guid: Option<ResMut<'w, InspectGuid>>,
     net: Option<Res<'w, NetCommands>>,
 }
 
 impl InspectLive<'_> {
-    /// `CMSG_INSPECT` (`0x5228c3`), then the target (`0x52291a`); a moved one resets the talent target to `class` (`0x5e76f2`); whether it moved.
-    pub(crate) fn notify(&self, guid: u64, class: impl FnOnce() -> Option<(u8, u8)>) -> bool {
+    /// `CMSG_INSPECT` (`0x5228c3`), then the target (`0x52291a`); whether it moved (`0x5e76c1`), where the caller resets the talent target (`0x5e76f2`).
+    pub(crate) fn notify(&mut self, guid: u64) -> bool {
         if let Some(net) = self.net.as_deref() {
             let _ = net.0.send(ClientCommand::Inspect { target: guid });
         }
-        let moved = self.guid.as_deref().is_none_or(|g| g.set(guid));
-        if moved {
-            self.set_talent_target(class());
-        }
-        moved
+        self.guid.as_mut().is_none_or(|g| g.set(guid))
     }
 
-    /// `ClearInspectPlayer`'s target clear (`0x5e78ae`); a held one resets the talent target (`0x5e78d5`).
-    pub(crate) fn clear(&self) {
-        if self.guid.as_deref().is_some_and(|g| g.set(0)) {
-            self.set_talent_target(None);
-        }
-    }
-
-    fn set_talent_target(&self, class: Option<(u8, u8)>) {
-        if let Some(t) = self.talents.as_deref() {
-            t.set(class);
-        }
+    /// `ClearInspectPlayer`'s target clear (`0x5e78ae`); whether one was held, where the caller resets the talent target (`0x5e78d5`).
+    pub(crate) fn clear(&mut self) -> bool {
+        self.guid.as_mut().is_some_and(|g| g.set(0))
     }
 }
 
@@ -150,11 +138,7 @@ fn on_inspect_items(
 }
 
 /// `SMSG_INSPECT_TALENT`'s talents, for the inspected player alone (`0x6ce0da`).
-fn on_inspect_talents(
-    In(ev): In<SessionEvent>,
-    mut talents: ResMut<crate::ui_talent::InspectTalents>,
-    target: Res<InspectGuid>,
-) {
+fn on_inspect_talents(In(ev): In<SessionEvent>, world: &mut World) {
     let SessionEvent::InspectTalents {
         guid,
         talents: info,
@@ -162,8 +146,8 @@ fn on_inspect_talents(
     else {
         return;
     };
-    if guid == target.get() {
-        talents.apply(info);
+    if world.get_resource::<InspectGuid>().map(InspectGuid::get) == Some(guid) {
+        crate::ui_talent::inspect_talents(world, info);
     }
 }
 
@@ -369,67 +353,91 @@ fn feed_inspect(
 mod leave_tests {
     use super::*;
 
-    use crate::ui_talent::InspectTalentClass;
-
     /// `0x5eafeb`: the leave clears a held target and its talent tabs; with none it does nothing.
     #[test]
     fn the_world_leave_clears_the_inspect_target() {
+        use benilla_ui::script::{TalentPages, TalentSide, TalentTabView};
+        let tabs = || TalentPages {
+            tabs: vec![TalentTabView::default()],
+            talents: vec![Vec::new()],
+        };
         let mut world = World::new();
         world.init_resource::<InspectGuid>();
-        world.init_resource::<InspectTalentClass>();
-        world.resource::<InspectTalentClass>().set(Some((1, 1)));
-        world.resource::<InspectGuid>().set(0x56);
+        world.init_resource::<crate::ui_talent::TalentState>();
+        let held = |world: &World| {
+            world
+                .resource::<crate::ui_talent::TalentState>()
+                .0
+                .pages(TalentSide::Inspect)
+                .tabs
+                .len()
+        };
+        world
+            .resource_mut::<crate::ui_talent::TalentState>()
+            .0
+            .set_inspect_target(0x56, Some(tabs()));
+        world.resource_mut::<InspectGuid>().set(0x56);
         leave_world(&mut world);
         assert_eq!(world.resource::<InspectGuid>().get(), 0);
-        assert_eq!(world.resource::<InspectTalentClass>().get(), None);
-        world.resource::<InspectTalentClass>().set(Some((1, 1)));
+        assert_eq!(held(&world), 0, "the talent target reset with no player");
+        world
+            .resource_mut::<crate::ui_talent::TalentState>()
+            .0
+            .set_inspect_target(0x56, Some(tabs()));
         leave_world(&mut world);
-        assert_eq!(
-            world.resource::<InspectTalentClass>().get(),
-            Some((1, 1)),
-            "no target held: nothing to clear"
-        );
+        assert_eq!(held(&world), 1, "no target held: nothing to clear");
     }
 
-    /// The talent target resets inside the verbs: `NotifyInspect` on a move (`0x5e76f2`), `ClearInspectPlayer` on a held target (`0x5e78d5`).
+    /// The talent target resets inside the verbs: `NotifyInspect` on a move (`0x5e76f2`), `ClearInspectPlayer` on a held target (`0x5e78d5`); a guid that is no held player leaves no tabs (`0x5c9f8f`).
     #[test]
     fn the_inspect_verbs_reset_the_talent_target_at_the_call() {
-        use bevy::ecs::system::RunSystemOnce;
+        use benilla_ui::script::{LiveState, TalentPages, TalentSide, TalentTabView};
         let mut world = World::new();
         world.init_resource::<InspectGuid>();
-        world.init_resource::<InspectTalentClass>();
-        let class = |world: &World| world.resource::<InspectTalentClass>().get();
-        let notify = |world: &mut World, guid: u64, class: Option<(u8, u8)>| {
+        world.init_resource::<crate::ui_talent::TalentState>();
+        let tabs = |world: &World| {
             world
-                .run_system_once(move |live: InspectLive| live.notify(guid, || class))
-                .expect("notify")
+                .resource::<crate::ui_talent::TalentState>()
+                .0
+                .pages(TalentSide::Inspect)
+                .tabs
+                .len()
         };
-        assert!(notify(&mut world, 0x56, Some((1, 8))));
-        assert_eq!(class(&world), Some((1, 8)), "a new target sets it");
-        assert!(!notify(&mut world, 0x56, Some((2, 1))));
-        assert_eq!(class(&world), Some((1, 8)), "the same target keeps it");
-        assert!(notify(&mut world, 0x57, None));
-        assert_eq!(class(&world), None, "no player object: no tabs");
-        let resets = world.resource::<InspectTalentClass>().resets();
-        assert!(notify(&mut world, 0x58, None));
+        let seed = |world: &mut World| {
+            world
+                .resource_mut::<crate::ui_talent::TalentState>()
+                .0
+                .set_inspect_target(
+                    0x55,
+                    Some(TalentPages {
+                        tabs: vec![TalentTabView::default()],
+                        talents: vec![Vec::new()],
+                    }),
+                );
+        };
+        let view = |world: &mut World, f: &dyn Fn(&mut dyn LiveState) -> bool| {
+            crate::ui_script::live::with_world_view(world, |l| f(l))
+        };
+        seed(&mut world);
+        assert!(view(&mut world, &|l| l.notify_inspect(0x56)));
         assert_eq!(
-            world.resource::<InspectTalentClass>().resets(),
-            resets + 1,
-            "a move to an equal class still resets the tabs"
+            tabs(&world),
+            0,
+            "a new target that is no held player: no tabs"
         );
-        world.resource::<InspectTalentClass>().set(Some((1, 8)));
-        world
-            .run_system_once(|live: InspectLive| live.clear())
-            .expect("clear");
-        assert_eq!(class(&world), None, "a held target's clear resets it");
-        world.resource::<InspectTalentClass>().set(Some((1, 8)));
-        world
-            .run_system_once(|live: InspectLive| live.clear())
-            .expect("clear");
-        assert_eq!(
-            class(&world),
-            Some((1, 8)),
-            "no target held: nothing to reset"
-        );
+        seed(&mut world);
+        assert!(!view(&mut world, &|l| l.notify_inspect(0x56)));
+        assert_eq!(tabs(&world), 1, "the same target keeps them");
+        view(&mut world, &|l| {
+            l.clear_inspect_target();
+            true
+        });
+        assert_eq!(tabs(&world), 0, "a held target's clear resets them");
+        seed(&mut world);
+        view(&mut world, &|l| {
+            l.clear_inspect_target();
+            true
+        });
+        assert_eq!(tabs(&world), 1, "no target held: nothing to reset");
     }
 }

@@ -307,7 +307,15 @@ fn holds(model: &Model, token: &str, c: &Condition<'_>) -> Option<bool> {
         "swimming" => boolean(model.option_state.swimming, args),
         "mounted" => boolean(model.option_state.mounted, args),
         // The active talent group, 1-based; no argument never holds (`0x5ef2e0`).
-        "spec" => any_number(model.talents.active_group as i64 + 1, args, false),
+        "spec" => any_number(
+            i64::from(
+                super::read_live(|l| l.talent_info().map(super::TalentInfo::active_group))
+                    .flatten()
+                    .unwrap_or(0),
+            ) + 1,
+            args,
+            false,
+        ),
         // The seat flag `0x20000000`: the player's seat (`0x5ef430`), the group's unit's
         // (`0x5ef470`).
         "vehicleui" => super::vehicle::has_vehicle_ui(model, "player"),

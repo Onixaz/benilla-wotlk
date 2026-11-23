@@ -162,17 +162,23 @@ fn socket_of(index: i32) -> usize {
     (index as u32).wrapping_sub(1) as usize
 }
 
-/// The group a verb's `talentGroup` names (`0x5c57d0`), its glyph at `socket` (`0x5c5770`), `None`
-/// for a group not there (`0x5c6080`).
-fn group_glyph(model: &Model, group: &Value, socket: usize) -> Option<u32> {
-    let group = super::talent::group_arg(model, group);
-    let g = model.talents.groups.get(group)?;
-    Some(
-        g.glyphs
-            .get(socket)
-            .copied()
-            .unwrap_or(NUM_GLYPH_SOCKETS as u32),
-    )
+/// The group a verb's `talentGroup` names (`0x5c57d0`), its glyph at `socket` (`0x5c5770`), read
+/// from the talent state at the call; `None` for a group not there (`0x5c6080`).
+fn group_glyph(group: &Value, socket: usize) -> Option<u32> {
+    super::read_live(|l| {
+        let info = l.talent_info()?;
+        let g = info.group(
+            super::TalentSide::Player,
+            super::talent::script_group(info, Some(group)),
+        )?;
+        Some(
+            g.glyphs
+                .get(socket)
+                .copied()
+                .unwrap_or(NUM_GLYPH_SOCKETS as u32),
+        )
+    })
+    .flatten()
 }
 
 fn arg(args: &MultiValue, i: usize) -> Value {
@@ -210,7 +216,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let glyph_id = group_glyph(&model, &arg(&args, 1), socket);
+            let glyph_id = group_glyph(&arg(&args, 1), socket);
             let (true, Some(glyph_id), true) =
                 (socket < NUM_GLYPH_SOCKETS, glyph_id, has_player(&model))
             else {
@@ -347,7 +353,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let glyph_id = group_glyph(&model, &arg(&args, 1), socket);
+            let glyph_id = group_glyph(&arg(&args, 1), socket);
             let (true, true, Some(glyph_id)) =
                 (socket < NUM_GLYPH_SOCKETS, has_player(&model), glyph_id)
             else {
@@ -511,7 +517,7 @@ pub(super) fn install_tooltip_method(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 let model = lua
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
-                let Some(glyph_id) = group_glyph(&model, &arg(&args, 1), socket) else {
+                let Some(glyph_id) = group_glyph(&arg(&args, 1), socket) else {
                     return Ok(());
                 };
                 if !has_player(&model) {
@@ -533,8 +539,8 @@ pub(super) fn install_tooltip_method(lua: &Lua, m: &Table) -> mlua::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::script::live::TestTargeting;
-    use crate::script::{TalentGroupView, TalentUiState, UiScript, UnitState};
+    use crate::script::live::{TestTargeting, TestView};
+    use crate::script::{TalentInfo, TalentPacket, TalentPacketGroup, UiScript, UnitState};
 
     const ICON: &str = r"Interface\Icons\INV_Glyph_MajorHunter";
 
@@ -549,13 +555,6 @@ mod tests {
                 ..Default::default()
             }),
         );
-        s.set_talents(TalentUiState {
-            groups: vec![TalentGroupView {
-                glyphs: [181, 0, 0, 0, 0, 0],
-                ..Default::default()
-            }],
-            ..Default::default()
-        });
         let glyph = |slot_type, name: &str| GlyphView {
             spell: 1000 + slot_type,
             slot_type,
@@ -585,74 +584,102 @@ mod tests {
         s
     }
 
+    /// A view lending one talent group whose first glyph is 181, the packet's (`0x5c9818`).
+    fn glyph_view() -> TestView {
+        let mut info = TalentInfo::default();
+        info.update_talent_data(
+            &TalentPacket {
+                unspent: 0,
+                active: 0,
+                groups: vec![TalentPacketGroup {
+                    talents: Vec::new(),
+                    glyphs: vec![181],
+                }],
+            },
+            &|_, _| true,
+        );
+        TestView {
+            talent_info: Some(info),
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn socket_info_reads_the_group_glyph_and_the_fields() {
-        let s = script();
-        let first: (i64, i64, i64, String) = s.eval("return GetGlyphSocketInfo(1)").unwrap();
-        assert_eq!(first, (1, 1, 1000, ICON.into()));
-        let locked: (Option<i64>, i64, Option<i64>, Option<String>) =
-            s.eval("return GetGlyphSocketInfo(6)").unwrap();
-        assert_eq!(locked, (None, 1, None, None), "socket 6 is a locked major");
-        assert_eq!(
-            s.eval::<i64>("return select('#', GetGlyphSocketInfo(0))")
-                .unwrap(),
-            0,
-            "index 0 wraps past the six"
-        );
-        assert_eq!(
-            s.eval::<i64>("return select('#', GetGlyphSocketInfo(1, 2))")
-                .unwrap(),
-            0,
-            "no group 2"
-        );
-        assert!(s.run("GetGlyphSocketInfo()").is_err(), "usage");
+        crate::script::live::lending(&mut glyph_view(), || {
+            let s = script();
+            let first: (i64, i64, i64, String) = s.eval("return GetGlyphSocketInfo(1)").unwrap();
+            assert_eq!(first, (1, 1, 1000, ICON.into()));
+            let locked: (Option<i64>, i64, Option<i64>, Option<String>) =
+                s.eval("return GetGlyphSocketInfo(6)").unwrap();
+            assert_eq!(locked, (None, 1, None, None), "socket 6 is a locked major");
+            assert_eq!(
+                s.eval::<i64>("return select('#', GetGlyphSocketInfo(0))")
+                    .unwrap(),
+                0,
+                "index 0 wraps past the six"
+            );
+            assert_eq!(
+                s.eval::<i64>("return select('#', GetGlyphSocketInfo(1, 2))")
+                    .unwrap(),
+                0,
+                "no group 2"
+            );
+            assert!(s.run("GetGlyphSocketInfo()").is_err(), "usage");
+        });
     }
 
     #[test]
     fn without_the_player_the_verbs_answer_nothing() {
-        let mut s = script();
-        s.set_unit("player", None);
-        let count = |s: &UiScript, call: &str| {
-            s.eval::<i64>(&format!("return select('#', {call})"))
-                .unwrap()
-        };
-        assert_eq!(count(&s, "GetGlyphSocketInfo(1)"), 0);
-        assert_eq!(count(&s, "GetGlyphLink(1)"), 0);
-        assert_eq!(count(&s, "PlaceGlyphInSocket(1)"), 0);
-        assert_eq!(count(&s, "GlyphMatchesSocket(1)"), 1, "an explicit nil");
-        s.run("RemoveGlyphFromSocket(1)").unwrap();
-        assert!(s.take_glyph_removes().is_empty());
+        crate::script::live::lending(&mut glyph_view(), || {
+            let mut s = script();
+            s.set_unit("player", None);
+            let count = |s: &UiScript, call: &str| {
+                s.eval::<i64>(&format!("return select('#', {call})"))
+                    .unwrap()
+            };
+            assert_eq!(count(&s, "GetGlyphSocketInfo(1)"), 0);
+            assert_eq!(count(&s, "GetGlyphLink(1)"), 0);
+            assert_eq!(count(&s, "PlaceGlyphInSocket(1)"), 0);
+            assert_eq!(count(&s, "GlyphMatchesSocket(1)"), 1, "an explicit nil");
+            s.run("RemoveGlyphFromSocket(1)").unwrap();
+            assert!(s.take_glyph_removes().is_empty());
+        });
     }
 
     /// A socket the fields name sends, inscribed or not; past the six, nothing.
     #[test]
     fn remove_sends_for_any_named_socket() {
-        let mut s = script();
-        s.run("RemoveGlyphFromSocket(1) RemoveGlyphFromSocket(3) RemoveGlyphFromSocket(7)")
-            .unwrap();
-        assert_eq!(s.take_glyph_removes(), vec![0, 2]);
-        s.set_glyph_sockets(GlyphSockets::default());
-        s.run("RemoveGlyphFromSocket(1)").unwrap();
-        assert!(s.take_glyph_removes().is_empty(), "no socket in the fields");
+        crate::script::live::lending(&mut glyph_view(), || {
+            let mut s = script();
+            s.run("RemoveGlyphFromSocket(1) RemoveGlyphFromSocket(3) RemoveGlyphFromSocket(7)")
+                .unwrap();
+            assert_eq!(s.take_glyph_removes(), vec![0, 2]);
+            s.set_glyph_sockets(GlyphSockets::default());
+            s.run("RemoveGlyphFromSocket(1)").unwrap();
+            assert!(s.take_glyph_removes().is_empty(), "no socket in the fields");
+        });
     }
 
     #[test]
     fn the_link_names_the_slot_and_the_glyph() {
-        let s = script();
-        assert_eq!(
-            s.eval::<String>("return GetGlyphLink(1)").unwrap(),
-            "|cff66bbff|Hglyph:21:181|h[Glyph of A]|h|r"
-        );
-        assert_eq!(s.eval::<String>("return GetGlyphLink(2)").unwrap(), "");
-        assert_eq!(parse_glyph_link("|Hglyph:21:181|h[A]|h"), Some((21, 181)));
-        assert_eq!(parse_glyph_link("glyph:21"), None);
+        crate::script::live::lending(&mut glyph_view(), || {
+            let s = script();
+            assert_eq!(
+                s.eval::<String>("return GetGlyphLink(1)").unwrap(),
+                "|cff66bbff|Hglyph:21:181|h[Glyph of A]|h|r"
+            );
+            assert_eq!(s.eval::<String>("return GetGlyphLink(2)").unwrap(), "");
+            assert_eq!(parse_glyph_link("|Hglyph:21:181|h[A]|h"), Some((21, 181)));
+            assert_eq!(parse_glyph_link("glyph:21"), None);
+        });
     }
 
     /// Without a targeting cast nothing matches or places; with one, the verdict is queued and
     /// the answer is 1 only for a bind the word wanted.
     #[test]
     fn placement_needs_a_targeting_glyph_cast() {
-        crate::script::live::lending(&mut crate::script::live::TestView::default(), || {
+        crate::script::live::lending(&mut glyph_view(), || {
             let mut s = script();
             assert_eq!(
                 s.eval::<i64>("return select('#', GlyphMatchesSocket(4))")
@@ -735,30 +762,32 @@ mod tests {
     /// keeps skipping.
     #[test]
     fn the_per_frame_glyph_reads_leave_the_mutation_count_standing() {
-        let mut s = script();
-        s.set_spell_targeting(true);
-        s.set_glyph_targeting(Some(GlyphTargeting {
-            glyphs: [Some(182), None, None],
-            wants_socket: true,
-        }));
-        let poll = "for i = 1, 7 do GlyphMatchesSocket(i) GetGlyphSocketInfo(i) GetGlyphLink(i) end                     SpellCanTargetGlyph() PlaceGlyphInSocket(9) RemoveGlyphFromSocket(9)                     RemoveGlyphFromSocket(6 + 1)";
-        s.run(poll).unwrap();
-        let settled = s.visual_epoch();
-        s.run(poll).unwrap();
-        assert!(s.take_glyph_removes().is_empty());
-        s.set_glyph_sockets(GlyphSockets {
-            slots: [21, 22, 23, 24, 25, 26],
-            glyphs: [181, 0, 0, 0, 0, 0],
-            enabled: 0x1f,
+        crate::script::live::lending(&mut glyph_view(), || {
+            let mut s = script();
+            s.set_spell_targeting(true);
+            s.set_glyph_targeting(Some(GlyphTargeting {
+                glyphs: [Some(182), None, None],
+                wants_socket: true,
+            }));
+            let poll = "for i = 1, 7 do GlyphMatchesSocket(i) GetGlyphSocketInfo(i) GetGlyphLink(i) end                     SpellCanTargetGlyph() PlaceGlyphInSocket(9) RemoveGlyphFromSocket(9)                     RemoveGlyphFromSocket(6 + 1)";
+            s.run(poll).unwrap();
+            let settled = s.visual_epoch();
+            s.run(poll).unwrap();
+            assert!(s.take_glyph_removes().is_empty());
+            s.set_glyph_sockets(GlyphSockets {
+                slots: [21, 22, 23, 24, 25, 26],
+                glyphs: [181, 0, 0, 0, 0, 0],
+                enabled: 0x1f,
+            });
+            s.set_glyph_targeting(Some(GlyphTargeting {
+                glyphs: [Some(182), None, None],
+                wants_socket: true,
+            }));
+            assert_eq!(
+                s.visual_epoch(),
+                settled,
+                "an idle glyph frame writes nothing"
+            );
         });
-        s.set_glyph_targeting(Some(GlyphTargeting {
-            glyphs: [Some(182), None, None],
-            wants_socket: true,
-        }));
-        assert_eq!(
-            s.visual_epoch(),
-            settled,
-            "an idle glyph frame writes nothing"
-        );
     }
 }

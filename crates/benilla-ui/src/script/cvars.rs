@@ -656,11 +656,20 @@ pub(super) fn install_cvar_verbs(lua: &Lua) -> mlua::Result<()> {
             // nil, and `SoundOptionsCheckButton_OnClick` writes it as is.
             let value = cvar_arg(args.get(1)).unwrap_or_else(|| NO_STRING_FORM.to_string());
             {
-                let mut model = crate::script::model_mut_of(lua);
+                let model = crate::script::model_mut_of(lua);
                 // Flag bit2, tested before anything is written.
                 if model.cvars_read_only.contains(&name.to_ascii_lowercase()) {
                     return Err(mlua::Error::runtime(format!("\"{name}\" is read-only")));
                 }
+            }
+            // The row's callback runs ahead of the store, on every set (`0x7668c0`).
+            if name.eq_ignore_ascii_case("previewTalents")
+                && read_cvar(lua, &name, |_| ()).is_some()
+            {
+                super::talent::preview_talents_changed(lua);
+            }
+            {
+                let mut model = crate::script::model_mut_of(lua);
                 if !write_cvar(&mut model, &name, value.clone()) {
                     return Ok(());
                 }
