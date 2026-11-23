@@ -1,10 +1,11 @@
-//! The mail feed: the app half of [`benilla_ui::script`]'s `mail` module, 12340's mail state.
+//! The app half of [`benilla_ui::script`]'s `mail` module, 12340's mail state.
 //!
 //! A mailbox opens locally, from a mailbox GameObject's use (`0x70c9d0`) or a mailbox NPC's
 //! interaction (`0x6de11f`), or by `SMSG_SHOW_MAILBOX`; each ends in the mailbox open
 //! (`0x56da60`), which resets the form and fires `MAIL_SHOW`, whose `CheckInbox()` asks for the
-//! list. The VM gates the verbs and queues their packets; this side sends them, keeps the wire
-//! rows and applies each result as the reference's handlers do.
+//! list. [`MailOpen`] is the client's inbox: the handlers move it and raise its events at their
+//! steps, and the verbs read it at the call through [`MailLive`], each read leaving its callback on
+//! a record in flight. The VM gates the verbs and queues their packets; the drain sends them.
 //!
 //! [`MailPending`] is the arrival layer behind `HasNewMail()`, the minimap icon and its sender
 //! tooltip; it never reads the inbox, only the next-mail time and its three senders.
@@ -15,15 +16,16 @@ use benilla_protocol::messages::{
 use bevy::prelude::*;
 
 use benilla_ui::script::{
-    MailAttachmentView, MailInboxRow, MailInvoice, MailState, ScriptValue, StationeryView,
-    UiScript, STATIONERY_GM,
+    MailAttachmentView, MailComplaint, MailInboxRow, MailInvoice, MailPacket, MailRead,
+    StationeryView, UiScript, STATIONERY_GM,
 };
 
 use crate::entities::ItemDisplays;
-use crate::items::Items;
+use crate::items::{Items, RecordWait, RecordWaits};
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, ObjectStore, Objects, SelfPlayer};
-use crate::ui_script::{UiDrain, UiFeed};
+use crate::ui_action::signals::{QueuedSignals, SignalSink};
+use crate::ui_script::live::UiEvents;
 use crate::ui_session::NpcSession;
 
 mod invoice;
@@ -129,65 +131,84 @@ fn leading_u64(s: &str) -> u64 {
         })
 }
 
-/// One step of a result's or list's effect on the window, applied by [`feed_mail`] in order.
-#[derive(Clone)]
-pub(crate) enum MailEffect {
-    /// A message line by key.
-    Message(&'static str),
-    /// An inventory error, through the equip-error table.
-    EquipError(u32),
-    /// A sent mail's form reset (`ClearSendMail(true)`).
-    Sent,
-    /// `CLOSE_INBOX_ITEM(index)`, 1-based.
-    CloseInboxItem(u32),
-    /// The rows changed: push them and fire `MAIL_INBOX_UPDATE`.
-    InboxUpdate,
-    /// The command in flight ended; `send` also ends a pending send.
-    Done { send: bool },
-    /// `MAIL_SUCCESS` on an OK result, else `MAIL_FAILED` (`0x571984`).
-    Result { ok: bool },
+/// A record a mail read left a name callback on: a player's name, or the creature's or game
+/// object's record a sender's name reads (`0x56d960`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NameRecord {
+    Player(u64),
+    Creature(u32),
+    GameObject(u32),
 }
 
-/// The mail session: the open mailbox, the inbox rows (kept past a close, as the reference keeps
-/// them until a world change, `0x571730`), and the queued effects.
+/// Which callback a name read left, by what it raises once the name lands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NameCallback {
+    /// The update queued, then `UPDATE_PENDING_MAIL` raised (`0x56d460`).
+    UpdateAndPending,
+    /// The update queued alone (`0x56d4b0`).
+    UpdateOnly,
+}
+
+/// The client's mail state (`0xbeb030`-`0xbeb204`): the open mailbox, the inbox rows (kept past a
+/// close, as the reference keeps them until a world change, `0x571730`), the auto-loot in flight,
+/// the callbacks its reads left and the usable stationery.
 #[derive(Resource, Default, Clone)]
 pub(crate) struct MailOpen {
-    /// The open mailbox.
+    /// The open mailbox (`[0xbeb030]`).
     pub(crate) mailbox: Option<u64>,
-    /// Wire order, which is the 1-based display order.
+    /// Wire order, which is the 1-based display order (`[0xbeb204]`, count `[0xbeb1d8]`).
     pub(crate) rows: Vec<MailRow>,
-    /// The server's whole count past the shown rows.
+    /// The server's whole count past the shown rows (`[0xbeb1dc]`).
     pub(crate) total: u32,
-    /// The mail `AutoLootMailItem` is emptying one attachment per result.
+    /// The mail `AutoLootMailItem` is emptying one attachment per result (`[0xbeb1ec]`).
     auto_looting: Option<u32>,
-    /// The mailbox open owed to the VM.
-    open_requested: bool,
-    /// The engine closed the window (range, despawn); the VM is owed `CloseMail(false)`.
-    close_requested: bool,
-    pub(crate) effects: Vec<MailEffect>,
-    /// The first usable stationery's id, which a row without one takes (`0x5720c3`).
-    default_stationery: u32,
+    /// The name callbacks the reads left, one per miss: `0x56d960` links with its once flag 0.
+    name_waits: Vec<(NameRecord, NameCallback)>,
+    /// The stationery records the world entry's asks still wait on (`[0xbeb1d4]`).
+    stationery_pending: u32,
+    /// The usable stationery as last built (`0x56fc80`, count `[0xbeb1c8]`).
+    stationery: Vec<StationeryView>,
 }
 
 impl MailOpen {
-    /// The mailbox open (`0x56da60`): a mailbox right-click, a mailbox NPC or `SMSG_SHOW_MAILBOX`.
-    pub(crate) fn click(&mut self, mailbox: u64) {
-        self.mailbox = Some(mailbox);
-        self.open_requested = true;
-    }
-
     pub(crate) fn index_of(&self, message_id: u32) -> Option<usize> {
         self.rows
             .iter()
             .position(|r| r.entry.message_id == message_id)
     }
 
-    /// The session's end: no mailbox and no rows, as `CloseMail(true)` leaves them (`0x571730`).
+    /// The session's end: no mailbox, no rows, and the callbacks in flight gone with the socket.
     pub(crate) fn clear_session(&mut self) {
-        *self = Self {
-            default_stationery: self.default_stationery,
-            ..Self::default()
-        };
+        *self = Self::default();
+    }
+
+    /// The world entry's part (`0x571530`): no mailbox, no rows and no auto-loot; the stationery
+    /// list empties for its rebuild. The callbacks stay linked on their records.
+    fn enter_world(&mut self) {
+        self.mailbox = None;
+        self.rows.clear();
+        self.total = 0;
+        self.auto_looting = None;
+        self.stationery.clear();
+        self.stationery_pending = 0;
+    }
+
+    /// The first stationery a row with none takes (`0x5720c3`): the list's first, else none.
+    fn default_stationery(&self) -> u32 {
+        self.stationery.first().map_or(0, |s| s.id)
+    }
+
+    /// The name callbacks left on `record`, unlinked, in link order.
+    pub(crate) fn take_name_waits(&mut self, record: NameRecord) -> Vec<NameCallback> {
+        let mut taken = Vec::new();
+        self.name_waits.retain(|&(r, callback)| {
+            let hit = r == record;
+            if hit {
+                taken.push(callback);
+            }
+            !hit
+        });
+        taken
     }
 }
 
@@ -201,24 +222,45 @@ impl NpcSession for MailOpen {
     fn close(&mut self) {
         self.mailbox = None;
         self.auto_looting = None;
-        self.close_requested = true;
     }
 }
 
-/// The mailbox open (`0x56da60`, `0x56dbc0`): the interact target set on the mailbox first (`0x56da67`, `0x56dbe2`), whose interaction close takes the window bound to the old one, then the mailbox stored and `MAIL_SHOW` owed.
+/// The mailbox open (`0x56da60`, `0x56dbc0`): the interact target set on the mailbox first (`0x56da67`, `0x56dbe2`), whose interaction close takes the window bound to the old one, then in its turn the mailbox stored, the form reset and `MAIL_SHOW`.
 pub(crate) fn talk_to_mailbox(world: &mut World, mailbox: u64) {
     crate::ui_session::set_interact_target(world, mailbox);
     crate::ui_script::live::in_turn(world, move |w| {
         if let Some(mut mail) = w.get_resource_mut::<MailOpen>() {
-            mail.click(mailbox);
+            mail.mailbox = Some(mailbox);
+        }
+        if let Some(mut ui) = w.get_resource_mut::<UiEvents>() {
+            ui.write(|script| {
+                script.close_bank_interaction();
+                script.open_mailbox();
+            });
         }
     });
 }
 
-/// The interaction close's mail leg (`0x51302d` -> `0x571730` with 0), its target already zeroed: the window closes and `MAIL_CLOSED` is owed.
+/// The interaction close's mail leg (`0x51302d` -> `0x571730` with 0), its target already zeroed: the window closes, then in turn the form clears, `MAIL_CLOSED` fires and the deferred query goes out.
 pub(crate) fn close_by_interaction(world: &mut World) {
     if let Some(mut mail) = world.get_resource_mut::<MailOpen>() {
         NpcSession::close(&mut *mail);
+    }
+    if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
+        ui.write(UiScript::close_mailbox);
+        // The deferred query after `MAIL_CLOSED` (`0x57179d`-`0x5717a7`).
+        ui.world(|w| {
+            if !w.contains_resource::<MailPending>() {
+                return;
+            }
+            w.resource_scope(|w, mut pending: Mut<MailPending>| {
+                if let Some(commands) = w.get_resource::<NetCommands>() {
+                    if pending.take_do_pending_query() {
+                        query_next_mail_time(&mut pending, commands);
+                    }
+                }
+            });
+        });
     }
 }
 
@@ -232,31 +274,99 @@ impl Plugin for UiMailPlugin {
             .add_systems(
                 Update,
                 (
-                    // Range-close, feed, then drain after input, so each edge lands the same
-                    // frame; the feed runs after `UnitFeed` so a row's tooltip reads the template.
-                    feed_mail.after(crate::ui_unit::UnitFeed).in_set(UiFeed),
-                    crate::ui_script::raises::then_fire(drain_mail)
-                        .in_set(UiDrain)
-                        .before(crate::ui_social::drain_social),
                     // The cascade's order: the time query, this, then the battlefield status.
                     send_query_next_mail_time_on_enter.after(crate::net::send_query_time),
+                    update_pending_mail,
                 ),
             );
     }
 }
 
 /// The mail state's world entry (`0x571530`) at each world-enter cascade, after the time query and
-/// before the battlefield status: the senders clear and `MSG_QUERY_NEXT_MAIL_TIME` goes out,
+/// before the battlefield status: no mailbox and no rows, the form reset in the VM, each
+/// stationery row's item record asked with its callback (`0x5715e3`) and the list built at once
+/// with none in flight (`0x571602`), the senders cleared and `MSG_QUERY_NEXT_MAIL_TIME` sent,
 /// stamping "no mail".
 pub(crate) fn send_query_next_mail_time_on_enter(
     mut cascades: MessageReader<crate::net::WorldEnterCascadeMessage>,
-    commands: Res<NetCommands>,
     mut pending: ResMut<MailPending>,
+    mut mail: Option<ResMut<MailOpen>>,
+    items: Option<Res<Items>>,
+    catalog: Option<Res<Stationery>>,
+    commands: Res<NetCommands>,
+    mut waits: Option<NonSendMut<RecordWaits>>,
+    ui: Option<ResMut<UiEvents>>,
+    mut ecs: Commands,
 ) {
-    if cascades.read().next().is_some() {
-        *pending = MailPending::default();
-        query_next_mail_time(&mut pending, &commands);
+    if cascades.read().next().is_none() {
+        return;
     }
+    if let Some(mail) = mail.as_deref_mut() {
+        mail.enter_world();
+        if let Some(mut ui) = ui {
+            ui.write(UiScript::mail_enter_world);
+            ecs.queue(crate::ui_script::live::fire_handler_events);
+        }
+        if let (Some(catalog), Some(items)) = (catalog.as_deref(), items.as_deref()) {
+            for row in catalog.0.rows() {
+                if items.template(row.item, 0, &commands).is_none() {
+                    if let Some(waits) = waits.as_deref_mut() {
+                        waits.wait(row.item, RecordWait::MailStationery, false);
+                    }
+                    mail.stationery_pending += 1;
+                }
+            }
+            if mail.stationery_pending == 0 {
+                ecs.queue(|world: &mut World| run_mail_system(world, build_stationery));
+            }
+        }
+    }
+    *pending = MailPending::default();
+    query_next_mail_time(&mut pending, &commands);
+}
+
+fn run_mail_system<M>(world: &mut World, system: impl IntoSystem<(), (), M> + 'static) {
+    if let Err(e) = world.run_system_cached(system) {
+        warn!("ui_mail: the stationery build did not run: {e}");
+    }
+}
+
+/// The stationery list built (`0x56fc80`), with none of its records in flight.
+fn build_stationery(mut mail: ResMut<MailOpen>, look: MailLookups) {
+    if let Some(catalog) = look.stationery.as_deref() {
+        mail.stationery = look.stationeries(catalog);
+    }
+}
+
+/// A stationery record the world entry asked for answered (`0x571520`): one fewer in flight, and
+/// the list rebuilt once none is (`0x571529`).
+pub(crate) fn stationery_callback(world: &mut World) {
+    run_mail_system(world, rebuild_stationery_on_callback);
+}
+
+fn rebuild_stationery_on_callback(mut mail: ResMut<MailOpen>, look: MailLookups) {
+    mail.stationery_pending = mail.stationery_pending.saturating_sub(1);
+    if mail.stationery_pending == 0 {
+        if let Some(catalog) = look.stationery.as_deref() {
+            if !look.self_q.is_empty() {
+                mail.stationery = look.stationeries(catalog);
+            }
+        }
+    }
+}
+
+/// The pending mail's per-frame step (`0x56ded0`, from the world frame's update at `0x4fa360`):
+/// each countdown that lands signals `UPDATE_PENDING_MAIL` there.
+fn update_pending_mail(
+    time: Res<Time>,
+    mut pending: ResMut<MailPending>,
+    mut signals: QueuedSignals,
+    mut ecs: Commands,
+) {
+    for _ in 0..pending.step(time.delta_secs()) {
+        signals.signal("UPDATE_PENDING_MAIL");
+    }
+    signals.flush(&mut ecs);
 }
 
 /// `QueryNextMailTime` (`0x56ff70`).
@@ -267,14 +377,14 @@ fn query_next_mail_time(pending: &mut MailPending, commands: &NetCommands) {
 
 /// `ReceivedMail` (`0x5704d0`), which `SMSG_RECEIVED_MAIL` and the auction notices call: with a
 /// mailbox open it only defers a re-query to the close; otherwise it re-queries and keeps the
-/// delay.
+/// delay. True when it lit the icon, which the caller signals as `UPDATE_PENDING_MAIL` there.
 pub(crate) fn received_mail(
     delay: f32,
     source: &str,
     pending: &mut MailPending,
     mail: &MailOpen,
     commands: &NetCommands,
-) {
+) -> bool {
     debug!(
         "ui_mail: ReceivedMail({delay}) from {source}, mailbox {}",
         if mail.mailbox.is_some() {
@@ -283,9 +393,11 @@ pub(crate) fn received_mail(
             "closed"
         }
     );
-    if pending.received_mail(delay, mail.mailbox.is_some()) {
+    let received = pending.received_mail(delay, mail.mailbox.is_some());
+    if received.query {
         let _ = commands.0.send(ClientCommand::QueryNextMailTime);
     }
+    received.lit
 }
 
 /// [`received_mail`] for a handler outside the mailbox, as the auction notices are.
@@ -297,9 +409,11 @@ pub(crate) struct MailArrival<'w> {
 }
 
 impl MailArrival<'_> {
-    /// `ReceivedMail(delay)` (`0x5704d0`); `source` names the caller in the debug trace.
-    pub(crate) fn arrive(&mut self, delay: f32, source: &str) {
-        received_mail(delay, source, &mut self.pending, &self.mail, &self.commands);
+    /// `ReceivedMail(delay)` (`0x5704d0`); `source` names the caller in the debug trace. True when
+    /// it lit the icon: the caller signals `UPDATE_PENDING_MAIL` at its step.
+    #[must_use]
+    pub(crate) fn arrive(&mut self, delay: f32, source: &str) -> bool {
+        received_mail(delay, source, &mut self.pending, &self.mail, &self.commands)
     }
 }
 
@@ -339,7 +453,7 @@ pub(crate) struct MailLookups<'w, 's> {
     names: Res<'w, NameCache>,
     go_templates: Res<'w, crate::go_templates::GameObjectTemplates>,
     houses: Option<Res<'w, crate::ui_auction::AuctionHouses>>,
-    social: Res<'w, crate::ui_social::SocialState>,
+    social: ResMut<'w, crate::ui_social::SocialState>,
     props: Option<Res<'w, crate::items::RandomProperties>>,
     enchants: Option<Res<'w, crate::items::Enchants>>,
     states: Res<'w, crate::world_state::WorldStates>,
@@ -668,414 +782,390 @@ impl MailLookups<'_, '_> {
     }
 }
 
-/// The feed's per-VM memos, bundled under Bevy's parameter limit.
+/// The record a sender's name reads (`0x56d960`): a player's or calendar notice's guid, a
+/// creature's or game object's entry; none for a GM's mail, an auction house or anything else.
+fn sender_record(message_type: u32, guid: u64, entry: u32, stationery: u32) -> Option<NameRecord> {
+    match message_type {
+        0 | 5 if stationery == STATIONERY_GM => None,
+        0 | 5 => Some(NameRecord::Player(guid)),
+        3 => Some(NameRecord::Creature(entry)),
+        4 => Some(NameRecord::GameObject(entry)),
+        _ => None,
+    }
+}
+
+/// The callbacks one verb's read of a row leaves, by the records it missed.
 #[derive(Default)]
-struct MailMemos {
-    inbox: Option<MailState>,
-    senders: Option<Vec<Option<String>>>,
-    has_new_mail: Option<bool>,
-    stationeries: Option<Vec<StationeryView>>,
-    packages_pushed: bool,
+struct ReadMisses {
+    /// Item records, each with the inbox's callback (`0x56d4b0`).
+    items: Vec<u32>,
+    names: Vec<(NameRecord, NameCallback)>,
 }
 
-fn feed_mail(
-    mut script: crate::ui_script::InTurn,
-    mut mail: ResMut<MailOpen>,
-    mut pending: ResMut<MailPending>,
-    look: MailLookups,
-    mut sink: crate::ui_action::MessageSink,
-    time: Res<Time>,
-    mut cascades: MessageReader<crate::net::WorldEnterCascadeMessage>,
-    mut memos: Local<crate::ui_script::VmMemo<MailMemos>>,
-) {
-    let Some(mut script) = script.turn() else {
-        return;
-    };
-    let memo = memos.get(&script);
-
-    // The mail state's world entry (`0x571530`): the form, the flags and the rows reset.
-    if cascades.read().next().is_some() {
-        script.mail_enter_world();
-        mail.clear_session();
+impl MailLookups<'_, '_> {
+    fn cached(&self, entry: u32) -> bool {
+        self.items.template_cached(entry).is_some()
     }
 
-    if !memo.packages_pushed {
-        if let Some(packages) = look.packages.as_deref() {
-            memo.packages_pushed = true;
-            script.set_mail_packages(packages.0.iter().map(package_view).collect());
+    /// What `read` of `row`, resolved as `resolved`, leaves its callback on: each record the verb
+    /// reads that is still in flight.
+    fn read_misses(
+        &self,
+        row: &MailRow,
+        read: MailRead,
+        resolved: &MailInboxRow,
+        get_text: &dyn Fn(&str) -> Option<String>,
+    ) -> ReadMisses {
+        let e = &row.entry;
+        let mut misses = ReadMisses::default();
+        let sender = || {
+            sender_record(
+                u32::from(e.message_type),
+                row.sender_guid(),
+                e.sender_entry,
+                e.stationery,
+            )
+        };
+        match read {
+            MailRead::Header => {
+                // The icon: a package's own; else a lone attachment's record (`0x56e668`).
+                let package = self
+                    .packages
+                    .as_deref()
+                    .is_some_and(|p| e.package != 0 && p.0.iter().any(|p| p.id == e.package));
+                if !package && row.num_attachments() == 1 {
+                    if let Some(a) = row.slots.iter().flatten().find(|a| a.entry != 0) {
+                        if !self.cached(a.entry) {
+                            misses.items.push(a.entry);
+                        }
+                    }
+                }
+                // The stationery's item (`0x56e711`).
+                if let Some(item) = self
+                    .stationery
+                    .as_deref()
+                    .and_then(|s| s.0.rows().iter().find(|r| r.id == e.stationery))
+                    .map(|r| r.item)
+                {
+                    if !self.cached(item) {
+                        misses.items.push(item);
+                    }
+                }
+                // The sender's name (`0x56e76c`).
+                if resolved.sender.is_none() {
+                    misses
+                        .names
+                        .extend(sender().map(|r| (r, NameCallback::UpdateAndPending)));
+                }
+            }
+            // A calendar notice's body names its sender (`0x570d2a`), once its template reads.
+            MailRead::Text => {
+                let key = if e.flags & mail_flags::CALENDAR_INVITE_REMOVED != 0 {
+                    "CALENDAR_INVITE_REMOVED_MAIL_BODY"
+                } else {
+                    "CALENDAR_EVENT_REMOVED_MAIL_BODY"
+                };
+                if e.message_type == mail_message_type::CALENDAR
+                    && !e.body.is_empty()
+                    && get_text(key).is_some_and(|t| !t.is_empty())
+                    && resolved.sender.is_none()
+                {
+                    misses
+                        .names
+                        .extend(sender().map(|r| (r, NameCallback::UpdateAndPending)));
+                }
+            }
+            // The invoice's other player (`0x56eb79`).
+            MailRead::Invoice => {
+                if let Some(guid) = self.invoice_player(row) {
+                    if self.names.peek(guid).is_none() {
+                        misses
+                            .names
+                            .push((NameRecord::Player(guid), NameCallback::UpdateOnly));
+                    }
+                }
+            }
+            // The attachment's record (`0x571017`, `0x56ed9f`).
+            MailRead::Item(slot) => {
+                let a = match slot {
+                    Some(s) => row.slots.get(s as usize).and_then(Option::as_ref),
+                    None => row.slots.iter().flatten().next(),
+                };
+                if let Some(a) = a.filter(|a| a.entry != 0) {
+                    if !self.cached(a.entry) {
+                        misses.items.push(a.entry);
+                    }
+                }
+            }
+            MailRead::Plain => {}
         }
-    }
-    // The usable stationery, asked ahead of any mailbox so the list is whole when
-    // `SendMailFrame_Reset` selects row 1 on show. Only with a player: an ask sent before the
-    // socket exists is dropped and never re-asked.
-    let usable = look
-        .stationery
-        .as_deref()
-        .filter(|_| !look.self_q.is_empty())
-        .map(|c| look.stationeries(c))
-        .unwrap_or_default();
-    if let Some(first) = usable.first() {
-        mail.default_stationery = first.id;
-    }
-    if memo.stationeries.as_ref() != Some(&usable) {
-        memo.stationeries = Some(usable.clone());
-        script.set_mail_stationeries(usable);
+        misses
     }
 
-    if std::mem::take(&mut mail.open_requested) {
-        // The mailbox open takes the interact target before `MAIL_SHOW` (`0x56da67`), through the
-        // lent `World` in its turn.
-        benilla_ui::script::world_loan::in_turn_or_now(&mut script, |script| {
-            script.close_bank_interaction();
-            script.open_mailbox();
+    /// The guid an auction invoice names, when the row reads as one.
+    fn invoice_player(&self, row: &MailRow) -> Option<u64> {
+        let e = &row.entry;
+        let auction = (e.message_type == mail_message_type::AUCTION)
+            .then(|| invoice::parse_subject(&e.subject))?;
+        if !auction.is_invoice() || e.body.is_empty() || !self.cached(auction.entry) {
+            return None;
+        }
+        Some(invoice::parse_body(&e.body, invoice::body_fields(auction.result)).player_guid)
+    }
+}
+
+/// The mail the verbs read at the call: the inbox, the arrival state and what a row resolves
+/// against.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct MailLive<'w, 's> {
+    mail: ResMut<'w, MailOpen>,
+    pending: ResMut<'w, MailPending>,
+    look: MailLookups<'w, 's>,
+}
+
+impl MailLive<'_, '_> {
+    /// The shown rows and the server's whole count.
+    pub(crate) fn counts(&self) -> (usize, u32) {
+        (self.mail.rows.len(), self.mail.total)
+    }
+
+    /// Row `index` (0-based) resolved now, `read` leaving its callbacks on the records it missed.
+    pub(crate) fn row(
+        &mut self,
+        index: usize,
+        read: MailRead,
+        get_text: &dyn Fn(&str) -> Option<String>,
+        military: bool,
+        waits: Option<&mut RecordWaits>,
+    ) -> Option<MailInboxRow> {
+        let (resolved, misses) = {
+            let row = self.mail.rows.get(index)?;
+            // `None` until the player is named; a letter body re-substitutes when it lands.
+            let subject = crate::npc_text::player_identity(
+                &self.look.self_q,
+                &self.look.names,
+                &self.look.commands,
+            );
+            let macros = crate::npc_text::MacroContext {
+                subject: subject.as_ref(),
+                states: &self.look.states,
+                achievement: None,
+            };
+            let resolved = self.look.resolve_row(row, &macros, get_text, military);
+            let misses = self.look.read_misses(row, read, &resolved, get_text);
+            (resolved, misses)
+        };
+        if let Some(waits) = waits {
+            for entry in misses.items {
+                waits.wait(entry, RecordWait::MailInbox, false);
+            }
+        }
+        self.mail.name_waits.extend(misses.names);
+        Some(resolved)
+    }
+
+    /// The mark-as-read (`0x56fe30`) of row `index` (0-based): with the row unread, the packet goes
+    /// out, the row turns read, the senders with nothing unread drop out and a waiting icon goes
+    /// dark once every row is read; the signals each step raised, in order, none for no unread row.
+    pub(crate) fn mark_read(&mut self, index: usize) -> Vec<&'static str> {
+        let mailbox = self.mail.mailbox.unwrap_or(0);
+        let Some(row) = self
+            .mail
+            .rows
+            .get_mut(index)
+            .filter(|r| r.entry.flags & mail_flags::READ == 0)
+        else {
+            return Vec::new();
+        };
+        let _ = self.look.commands.0.send(ClientCommand::MailMarkAsRead {
+            mailbox,
+            mail_id: row.entry.message_id,
         });
-    }
-    if std::mem::take(&mut mail.close_requested) {
-        benilla_ui::script::world_loan::in_turn_or_now(&mut script, |script| {
-            script.close_mailbox()
-        });
-    }
-
-    // `None` until the player is named; a letter body re-substitutes when it lands.
-    let subject = crate::npc_text::player_identity(&look.self_q, &look.names, &look.commands);
-    let macros = crate::npc_text::MacroContext {
-        subject: subject.as_ref(),
-        states: &look.states,
-        achievement: None,
-    };
-    let snapshot = |script: &UiScript, mail: &MailOpen| {
-        let get_text = |key: &str| script.lua().globals().get::<String>(key).ok();
-        let military = script
-            .cvar("timeMgrUseMilitaryTime")
-            .is_some_and(|v| benilla_ui::script::sstr_to_int(&v) != 0);
-        MailState {
-            inbox: mail
-                .rows
-                .iter()
-                .map(|r| look.resolve_row(r, &macros, &get_text, military))
-                .collect(),
-            total: mail.total,
+        row.entry.flags |= mail_flags::READ;
+        let rows = &self.mail.rows;
+        let mut signals = Vec::new();
+        let unread = |guid: u64, entry: u32| {
+            rows.iter().any(|r| {
+                r.entry.flags & mail_flags::READ == 0
+                    && ((guid != 0 && guid == r.sender_guid())
+                        || (entry != 0 && entry == r.entry.sender_entry))
+            })
+        };
+        if self.pending.update_recent_senders(unread) {
+            signals.push("UPDATE_PENDING_MAIL");
         }
-    };
+        let all_read = rows.iter().all(|r| r.entry.flags & mail_flags::READ != 0);
+        if self.pending.on_mail_read(all_read) {
+            signals.push("UPDATE_PENDING_MAIL");
+        }
+        signals.push("MAIL_INBOX_UPDATE");
+        signals
+    }
 
-    // The results' effects, in the reference's order: the message, the row's change with its
-    // events, the pending flags, then `MAIL_SUCCESS` or `MAIL_FAILED`; each write after a raise
-    // lands once that raise's listeners have run.
-    let mut inbox_fired = false;
-    for effect in std::mem::take(&mut mail.effects) {
-        match effect {
-            MailEffect::Message(key) => {
-                let line = crate::ui_action::keyed_line(&script, key);
-                crate::ui_action::show_messages(&mut script, &mut sink, "ui_mail", line);
-            }
-            // The result names no bag, so the plain line.
-            MailEffect::EquipError(reason) => {
-                let key = crate::ui_items::equip_error_key(reason);
-                let line = crate::ui_action::keyed_line(&script, key);
-                crate::ui_action::show_messages(&mut script, &mut sink, "ui_mail", line);
-            }
-            MailEffect::Sent => script.after_raises(|s| s.mail_sent()),
-            MailEffect::CloseInboxItem(index) => {
-                script.fire_event("CLOSE_INBOX_ITEM", vec![ScriptValue::Int(i64::from(index))]);
-            }
-            MailEffect::InboxUpdate => {
-                let fresh = snapshot(&script, &mail);
-                memo.inbox = Some(fresh.clone());
-                script.after_raises(move |s| s.set_mail(fresh));
-                script.fire_event("MAIL_INBOX_UPDATE", vec![]);
-                inbox_fired = true;
-            }
-            MailEffect::Done { send } => script.after_raises(move |s| s.mail_command_done(send)),
-            MailEffect::Result { ok } => {
-                script.fire_event(if ok { "MAIL_SUCCESS" } else { "MAIL_FAILED" }, vec![]);
-            }
+    /// A return or delete in flight on row `index` (0-based) (`+0x2940`).
+    pub(crate) fn mark_delete_pending(&mut self, index: usize) {
+        if let Some(row) = self.mail.rows.get_mut(index) {
+            row.delete_pending = true;
         }
     }
 
-    // A template, sender name or body landing repaints, as the reference's query callbacks
-    // signal `MAIL_INBOX_UPDATE` (`0x56d4b0`, `0x56d460`).
-    let fresh = snapshot(&script, &mail);
-    if memo.inbox.as_ref() != Some(&fresh) {
-        memo.inbox = Some(fresh.clone());
-        script.after_raises(move |s| s.set_mail(fresh));
-        if !inbox_fired {
-            script.fire_event("MAIL_INBOX_UPDATE", vec![]);
-        }
+    /// `HasNewMail()`'s test (`0x56f350`).
+    pub(crate) fn has_new(&self) -> bool {
+        self.pending.has_new_mail()
     }
 
-    pending.step(time.delta_secs());
-    let has_new_mail = pending.has_new_mail();
-    if memo.has_new_mail != Some(has_new_mail) {
-        script.after_raises(move |s| s.set_has_new_mail(has_new_mail));
-        memo.has_new_mail = Some(has_new_mail);
-    }
-    let senders: Vec<Option<String>> = {
-        let get_text = |key: &str| script.lua().globals().get::<String>(key).ok();
-        pending
+    /// The delivered senders' names (`0x56f3a0`), a miss leaving the sender's callback
+    /// (`0x56f3e0`) and reading nil.
+    pub(crate) fn latest_senders(
+        &mut self,
+        get_text: &dyn Fn(&str) -> Option<String>,
+    ) -> Vec<Option<String>> {
+        let mut misses = Vec::new();
+        let names = self
+            .pending
             .delivered_senders()
-            .map(|s| look.sender_name(s.entry, s.message_type, s.guid, s.stationery, &get_text))
-            .collect()
-    };
-    if memo.senders.as_ref() != Some(&senders) {
-        // A sender's name landing signals as the name callback does (`0x56d47a`).
-        if memo.senders.is_some() {
-            pending.notify_senders();
-        }
-        memo.senders = Some(senders.clone());
-        script.after_raises(move |s| s.set_mail_latest_senders(senders));
+            .map(|s| {
+                let name =
+                    self.look
+                        .sender_name(s.entry, s.message_type, s.guid, s.stationery, get_text);
+                if name.is_none() {
+                    misses.extend(sender_record(s.message_type, s.guid, s.entry, s.stationery));
+                }
+                name
+            })
+            .collect();
+        self.mail.name_waits.extend(
+            misses
+                .into_iter()
+                .map(|r| (r, NameCallback::UpdateAndPending)),
+        );
+        names
     }
-    if pending.take_notify() {
-        script.fire_event("UPDATE_PENDING_MAIL", vec![]);
+
+    /// The usable stationery, rebuilt first on `rebuild` with no record in flight and a player to
+    /// read (`0x571abd`, `0x56fc80`).
+    pub(crate) fn stationeries(&mut self, rebuild: bool) -> Vec<StationeryView> {
+        if rebuild && self.mail.stationery_pending == 0 && !self.look.self_q.is_empty() {
+            if let Some(catalog) = self.look.stationery.as_deref() {
+                self.mail.stationery = self.look.stationeries(catalog);
+            }
+        }
+        self.mail.stationery.clone()
+    }
+
+    /// `Package.dbc`'s rows, in file order.
+    pub(crate) fn packages(&self) -> Vec<benilla_ui::script::PackageView> {
+        self.look
+            .packages
+            .as_deref()
+            .map(|p| p.0.iter().map(package_view).collect())
+            .unwrap_or_default()
     }
 }
 
-/// The mail complaint's tail (`0x56faf0`): nothing with the complaint system off; a sender already
-/// complained about prints `COMPLAINT_ADDED`; else the report goes out, the row closes and the
-/// inbox is asked again. The complaint, for the social state to record.
-fn complain(
-    mail: &mut MailOpen,
-    social: &crate::ui_social::SocialState,
-    message_id: u32,
-    send: &dyn Fn(ClientCommand),
-    mailbox: u64,
-) -> Option<crate::ui_social::Complained> {
-    if social.complaint_status() == 0 {
-        return None;
-    }
-    let index = mail.index_of(message_id)?;
-    let sender = mail.rows[index].entry.sender_guid;
-    if social.is_complained(sender) {
-        return Some(crate::ui_social::Complained {
-            guid: sender,
-            again: true,
-        });
-    }
-    send(ClientCommand::ComplainMail {
-        sender,
-        mail_id: message_id,
-    });
-    mail.effects
-        .push(MailEffect::CloseInboxItem(index as u32 + 1));
-    send(ClientCommand::GetMailList { mailbox });
-    Some(crate::ui_social::Complained {
-        guid: sender,
-        again: false,
-    })
-}
-
-/// The VM's mail packets out, each as its verb's reference send does.
-fn drain_mail(
-    mut script: crate::ui_script::InTurn,
-    mut mail: ResMut<MailOpen>,
-    mut pending: ResMut<MailPending>,
-    (commands, mut queue): (Res<NetCommands>, Commands),
-    (social, mut complaints): (
-        Res<crate::ui_social::SocialState>,
-        MessageWriter<crate::ui_social::Complained>,
-    ),
-    self_q: Query<&ObjectStore, With<SelfPlayer>>,
-    objects: Objects,
-) {
-    use benilla_protocol::messages::mail_delete_reason;
-    use benilla_ui::script::MailCommand;
-    let Some(mut script) = script.turn() else {
-        return;
-    };
-    for command in script.take_mail_commands() {
-        if let MailCommand::Close = command {
-            // `CloseMail(false)`'s tail (`0x571a99`): a read or an arrival while open re-asks.
-            debug!("ui_mail: the window closed");
-            // The close clears the interact target on the mailbox (`0x571778`).
-            if let Some(mailbox) = mail.mailbox {
-                queue.queue(move |w: &mut World| {
-                    crate::ui_session::clear_interact_target(w, mailbox);
-                    crate::ui_script::live::fire_handler_events(w);
-                });
-            }
-            mail.mailbox = None;
-            mail.auto_looting = None;
-            if pending.take_do_pending_query() {
-                query_next_mail_time(&mut pending, &commands);
-            }
-            continue;
-        }
-        let Some(mailbox) = mail.mailbox else {
-            continue; // the window closed under the verb
+impl MailLive<'_, '_> {
+    /// Send `packet` to the open mailbox inside the verb's call; nothing with none open.
+    pub(crate) fn send(&mut self, packet: MailPacket) {
+        use benilla_protocol::messages::mail_delete_reason;
+        let Some(mailbox) = self.mail.mailbox else {
+            return;
         };
-        let send = |cmd: ClientCommand| {
-            debug!("ui_mail: sending {cmd:?}");
-            let _ = commands.0.send(cmd);
-        };
-        match command {
-            MailCommand::GetList => send(ClientCommand::GetMailList { mailbox }),
-            MailCommand::MarkRead { message_id } => {
-                send(ClientCommand::MailMarkAsRead {
-                    mailbox,
-                    mail_id: message_id,
-                });
-                mark_read(&mut mail, &mut pending, message_id);
-            }
-            MailCommand::TakeMoney { message_id } => send(ClientCommand::MailTakeMoney {
+        let command = match packet {
+            MailPacket::GetList => ClientCommand::GetMailList { mailbox },
+            MailPacket::MarkRead { message_id } => ClientCommand::MailMarkAsRead {
                 mailbox,
                 mail_id: message_id,
-            }),
-            MailCommand::TakeItem {
+            },
+            MailPacket::TakeMoney { message_id } => ClientCommand::MailTakeMoney {
+                mailbox,
+                mail_id: message_id,
+            },
+            MailPacket::TakeItem {
                 message_id,
                 item_guid_low,
                 auto_loot,
             } => {
-                send(ClientCommand::MailTakeItem {
+                if auto_loot {
+                    self.mail.auto_looting = Some(message_id);
+                }
+                ClientCommand::MailTakeItem {
                     mailbox,
                     mail_id: message_id,
                     item_guid_low,
-                });
-                if auto_loot {
-                    mail.auto_looting = Some(message_id);
                 }
             }
-            MailCommand::TextItem { message_id } => send(ClientCommand::MailCreateTextItem {
+            MailPacket::TextItem { message_id } => ClientCommand::MailCreateTextItem {
                 mailbox,
                 mail_id: message_id,
-            }),
-            MailCommand::Return { message_id } => {
-                if let Some(i) = mail.index_of(message_id) {
-                    mail.rows[i].delete_pending = true;
-                    send(ClientCommand::MailReturnToSender {
-                        mailbox,
-                        mail_id: message_id,
-                        sender: mail.rows[i].entry.sender_guid,
-                    });
-                }
-            }
-            MailCommand::Delete { message_id } => {
-                if let Some(i) = mail.index_of(message_id) {
-                    mail.rows[i].delete_pending = true;
-                }
-                send(ClientCommand::MailDelete {
+            },
+            MailPacket::Return { message_id } => {
+                let Some(i) = self.mail.index_of(message_id) else {
+                    return;
+                };
+                ClientCommand::MailReturnToSender {
                     mailbox,
                     mail_id: message_id,
-                    reason: mail_delete_reason::PLAYER,
-                });
-            }
-            MailCommand::Complain { message_id } => {
-                if let Some(c) = complain(&mut mail, &social, message_id, &send, mailbox) {
-                    complaints.write(c);
+                    sender: self.mail.rows[i].entry.sender_guid,
                 }
             }
-            MailCommand::Send(req) => {
-                // Each attachment's guid is read off its bag slot as the send fires.
-                let store = self_q.iter().next();
-                let mut items = Vec::with_capacity(req.items.len());
-                let mut lost = None;
-                for &(send_slot, bag, slot) in &req.items {
-                    match store.and_then(|s| {
-                        crate::ui_items::slot_guid(&s.0, bag, (slot.max(1) - 1) as u8, &objects)
-                    }) {
-                        Some(guid) => items.push((send_slot, guid)),
-                        None => {
-                            lost = Some(send_slot);
-                            break;
-                        }
-                    }
-                }
-                if let Some(send_slot) = lost {
-                    // The item left its slot: `ERR_ITEM_NOT_FOUND`, no packet (`0x570a7c`).
-                    mail.effects.push(MailEffect::Message("ERR_ITEM_NOT_FOUND"));
-                    script.drop_mail_send_item(send_slot);
-                    script.mail_command_done(true);
-                    continue;
-                }
-                send(ClientCommand::SendMail {
-                    mailbox,
-                    receiver: req.target,
-                    subject: req.subject,
-                    body: req.body,
-                    stationery: req.stationery,
-                    package: req.package,
-                    items,
-                    money: req.money,
-                    cod: req.cod,
-                });
-            }
-            MailCommand::Close => unreachable!("handled above"),
-        }
+            MailPacket::Delete { message_id } => ClientCommand::MailDelete {
+                mailbox,
+                mail_id: message_id,
+                reason: mail_delete_reason::PLAYER,
+            },
+            MailPacket::Send(req) => ClientCommand::SendMail {
+                mailbox,
+                receiver: req.target,
+                subject: req.subject,
+                body: req.body,
+                stationery: req.stationery,
+                package: req.package,
+                items: req.items,
+                money: req.money,
+                cod: req.cod,
+            },
+        };
+        debug!("ui_mail: sending {command:?}");
+        let _ = self.look.commands.0.send(command);
     }
-}
 
-/// The mark-read's local half (`0x56fe30`): the row turns read, the senders with nothing unread
-/// drop out, the icon goes dark once all is read, and the close will re-ask.
-fn mark_read(mail: &mut MailOpen, pending: &mut MailPending, message_id: u32) {
-    let Some(i) = mail.index_of(message_id) else {
-        return;
-    };
-    mail.rows[i].entry.flags |= mail_flags::READ;
-    let unread = |guid: u64, entry: u32| {
-        mail.rows.iter().any(|r| {
-            r.entry.flags & mail_flags::READ == 0
-                && ((guid != 0 && guid == r.entry.sender_guid)
-                    || (entry != 0 && entry == r.entry.sender_entry))
-        })
-    };
-    pending.update_recent_senders(unread);
-    let all_read = mail
-        .rows
-        .iter()
-        .all(|r| r.entry.flags & mail_flags::READ != 0);
-    pending.on_mail_read(all_read);
-    mail.effects.push(MailEffect::InboxUpdate);
-}
+    /// The complaint about the sender of `message_id` (`0x56faf0`): nothing with the complaint
+    /// system off; a sender already complained about is told back for its line (`0x56fb60`);
+    /// else they join the list (`0x56fbb4`) and the report goes out (`0x56fc0f`).
+    pub(crate) fn complain(&mut self, message_id: u32) -> MailComplaint {
+        if self.look.social.complaint_status() == 0 {
+            return MailComplaint::Refused;
+        }
+        let Some(index) = self.mail.index_of(message_id) else {
+            return MailComplaint::Refused;
+        };
+        let sender = self.mail.rows[index].entry.sender_guid;
+        if self.look.social.is_complained(sender) {
+            return MailComplaint::Again;
+        }
+        self.look.social.add_complained(sender);
+        let _ = self.look.commands.0.send(ClientCommand::ComplainMail {
+            sender,
+            mail_id: message_id,
+        });
+        MailComplaint::Filed(index)
+    }
 
-#[cfg(test)]
-mod split_tests {
-    use super::*;
+    /// The open mailbox, `None` with none open.
+    pub(crate) fn mailbox(&self) -> Option<u64> {
+        self.mail.mailbox
+    }
 
-    /// A result's listener reads the model as of its raise: the feed's later new-mail write lands
-    /// once the listener has run.
-    #[test]
-    fn a_results_listener_does_not_see_the_feeds_later_new_mail_write() {
-        let mut app = App::new();
-        let (tx, _rx) = crossbeam_channel::unbounded();
-        app.insert_resource(NetCommands(tx))
-            .init_resource::<MailOpen>()
-            .init_resource::<MailPending>()
-            .init_resource::<Items>()
-            .init_resource::<NameCache>()
-            .init_resource::<crate::go_templates::GameObjectTemplates>()
-            .init_resource::<crate::ui_social::SocialState>()
-            .init_resource::<crate::world_state::WorldStates>()
-            .init_resource::<crate::net::GuidIndex>()
-            .init_resource::<crate::ui_chat::ChatLog>()
-            .init_resource::<crate::sound::MessageSounds>()
-            .init_resource::<Time>()
-            .init_resource::<crate::ui_script::live::UiEvents>()
-            .add_message::<crate::net::WorldEnterCascadeMessage>()
-            .add_systems(Update, feed_mail);
-        let script = UiScript::new().expect("VM");
-        script
-            .run(
-                "SEEN = {} local f = CreateFrame('Frame') f:RegisterEvent('MAIL_SUCCESS')
-                 f:SetScript('OnEvent', function() SEEN[#SEEN + 1] = tostring(HasNewMail()) end)",
-            )
-            .unwrap();
-        app.insert_non_send_resource(script);
-        app.update();
-        crate::ui_script::raises::fire_raises(app.world_mut());
-        app.world_mut()
-            .resource_mut::<MailPending>()
-            .apply_query_reply(0.0, &[]);
-        app.world_mut()
-            .resource_mut::<MailOpen>()
-            .effects
-            .push(MailEffect::Result { ok: true });
-        app.update();
-        crate::ui_script::raises::fire_raises(app.world_mut());
-        let script = app.world().non_send_resource::<UiScript>();
-        let seen: String = script.eval("return table.concat(SEEN, ',')").unwrap();
-        assert_eq!(
-            seen, "nil",
-            "the listener ran before the new mail was written"
-        );
-        let now: bool = script.eval("return HasNewMail() ~= nil").unwrap();
-        assert!(now, "the new mail is written after the listener");
+    /// The close's zeroing of the mailbox and the auto-loot (`0x571a6a`-`0x571a7e`).
+    pub(crate) fn end_session(&mut self) {
+        NpcSession::close(&mut *self.mail);
+    }
+
+    /// The close's tail (`0x571a99`, `0x5717a7`): the query an arrival deferred while the mailbox
+    /// was open, sent once.
+    pub(crate) fn close_query(&mut self) {
+        if self.pending.take_do_pending_query() {
+            query_next_mail_time(&mut self.pending, &self.look.commands);
+        }
     }
 }

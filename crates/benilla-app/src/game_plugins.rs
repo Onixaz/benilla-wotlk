@@ -2014,8 +2014,6 @@ pub(crate) mod schedule_tests {
          "`MacroFiles.loaded` is a `VmMemo`, so a new session re-reads the files and re-fires UPDATE_MACROS; also `InWorldGated`"),
         ("ui_macro/mod.rs", "note_dirty_macros", Because::FilledByVm,
          "`take_macros_dirty` is raised only by the macro window's Lua"),
-        ("ui_mail/mod.rs", "feed_mail", Because::SelfHealing,
-         "the window queues are mailbox-click replies; the one server push (`SMSG_RECEIVED_MAIL`) is re-asked by `send_query_next_mail_time_on_enter`, whose reply sets `notify` unconditionally"),
         ("ui_quest_log/progress.rs", "announce_notices", Because::Deliberate,
          "runs in the progress packet's handler turn, as 12340's handler shows its line (`0x6d82e9`); a packet before the interface loads has no listener in 12340 either"),
         ("ui_script/extract/mod.rs", "paint_extract", Because::Deliberate,

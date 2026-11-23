@@ -180,7 +180,13 @@ fn add_chat_line(lua: &Lua, key: &'static str, args: &[crate::strings::Arg<'_>])
     };
     let text = crate::strings::fill(&text, args);
     let chat_type = crate::messages::by_key(key).map_or(0, |r| r.chat_type);
-    if let Some(Some((event, args))) = super::write_live(|l| l.add_chat_line(chat_type, &text)) {
+    add_chat_text(lua, chat_type, &text);
+}
+
+/// Add `text` to the chat log on `chat_type` inside the call (`0x509dd0`), firing its event once
+/// the host lets go.
+pub(crate) fn add_chat_text(lua: &Lua, chat_type: u8, text: &str) {
+    if let Some(Some((event, args))) = super::write_live(|l| l.add_chat_line(chat_type, text)) {
         super::tick::fire_event_into(lua, event, args);
     }
 }
