@@ -1156,3 +1156,11 @@ fn the_hover_builds_the_unit_plate_at_the_raise_step() {
     crate::ui_script::live::fire_handler_events(app.world_mut());
     assert_eq!(eval(&mut app, "return Anchored"), Some(1));
 }
+
+/// A building's health byte fills the bar as `byte / 255` (`0x61bf80`).
+#[test]
+fn a_building_health_byte_fills_the_bar_over_255() {
+    assert_eq!(super::health_fraction(255), 1.0);
+    assert_eq!(super::health_fraction(0), 0.0);
+    assert!((super::health_fraction(51) - 0.2).abs() < 1e-6);
+}

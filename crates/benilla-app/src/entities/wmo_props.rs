@@ -1,7 +1,7 @@
 //! The doodad props of a WMO-display GameObject: a transport's sail rig, rotor and cabin
 //! furniture. A GameObject has no MODF placement and so no selected extra set: its props are
-//! doodad set 0 (`Set_$DefaultGlobal`) alone, the only set either 1.12 transport authors (the ship
-//! 134 props, the zeppelin 1).
+//! doodad set 0 (`Set_$DefaultGlobal`), the only set either 1.12 transport authors (the ship
+//! 134 props, the zeppelin 1), and on a destructible building the sets its damage state names.
 //!
 //! Each prop spawns through the shared placed-model assembler with its doodad-local transform,
 //! parented under the GameObject, so it rides the moving boat, despawns with it and inherits its
@@ -64,6 +64,8 @@ struct WmoProp {
     /// Set for a doodad of an indoor group (MODR ownership, [`DoodadBase::Interior`]); `None` is
     /// the deck lane, lit as an exterior doodad.
     interior: Option<InteriorLane>,
+    /// A destructible building's state set, whose sequence chain the prop plays; `None` for set 0.
+    role: Option<super::destructible::SetRole>,
 }
 
 /// An interior prop's light inputs, kept WMO-local so the fold composes them through the host's
@@ -78,7 +80,8 @@ struct InteriorLane {
     lights: Vec<(Vec3, [f32; 3], f32, f32)>,
 }
 
-/// Resolve the set-0 props of each newly attached WMO-display GameObject. Runs after
+/// Resolve the set-0 props of each newly attached WMO-display GameObject, and a destructible
+/// building's state sets beside them ([`super::destructible::state_sets`]). Runs after
 /// `attach_entity_visuals`, whose `VisualAttached` means the `WmoModel` is resident.
 #[allow(clippy::type_complexity)] // the visit-once attach-gate query
 pub(super) fn resolve_wmo_gameobject_props(
@@ -86,11 +89,119 @@ pub(super) fn resolve_wmo_gameobject_props(
     gameobjects: Option<Res<GameObjects>>,
     wmos: Res<Assets<WmoModel>>,
     asset_server: Res<AssetServer>,
-    pending: Query<(Entity, &NetEntity), (With<VisualAttached>, Without<WmoPropsResolved>)>,
+    buildings: super::destructible::BuildingSets,
+    pending: Query<
+        (
+            Entity,
+            &NetEntity,
+            Option<&crate::net::ObjectStore>,
+            Option<&crate::net::Guid>,
+            Option<&super::destructible::BuildingTransition>,
+        ),
+        (With<VisualAttached>, Without<WmoPropsResolved>),
+    >,
 ) {
-    for (entity, net) in &pending {
+    let wmo_of = |display: Option<u32>| {
+        display
+            .and_then(|d| gameobjects.as_deref()?.models.get(&d))
+            .and_then(|dm| match &dm.handle {
+                ModelHandle::Wmo(h) => wmos.get(h),
+                _ => None,
+            })
+    };
+    for (entity, net, store, guid, transition) in &pending {
         commands.entity(entity).insert(WmoPropsResolved);
         if net.kind != EntityKind::GameObject {
+            continue;
+        }
+        let Some(wmo) = wmo_of(net.display_id) else {
+            continue; // no display, an M2 display, or the asset gone
+        };
+        let mut props = set_props(wmo, 0, None, &asset_server);
+        // A building's state sets: the ones its state shows, and on a state change the ones the
+        // change plays, the previous model's sets included.
+        if let (Some(store), Some(guid)) = (store, guid) {
+            let sets = buildings.state_sets(guid.0, store, transition);
+            if !sets.is_empty() || transition.is_some() {
+                info!(
+                    "destructible building: guid {:016x} display {:?} spawns sets {:?} (transition \
+                     {:?})",
+                    guid.0,
+                    net.display_id,
+                    sets.iter()
+                        .map(|s| (s.set, s.role, s.from_display))
+                        .collect::<Vec<_>>(),
+                    transition
+                );
+            }
+            if transition.is_some() {
+                commands
+                    .entity(entity)
+                    .remove::<super::destructible::BuildingTransition>();
+            }
+            for s in sets {
+                let source = match s.from_display {
+                    Some(old) => wmo_of(Some(old)),
+                    None => Some(wmo),
+                };
+                if let Some(source) = source {
+                    props.extend(set_props(source, s.set, Some(s.role), &asset_server));
+                }
+            }
+        }
+        if !props.is_empty() {
+            // Named by entity as well as display: each entity is visited once, so two lines for
+            // one display are two ships of the same model.
+            info!(
+                "wmo props: {} doodads resolved for display {} on {entity}",
+                props.len(),
+                net.display_id.unwrap_or_default()
+            );
+            commands.entity(entity).insert(WmoProps(props));
+        }
+    }
+}
+
+/// Queue a destructible building's impact set when its hit flag moves (`0x70e6a0`), unless the
+/// set is already up, whose props the hit replays instead.
+#[allow(clippy::type_complexity)] // one gate's marker filters
+pub(super) fn resolve_building_impacts(
+    mut commands: Commands,
+    gameobjects: Option<Res<GameObjects>>,
+    wmos: Res<Assets<WmoModel>>,
+    asset_server: Res<AssetServer>,
+    mut hits: Query<
+        (
+            Entity,
+            &NetEntity,
+            &super::destructible::BuildingImpact,
+            Option<&mut WmoProps>,
+        ),
+        With<WmoPropsResolved>,
+    >,
+    children: Query<&Children>,
+    mut doodads: Query<&mut super::destructible::BuildingDoodad>,
+) {
+    for (entity, net, impact, pending) in &mut hits {
+        commands
+            .entity(entity)
+            .remove::<super::destructible::BuildingImpact>();
+        // The set is up: replay its chain from the top.
+        let mut replayed = false;
+        for e in children.iter_descendants(entity) {
+            if let Ok(mut d) = doodads.get_mut(e) {
+                if d.role() == super::destructible::SetRole::Impact {
+                    *d = super::destructible::BuildingDoodad::new(d.role());
+                    replayed = true;
+                }
+            }
+        }
+        // Up already, or still loading from an earlier hit.
+        let loading = pending.as_ref().is_some_and(|p| {
+            p.0.iter()
+                .any(|w| w.role == Some(super::destructible::SetRole::Impact))
+        });
+        if replayed || loading {
             continue;
         }
         let Some(wmo) = net
@@ -101,57 +212,70 @@ pub(super) fn resolve_wmo_gameobject_props(
                 _ => None,
             })
         else {
-            continue; // no display, an M2 display, or the asset gone
-        };
-        let Some(set) = wmo.doodad_sets.first() else {
             continue;
         };
-        let props: Vec<WmoProp> = wmo
-            .doodads
-            .iter()
-            .enumerate()
-            .skip(set.start as usize)
-            .take(set.count as usize)
-            .filter(|(_, d)| !d.model.is_empty()) // the MODN name did not resolve
-            .map(|(di, d)| WmoProp {
-                handle: asset_server.load(m2_url(&d.model)),
-                local: wmo_doodad_local(d.position, d.orientation, d.scale),
-                // The indoor classification and MODD colour words; MOLR refs resolve here to
-                // WMO-local lights, so the spawn needs the WMO asset no further.
-                interior: match wmo.doodad_base.get(di) {
-                    Some(DoodadBase::Interior(b)) => Some(InteriorLane {
-                        ambient: b.ambient,
-                        diffuse: b.diffuse,
-                        lights: b
-                            .light_refs
-                            .iter()
-                            .filter_map(|&li| wmo.lights.get(li as usize))
-                            .filter(|l| l.is_omni())
-                            .map(|l| {
-                                (
-                                    wow_to_bevy(l.position),
-                                    l.color.map(|c| c * l.intensity.max(0.0)),
-                                    l.attenuation_start,
-                                    l.attenuation_end,
-                                )
-                            })
-                            .collect(),
-                    }),
-                    _ => None,
-                },
-            })
-            .collect();
-        if !props.is_empty() {
-            // Named by entity as well as display: each entity is visited once, so two lines for
-            // one display are two ships of the same model.
-            info!(
-                "wmo props: {} set-0 doodads resolved for display {} on {entity}",
-                props.len(),
-                net.display_id.unwrap_or_default()
-            );
-            commands.entity(entity).insert(WmoProps(props));
+        let props = set_props(
+            wmo,
+            impact.set,
+            Some(super::destructible::SetRole::Impact),
+            &asset_server,
+        );
+        match pending {
+            Some(mut p) => p.0.extend(props),
+            None if !props.is_empty() => {
+                commands.entity(entity).insert(WmoProps(props));
+            }
+            None => {}
         }
     }
+}
+
+/// One doodad set's props, each with its WMO-local placement; `role` marks a destructible
+/// building's state set. A set the WMO lacks has none.
+fn set_props(
+    wmo: &WmoModel,
+    set: u16,
+    role: Option<super::destructible::SetRole>,
+    asset_server: &AssetServer,
+) -> Vec<WmoProp> {
+    let Some(set) = wmo.doodad_sets.get(set as usize) else {
+        return Vec::new();
+    };
+    wmo.doodads
+        .iter()
+        .enumerate()
+        .skip(set.start as usize)
+        .take(set.count as usize)
+        .filter(|(_, d)| !d.model.is_empty()) // the MODN name did not resolve
+        .map(|(di, d)| WmoProp {
+            handle: asset_server.load(m2_url(&d.model)),
+            local: wmo_doodad_local(d.position, d.orientation, d.scale),
+            role,
+            // The indoor classification and MODD colour words; MOLR refs resolve here to
+            // WMO-local lights, so the spawn needs the WMO asset no further.
+            interior: match wmo.doodad_base.get(di) {
+                Some(DoodadBase::Interior(b)) => Some(InteriorLane {
+                    ambient: b.ambient,
+                    diffuse: b.diffuse,
+                    lights: b
+                        .light_refs
+                        .iter()
+                        .filter_map(|&li| wmo.lights.get(li as usize))
+                        .filter(|l| l.is_omni())
+                        .map(|l| {
+                            (
+                                wow_to_bevy(l.position),
+                                l.color.map(|c| c * l.intensity.max(0.0)),
+                                l.attenuation_start,
+                                l.attenuation_end,
+                            )
+                        })
+                        .collect(),
+                }),
+                _ => None,
+            },
+        })
+        .collect()
 }
 
 /// Spawn each pending prop under its GameObject as its M2 lands, with no per-frame budget: a map
@@ -317,6 +441,12 @@ pub(super) fn spawn_wmo_gameobject_props(
                 if SHIP_SEQUENCES.iter().any(|&id| anims.find(id).is_some()) {
                     ship_props.push(h.root());
                 }
+            }
+            // A building's state set plays its chain from its first sequence.
+            if let (Some(role), Some(h)) = (prop.role, host.as_ref()) {
+                commands
+                    .entity(h.root())
+                    .insert(super::destructible::BuildingDoodad::new(role));
             }
             // The slot's component hook returns it to the table whoever despawns the prop.
             if let (Some(slot), Some(&first)) = (interior_slot, ents.first()) {

@@ -280,8 +280,22 @@ fn cull_dump_path() -> &'static Option<std::path::PathBuf> {
     ENV_DUMP.get_or_init(|| std::env::var_os("WOW_CULLDUMP").map(std::path::PathBuf::from))
 }
 
-/// Recompute each resident WMO's per-group visible set from the camera; a portal-less prop stays
-/// all-visible.
+/// Whether a placement of `model` needs the per-frame flood: it has a portal graph, or a group
+/// the outside leg would not seed. The scene takes a group from outside only under `0x10008`
+/// (`0x792ad0`), so a portal-less model's interior group draws only while the camera's down-ray
+/// stands in it (`0x795d40`): the `ND_WinterOrc_Wall` core, a `0x2000` slab lit near-black inside
+/// the `0x8` shell. A model of outside groups alone keeps every group drawn without the walk.
+pub fn floods(model: &WmoModel) -> bool {
+    let has_portals = !model.portal_refs.is_empty() && !model.portal_infos.is_empty();
+    has_portals
+        || model
+            .group_nav
+            .iter()
+            .any(|g| g.flags & (EXTERIOR | CALLBACK_PASS) == 0)
+}
+
+/// Recompute each resident WMO's per-group visible set from the camera; a model the
+/// flood cannot narrow ([`floods`]) stays all-visible.
 #[allow(clippy::type_complexity)] // one Bevy system's full input set
 fn compute_wmo_pvs(
     wmos: Res<Assets<WmoModel>>,
@@ -327,10 +341,10 @@ fn compute_wmo_pvs(
             continue;
         };
         let groups = model.group_nav.len();
-        // A WMO with no portal graph (single-group props, doors) is never culled, and never on the
-        // interior-fog lane. Written through the change gate: marking every prop changed each frame
-        // would defeat `Changed<WmoPortalInstance>`.
-        if model.portal_refs.is_empty() || model.portal_infos.is_empty() {
+        // A WMO the flood could not narrow (no portal graph, every group drawn from outside) is
+        // never culled, and never on the interior-fog lane. Written through the change gate:
+        // marking every prop changed each frame would defeat `Changed<WmoPortalInstance>`.
+        if !floods(model) {
             let held = inst.bypass_change_detection();
             let mut changed = false;
             if held.visible.len() != groups || held.visible.iter().any(|v| !*v) {
@@ -689,7 +703,8 @@ impl Flood<'_> {
             let chain_on = chain && nav_g.flags & (EXTERIOR | EXTERIOR_LIT) == 0;
             let start = nav_g.ref_start as usize;
             let end = (start + nav_g.ref_count as usize).min(model.portal_refs.len());
-            for r in &model.portal_refs[start..end] {
+            // A start past the table (a portal-less group's) reads no refs, not a panic.
+            for r in model.portal_refs.get(start..end).unwrap_or(&[]) {
                 let neighbour = r.group as usize;
                 // Never re-cross the entry portal, and skip the "no group" sentinel.
                 if r.group == u16::MAX || neighbour == came {
@@ -1350,6 +1365,51 @@ mod tests {
             outside.visible[3],
             "the callback arm belongs to BOTH legs — gating it on the inside leg left 20 of the 24 \
              real groups undrawable from anywhere"
+        );
+    }
+
+    /// A portal-less model floods only when a group is outside the `0x10008` seed set; from
+    /// outside, its interior group stays dark (`ND_WinterOrc_Wall`: `0x8` shell, `0x2000` core).
+    #[test]
+    fn a_portal_less_interior_group_is_dark_from_outside() {
+        let mut model = doorway_model();
+        model.portal_refs.clear();
+        model.portal_infos.clear();
+        for g in &mut model.group_nav {
+            g.ref_count = 0;
+        }
+        assert!(floods(&model), "g0 and g4 are 0x2000 alone");
+        // From high above and off to the side, so no floor is under the eye, looking at the
+        // model: WoW (-3, 200, 500) is Bevy (-200, 500, 3), and every box is in the frustum.
+        let clip = Mat4::perspective_rh(1.5, 1.0, 0.1, 2000.0)
+            * Mat4::look_at_rh(
+                bevy::math::Vec3::new(-200.0, 500.0, 3.0),
+                bevy::math::Vec3::ZERO,
+                bevy::math::Vec3::Y,
+            );
+        let pvs = compute_pvs_traced(
+            &model,
+            [-3.0, 200.0, 500.0],
+            None,
+            &clip,
+            &Affine3A::IDENTITY,
+            &mut (),
+        );
+        assert_eq!(
+            pvs.visible,
+            vec![false, true, true, true, false],
+            "the outside leg draws the 0x8 shells and never reaches an interior group"
+        );
+
+        // Outside groups alone: nothing for the flood to narrow.
+        for g in &mut model.group_nav {
+            g.flags |= EXTERIOR;
+        }
+        assert!(!floods(&model));
+        model.group_nav[0].flags = CALLBACK_PASS;
+        assert!(
+            !floods(&model),
+            "a callback group is drawn from outside too"
         );
     }
 

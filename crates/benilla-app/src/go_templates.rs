@@ -48,8 +48,30 @@ pub(crate) struct GoTemplate {
     pub(crate) quest_material: Option<u32>,
     /// DUNGEON_DIFFICULTY (type 31) only: properties `0x57` and `0x58`, `data[0]` and `data[1]`.
     pub(crate) difficulty: Option<crate::go_difficulty::DifficultySlots>,
+    /// DESTRUCTIBLE_BUILDING (type 33) only.
+    pub(crate) destructible: Option<DestructibleTemplate>,
     /// QUESTGIVER (type 2) only: property `0x16`, `data[4]`, the custom anim its interaction plays in place of opening, 0 for none (`0x70fe10`).
     pub(crate) interact_anim: u32,
+}
+
+impl GoTemplate {
+    /// The mouseover column `mouseover_eligible` reads for the types that have one: GENERIC's
+    /// and CAPTURE_POINT's template column, a destructible building's row (`0x70df30`).
+    pub(crate) fn mouseover_column(
+        &self,
+        destructibles: Option<&crate::entities::destructible::Destructibles>,
+    ) -> bool {
+        crate::entities::destructible::mouseover_allowed(self, destructibles)
+    }
+}
+
+/// A DESTRUCTIBLE_BUILDING template's model inputs (`0x710be0`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DestructibleTemplate {
+    /// `data[18]`, the `DestructibleModelData` row; 0 names none.
+    pub(crate) model_data: u32,
+    /// The template's display, the intact state's model.
+    pub(crate) display_id: u32,
 }
 
 /// A MEETINGSTONE template's slots, 12340 properties `0x33` to `0x35` (`0x7121e0`, `0x7108d0`): the
@@ -154,7 +176,14 @@ impl GameObjectTemplates {
     }
 
     /// Records a `SMSG_GAMEOBJECT_QUERY_RESPONSE`; a miss arrives zeroed, so no lock.
-    pub(crate) fn insert(&mut self, entry: u32, type_id: u32, name: String, data: &[i32; 24]) {
+    pub(crate) fn insert(
+        &mut self,
+        entry: u32,
+        type_id: u32,
+        display_id: u32,
+        name: String,
+        data: &[i32; 24],
+    ) {
         let lock_id = go_lock_slot(type_id)
             .and_then(|slot| data.get(slot))
             .map(|&v| v.max(0) as u32)
@@ -208,9 +237,15 @@ impl GameObjectTemplates {
         } else {
             0
         };
+        // DESTRUCTIBLE_BUILDING (type 33) only: property `0x7c`, `data[18]` (`0x710be0`).
+        let destructible = (type_id == 33).then(|| DestructibleTemplate {
+            model_data: data[18].max(0) as u32,
+            display_id,
+        });
         self.templates.insert(
             entry,
             Some(GoTemplate {
+                destructible,
                 interact_anim,
                 lock_id,
                 name,
@@ -224,6 +259,12 @@ impl GameObjectTemplates {
                 difficulty,
             }),
         );
+    }
+
+    /// The cached template for an entry, for tests.
+    #[cfg(test)]
+    pub(crate) fn template_by_entry(&self, entry: u32) -> Option<&GoTemplate> {
+        self.templates.get(entry)
     }
 
     /// The cached template for a GameObject guid.
@@ -319,7 +360,7 @@ mod tests {
         for (type_id, slot) in [(3u32, 16usize), (5, 0), (8, 6), (10, 18)] {
             let mut data = [0i32; 24];
             data[slot] = 1;
-            t.insert(8000 + type_id, type_id, format!("type {type_id}"), &data);
+            t.insert(8000 + type_id, type_id, 0, format!("type {type_id}"), &data);
             assert!(
                 t.templates.get(8000 + type_id).unwrap().floating_tooltip,
                 "type {type_id} floats on data[{slot}]"
@@ -327,7 +368,7 @@ mod tests {
         }
         let mut data = [0i32; 24];
         data[16] = 1;
-        t.insert(8099, 2, "Questgiver".into(), &data);
+        t.insert(8099, 2, 0, "Questgiver".into(), &data);
         assert!(!t.templates.get(8099).unwrap().floating_tooltip);
     }
 
@@ -348,10 +389,10 @@ mod tests {
         let mut data = [0i32; 24];
         data[2] = 2;
         data[9] = 3;
-        t.insert(100, 2, "Wanted Poster".into(), &data);
-        t.insert(101, 9, "Book".into(), &data);
-        t.insert(102, 10, "Goober".into(), &data);
-        t.insert(103, 15, "Boat".into(), &data);
+        t.insert(100, 2, 0, "Wanted Poster".into(), &data);
+        t.insert(101, 9, 0, "Book".into(), &data);
+        t.insert(102, 10, 0, "Goober".into(), &data);
+        t.insert(103, 15, 0, "Boat".into(), &data);
         assert_eq!(t.templates.get(100).unwrap().quest_material, Some(2));
         assert_eq!(t.templates.get(101).unwrap().quest_material, Some(2));
         assert_eq!(
@@ -368,8 +409,8 @@ mod tests {
         let mut t = GameObjectTemplates::default();
         let mut data = [0i32; 24];
         (data[0], data[1]) = (599, 1);
-        t.insert(192500, 31, "Halls of Stone".into(), &data);
-        t.insert(192501, 5, "Generic".into(), &data);
+        t.insert(192500, 31, 0, "Halls of Stone".into(), &data);
+        t.insert(192501, 5, 0, "Generic".into(), &data);
         assert_eq!(
             t.templates.get(192500).unwrap().difficulty,
             Some(crate::go_difficulty::DifficultySlots {
@@ -388,7 +429,7 @@ mod tests {
         data[0] = 292;
         data[1] = 30;
         data[2] = 1;
-        t.insert(176231, 15, "Proudmore's Treasure".into(), &data);
+        t.insert(176231, 15, 0, "Proudmore's Treasure".into(), &data);
         let mo = t
             .templates
             .get(176231)
@@ -399,7 +440,7 @@ mod tests {
         assert_eq!(mo.move_speed, 30.0);
         assert_eq!(mo.accel_rate, 1.0);
         // A chest doesn't.
-        t.insert(2, 3, "Chest".into(), &data);
+        t.insert(2, 3, 0, "Chest".into(), &data);
         assert!(t.templates.get(2).unwrap().mo_transport.is_none());
     }
 
@@ -414,7 +455,7 @@ mod tests {
         const BOAT: u64 = 0x1FC0_0000_0000_0007;
         let mut data = [0i32; 24];
         data[0] = 964;
-        t.insert(181688, 15, "Northspear".into(), &data);
+        t.insert(181688, 15, 0, "Northspear".into(), &data);
         t.request(BOAT, Some(181688), &commands);
         t.clear_pending();
         assert_eq!(
@@ -459,7 +500,7 @@ mod tests {
         ));
         let mut data = [0i32; 24];
         data[0] = 292;
-        t.insert(176231, 15, "Proudmore's Treasure".into(), &data);
+        t.insert(176231, 15, 0, "Proudmore's Treasure".into(), &data);
         assert_eq!(
             t.get(BOAT)
                 .and_then(|g| g.mo_transport)
@@ -475,7 +516,7 @@ mod tests {
         data[0] = 1416; // pageID
         data[1] = 0; // language
         data[2] = 2; // pageMaterial (Stone)
-        t.insert(2036, 9, "Book".into(), &data);
+        t.insert(2036, 9, 0, "Book".into(), &data);
         let page = t
             .templates
             .get(2036)
@@ -485,16 +526,16 @@ mod tests {
         assert_eq!(page.page_id, 1416);
         assert_eq!(page.material, 2);
         // A goober's data[0] is a lockId; its page is data[7], its material data[9].
-        t.insert(2037, 10, "Lever".into(), &data);
+        t.insert(2037, 10, 0, "Lever".into(), &data);
         let page = t.templates.get(2037).unwrap().text_page.expect("type 10");
         assert_eq!((page.page_id, page.material), (0, 0));
         data[7] = 3065;
         data[9] = 5;
-        t.insert(2038, 10, "Plaque".into(), &data);
+        t.insert(2038, 10, 0, "Plaque".into(), &data);
         let page = t.templates.get(2038).unwrap().text_page.expect("type 10");
         assert_eq!((page.page_id, page.material), (3065, 5));
         // Any other type has no page.
-        t.insert(2039, 3, "Chest".into(), &data);
+        t.insert(2039, 3, 0, "Chest".into(), &data);
         assert!(t.templates.get(2039).unwrap().text_page.is_none());
     }
 
@@ -508,6 +549,7 @@ mod tests {
         t.insert(
             guid::entry(guid).unwrap(),
             3,
+            0,
             "Alliance Chest".into(),
             &data,
         );
@@ -523,8 +565,14 @@ mod tests {
         (brill[0], brill[1]) = (1, 1);
         let mut pointer = [0i32; 24];
         (pointer[0], pointer[1]) = (0, 1);
-        t.insert(1630, 5, "Brill".into(), &brill);
-        t.insert(175656, 5, "Doodad_WoodSignPointerNice10".into(), &pointer);
+        t.insert(1630, 5, 0, "Brill".into(), &brill);
+        t.insert(
+            175656,
+            5,
+            0,
+            "Doodad_WoodSignPointerNice10".into(),
+            &pointer,
+        );
 
         let brill = t.templates.get(1630).expect("Brill cached");
         assert!(brill.highlight_column, "Brill is hoverable");
@@ -548,7 +596,7 @@ mod tests {
         let mut data = [0i32; 24];
         data[0] = 1;
         for type_id in [0u32, 1, 2, 3, 6, 7, 8, 9, 10, 16, 22, 23, 25, 29] {
-            t.insert(9000 + type_id, type_id, format!("type {type_id}"), &data);
+            t.insert(9000 + type_id, type_id, 0, format!("type {type_id}"), &data);
             assert!(
                 !t.templates
                     .get(9000 + type_id)

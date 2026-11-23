@@ -7529,7 +7529,7 @@ fn npc_on_a_gameobject_names_its_template_and_is_no_unit() {
     rig.app
         .world_mut()
         .resource_mut::<crate::go_templates::GameObjectTemplates>()
-        .insert(0x300, 19, "Mailbox".into(), &[0; 24]);
+        .insert(0x300, 19, 0, "Mailbox".into(), &[0; 24]);
     lua(
         &mut rig,
         "local f = CreateFrame('Frame') f:RegisterEvent('MAIL_SHOW') \

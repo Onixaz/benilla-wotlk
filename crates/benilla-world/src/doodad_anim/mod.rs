@@ -298,6 +298,13 @@ impl MoverGate {
 }
 
 impl DoodadAnimHost {
+    /// The animation id the host plays and the end of its current play-window on the shared
+    /// clock; `None` on the gseq-only tier. The window is `NEG_INFINITY` until the next re-roll
+    /// arms the requested id.
+    pub fn armed(&self) -> Option<(u16, f32)> {
+        self.anim_id.map(|id| (id, self.window_hi))
+    }
+
     /// The armed clip's `(node, seek)` on the shared clock, `(now − armed_at) mod duration`. It
     /// answers while parked, but the reference fires no events for a doodad culled out of its
     /// scene list (scene `[+0x20]`), so a consumer reads [`DoodadAnimHost::active`] beside it.
