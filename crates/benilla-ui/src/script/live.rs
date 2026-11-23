@@ -1083,8 +1083,8 @@ pub trait LiveState {
         None
     }
 
-    /// The active player's skill slot for line `skill_id` at the call, as `GetSkillLineInfo` reads it (`0x5cdfe7`); `Some(None)` for a line the player lacks, `None` with no active player held.
-    fn skill_slot(&self, _skill_id: u32) -> Option<Option<super::SkillLive>> {
+    /// The active player's skill slot for line `skill_id` at the call, as `GetSkillLineInfo` reads it (`0x5cdfe7`), slot -1 for a line the player lacks (`0x6dc222`); `None` with no active player held.
+    fn skill_slot(&self, _skill_id: u32) -> Option<super::SkillLive> {
         None
     }
 
@@ -1954,6 +1954,8 @@ pub(crate) struct TestView {
     /// Our sheet figures, our skill slots by line, and the skill sends made, in order.
     pub combat_stats: Option<super::UnitCombatStats>,
     pub skills: Option<std::collections::HashMap<u32, super::SkillLive>>,
+    /// What a line missing from `skills` reads: slot -1 (`0x6dc222`).
+    pub skill_slot_minus_one: super::SkillLive,
     pub unlearn_sends: Vec<u32>,
     pub skill_sends: Vec<super::SkillRequest>,
     /// The talent state, the talent unit per side `(player, pet)`, the pet's family category, our character points, and the learn sends in order.
@@ -2086,8 +2088,14 @@ impl LiveState for TestView {
         self.combat_stats.clone()
     }
 
-    fn skill_slot(&self, skill_id: u32) -> Option<Option<super::SkillLive>> {
-        Some(self.skills.as_ref()?.get(&skill_id).copied())
+    fn skill_slot(&self, skill_id: u32) -> Option<super::SkillLive> {
+        let skills = self.skills.as_ref()?;
+        Some(
+            skills
+                .get(&skill_id)
+                .copied()
+                .unwrap_or(self.skill_slot_minus_one),
+        )
     }
 
     fn send_unlearn_skill(&mut self, skill_id: u32) {

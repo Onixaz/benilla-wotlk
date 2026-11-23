@@ -167,25 +167,22 @@ fn write_list<R>(lua: &Lua, f: impl FnOnce(&mut SkillList) -> R) -> R {
     (f.take().expect("unrun"))(&mut crate::script::model_mut_of(lua).skill_list)
 }
 
-/// `e` with the player's slot read at the call (`0x5cdfe7`): a line the player no longer holds reads 0; with no view lent, as rebuilt.
+/// `e` with the player's slot read at the call (`0x5cdfe7`): a line the player no longer holds reads slot -1 unchecked (`0x6dc222`); with no view lent, as rebuilt.
 fn live_entry<'a>(
     e: &'a SkillEntry,
     live: Option<&dyn LiveState>,
 ) -> std::borrow::Cow<'a, SkillEntry> {
     match live.and_then(|l| l.skill_slot(e.skill_id)) {
         None => std::borrow::Cow::Borrowed(e),
-        Some(slot) => {
-            let slot = slot.unwrap_or_default();
-            std::borrow::Cow::Owned(SkillEntry {
-                value: slot.value,
-                max: slot.max,
-                temp_bonus: slot.temp_bonus,
-                perm_bonus: slot.perm_bonus,
-                abandonable: slot.abandonable,
-                tier_cost: slot.tier_cost,
-                ..e.clone()
-            })
-        }
+        Some(slot) => std::borrow::Cow::Owned(SkillEntry {
+            value: slot.value,
+            max: slot.max,
+            temp_bonus: slot.temp_bonus,
+            perm_bonus: slot.perm_bonus,
+            abandonable: slot.abandonable,
+            tier_cost: slot.tier_cost,
+            ..e.clone()
+        }),
     }
 }
 
@@ -808,13 +805,18 @@ mod skill_up_tests {
             (rank, modifier, max, abandon, step),
             (2, 4, 3, Some(1), Some(9))
         );
-        // A line the player no longer holds reads 0 until the next rebuild drops it.
+        // A line the player no longer holds reads slot -1 (`0x6dc222`) until the next rebuild drops it.
         v.skills = Some(Default::default());
-        let rank = s.with_live(&mut v, |s| {
-            s.eval::<i64>("return (select(4, GetSkillLineInfo(2)))")
+        v.skill_slot_minus_one = SkillLive {
+            value: 1234,
+            max: 3,
+            ..Default::default()
+        };
+        let (rank, max) = s.with_live(&mut v, |s| {
+            s.eval::<(i64, i64)>("local _,_,_,r,_,_,x = GetSkillLineInfo(2) return r, x")
                 .unwrap()
         });
-        assert_eq!(rank, 0);
+        assert_eq!((rank, max), (1234, 3));
     }
 }
 

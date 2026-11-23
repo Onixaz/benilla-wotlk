@@ -2204,7 +2204,7 @@ impl LiveState for LiveView<'_, '_> {
         Some(self.char_sheet.as_ref()?.weapon_enchants(store))
     }
 
-    fn skill_slot(&self, skill_id: u32) -> Option<Option<benilla_ui::script::SkillLive>> {
+    fn skill_slot(&self, skill_id: u32) -> Option<benilla_ui::script::SkillLive> {
         let entity = self.player_entity(self.active_player()?)?;
         let fields = &self.stores.get(entity).ok()?.0;
         let catalog = self.skill_lines.as_deref().map(|l| &*l.catalog);

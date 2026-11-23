@@ -10943,14 +10943,16 @@ fn a_reload_reads_the_skill_list_until_the_world_entrys_rebuild() {
     );
 }
 
-/// `GetSpellLink`'s trade link reads the active player at the call (`0x5db120`-`0x5db134`): a stat listener ahead of the rebuild (`0x6da509` before `0x6da531`) reads the new rank, and a line the player lacks reads slot 128's halves, the free professions (`0x6dc213`).
+/// `GetSpellLink`'s trade link reads the active player at the call (`0x5db120`-`0x5db134`): a stat listener ahead of the rebuild (`0x6da509` before `0x6da531`) reads the new rank, and a line the player lacks reads slot -1 (`0x6dc222`): `PLAYER_XP`'s halves, plus `PLAYER_NEXT_LEVEL_XP`'s high half when positive.
 #[test]
 fn the_trade_link_reads_the_rank_at_the_call() {
     use benilla_protocol::field::{
-        FIELD_PLAYER_CHARACTER_POINTS2, FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_UNIT_BYTES_0,
+        FIELD_PLAYER_CHARACTER_POINTS2, FIELD_PLAYER_NEXT_LEVEL_XP,
+        FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_PLAYER_XP, FIELD_UNIT_BYTES_0,
     };
     let pair = |lo: u32, hi: u32| lo | hi << 16;
-    // A human warrior with Tailoring (197) at 100 of 150, +5 permanent, and two free professions.
+    // A human warrior with Tailoring (197) at 100 of 150, +5 permanent, two free professions (slot 128,
+    // never read), and slot -1's words: 1234 | 3 << 16 experience, 4 << 16 to the next level.
     let Some(mut rig) = Rig::login(&[
         OBJECT_TYPE_PLAYER,
         (FIELD_UNIT_BYTES_0, 1 | 1 << 8 | 1 << 24),
@@ -10958,11 +10960,16 @@ fn the_trade_link_reads_the_rank_at_the_call() {
         (SKILL + 1, pair(100, 150)),
         (SKILL + 2, pair(0, 5)),
         (FIELD_PLAYER_CHARACTER_POINTS2, 2),
+        (FIELD_PLAYER_XP, pair(1234, 3)),
+        (FIELD_PLAYER_NEXT_LEVEL_XP, pair(0, 4)),
     ]) else {
         return;
     };
     const VERBS: &[&str] = &["tailor", "alch"];
-    assert_eq!(rig.live_now().line(VERBS), "NOW | tailor=105:155 alch=2:0");
+    assert_eq!(
+        rig.live_now().line(VERBS),
+        "NOW | tailor=105:155 alch=1238:7"
+    );
     let value = rig.packets(vec![self_values(&[(SKILL + 1, pair(101, 150))])], 2);
     assert_eq!(
         pin(&value, &["UNIT_ATTACK", "SKILL_LINES_CHANGED"], &["tailor"]),
