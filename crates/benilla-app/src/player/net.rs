@@ -33,13 +33,15 @@ pub(super) fn register(app: &mut App) {
 /// tied to a state benilla's mover holds.
 fn on_time_sync_req(
     In(ev): In<SessionEvent>,
-    me: Query<(), With<SelfPlayer>>,
+    self_guid: Res<SelfGuid>,
+    index: Res<GuidIndex>,
     commands: Res<NetCommands>,
 ) {
     let SessionEvent::TimeSyncReq { counter } = ev else {
         return;
     };
-    if me.is_empty() {
+    // The active player's object in the index (`0x6dc028`, `0x6dc03b`), held from its create's step, not a later frame's tag; none answers nothing (`0x6dc047`).
+    if !self_guid.0.is_some_and(|g| index.0.contains_key(&g)) {
         return;
     }
     let client_ms = benilla_protocol::client_uptime_ms();
@@ -131,5 +133,46 @@ fn on_stand_state_update(
             &mut asks,
         );
         out.write(ServerStandState { state });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::net::Guid;
+
+    const ME: u64 = 0x42;
+
+    /// The request's answers after `index_me` (our create's step) and the request in one drain.
+    fn answers(index_me: bool) -> Vec<u32> {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut app = App::new();
+        app.insert_resource(NetCommands(tx))
+            .insert_resource(SelfGuid(Some(ME)))
+            .init_resource::<GuidIndex>();
+        register(&mut app);
+        if index_me {
+            // What our create's step writes; no tag yet, since that runs a frame later.
+            let e = app.world_mut().spawn(Guid(ME)).id();
+            app.world_mut().resource_mut::<GuidIndex>().0.insert(ME, e);
+        }
+        crate::net::handlers::dispatch(
+            app.world_mut(),
+            vec![SessionEvent::TimeSyncReq { counter: 7 }],
+        );
+        rx.try_iter()
+            .filter_map(|c| match c {
+                ClientCommand::TimeSyncResp { counter, .. } => Some(counter),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// `0x6dc047` tests the active player's object, held from its create's step: a request in the
+    /// same drain as our create is answered, one with no object is not.
+    #[test]
+    fn a_time_sync_behind_our_create_is_answered_before_the_tag() {
+        assert_eq!(answers(true), vec![7]);
+        assert!(answers(false).is_empty());
     }
 }

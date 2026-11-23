@@ -593,6 +593,8 @@ pub(crate) fn load_ingame_ui_on_world_entry(world: &mut World) {
             // (`0x57ea41`), where it landed before this UI stood.
             |script| {
                 script.load_tracked_state(class_id);
+                // `0x5128d0` loads the tracked achievements after the town type (`0x5b3840`).
+                script.load_tracked_achievements();
                 if tracking != 0 {
                     script.tracking_spell_moved(tracking);
                 }
@@ -786,6 +788,8 @@ pub(crate) fn shutdown_ui_state(
         script.fire_event("PLAYER_LEAVING_WORLD", vec![]);
     }
     script.fire_event("PLAYER_LOGOUT", vec![]);
+    // The tracked achievements save before the saved variables (`0x528f00` -> `0x5b1fa0`).
+    script.save_tracked_achievements();
     crate::ui_saved::save(script, identity);
     addons::save_addon_variables(script, identity);
     addons::save_enable_state(script, identity);
@@ -949,8 +953,8 @@ pub(crate) fn run_pending_reload(world: &mut World) {
 }
 
 /// `AppExit`, the quit roots, read as a message because a quit from in-world never leaves
-/// `InWorld`. A quit from the character screen, or on a worldport's loading screen, finds the
-/// latch spent, so `PLAYER_LEAVING_WORLD` does not fire.
+/// `InWorld`. A quit on a worldport's loading screen finds the latch spent, so
+/// `PLAYER_LEAVING_WORLD` does not fire; a quit from the character screen runs no tail at all.
 pub(crate) fn shutdown_on_exit(world: &mut World) {
     let Ok(Some((identity, leaving_world))) = world.run_system_cached(exit_sweep) else {
         return;
@@ -961,16 +965,22 @@ pub(crate) fn shutdown_on_exit(world: &mut World) {
 }
 
 /// [`shutdown_on_exit`]'s gate and sweep: the identity and whether the world is left, on a quit
-/// with a UI to save.
+/// with an in-game UI to shut down.
 fn exit_sweep(
     id: Res<AddOnIdentity>,
     pending_entry: Option<Res<PendingEntryUiLoad>>,
+    state: Option<Res<State<crate::char_select::ClientState>>>,
     mut sweep: LeaveWorldSweep,
     mut exits: MessageReader<AppExit>,
 ) -> Option<(Option<(String, String)>, bool)> {
     exits.read().next()?;
     // Same guard as [`end_ui_session`]: a quit inside the entry-load window has no UI to save.
     if pending_entry.is_some() {
+        return None;
+    }
+    // The game's destroy skips its UI shutdown with no game up (`0x406516`-`0x40651c`), so a quit
+    // from the login or character screen fires no event and saves nothing.
+    if !state.is_some_and(|s| *s.get() == crate::char_select::ClientState::InWorld) {
         return None;
     }
     Some((id.0.clone(), sweep.run()))

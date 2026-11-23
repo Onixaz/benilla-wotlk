@@ -3,7 +3,9 @@
 
 use std::sync::Arc;
 
-use benilla_ui::script::{AchievementBook, AchievementDb};
+use benilla_ui::script::AchievementDb;
+
+use crate::ui_achievement::book_view::BookView;
 
 fn alert_errors(errors: impl IntoIterator<Item = String>) -> Vec<String> {
     errors
@@ -33,8 +35,7 @@ fn two_achievement_toasts_fade_in_hold_and_hide() {
     let db: Arc<AchievementDb> = Arc::new(crate::ui_achievement::db_of(catalog));
     let (mut s, _load_failures) =
         super::layer_tests::production_load_with("alerts", false, "", |_| {});
-    s.set_achievement_db(db);
-    s.set_achievement_book(AchievementBook::default());
+    let mut view = BookView::new(db);
     s.resolve();
     let _ = s.take_errors();
 
@@ -50,8 +51,10 @@ fn two_achievement_toasts_fade_in_hold_and_hide() {
     };
     // The stock `ACHIEVEMENT_EARNED` arm loads the window addon first (`AlertFrames.lua:12-14`).
     s.run("AchievementFrame_LoadUI()").unwrap();
-    s.run(&format!("AchievementAlertFrame_ShowAlert({})", ids[0]))
-        .unwrap();
+    view.lend(&mut s, |s| {
+        s.run(&format!("AchievementAlertFrame_ShowAlert({})", ids[0]))
+    })
+    .unwrap();
     let errors = alert_errors(s.take_errors());
     assert!(errors.is_empty(), "alert errors: {errors:#?}");
     assert!(shown(&s, 1));
@@ -59,8 +62,10 @@ fn two_achievement_toasts_fade_in_hold_and_hide() {
     let early = alpha(&s, 1);
     assert!(early < 0.5, "fading in from 0, got {early}");
     s.tick(0.25);
-    s.run(&format!("AchievementAlertFrame_ShowAlert({})", ids[1]))
-        .unwrap();
+    view.lend(&mut s, |s| {
+        s.run(&format!("AchievementAlertFrame_ShowAlert({})", ids[1]))
+    })
+    .unwrap();
     assert!(shown(&s, 2), "the second toast takes the second frame");
     s.tick(0.5);
     assert_eq!(alpha(&s, 1), 1.0, "faded in and holding");

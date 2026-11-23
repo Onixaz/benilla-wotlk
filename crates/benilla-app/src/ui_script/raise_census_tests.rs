@@ -38,7 +38,6 @@ const ON_THE_QUEUE: &[(&str, &str)] = &[
     ("target/script.rs", "target_by_name_requests"),
     ("tutorial.rs", "drain_tutorials"),
     ("tutorial.rs", "feed_tutorials"),
-    ("ui_achievement.rs", "feed_achievements"),
     ("ui_action/cast_refusal.rs", "show_refusal_now"),
     ("ui_action/equipment_sets.rs", "drain_equipment_sets"),
     ("ui_action/errors.rs", "show_line_now"),

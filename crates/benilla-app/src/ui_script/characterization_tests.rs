@@ -42,6 +42,12 @@ local function button2()
 end
 local VERBS = {
     { "taxi", function() return UnitOnTaxi("player") end },
+    { "achcan", function() return CanShowAchievementUI() end },
+    { "achcrit", function() return CHARZ_CRIT and (select(4, GetAchievementCriteriaInfo(CHARZ_CRIT))) end },
+    { "achtracked", function() return GetNumTrackedAchievements() end },
+    { "achdone", function() return (select(2, GetNumCompletedAchievements())) end },
+    { "achtotal", function() return (GetNumCompletedAchievements()) end },
+    { "achpts", function() return GetTotalAchievementPoints() end },
     { "control", function() return HasFullControl() end },
     { "dead", function() return UnitIsDeadOrGhost("player") end },
     { "isdead", function() return UnitIsDead("player") end },
@@ -1107,6 +1113,57 @@ fn zone_change() {
     assert_eq!(
         pin(&stormwind, events, verbs),
         vec!["ZONE_CHANGED_NEW_AREA | zone=Stormwind City",]
+    );
+}
+
+/// The zone update (`0x6d7bb0`) reads the active mover (`0x6d7be2`), else the active player (`0x6d7c01`), and skips with neither held (`0x6d7c0b`): an area under no unit of ours fires nothing until a mover is held.
+#[test]
+fn no_zone_event_fires_without_our_player() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let events = &[
+        "ZONE_CHANGED_NEW_AREA",
+        "ZONE_CHANGED",
+        "ZONE_CHANGED_INDOORS",
+    ];
+    let verbs = &["zone"];
+    rig.packets(vec![SessionEvent::ObjectDestroyed(ME)], 2);
+    rig.app
+        .world_mut()
+        .insert_resource(benilla_world::terrain_stream::CurrentArea(Some(12)));
+    rig.run(3);
+    let alone = rig.take();
+    // A unit of the server's that we steer (the Eye of Acherus' case) is the active mover.
+    let eye = SessionEvent::ObjectCreate {
+        guid: PET,
+        kind: EntityKind::Unit,
+        display_id: None,
+        position: [-8949.0, -132.0, 83.5],
+        orientation: 0.0,
+        scale: 1.0,
+        speeds: None,
+        mover: None,
+        transport_progress: None,
+        transport: None,
+        spline: None,
+        vehicle: None,
+        attack_target: None,
+        spawned: true,
+        fields: ObjectFields::from_pairs(&[(FIELD_UNIT_HEALTH, 500), (FIELD_UNIT_MAXHEALTH, 500)])
+            .into_created(ObjectType::Unit),
+    };
+    rig.packets(vec![eye], 1);
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::player::Player>()
+        .foreign_mover = Some(PET);
+    rig.run(3);
+    let moved = rig.take();
+    assert_eq!(pin(&alone, events, verbs), Vec::<String>::new());
+    assert_eq!(
+        pin(&moved, events, verbs),
+        vec!["ZONE_CHANGED_NEW_AREA | zone=Elwynn Forest"]
     );
 }
 
@@ -8425,6 +8482,226 @@ fn a_loot_window_fires_from_its_handlers_with_the_rows_read_at_the_call() {
                     "lootn=0 l1= l2= l3= l3q=0 coin1=nil item2=nil"
                 ),
             ],
+        ]
+    );
+}
+
+/// `SetAchievementComparisonUnit` resolves its token at the call (`0x5b1ae8`): a target set earlier
+/// in the same chunk, before any feed runs, is the compared guid (`0x5b1b08`).
+#[test]
+fn the_comparison_unit_resolves_its_token_at_the_call() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let answer = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval::<String>(
+            "local before = tostring((SetAchievementComparisonUnit('target'))) \
+             TargetUnit('player') \
+             return before .. ' ' .. tostring(SetAchievementComparisonUnit('target'))",
+        )
+    })
+    .expect("a VM")
+    .expect("the chunk runs");
+    assert_eq!(answer, "nil 1");
+    let book = &rig
+        .app
+        .world()
+        .resource::<crate::ui_achievement::PlayerAchievements>()
+        .0;
+    assert_eq!(book.inspect_guid(), ME);
+}
+
+/// A reload keeps the active player (`0x52b03e` -> `0x528f00` leaves the object manager alone), so
+/// the reloaded files' `VARIABLES_LOADED` reads the faction filter at the call (`0x5b3d0a`,
+/// `0x5b3d1e`): a Human's completed Horde-only achievement is neither listed nor counted.
+#[test]
+fn a_reload_reads_the_faction_filter_with_the_player_held() {
+    use benilla_protocol::field::FIELD_UNIT_BYTES_0;
+    use benilla_protocol::messages::AllAchievementData;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER, (FIELD_UNIT_BYTES_0, 1)]) else {
+        return;
+    };
+    let horde = {
+        let data = benilla_formats::wow_data().expect("install");
+        let mut chain = benilla_formats::open_chain(&data).unwrap();
+        let cat = benilla_formats::load_achievement_catalog(&mut chain).unwrap();
+        cat.achievements
+            .iter()
+            .find(|a| a.faction == 0 && a.flags & 0x8a3 == 0 && a.category > 0 && a.category != 81)
+            .expect("a Horde-only achievement")
+            .id
+    };
+    let date = benilla_ui::script::WowDate::from_date(0, 1, 9).0;
+    let list = rig.packets(
+        vec![SessionEvent::AllAchievementData(AllAchievementData {
+            achievements: vec![(horde, date)],
+            criteria: Vec::new(),
+        })],
+        2,
+    );
+    rig.app
+        .world()
+        .non_send_resource::<benilla_ui::script::UiScript>()
+        .run("ReloadUI()")
+        .unwrap();
+    rig.run(4);
+    let reload = rig.take();
+    let events = &["RECEIVED_ACHIEVEMENT_LIST", "VARIABLES_LOADED"];
+    let at_list = pin(&list, events, &["achdone", "achtotal"]);
+    assert_eq!(at_list.len(), 1);
+    assert!(
+        at_list[0].starts_with("RECEIVED_ACHIEVEMENT_LIST | achdone=0 "),
+        "{at_list:?}"
+    );
+    assert_eq!(
+        pin(&reload, events, &["achdone", "achtotal"]),
+        vec![at_list[0].replace("RECEIVED_ACHIEVEMENT_LIST", "VARIABLES_LOADED")]
+    );
+}
+
+/// The achievement handlers fire at their steps with the lists read at the call (`0x5b3160`,
+/// `0x5b3020`): a criteria update's `CRITERIA_UPDATE` (`0x5b3224`) reads the new counter and not the
+/// unit flags a later packet of the same frame sets; the earn's tracked removal (`0x5b3136`) is
+/// read at its own `TRACKED_ACHIEVEMENT_UPDATE`, ahead of `ACHIEVEMENT_EARNED` (`0x5b3148`); the
+/// other order reads the flags. A reload keeps the lists, and the tracked list's load re-announces
+/// each id before `VARIABLES_LOADED` (`0x5128d0` -> `0x5b3840`).
+#[test]
+fn achievement_packets_fire_from_their_handlers_with_the_lists_read_at_the_call() {
+    use benilla_protocol::messages::{AchievementEarned, AllAchievementData, CriteriaProgress};
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    // A listed achievement with points whose own first visible criterion has no timer and needs
+    // more than the counters sent, which the criteria text caps at its quantity (`0x5b0ea0`).
+    let (ach, crit, points) = {
+        let data = benilla_formats::wow_data().expect("install");
+        let mut chain = benilla_formats::open_chain(&data).unwrap();
+        let cat = benilla_formats::load_achievement_catalog(&mut chain).unwrap();
+        let first = |id: u32| {
+            cat.criteria
+                .iter()
+                .find(|c| c.achievement == id && c.flags & 2 == 0)
+        };
+        let a = cat
+            .achievements
+            .iter()
+            .find(|a| {
+                a.faction == -1
+                    && a.flags & 0x8a3 == 0
+                    && a.category > 0
+                    && a.category != 81
+                    && a.points > 0
+                    && a.supercedes == 0
+                    && a.shares_criteria == 0
+                    && first(a.id).is_some_and(|c| c.timer_time == 0 && c.quantity > 3)
+            })
+            .expect("a listed achievement");
+        (a.id, first(a.id).unwrap().id, a.points)
+    };
+    rig.app
+        .world()
+        .non_send_resource::<benilla_ui::script::UiScript>()
+        .run(&format!("CHARZ_ACH = {ach} CHARZ_CRIT = {crit}"))
+        .unwrap();
+    let progress = |counter: u64| CriteriaProgress {
+        id: crit,
+        counter,
+        date: benilla_ui::script::WowDate::from_date(0, 1, 9).0,
+        ..Default::default()
+    };
+    const EVENTS: &[&str] = &[
+        "RECEIVED_ACHIEVEMENT_LIST",
+        "CRITERIA_UPDATE",
+        "TRACKED_ACHIEVEMENT_UPDATE",
+        "ACHIEVEMENT_EARNED",
+        "VARIABLES_LOADED",
+    ];
+    const VERBS: &[&str] = &[
+        "achcan",
+        "achcrit",
+        "achtracked",
+        "achdone",
+        "achpts",
+        "combat",
+    ];
+    let list = rig.packets(
+        vec![SessionEvent::AllAchievementData(AllAchievementData {
+            achievements: Vec::new(),
+            criteria: vec![progress(1)],
+        })],
+        2,
+    );
+    // The tracked add fires inside the call (`0x5b4870` -> `0x5b23e0`).
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("AddTrackedAchievement(CHARZ_ACH)")
+    })
+    .expect("a VM")
+    .unwrap();
+    rig.run(1);
+    let tracked = rig.take();
+    let step = rig.packets(
+        vec![
+            SessionEvent::CriteriaUpdate(progress(2)),
+            flags(crate::player::UNIT_FLAG_IN_COMBAT),
+            SessionEvent::AchievementEarned(AchievementEarned {
+                player: ME,
+                achievement: ach,
+                date: benilla_ui::script::WowDate::from_date(0, 2, 9).0,
+                silent: false,
+            }),
+        ],
+        2,
+    );
+    let flags_first = rig.packets(vec![flags(0), SessionEvent::CriteriaUpdate(progress(3))], 2);
+    assert_eq!(
+        pin(&list, EVENTS, VERBS),
+        vec![
+            "CRITERIA_UPDATE | achcan=true achcrit=1 achtracked=0 achdone=0 achpts=0 combat=nil",
+            "RECEIVED_ACHIEVEMENT_LIST | achcan=true achcrit=1 achtracked=0 achdone=0 achpts=0 combat=nil",
+        ]
+    );
+    assert_eq!(
+        pin(&tracked, EVENTS, VERBS),
+        vec![format!(
+            "TRACKED_ACHIEVEMENT_UPDATE {ach} | achcan=true achcrit=1 achtracked=1 achdone=0 achpts=0 combat=nil"
+        )]
+    );
+    assert_eq!(
+        pin(&step, EVENTS, VERBS),
+        vec![
+            "CRITERIA_UPDATE | achcan=true achcrit=2 achtracked=1 achdone=0 achpts=0 combat=nil".to_string(),
+            format!("TRACKED_ACHIEVEMENT_UPDATE {ach} | achcan=true achcrit=2 achtracked=1 achdone=0 achpts=0 combat=nil"),
+            format!("TRACKED_ACHIEVEMENT_UPDATE {ach} | achcan=true achcrit=2 achtracked=0 achdone=1 achpts={points} combat=1"),
+            format!("ACHIEVEMENT_EARNED {ach} | achcan=true achcrit=2 achtracked=0 achdone=1 achpts={points} combat=1"),
+        ]
+    );
+    assert_eq!(
+        pin(&flags_first, EVENTS, VERBS),
+        vec![format!(
+            "CRITERIA_UPDATE | achcan=true achcrit=3 achtracked=0 achdone=1 achpts={points} combat=nil"
+        )]
+    );
+
+    // A reload keeps the lists; the tracked list's load announces before `VARIABLES_LOADED`.
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("AddTrackedAchievement(CHARZ_ACH)")
+    })
+    .expect("a VM")
+    .unwrap();
+    rig.run(1);
+    rig.take();
+    rig.app
+        .world()
+        .non_send_resource::<benilla_ui::script::UiScript>()
+        .run("ReloadUI()")
+        .unwrap();
+    rig.run(4);
+    let reload = rig.take();
+    assert_eq!(
+        pin(&reload, EVENTS, &["achcan", "achtracked", "achpts"]),
+        vec![
+            format!("TRACKED_ACHIEVEMENT_UPDATE {ach} | achcan=true achtracked=1 achpts={points}"),
+            format!("VARIABLES_LOADED | achcan=true achtracked=1 achpts={points}"),
         ]
     );
 }

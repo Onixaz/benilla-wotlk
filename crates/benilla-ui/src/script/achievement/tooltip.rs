@@ -4,7 +4,7 @@
 
 use mlua::{Lua, Table};
 
-use crate::script::object::frame_handle_of;
+use crate::script::object::{frame_handle_of, frame_wrapper};
 use crate::script::tooltip::{append_line, clear_content, fire_cleared, hide_tooltip, set_shown};
 use crate::strings::{fill, global, Arg};
 
@@ -71,40 +71,77 @@ pub(crate) fn parse_achievement_link(link: &str) -> Option<AchievementLink> {
 }
 
 /// Render an `achievement:` link into `this`; `false` when `link` is no achievement link. A
-/// second open of the shown achievement hides it; an owner whose name is not cached leaves the
-/// tooltip as it was and asks the host for the name, as the reference waits on its name query.
+/// second open of the shown achievement hides it.
 pub(crate) fn set_achievement_link(lua: &Lua, this: &Table, link: &str) -> mlua::Result<bool> {
     let Some(l) = parse_achievement_link(link) else {
         return Ok(false);
     };
     let h = frame_handle_of(lua, this)?;
-    let (db, name, shown_same) = {
-        let mut model = crate::script::model_mut_of(lua);
-        let Some(db) = model.achievement.db.clone() else {
-            return Ok(true);
-        };
+    let shown_same = {
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
         let shown = model.arena.frame(h).is_some_and(|f| f.shown);
-        let shown_same = shown && model.achievement.tooltips.get(&h) == Some(&l.id);
-        let name = model.achievement.names.get(&l.guid).cloned();
-        if name.is_none() && !shown_same && db.get(l.id).is_some() {
-            model.achievement.name_wants.push(l.guid);
-        }
-        (db, name, shown_same)
+        shown && model.achievement.tooltips.get(&h).map(|t| t.id) == Some(l.id)
     };
     if shown_same {
         hide_tooltip(lua, h);
         return Ok(true);
     }
+    set_achievement(lua, this, l, false)?;
+    Ok(true)
+}
+
+/// The name callback's rebuild (`0x61de50`): a tooltip still showing an achievement is filled
+/// again from the fields it keeps, name or not.
+pub(super) fn rebuild(lua: &Lua, h: crate::widget::FrameHandle) -> mlua::Result<()> {
+    let (shown, id) = {
+        let mut model = crate::script::model_mut_of(lua);
+        (
+            model.achievement.tooltips.get(&h).copied(),
+            model.frame_id(h),
+        )
+    };
+    let Some(l) = shown else {
+        return Ok(());
+    };
+    let this = frame_wrapper(lua, id)?;
+    set_achievement(lua, &this, l, true)
+}
+
+/// The achievement fill (`0x627220`): an unknown id fills nothing; the owner's name is read with
+/// the tooltip's callback, deduped (`0x62726d`), and an uncached one leaves the tooltip as it was
+/// unless `force`, the callback's rebuild, which names the owner `UNKNOWN`.
+fn set_achievement(lua: &Lua, this: &Table, l: AchievementLink, force: bool) -> mlua::Result<()> {
+    let h = frame_handle_of(lua, this)?;
+    let Some(db) = crate::script::read_live(|v| v.achievement_db()).flatten() else {
+        return Ok(());
+    };
     let Some(a) = db.get(l.id) else {
-        return Ok(true);
+        return Ok(());
     };
-    let Some(name) = name else {
-        return Ok(true);
+    // A zero guid has no record and no callback (`0x67d783`).
+    let name = match l.guid {
+        0 => None,
+        g => crate::script::write_live(|v| v.player_name_or_ask(g)).flatten(),
     };
+    if name.is_none() {
+        let mut model = crate::script::model_mut_of(lua);
+        let waits = &mut model.achievement.name_waits;
+        // A pending record keeps one callback per tooltip (`0x67d84a`-`0x67d876`).
+        if l.guid != 0 && !waits.contains(&(h, l.guid)) {
+            waits.push((h, l.guid));
+        }
+        drop(model);
+        if !force {
+            return Ok(());
+        }
+    }
+    let name = name.unwrap_or_else(|| global(lua, "UNKNOWN").unwrap_or_default());
     {
         let mut model = crate::script::model_mut_of(lua);
         clear_content(&mut model, h);
-        model.achievement.tooltips.insert(h, l.id);
+        model.achievement.tooltips.insert(h, l);
     }
     fire_cleared(lua, h);
     append_line(lua, this, (a.title.clone(), WHITE), None, false)?;
@@ -152,5 +189,5 @@ pub(crate) fn set_achievement_link(lua: &Lua, this: &Table, link: &str) -> mlua:
         crate::script::model_mut_of(lua).record_lua_error(&e);
     }
     set_shown(lua, h, true);
-    Ok(true)
+    Ok(())
 }

@@ -1,19 +1,17 @@
-//! 3.3.5a's achievement engine: the three DBC tables the app pushes once ([`AchievementDb`]), the
-//! player's completed list and criteria progress and an inspected player's ([`AchievementBook`]),
-//! the tracked list, and the 37 bindings registered from `0xacfc70` bar the two quest-completion
-//! ones.
+//! 3.3.5a's achievement engine: the three DBC tables ([`AchievementDb`]), the client's lists
+//! ([`AchievementBook`]: the player's completed list and criteria progress, an inspected player's,
+//! the tracked list), the packet handlers' steps ([`handle_achievement_packet`]), and the 37
+//! bindings registered from `0xacfc70` bar the two quest-completion ones.
 //!
-//! The app keeps its own book and applies every packet to it, so a fresh VM is seeded whole
-//! ([`super::UiScript::set_achievement_book`]); the VM's copy takes the same packets
-//! ([`super::UiScript::apply_achievement`]) and fires their events as the handlers do. Lists keep
-//! 12340's orders: completed newest first (`0x5b28d0`), criteria newest first (`0x5b2520`).
-//! Achievement strings carry no `$` tokens, so the reference's quest-text expansion of titles,
-//! descriptions and rewards is the identity here.
+//! The app holds the tables and the book; each binding reads them through the lent view at the
+//! call, and each handler writes the book and fires its events at their steps through an
+//! [`AchievementHost`]. Lists keep 12340's orders: completed newest first (`0x5b28d0`), criteria
+//! newest first (`0x5b2520`). Achievement strings carry no `$` tokens, so the reference's
+//! quest-text expansion of titles, descriptions and rewards is the identity here.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
-use super::{Model, ScriptValue};
+use super::{LiveState, ScriptValue};
 
 mod text;
 mod tooltip;
@@ -369,11 +367,13 @@ pub enum AchievementUpdate {
     },
 }
 
-/// The events one packet owes the VM, in the handler's order.
-pub type AchievementEvents = Vec<(&'static str, Vec<ScriptValue>)>;
+/// What one packet handler raises: `TRACKED_ACHIEVEMENT_UPDATE`'s one or four numbers, or a bare
+/// event; [`AchievementHost::raise`] fires it at its step.
+pub type AchievementEvent = (&'static str, Vec<ScriptValue>);
 
-/// The client's achievement lists (`0xacfd98`-`0xacfde0`): the player's and an inspected
-/// player's.
+/// The client's achievement lists (`0xacfd98`-`0xacfde0`): the player's, an inspected player's and
+/// the tracked list. The game start and the game shutdown empty them (`0x5b6df0`, `0x5b4f00`); a UI
+/// reload keeps them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AchievementBook {
     /// `CanShowAchievementUI` (`[0xc1f454]`): a list or a criteria update has arrived.
@@ -387,6 +387,139 @@ pub struct AchievementBook {
     pub(crate) inspect_completed: Vec<Dated>,
     pub(crate) inspect_criteria: Vec<CriteriaState>,
     pub(crate) inspect_recent: Vec<CriteriaState>,
+    /// The tracked list, in add order (`0xacfde0`).
+    pub(crate) tracked: Vec<u32>,
+}
+
+/// One packet handler's host: the book it writes between raises, and the raise, which runs the
+/// listeners at the step with the book released (`0x81b530` runs them inside the handler).
+pub trait AchievementHost {
+    /// The book as of this step.
+    fn book(&mut self) -> &mut AchievementBook;
+    /// Fire `event` now; a listener reads and writes the book the handler goes on with.
+    fn raise(&mut self, event: AchievementEvent);
+}
+
+/// Run one achievement packet's handler over `host`: each write, then each raise at its step.
+pub fn handle_achievement_packet(
+    db: &AchievementDb,
+    update: AchievementUpdate,
+    host: &mut dyn AchievementHost,
+) {
+    match update {
+        // `0x5b32f0`: the show flag, each completed row (`0x5b3355`), each criterion (`0x5b340b`)
+        // with a timed one's tracker update at once (`0x5b3454`), then `CRITERIA_UPDATE`
+        // (`0x5b3478`) and `RECEIVED_ACHIEVEMENT_LIST` (`0x5b3484`). Nothing is cleared first.
+        AchievementUpdate::List {
+            achievements,
+            criteria,
+            now,
+        } => {
+            host.book().received = true;
+            for (id, date) in achievements {
+                host.book().update_achievement(db, id, WowDate(date));
+            }
+            for c in criteria {
+                host.book().update_criteria(db, c, now);
+                if let Some(rec) = db.criterion(c.id).filter(|r| r.timer_time != 0) {
+                    host.raise(timed_update(rec, c.timer1));
+                }
+            }
+            host.raise(("CRITERIA_UPDATE", Vec::new()));
+            host.raise(("RECEIVED_ACHIEVEMENT_LIST", Vec::new()));
+        }
+        // `0x5b3020`: our own earn joins the list (`0x5b308d`); a known, loud earn of ours leaves
+        // the tracked list (`0x5b3136`) and fires `ACHIEVEMENT_EARNED` (`0x5b3148`). The earn
+        // effect between them (`0x5b3115`) is the creature animation's handler.
+        AchievementUpdate::Earned {
+            id,
+            date,
+            silent,
+            own,
+            ..
+        } => {
+            if own {
+                host.book().update_achievement(db, id, WowDate(date));
+            }
+            if db.get(id).is_none() || silent || !own {
+                return;
+            }
+            if host.book().remove_tracked(id) {
+                host.raise(tracked_update(id));
+            }
+            host.raise(("ACHIEVEMENT_EARNED", vec![ScriptValue::Int(id.into())]));
+        }
+        // `0x5b3160`: the show flag, the criterion (`0x5b3218`), `CRITERIA_UPDATE` (`0x5b3224`),
+        // then a timed criterion's tracker update (`0x5b326d`) or one per tracked achievement
+        // reading it (`0x5b32d8`), each next link saved before the raise.
+        AchievementUpdate::Criteria { criterion, now } => {
+            let book = host.book();
+            book.received = true;
+            book.update_criteria(db, criterion, now);
+            host.raise(("CRITERIA_UPDATE", Vec::new()));
+            let Some(rec) = db.criterion(criterion.id) else {
+                return;
+            };
+            if rec.timer_time != 0 {
+                host.raise(timed_update(rec, criterion.timer1));
+                return;
+            }
+            // `0x5b3298`: each node's next link is read before its compare and raise, and the walk
+            // resumes from that saved link (`0x5b32e0`), so a node a listener appends after the
+            // last one is never visited. A listener that frees the saved node leaves 12340 reading
+            // freed memory; the walk stops there.
+            let mut next = host.book().tracked.first().copied();
+            while let Some(t) = next {
+                let tracked = &host.book().tracked;
+                let saved = tracked
+                    .iter()
+                    .position(|&x| x == t)
+                    .and_then(|i| tracked.get(i + 1).copied());
+                let shares = db
+                    .get(t)
+                    .is_some_and(|a| a.shares_criteria == rec.achievement);
+                if t == rec.achievement || shares {
+                    host.raise(tracked_update(t));
+                }
+                next = saved.filter(|s| host.book().tracked.contains(s));
+            }
+        }
+        // `0x5b36f0`: a held criterion unlinks, then `CRITERIA_UPDATE` (`0x5b376b`).
+        AchievementUpdate::CriteriaDeleted(id) => {
+            let book = host.book();
+            if let Some(i) = book.criteria.iter().position(|c| c.id == id) {
+                book.criteria.remove(i);
+                host.raise(("CRITERIA_UPDATE", Vec::new()));
+            }
+        }
+        // `0x5b3610`: a held completed row unlinks, then `ACHIEVEMENT_EARNED` (`0x5b3692`).
+        AchievementUpdate::AchievementDeleted(id) => {
+            let book = host.book();
+            if let Some(i) = book.completed.iter().position(|d| d.id == id) {
+                book.completed.remove(i);
+                host.raise(("ACHIEVEMENT_EARNED", vec![ScriptValue::Int(id.into())]));
+            }
+        }
+        // `0x5b34a0`: the rows (`0x5b350d`) and criteria (`0x5b35cb`) of the compared guid alone,
+        // then `INSPECT_ACHIEVEMENT_READY` whoever they name (`0x5b35ef`).
+        AchievementUpdate::Inspect {
+            guid,
+            achievements,
+            criteria,
+            now,
+        } => {
+            let book = host.book();
+            if guid == book.inspect_guid {
+                for (id, date) in achievements {
+                    update_achievement(db, &mut book.inspect_completed, id, WowDate(date), true);
+                }
+                for c in criteria {
+                    book.update_inspect_criteria(db, c, now);
+                }
+            }
+            host.raise(("INSPECT_ACHIEVEMENT_READY", Vec::new()));
+        }
+    }
 }
 
 impl AchievementBook {
@@ -410,118 +543,41 @@ impl AchievementBook {
             .any(|&next| self.completed(next).is_some())
     }
 
-    /// The players named on the held criteria, for the host's name push.
-    pub fn criteria_players(&self) -> impl Iterator<Item = u64> + '_ {
-        self.criteria.iter().map(|c| c.player)
-    }
-
     /// The number of completed achievements.
     pub fn completed_len(&self) -> usize {
         self.completed.len()
     }
 
-    /// Apply one packet. `tracked` is the tracked list the earned and criteria arms read and
-    /// edit; the returned events are the handler's, in its order.
-    pub fn apply(
-        &mut self,
-        db: &AchievementDb,
-        update: AchievementUpdate,
-        tracked: &mut Vec<u32>,
-    ) -> AchievementEvents {
-        let mut events = AchievementEvents::new();
-        match update {
-            AchievementUpdate::List {
-                achievements,
-                criteria,
-                now,
-            } => {
-                self.received = true;
-                for (id, date) in achievements {
-                    update_achievement(db, &mut self.completed, id, WowDate(date), false);
-                }
-                for c in criteria {
-                    self.update_criteria(db, c, now);
-                    if let Some(rec) = db.criterion(c.id).filter(|r| r.timer_time != 0) {
-                        events.push(timed_update(rec, c.timer1));
-                    }
-                }
-                events.push(("CRITERIA_UPDATE", Vec::new()));
-                events.push(("RECEIVED_ACHIEVEMENT_LIST", Vec::new()));
+    /// The tracked list, in add order.
+    pub fn tracked(&self) -> &[u32] {
+        &self.tracked
+    }
+
+    /// The compared player's guid (`[0xc1f458]`), 0 for none.
+    pub fn inspect_guid(&self) -> u64 {
+        self.inspect_guid
+    }
+
+    /// The player's achievement update (`0x5b28d0`).
+    fn update_achievement(&mut self, db: &AchievementDb, id: u32, date: WowDate) {
+        update_achievement(db, &mut self.completed, id, date, false);
+    }
+
+    /// `AddTrackedAchievement` (`0x5b23e0`): `true` when it announces `id`, held or added; past
+    /// ten nothing is added.
+    pub fn add_tracked(&mut self, id: u32) -> bool {
+        add_tracked(&mut self.tracked, id)
+    }
+
+    /// The tracked removal (`0x5b24d0`): `true` when `id` was held and is gone.
+    pub fn remove_tracked(&mut self, id: u32) -> bool {
+        match self.tracked.iter().position(|&t| t == id) {
+            Some(at) => {
+                self.tracked.remove(at);
+                true
             }
-            AchievementUpdate::Earned {
-                id,
-                date,
-                silent,
-                own,
-                ..
-            } => {
-                if own {
-                    update_achievement(db, &mut self.completed, id, WowDate(date), false);
-                }
-                // The earn visual on the player (special effect 11, `0x5b3020`) is not modelled.
-                if db.get(id).is_some() && !silent && own {
-                    if let Some(i) = tracked.iter().position(|&t| t == id) {
-                        tracked.remove(i);
-                        events.push(tracked_update(id));
-                    }
-                    events.push(("ACHIEVEMENT_EARNED", vec![ScriptValue::Int(id.into())]));
-                }
-            }
-            AchievementUpdate::Criteria { criterion, now } => {
-                self.received = true;
-                self.update_criteria(db, criterion, now);
-                events.push(("CRITERIA_UPDATE", Vec::new()));
-                if let Some(rec) = db.criterion(criterion.id) {
-                    if rec.timer_time != 0 {
-                        events.push(timed_update(rec, criterion.timer1));
-                    } else {
-                        for &t in tracked.iter() {
-                            let shares = db
-                                .get(t)
-                                .is_some_and(|a| a.shares_criteria == rec.achievement);
-                            if t == rec.achievement || shares {
-                                events.push(tracked_update(t));
-                            }
-                        }
-                    }
-                }
-            }
-            AchievementUpdate::CriteriaDeleted(id) => {
-                if let Some(i) = self.criteria.iter().position(|c| c.id == id) {
-                    self.criteria.remove(i);
-                    events.push(("CRITERIA_UPDATE", Vec::new()));
-                }
-            }
-            AchievementUpdate::AchievementDeleted(id) => {
-                if let Some(i) = self.completed.iter().position(|d| d.id == id) {
-                    self.completed.remove(i);
-                    events.push(("ACHIEVEMENT_EARNED", vec![ScriptValue::Int(id.into())]));
-                }
-            }
-            AchievementUpdate::Inspect {
-                guid,
-                achievements,
-                criteria,
-                now,
-            } => {
-                if guid == self.inspect_guid {
-                    for (id, date) in achievements {
-                        update_achievement(
-                            db,
-                            &mut self.inspect_completed,
-                            id,
-                            WowDate(date),
-                            true,
-                        );
-                    }
-                    for c in criteria {
-                        self.update_inspect_criteria(db, c, now);
-                    }
-                }
-                events.push(("INSPECT_ACHIEVEMENT_READY", Vec::new()));
-            }
+            None => false,
         }
-        events
     }
 
     /// The criteria update (`0x5b2520`): a new row goes before the first one not newer; flag bit 0
@@ -711,38 +767,29 @@ pub(crate) fn add_tracked(tracked: &mut Vec<u32>, id: u32) -> bool {
     true
 }
 
-/// The VM's achievement state.
+/// The VM's achievement state: what each tooltip shows and the name answers it waits on. The tables
+/// and the lists are the client's, read through the lent view at the call.
 #[derive(Debug, Default)]
 pub(crate) struct AchievementModel {
-    pub(crate) db: Option<Arc<AchievementDb>>,
-    pub(crate) book: AchievementBook,
-    /// The tracked list, in add order (`0xacfde0`).
-    pub(crate) tracked: Vec<u32>,
-    /// The active player's guid, the link's owner.
-    pub(crate) player: u64,
-    /// Names the criteria and link tooltips read, the app's name cache as far as it pushed.
-    pub(crate) names: HashMap<u64, String>,
-    /// Guids a tooltip asked a name for and found none.
-    pub(crate) name_wants: Vec<u64>,
-    /// `CMSG_QUERY_INSPECT_ACHIEVEMENTS` guids `SetAchievementComparisonUnit` queued.
-    pub(crate) inspect_queries: Vec<u64>,
-    /// Each tooltip's shown achievement, cleared with its lines.
-    pub(crate) tooltips: HashMap<crate::widget::FrameHandle, u32>,
+    /// Each tooltip's shown link, the fields the achievement fill keeps (`0x627220`), cleared with
+    /// its lines.
+    pub(crate) tooltips: HashMap<crate::widget::FrameHandle, tooltip::AchievementLink>,
+    /// The tooltips whose name read left its callback on a guid's record (`0x627220` ->
+    /// `0x61de50`), one per uncached read.
+    pub(crate) name_waits: Vec<(crate::widget::FrameHandle, u64)>,
 }
 
 impl AchievementModel {
-    /// The active player's PvP faction index, `None` before the player's unit is pushed.
-    fn player_faction(model: &Model) -> Option<i32> {
-        model.unit("player").map(|u| i32::from(u.pvp_team))
+    /// The active player's PvP faction index read at the call (`0x4d3790`, `0x5b3d0a`), `None`
+    /// with no player object held.
+    fn player_faction(l: &dyn LiveState) -> Option<i32> {
+        l.player_pvp_faction(l.active_player()?)
     }
 
-    /// The inspected player's, when the client holds that unit.
-    fn inspect_faction(model: &Model) -> Option<i32> {
-        let guid = model.achievement.book.inspect_guid;
-        (guid != 0)
-            .then(|| model.units_by_guid.get(&guid))
-            .flatten()
-            .map(|u| i32::from(u.pvp_team))
+    /// The compared player's (`guid`, `0xc1f458`) read at the call (`0x5b3bf0`), when the
+    /// client holds that player.
+    fn inspect_faction(l: &dyn LiveState, guid: u64) -> Option<i32> {
+        l.player_pvp_faction(guid)
     }
 }
 
@@ -766,122 +813,121 @@ pub fn encode_tracked(ids: &[u32]) -> String {
     out
 }
 
-/// Decode the CVar, stopping at an id of 0 (`0x5b3840`). An untagged value is the version-0
-/// form, three base-220 digits each (`0x766f00`).
+/// Decode the CVar as the int-list read does (`0x766f70`), over the value [`upgrade_tracked`]
+/// leaves: base-93 triples from the third byte, stopping at a short triple, a NUL or an id of 0.
 pub fn decode_tracked(value: &str) -> Vec<u32> {
-    let bytes = value.as_bytes();
-    let (body, base) = match bytes {
-        [b'v', 1, rest @ ..] => (rest, 93u32),
-        [b'v', ..] => (&[][..], 93),
-        _ => (bytes, 220),
-    };
+    let upgraded = upgrade_tracked(value);
+    let bytes = upgraded.as_deref().unwrap_or(value).as_bytes();
     let mut out = Vec::new();
-    let digit = |b: u8| u32::from(b).wrapping_sub(35);
-    for &[a, b, c] in body.as_chunks::<3>().0 {
-        let id = digit(a) * base * base + digit(b) * base + digit(c);
+    // Each byte sign-extended (`movsx` at `0x766fcd`, `0x766fd6`, `0x766fe4`).
+    let digit = |b: u8| i32::from(b as i8).wrapping_sub(35);
+    for &[a, b, c] in bytes.get(2..).unwrap_or(&[]).as_chunks::<3>().0 {
+        if a == 0 || b == 0 || c == 0 {
+            break;
+        }
+        let id = digit(a)
+            .wrapping_mul(93)
+            .wrapping_add(digit(b))
+            .wrapping_mul(93)
+            .wrapping_add(digit(c));
         if id == 0 {
             break;
         }
-        out.push(id);
+        out.push(id as u32);
     }
     out
 }
 
-impl super::UiScript {
-    /// Push the three tables; a VM holds them for its life.
-    pub fn set_achievement_db(&mut self, db: Arc<AchievementDb>) {
-        self.model_mut().achievement.db = Some(db);
+/// The version-0 upgrade (`0x766f00`): a value with no `v` tag, or a bare `v`, is read whole as
+/// base-220 triples and written again under the `v\x01` tag (`0x766720`, `0x5300d0`); `None` for
+/// a tagged value, which the read takes as it is.
+pub fn upgrade_tracked(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let version = match bytes {
+        [b'v', v, ..] => *v,
+        _ => 0,
+    };
+    if version != 0 {
+        return None;
     }
-
-    /// The active player's guid, which the link and criteria tooltips name.
-    pub fn set_achievement_player(&mut self, guid: u64) {
-        if self.model_ref().achievement.player != guid {
-            self.model_mut().achievement.player = guid;
+    const WEIGHTS: [u32; 3] = [220 * 220, 220, 1];
+    let mut ids = Vec::new();
+    let (mut digit, mut id) = (0, 0u32);
+    for &b in bytes {
+        id = id.wrapping_add(WEIGHTS[digit].wrapping_mul(u32::from(b).wrapping_sub(35)));
+        digit += 1;
+        if digit > 2 {
+            ids.push(id);
+            (digit, id) = (0, 0);
         }
     }
+    Some(encode_tracked(&ids))
+}
 
-    /// Seed a fresh VM with the app's book, then load the tracked list from
-    /// `trackedAchievements` as the tracked-state load does (`0x5128d0` → `0x5b3840`), each add
-    /// announcing itself.
-    pub fn set_achievement_book(&mut self, book: AchievementBook) {
-        let ids = {
+impl super::UiScript {
+    /// The tracked-list load (`0x5b3840`), a step of the tracked-state load before
+    /// `VARIABLES_LOADED` (`0x5128d0`): each id `trackedAchievements` holds is added to the client's
+    /// list, which a UI reload keeps, and each add that holds it announces itself (`0x5b241b`,
+    /// `0x5b24b6`). Nothing with no view lent.
+    pub fn load_tracked_achievements(&mut self) {
+        let value = self
+            .model_ref()
+            .cvars
+            .get("trackedachievements")
+            .map(|s| s.value.clone())
+            .unwrap_or_default();
+        // An untagged value is written back upgraded before the read (`0x766f00`).
+        if let Some(upgraded) = upgrade_tracked(&value) {
             let mut model = self.model_mut();
-            model.achievement.book = book;
-            model.achievement.tracked.clear();
-            model
-                .cvars
-                .get("trackedachievements")
-                .map(|s| decode_tracked(&s.value))
-                .unwrap_or_default()
-        };
+            super::cvars::set_from_engine(&mut model, "trackedAchievements", upgraded);
+        }
+        let ids = decode_tracked(&value);
         for id in ids {
-            let added = add_tracked(&mut self.model_mut().achievement.tracked, id);
-            if added {
+            let added = super::write_live(|l| l.achievement_book_mut().map(|b| b.add_tracked(id)))
+                .flatten();
+            if added == Some(true) {
                 self.fire_event(
                     "TRACKED_ACHIEVEMENT_UPDATE",
                     vec![ScriptValue::Int(id.into())],
                 );
             }
         }
-        self.save_tracked();
     }
 
-    /// Apply one packet to the VM's book and fire its events.
-    pub fn apply_achievement(&mut self, update: AchievementUpdate) {
-        let (events, retracked) = {
-            let mut model = self.model_mut();
-            let Some(db) = model.achievement.db.clone() else {
-                return;
-            };
-            let a = &mut model.achievement;
-            let mut tracked = std::mem::take(&mut a.tracked);
-            let before = tracked.len();
-            let events = a.book.apply(&db, update, &mut tracked);
-            let retracked = tracked.len() != before;
-            a.tracked = tracked;
-            (events, retracked)
+    /// The tracked-list save (`0x5b1fa0`) into `trackedAchievements`, a step of the UI shutdown
+    /// after `PLAYER_LOGOUT` (`0x528f00`). Nothing with no view lent.
+    pub fn save_tracked_achievements(&mut self) {
+        let Some(value) =
+            super::read_live(|l| l.achievement_book().map(|b| encode_tracked(b.tracked())))
+                .flatten()
+        else {
+            return;
         };
-        if retracked {
-            self.save_tracked();
-        }
-        for (event, args) in events {
-            self.fire_event(event, args);
-        }
-    }
-
-    /// Push the names the criteria and link tooltips read.
-    pub fn set_achievement_names(&mut self, names: HashMap<u64, String>) {
-        if self.model_ref().achievement.names != names {
-            self.model_mut().achievement.names = names;
-        }
-    }
-
-    /// Drain the guids a tooltip wanted a name for.
-    pub fn take_achievement_name_wants(&mut self) -> Vec<u64> {
-        drain_field!(self, achievement.name_wants)
-    }
-
-    /// Drain the `CMSG_QUERY_INSPECT_ACHIEVEMENTS` guids to send.
-    pub fn take_inspect_achievement_queries(&mut self) -> Vec<u64> {
-        drain_field!(self, achievement.inspect_queries)
-    }
-
-    /// The tracked list as the VM holds it.
-    pub fn tracked_achievements(&self) -> Vec<u32> {
-        self.model_ref().achievement.tracked.clone()
-    }
-
-    /// The tracked-list save (`0x5b1fa0`) into `trackedAchievements`. The reference saves at
-    /// shutdown; every change saves here, which leaves the stored value the same.
-    fn save_tracked(&mut self) {
         let mut model = self.model_mut();
-        let value = encode_tracked(&model.achievement.tracked);
         super::cvars::set_from_engine(&mut model, "trackedAchievements", value);
     }
-}
 
-/// [`super::UiScript::save_tracked`] for a binding holding `&Model`.
-fn save_tracked_model(model: &mut Model) {
-    let value = encode_tracked(&model.achievement.tracked);
-    super::cvars::set_from_engine(model, "trackedAchievements", value);
+    /// A player name's answer: each achievement tooltip whose name read waited on `guid` runs its
+    /// callback (`0x61de50`), which on a name rebuilds the link the tooltip still shows; a miss
+    /// spends the callback.
+    pub fn achievement_name_landed(&mut self, guid: u64, named: bool) {
+        let waiting: Vec<crate::widget::FrameHandle> = {
+            let mut model = self.model_mut();
+            let waits = &mut model.achievement.name_waits;
+            if waits.is_empty() {
+                return;
+            }
+            let landed = waits.iter().filter(|w| w.1 == guid).map(|w| w.0).collect();
+            waits.retain(|w| w.1 != guid);
+            if !named {
+                return;
+            }
+            landed
+        };
+        for h in waiting {
+            if let Err(e) = tooltip::rebuild(&self.lua, h) {
+                self.push_error(e);
+            }
+        }
+    }
 }

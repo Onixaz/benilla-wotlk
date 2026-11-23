@@ -4,9 +4,11 @@
 use std::sync::Arc;
 
 use benilla_ui::script::{
-    AchievementBook, AchievementDb, AchievementUpdate, QuestLogDetail, QuestLogEntryView,
-    QuestLogObjectiveView, QuestLogState, ScriptValue,
+    AchievementDb, AchievementUpdate, QuestLogDetail, QuestLogEntryView, QuestLogObjectiveView,
+    QuestLogState, ScriptValue,
 };
+
+use crate::ui_achievement::book_view::BookView;
 
 /// Errors from the tracker's and the quest log's own code.
 fn tracker_errors(errors: impl IntoIterator<Item = String>) -> Vec<String> {
@@ -79,23 +81,29 @@ fn the_stock_tracker_draws_watched_quests_and_a_tracked_achievement() {
         super::layer_tests::production_load_with("watchframe", false, "", |_| {});
     s.resolve();
     let _ = s.take_errors();
-    s.set_achievement_db(db);
-    s.set_achievement_book(AchievementBook::default());
-    s.apply_achievement(AchievementUpdate::List {
-        achievements: Vec::new(),
-        criteria: Vec::new(),
-        now: 0,
-    });
+    let mut view = BookView::new(db);
+    view.apply(
+        &mut s,
+        AchievementUpdate::List {
+            achievements: Vec::new(),
+            criteria: Vec::new(),
+            now: 0,
+        },
+    );
     for event in ["VARIABLES_LOADED", "PLAYER_ENTERING_WORLD"] {
-        s.fire_event(event, Vec::<ScriptValue>::new());
+        view.lend(&mut s, |s| s.fire_event(event, Vec::<ScriptValue>::new()));
     }
     s.seed_quest_log(model());
-    s.run(&format!(
-        "AddQuestWatch(2) AddQuestWatch(3) AddTrackedAchievement({tracked})"
-    ))
+    view.lend(&mut s, |s| {
+        s.run(&format!(
+            "AddQuestWatch(2) AddQuestWatch(3) AddTrackedAchievement({tracked})"
+        ))
+    })
     .unwrap();
-    s.fire_event("QUEST_LOG_UPDATE", Vec::<ScriptValue>::new());
-    s.resolve();
+    view.lend(&mut s, |s| {
+        s.fire_event("QUEST_LOG_UPDATE", Vec::<ScriptValue>::new());
+        s.resolve();
+    });
     let errors = tracker_errors(s.take_errors());
     assert!(errors.is_empty(), "tracker errors: {errors:#?}");
 
@@ -119,8 +127,10 @@ fn the_stock_tracker_draws_watched_quests_and_a_tracked_achievement() {
         "#,
     )
     .unwrap();
-    let achievement: String = s
-        .eval(&format!("return select(2, GetAchievementInfo({tracked}))"))
+    let achievement: String = view
+        .lend(&mut s, |s| {
+            s.eval(&format!("return select(2, GetAchievementInfo({tracked}))"))
+        })
         .unwrap();
     for want in [
         achievement.as_str(),
@@ -136,8 +146,10 @@ fn the_stock_tracker_draws_watched_quests_and_a_tracked_achievement() {
     }
 
     // Unwatching drops the quest's lines and the count.
-    s.run("RemoveQuestWatch(2)").unwrap();
-    s.fire_event("QUEST_LOG_UPDATE", Vec::<ScriptValue>::new());
+    view.lend(&mut s, |s| s.run("RemoveQuestWatch(2)")).unwrap();
+    view.lend(&mut s, |s| {
+        s.fire_event("QUEST_LOG_UPDATE", Vec::<ScriptValue>::new())
+    });
     s.run(
         r#"assert(WatchFrameTitle:GetText() == OBJECTIVES_TRACKER_LABEL .. " (2)",
             WatchFrameTitle:GetText())"#,

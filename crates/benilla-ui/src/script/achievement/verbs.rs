@@ -1,5 +1,5 @@
-//! The achievement bindings (`0xacfc70`). Each reads the pushed tables and the VM's book; an id
-//! the tables lack answers nothing, as the reference's record lookups do.
+//! The achievement bindings (`0xacfc70`). Each reads the client's tables and lists through the lent
+//! view at the call; an id the tables lack answers nothing, as the reference's record lookups do.
 
 use std::sync::Arc;
 
@@ -7,10 +7,10 @@ use mlua::{Lua, MultiValue, Table, Value};
 
 use super::text::{build_output, Output, TextCtx};
 use super::{
-    add_tracked, flag, save_tracked_model, wrong_side, AchievementDb, AchievementModel,
-    AchievementRow, CriteriaState, Dated, FEATS_OF_STRENGTH,
+    flag, wrong_side, AchievementBook, AchievementDb, AchievementModel, AchievementRow,
+    CriteriaState, Dated, FEATS_OF_STRENGTH,
 };
-use crate::script::{Model, ModelCell};
+use crate::script::{read_live, write_live, LiveState, Model, ModelCell};
 
 type Values = MultiValue;
 
@@ -50,8 +50,14 @@ fn model(lua: &Lua) -> mlua::AppDataRef<'_, ModelCell> {
     lua.app_data_ref::<ModelCell>().expect("model app_data")
 }
 
-fn db_of(model: &Model) -> Option<Arc<AchievementDb>> {
-    model.achievement.db.clone()
+/// The tables at the call, `None` with no view lent or none loaded.
+fn db_of() -> Option<Arc<AchievementDb>> {
+    read_live(|l| l.achievement_db()).flatten()
+}
+
+/// `f` over the client's lists at the call and the view lending them; `None` with no view lent.
+fn with_book<R>(f: impl FnOnce(&AchievementBook, &dyn LiveState) -> R) -> Option<R> {
+    read_live(|l| l.achievement_book().map(|b| f(b, l))).flatten()
 }
 
 /// An id argument as a table key; negative and oversized ids name nothing.
@@ -88,7 +94,7 @@ fn category_list(lua: &Lua, args: &MultiValue, statistics: bool) -> mlua::Result
         Some(Value::Table(t)) => t.clone(),
         _ => lua.create_table()?,
     };
-    let Some(db) = db_of(&model(lua)) else {
+    let Some(db) = db_of() else {
         return Ok(t);
     };
     let mut n = 1;
@@ -108,9 +114,13 @@ fn category_list(lua: &Lua, args: &MultiValue, statistics: bool) -> mlua::Result
 
 /// `GetCategoryNumAchievements` (`0x5b38e0`): the listed count and the completed count. A series
 /// lists its first incomplete step only; a completed step lists unless a later one is complete.
-fn category_num(model: &Model, db: &AchievementDb, category: i64, all: bool) -> (i64, i64) {
-    let book = &model.achievement.book;
-    let faction = AchievementModel::player_faction(model);
+fn category_num(
+    faction: Option<i32>,
+    db: &AchievementDb,
+    book: &AchievementBook,
+    category: i64,
+    all: bool,
+) -> (i64, i64) {
     let (mut total, mut pending, mut completed) = (0i64, 0i64, 0i64);
     let mut previous = 0u32;
     for a in db.rows() {
@@ -212,8 +222,13 @@ fn step(
 
 /// `GetAchievementInfo(category, index)`'s id (`0x5b3fc0`): completed rows also inspected, then
 /// completed only, then inspected only, then the table's rows not earned by either.
-fn info_index(model: &Model, db: &AchievementDb, category: i64, mut index: i64) -> Option<u32> {
-    let book = &model.achievement.book;
+fn info_index(
+    faction: Option<i32>,
+    db: &AchievementDb,
+    book: &AchievementBook,
+    category: i64,
+    mut index: i64,
+) -> Option<u32> {
     let both = book
         .completed
         .iter()
@@ -248,7 +263,6 @@ fn info_index(model: &Model, db: &AchievementDb, category: i64, mut index: i64) 
     if category == i64::from(FEATS_OF_STRENGTH) {
         return None;
     }
-    let faction = AchievementModel::player_faction(model);
     let mut previous = 0u32;
     for a in db.rows() {
         if wrong_side(a, faction) {
@@ -356,11 +370,22 @@ fn walk<'a>(
 fn statistic(lua: &Lua, args: &MultiValue, inspect: bool, usage: &str) -> mlua::Result<Values> {
     let id = number_or_usage(lua, args, 0, usage)?;
     let m = model(lua);
-    let Some(db) = db_of(&m) else { return none() };
+    let Some(db) = db_of() else { return none() };
     let Some(a) = id_of(id).and_then(|id| db.get(id)) else {
         return none();
     };
-    let book = &m.achievement.book;
+    with_book(|book, _| statistic_text(lua, &m, &db, a, book, inspect)).unwrap_or_else(none)
+}
+
+/// [`statistic`]'s walk and text over `book`.
+fn statistic_text(
+    lua: &Lua,
+    m: &Model,
+    db: &AchievementDb,
+    a: &AchievementRow,
+    book: &AchievementBook,
+    inspect: bool,
+) -> mlua::Result<Values> {
     let held = if inspect {
         &book.inspect_criteria
     } else {
@@ -369,7 +394,7 @@ fn statistic(lua: &Lua, args: &MultiValue, inspect: bool, usage: &str) -> mlua::
     let mut value = 0u64;
     let mut criteria_flags = 0u32;
     let mut earliest: Option<&CriteriaState> = None;
-    let w = walk(&db, a, db.source(a.id), held, |node| {
+    let w = walk(db, a, db.source(a.id), held, |node| {
         value = node.counter;
         if let Some(rec) = db.criterion(node.id) {
             criteria_flags = rec.flags;
@@ -380,12 +405,12 @@ fn statistic(lua: &Lua, args: &MultiValue, inspect: bool, usage: &str) -> mlua::
     });
     let ctx = TextCtx {
         lua,
-        colorblind: colorblind(&m),
+        colorblind: colorblind(m),
         now: unix_now(),
     };
     let (s, _) = build_output(
         &ctx,
-        &db,
+        db,
         &Output {
             sum: w.sum,
             highest: w.highest,
@@ -410,7 +435,7 @@ fn criteria_info(lua: &Lua, args: &MultiValue) -> mlua::Result<Values> {
     const USAGE: &str = "Usage: GetAchievementCrieriaInfo(achievementID, criteriaIndex)";
     let first = number_or_usage(lua, args, 0, USAGE)?;
     let m = model(lua);
-    let Some(db) = db_of(&m) else { return none() };
+    let Some(db) = db_of() else { return none() };
     let mut achievement_id: Option<u32> = None;
     let mut show_all = false;
     let criteria_id = match number(lua, args, 1) {
@@ -453,10 +478,51 @@ fn criteria_info(lua: &Lua, args: &MultiValue) -> mlua::Result<Values> {
     else {
         return none();
     };
-    let book = &m.achievement.book;
+    with_book(|book, live| {
+        criteria_values(
+            lua,
+            &m,
+            &db,
+            Picked {
+                a,
+                criterion,
+                show_all,
+            },
+            book,
+            live,
+        )
+    })
+    .unwrap_or_else(none)
+}
+
+/// The row and criterion `GetAchievementCriteriaInfo` picked, and whether its row shows every
+/// criterion.
+struct Picked<'a> {
+    a: &'a AchievementRow,
+    criterion: &'a super::AchievementCriteriaRow,
+    show_all: bool,
+}
+
+/// [`criteria_info`]'s ten values over `book`, the owner's name off the name cache with no
+/// callback (`0x5b58b0`).
+fn criteria_values(
+    lua: &Lua,
+    m: &Model,
+    db: &AchievementDb,
+    picked: Picked<'_>,
+    book: &AchievementBook,
+    live: &dyn LiveState,
+) -> mlua::Result<Values> {
+    let Picked {
+        a,
+        criterion,
+        show_all,
+    } = picked;
+    let achievement_id = a.id;
+    let criteria_id = criterion.id;
     let progress = book.progress(criteria_id);
     let done = book.completed(achievement_id).is_some();
-    let mut w = walk(&db, a, db.source(a.id), &book.criteria, |_| {});
+    let mut w = walk(db, a, db.source(a.id), &book.criteria, |_| {});
     let mut criteria_flags = criterion.flags;
     let mut required = 0;
     if a.flags & flag::PROGRESS_BAR != 0 {
@@ -470,12 +536,12 @@ fn criteria_info(lua: &Lua, args: &MultiValue) -> mlua::Result<Values> {
     }
     let ctx = TextCtx {
         lua,
-        colorblind: colorblind(&m),
+        colorblind: colorblind(m),
         now: unix_now(),
     };
     let (s, shown) = build_output(
         &ctx,
-        &db,
+        db,
         &Output {
             sum: w.sum,
             highest: w.highest,
@@ -510,8 +576,8 @@ fn criteria_info(lua: &Lua, args: &MultiValue) -> mlua::Result<Values> {
             let met =
                 !((!done || a.minimum_criteria != 0) && p.counter < u64::from(criterion.quantity));
             out.extend([Value::Boolean(met), num(shown as f64), num(quantity)]);
-            out.push(match m.achievement.names.get(&p.player) {
-                Some(name) => text(lua, name)?,
+            out.push(match live.cached_player_name(p.player) {
+                Some(name) => text(lua, &name)?,
                 None => Value::Nil,
             });
         }
@@ -542,19 +608,64 @@ fn criteria_bits(db: &AchievementDb, source: &AchievementRow, held: &[CriteriaSt
     bits
 }
 
+/// `GetAchievementInfo`'s values over `book` (`0x5b3fc0`): by id, or by a category's index.
+fn achievement_info(
+    lua: &Lua,
+    faction: Option<i32>,
+    db: &AchievementDb,
+    book: &AchievementBook,
+    first: i64,
+    index: Option<i64>,
+) -> mlua::Result<Values> {
+    let id = match index {
+        Some(index) => match info_index(faction, db, book, first, index) {
+            Some(id) => id,
+            None => return none(),
+        },
+        None => match id_of(first) {
+            Some(id) => id,
+            None => return none(),
+        },
+    };
+    let Some(a) = db.get(id).filter(|a| a.flags & flag::HIDDEN == 0) else {
+        return none();
+    };
+    let done = book.completed(id);
+    if a.flags & flag::EARNED_ONLY != 0 && done.is_none() {
+        return none();
+    }
+    let mut out = vec![num(id), text(lua, &a.title)?, num(a.points)];
+    match done {
+        Some(d) => {
+            out.push(Value::Boolean(true));
+            out.extend(date_values(d));
+        }
+        None => out.extend([Value::Boolean(false), Value::Nil, Value::Nil, Value::Nil]),
+    }
+    out.extend([
+        text(lua, &a.description)?,
+        num(a.flags),
+        text(lua, &a.icon)?,
+        text(lua, &a.reward)?,
+    ]);
+    values(out)
+}
+
 pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
     // CanShowAchievementUI() (`0x5b0ce0`): a list or a criteria update has arrived.
     g.set(
         "CanShowAchievementUI",
-        lua.create_function(|lua, ()| Ok(model(lua).achievement.book.received))?,
+        lua.create_function(|_, ()| Ok(with_book(|b, _| b.received).unwrap_or(false)))?,
     )?;
 
     // HasCompletedAnyAchievement() (`0x5b1ec0`).
     g.set(
         "HasCompletedAnyAchievement",
-        lua.create_function(|lua, ()| Ok(!model(lua).achievement.book.completed.is_empty()))?,
+        lua.create_function(
+            |_, ()| Ok(with_book(|b, _| !b.completed.is_empty()).unwrap_or(false)),
+        )?,
     )?;
 
     // GetCategoryList([table]) (`0x5b1390`).
@@ -574,8 +685,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetCategoryInfo",
         lua.create_function(|lua, args: MultiValue| {
             let id = number_or_usage(lua, &args, 0, "Usage: GetCategoryInfo(categoryID)")?;
-            let m = model(lua);
-            let Some(db) = db_of(&m) else { return none() };
+            let Some(db) = db_of() else { return none() };
             let Some(c) = i32::try_from(id).ok().and_then(|id| db.category(id)) else {
                 return none();
             };
@@ -599,9 +709,13 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 "Usage: GetCategoryNumAchievements(categoryID)",
             )?;
             let all = matches!(args.get(1), Some(Value::Boolean(true)));
-            let m = model(lua);
-            let Some(db) = db_of(&m) else { return none() };
-            let (listed, completed) = category_num(&m, &db, category, all);
+            let Some(db) = db_of() else { return none() };
+            let Some((listed, completed)) = with_book(|book, l| {
+                let faction = AchievementModel::player_faction(l);
+                category_num(faction, &db, book, category, all)
+            }) else {
+                return none();
+            };
             values(vec![num(listed as f64), num(completed as f64)])
         })?,
     )?;
@@ -617,24 +731,27 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 0,
                 "Usage: GetComparisonCategoryNumAchievements(categoryID)",
             )?;
-            let m = model(lua);
-            let Some(db) = db_of(&m) else { return none() };
-            let book = &m.achievement.book;
-            let faction = AchievementModel::inspect_faction(&m);
-            let mut count = 0;
-            for a in db.rows() {
-                let statistic = a.flags & flag::STATISTIC != 0;
-                let all = (category == -1 && !statistic) || (category == -2 && statistic);
-                if (i64::from(a.category) != category && !all)
-                    || a.flags & flag::HIDDEN != 0
-                    || wrong_side(a, faction)
-                {
-                    continue;
+            let Some(db) = db_of() else { return none() };
+            let Some(count) = with_book(|book, l| {
+                let faction = AchievementModel::inspect_faction(l, book.inspect_guid);
+                let mut count = 0;
+                for a in db.rows() {
+                    let statistic = a.flags & flag::STATISTIC != 0;
+                    let all = (category == -1 && !statistic) || (category == -2 && statistic);
+                    if (i64::from(a.category) != category && !all)
+                        || a.flags & flag::HIDDEN != 0
+                        || wrong_side(a, faction)
+                    {
+                        continue;
+                    }
+                    if book.inspected(a.id).is_some() && (!book.superseded(&db, a.id) || all) {
+                        count += 1;
+                    }
                 }
-                if book.inspected(a.id).is_some() && (!book.superseded(&db, a.id) || all) {
-                    count += 1;
-                }
-            }
+                count
+            }) else {
+                return none();
+            };
             values(vec![num(count)])
         })?,
     )?;
@@ -645,40 +762,13 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetAchievementInfo",
         lua.create_function(|lua, args: MultiValue| {
             let first = number_or_usage(lua, &args, 0, "Usage: GetAchievementInfo(achievementID)")?;
-            let m = model(lua);
-            let Some(db) = db_of(&m) else { return none() };
-            let id = match number(lua, &args, 1) {
-                Some(index) => match info_index(&m, &db, first, index) {
-                    Some(id) => id,
-                    None => return none(),
-                },
-                None => match id_of(first) {
-                    Some(id) => id,
-                    None => return none(),
-                },
-            };
-            let Some(a) = db.get(id).filter(|a| a.flags & flag::HIDDEN == 0) else {
-                return none();
-            };
-            let done = m.achievement.book.completed(id);
-            if a.flags & flag::EARNED_ONLY != 0 && done.is_none() {
-                return none();
-            }
-            let mut out = vec![num(id), text(lua, &a.title)?, num(a.points)];
-            match done {
-                Some(d) => {
-                    out.push(Value::Boolean(true));
-                    out.extend(date_values(d));
-                }
-                None => out.extend([Value::Boolean(false), Value::Nil, Value::Nil, Value::Nil]),
-            }
-            out.extend([
-                text(lua, &a.description)?,
-                num(a.flags),
-                text(lua, &a.icon)?,
-                text(lua, &a.reward)?,
-            ]);
-            values(out)
+            let Some(db) = db_of() else { return none() };
+            let index = number(lua, &args, 1);
+            with_book(|book, l| {
+                let faction = AchievementModel::player_faction(l);
+                achievement_info(lua, faction, &db, book, first, index)
+            })
+            .unwrap_or_else(none)
         })?,
     )?;
 
@@ -693,8 +783,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 0,
                 "Usage: GetAchievementInfoFromCriteria(criteriaID)",
             )?;
-            let m = model(lua);
-            let Some(db) = db_of(&m) else { return none() };
+            let Some(db) = db_of() else { return none() };
             let Some(c) = id_of(id).and_then(|id| db.criterion(id)) else {
                 return none();
             };
@@ -723,8 +812,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 0,
                 "Usage: GetAchievementNumRewards(achievementID)",
             )?;
-            let m = model(lua);
-            let shown = db_of(&m)
+            let shown = db_of()
                 .and_then(|db| id_of(id).and_then(|id| db.get(id).map(|a| a.flags)))
                 .is_some_and(|f| f & flag::HIDDEN == 0);
             values(vec![if shown { num(1) } else { Value::Nil }])
@@ -738,8 +826,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             const USAGE: &str = "Usage: GetAchievementNumRewards(achievementID, rewardIndex)";
             let id = number_or_usage(lua, &args, 0, USAGE)?;
             number_or_usage(lua, &args, 1, USAGE)?;
-            let m = model(lua);
-            let points = db_of(&m).and_then(|db| {
+            let points = db_of().and_then(|db| {
                 id_of(id)
                     .and_then(|id| db.get(id))
                     .filter(|a| a.flags & flag::HIDDEN == 0)
@@ -760,8 +847,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 0,
                 "Usage: GetAchievementNumCriteria(achievementID)",
             )?;
-            let m = model(lua);
-            let Some(db) = db_of(&m) else { return none() };
+            let Some(db) = db_of() else { return none() };
             let Some(a) = id_of(id).and_then(|id| db.get(id)) else {
                 return none();
             };
@@ -795,8 +881,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 0,
                 "Usage: GetPreviousAchievement(achievementID)",
             )?;
-            let m = model(lua);
-            let prev = db_of(&m)
+            let prev = db_of()
                 .and_then(|db| id_of(id).and_then(|id| db.get(id)).map(|a| a.supercedes))
                 .filter(|&p| p != 0);
             match prev {
@@ -812,12 +897,11 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetNextAchievement",
         lua.create_function(|lua, args: MultiValue| {
             let id = number_or_usage(lua, &args, 0, "Usage: GetNextAchievement(achievementID)")?;
-            let m = model(lua);
-            let Some(db) = db_of(&m) else { return none() };
+            let Some(db) = db_of() else { return none() };
             let Some(next) = db.rows().iter().find(|a| i64::from(a.supercedes) == id) else {
                 return none();
             };
-            if m.achievement.book.completed(next.id).is_some() {
+            if with_book(|b, _| b.completed(next.id).is_some()).unwrap_or(false) {
                 values(vec![num(next.id), Value::Boolean(true)])
             } else {
                 values(vec![num(next.id)])
@@ -835,8 +919,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 0,
                 "Usage: GetAchievementCategory(achievementID)",
             )?;
-            let m = model(lua);
-            let category = db_of(&m).and_then(|db| {
+            let category = db_of().and_then(|db| {
                 id_of(id)
                     .and_then(|id| db.get(id))
                     .filter(|a| a.category != 0 && a.flags & flag::HIDDEN == 0)
@@ -855,27 +938,29 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetAchievementLink",
         lua.create_function(|lua, args: MultiValue| {
             let id = number_or_usage(lua, &args, 0, "Usage: GetAchievementLink(achievementID)")?;
-            let m = model(lua);
-            let Some(db) = db_of(&m) else { return none() };
+            let Some(db) = db_of() else { return none() };
             let Some(a) = id_of(id).and_then(|id| db.get(id)) else {
                 return none();
             };
-            let book = &m.achievement.book;
-            let source = db.source(a.id);
-            let mut bits = source.map_or([0; 4], |s| criteria_bits(&db, s, &book.criteria));
-            let done = book.completed(a.id);
-            if done.is_some() && source.is_some_and(|s| s.minimum_criteria == 0) {
-                bits = [u32::MAX; 4];
-            }
-            let date = done.map_or(super::WowDate(u32::MAX), |d| d.date);
-            let link = super::achievement_hyperlink(
-                &db,
-                a.id,
-                m.achievement.player,
-                done.is_some(),
-                date,
-                bits,
-            );
+            let Some(link) = with_book(|book, live| {
+                let source = db.source(a.id);
+                let mut bits = source.map_or([0; 4], |s| criteria_bits(&db, s, &book.criteria));
+                let done = book.completed(a.id);
+                if done.is_some() && source.is_some_and(|s| s.minimum_criteria == 0) {
+                    bits = [u32::MAX; 4];
+                }
+                let date = done.map_or(super::WowDate(u32::MAX), |d| d.date);
+                super::achievement_hyperlink(
+                    &db,
+                    a.id,
+                    live.active_player().unwrap_or(0),
+                    done.is_some(),
+                    date,
+                    bits,
+                )
+            }) else {
+                return none();
+            };
             values(vec![text(lua, &link)?])
         })?,
     )?;
@@ -884,13 +969,14 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     // with no achievement table loaded, a book of none.
     g.set(
         "GetNumCompletedAchievements",
-        lua.create_function(|lua, ()| {
-            let m = model(lua);
-            let Some(db) = db_of(&m) else {
+        lua.create_function(|_, ()| {
+            let Some(db) = db_of() else {
                 return values(vec![num(0.0), num(0.0)]);
             };
-            let faction = AchievementModel::player_faction(&m);
-            let (total, completed) = num_completed(&db, &m.achievement.book.completed, faction);
+            let (total, completed) = with_book(|b, l| {
+                num_completed(&db, &b.completed, AchievementModel::player_faction(l))
+            })
+            .unwrap_or((0, 0));
             values(vec![num(total as f64), num(completed as f64)])
         })?,
     )?;
@@ -898,14 +984,15 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     // GetNumComparisonCompletedAchievements() (`0x5b3dc0`), the same two numbers.
     g.set(
         "GetNumComparisonCompletedAchievements",
-        lua.create_function(|lua, ()| {
-            let m = model(lua);
-            let Some(db) = db_of(&m) else {
+        lua.create_function(|_, ()| {
+            let Some(db) = db_of() else {
                 return values(vec![num(0.0), num(0.0)]);
             };
-            let faction = AchievementModel::inspect_faction(&m);
-            let (total, completed) =
-                num_completed(&db, &m.achievement.book.inspect_completed, faction);
+            let (total, completed) = with_book(|b, l| {
+                let faction = AchievementModel::inspect_faction(l, b.inspect_guid);
+                num_completed(&db, &b.inspect_completed, faction)
+            })
+            .unwrap_or((0, 0));
             values(vec![num(total as f64), num(completed as f64)])
         })?,
     )?;
@@ -918,22 +1005,21 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     ] {
         g.set(
             name,
-            lua.create_function(move |lua, ()| {
-                let m = model(lua);
-                let Some(db) = db_of(&m) else { return none() };
-                let book = &m.achievement.book;
-                let list = if inspect {
-                    &book.inspect_completed
-                } else {
-                    &book.completed
-                };
-                let ids = list
-                    .iter()
-                    .filter(|d| db.is_real(d.id))
-                    .take(5)
-                    .map(|d| num(d.id))
-                    .collect();
-                values(ids)
+            lua.create_function(move |_, ()| {
+                let Some(db) = db_of() else { return none() };
+                let ids = with_book(|book, _| {
+                    let list = if inspect {
+                        &book.inspect_completed
+                    } else {
+                        &book.completed
+                    };
+                    list.iter()
+                        .filter(|d| db.is_real(d.id))
+                        .take(5)
+                        .map(|d| num(d.id))
+                        .collect()
+                });
+                values(ids.unwrap_or_default())
             })?,
         )?;
     }
@@ -946,15 +1032,16 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     ] {
         g.set(
             name,
-            lua.create_function(move |lua, ()| {
-                let m = model(lua);
-                let book = &m.achievement.book;
-                let list = if inspect {
-                    &book.inspect_recent
-                } else {
-                    &book.recent
-                };
-                values(list.iter().take(5).map(|c| num(c.id)).collect())
+            lua.create_function(move |_, ()| {
+                let ids = with_book(|book, _| {
+                    let list = if inspect {
+                        &book.inspect_recent
+                    } else {
+                        &book.recent
+                    };
+                    list.iter().take(5).map(|c| num(c.id)).collect()
+                });
+                values(ids.unwrap_or_default())
             })?,
         )?;
     }
@@ -966,22 +1053,22 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     ] {
         g.set(
             name,
-            lua.create_function(move |lua, ()| {
-                let m = model(lua);
-                let Some(db) = db_of(&m) else {
+            lua.create_function(move |_, ()| {
+                let Some(db) = db_of() else {
                     return values(vec![num(0)]);
                 };
-                let book = &m.achievement.book;
-                let list = if inspect {
-                    &book.inspect_completed
-                } else {
-                    &book.completed
-                };
-                let points: u32 = list
-                    .iter()
-                    .filter_map(|d| db.get(d.id))
-                    .map(|a| a.points)
-                    .sum();
+                let points: u32 = with_book(|book, _| {
+                    let list = if inspect {
+                        &book.inspect_completed
+                    } else {
+                        &book.completed
+                    };
+                    list.iter()
+                        .filter_map(|d| db.get(d.id))
+                        .map(|a| a.points)
+                        .sum()
+                })
+                .unwrap_or(0);
                 values(vec![num(points)])
             })?,
         )?;
@@ -1016,12 +1103,18 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 v,
                 "Usage: AddAchievementComparisonUnit(unitToken)",
             )?;
-            let mut m = crate::script::model_mut_of(lua);
-            let Some(guid) = m.token_guid(&token).filter(|&g| g != 0) else {
+            // The token resolved at the call through the lent view (`0x5b1ae8` -> `0x60abf0`).
+            let guid = model(lua).token_guid(&token);
+            let Some(guid) = guid.filter(|&g| g != 0) else {
                 return none();
             };
-            m.achievement.book.inspect_guid = guid;
-            m.achievement.inspect_queries.push(guid);
+            // The compared guid, then `CMSG_QUERY_INSPECT_ACHIEVEMENTS` in the call (`0x5b1ab0`).
+            write_live(|l| {
+                if let Some(book) = l.achievement_book_mut() {
+                    book.inspect_guid = guid;
+                }
+                l.query_inspect_achievements(guid);
+            });
             values(vec![num(1)])
         })?,
     )?;
@@ -1029,11 +1122,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     // ClearAchievementComparisonUnit() (`0x5b4760`): the inspected lists empty.
     g.set(
         "ClearAchievementComparisonUnit",
-        lua.create_function(|lua, ()| {
-            crate::script::model_mut_of(lua)
-                .achievement
-                .book
-                .release_inspect();
+        lua.create_function(|_, ()| {
+            write_live(|l| l.achievement_book_mut().map(|b| b.release_inspect()));
             Ok(())
         })?,
     )?;
@@ -1049,44 +1139,40 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 0,
                 "Usage: GetAchievementComparisonInfo(achievementID)",
             )?;
-            let m = model(lua);
-            let book = &m.achievement.book;
-            if book.inspect_guid == 0 {
-                return none();
+            let db = db_of();
+            let out = with_book(|book, _| {
+                if book.inspect_guid == 0 {
+                    return None;
+                }
+                let db = db.as_ref()?;
+                let d = id_of(id).and_then(|id| book.inspected(id))?;
+                let a = id_of(id).and_then(|id| db.get(id))?;
+                let mut out = vec![Value::Boolean(true)];
+                out.extend(date_values(d));
+                out.push(num(a.flags));
+                Some(out)
+            })
+            .flatten();
+            match out {
+                Some(out) => values(out),
+                None => none(),
             }
-            let Some(db) = db_of(&m) else { return none() };
-            let (Some(d), Some(a)) = (
-                id_of(id).and_then(|id| book.inspected(id)),
-                id_of(id).and_then(|id| db.get(id)),
-            ) else {
-                return none();
-            };
-            let mut out = vec![Value::Boolean(true)];
-            out.extend(date_values(d));
-            out.push(num(a.flags));
-            values(out)
         })?,
     )?;
 
     // GetTrackedAchievements() (`0x5b2040`), add order.
     g.set(
         "GetTrackedAchievements",
-        lua.create_function(|lua, ()| {
-            values(
-                model(lua)
-                    .achievement
-                    .tracked
-                    .iter()
-                    .map(|&id| num(id))
-                    .collect(),
-            )
+        lua.create_function(|_, ()| {
+            let ids = with_book(|b, _| b.tracked.iter().map(|&id| num(id)).collect());
+            values(ids.unwrap_or_default())
         })?,
     )?;
 
     // GetNumTrackedAchievements() (`0x5b2120`).
     g.set(
         "GetNumTrackedAchievements",
-        lua.create_function(|lua, ()| Ok(model(lua).achievement.tracked.len() as f64))?,
+        lua.create_function(|_, ()| Ok(with_book(|b, _| b.tracked.len()).unwrap_or(0) as f64))?,
     )?;
 
     // IsTrackedAchievement(achievementID) (`0x5b2090`).
@@ -1095,11 +1181,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, args: MultiValue| {
             let id = number_or_zero(lua, &args, 0);
             Ok(id != 0
-                && model(lua)
-                    .achievement
-                    .tracked
-                    .iter()
-                    .any(|&t| i64::from(t) == id))
+                && with_book(|b, _| b.tracked.iter().any(|&t| i64::from(t) == id)).unwrap_or(false))
         })?,
     )?;
 
@@ -1109,22 +1191,17 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         "AddTrackedAchievement",
         lua.create_function(|lua, args: MultiValue| {
             let id = number_or_zero(lua, &args, 0);
-            let added = {
-                let mut m = crate::script::model_mut_of(lua);
-                let known =
-                    db_of(&m).is_some_and(|db| id_of(id).is_some_and(|id| db.get(id).is_some()));
-                let Some(id) = id_of(id).filter(|&id| id != 0 && known) else {
-                    return Err(mlua::Error::RuntimeError(
-                        "Usage: AddTrackedAchievement(achievementID)".into(),
-                    ));
-                };
-                let added = add_tracked(&mut m.achievement.tracked, id);
-                if added {
-                    save_tracked_model(&mut m);
-                }
-                added.then_some(id)
+            let known = db_of().is_some_and(|db| id_of(id).is_some_and(|id| db.get(id).is_some()));
+            let Some(id) = id_of(id).filter(|&id| id != 0 && known) else {
+                return Err(mlua::Error::RuntimeError(
+                    "Usage: AddTrackedAchievement(achievementID)".into(),
+                ));
             };
-            if let Some(id) = added {
+            let added = write_live(|l| l.achievement_book_mut().map(|b| b.add_tracked(id)))
+                .flatten()
+                .unwrap_or(false);
+            if added {
+                // Fired inside the call, held (`0x5b241b`) or added (`0x5b24b6`).
                 crate::script::tick::fire_event_into(
                     lua,
                     "TRACKED_ACHIEVEMENT_UPDATE",
@@ -1145,20 +1222,14 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                     "Usage: RemoveTrackedAchievement(achievementID)".into(),
                 ));
             }
-            let removed = {
-                let mut m = crate::script::model_mut_of(lua);
-                let at = m
-                    .achievement
-                    .tracked
-                    .iter()
-                    .position(|&t| i64::from(t) == id);
-                if let Some(at) = at {
-                    m.achievement.tracked.remove(at);
-                    save_tracked_model(&mut m);
-                }
-                at.is_some()
-            };
+            // The removal (`0x5b24d0`) announces only an id it held.
+            let removed = id_of(id).is_some_and(|id| {
+                write_live(|l| l.achievement_book_mut().map(|b| b.remove_tracked(id)))
+                    .flatten()
+                    .unwrap_or(false)
+            });
             if removed {
+                // Fired inside the call (`0x5b2513`).
                 crate::script::tick::fire_event_into(
                     lua,
                     "TRACKED_ACHIEVEMENT_UPDATE",
