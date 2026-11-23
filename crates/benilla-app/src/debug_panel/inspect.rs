@@ -122,6 +122,7 @@ pub(super) struct InspectStores<'w, 's> {
     /// The GO template cache: a TEXT object's page and the tooltip ladder's highlight column
     /// and name.
     go_templates: Res<'w, crate::go_templates::GameObjectTemplates>,
+    destructibles: Option<Res<'w, crate::entities::destructible::Destructibles>>,
     /// The published GameObject mouseover the tooltip reads; the card's own dev pick bypasses the
     /// publish, so this shows when the two differ.
     hovered_go: Res<'w, crate::target::HoveredObject>,
@@ -208,6 +209,7 @@ pub(super) fn inspect_ui(
         (&*stores.reputations, &stores.plates.0, &*stores.plate_mode);
     let party = crate::target::party_of(stores.group.as_deref());
     let go_templates = &*stores.go_templates;
+    let destructibles = stores.destructibles.as_deref();
     let hovered_go = &*stores.hovered_go;
     // The picked submesh's shading payload, off the hit entity itself.
     let tag_line = mouseover
@@ -364,7 +366,7 @@ pub(super) fn inspect_ui(
                 s.0.gameobject_type_id(),
                 flags,
                 s.0.gameobject_dynamic_flags(),
-                tmpl.map(|t| t.highlight_column),
+                tmpl.map(|t| t.mouseover_column(destructibles)),
                 reaction,
                 overrides,
             );

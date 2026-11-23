@@ -692,6 +692,12 @@ impl ObjectFields {
         self.get_u32(FIELD_GAMEOBJECT_BYTES_1)
             .map_or(0, |b| (b >> 16) as u8 as i8)
     }
+    /// `GAMEOBJECT_BYTES_1` byte 3, the anim progress: a destructible building's health out of 255
+    /// (`0x61bf80`); absent is 0.
+    pub fn gameobject_anim_progress(&self) -> u8 {
+        self.get_u32(FIELD_GAMEOBJECT_BYTES_1)
+            .map_or(0, |b| (b >> 24) as u8)
+    }
     /// `GAMEOBJECT_FLAGS`: `0x1` in use, `0x4` needs the quest activate bit, `0x10` no interact.
     pub fn gameobject_flags(&self) -> u32 {
         self.get_u32(FIELD_GAMEOBJECT_FLAGS).unwrap_or(0)

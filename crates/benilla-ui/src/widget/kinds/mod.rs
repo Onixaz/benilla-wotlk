@@ -289,6 +289,10 @@ pub struct TooltipState {
     /// The guid of the unit this tooltip shows (`+0x368`/`+0x36c`), whose health watcher drives the
     /// bar; a `set_unit` push of that unit, under any token, re-drives it.
     pub unit_guid: Option<u64>,
+    /// The guid of the destructible building whose health this tooltip's bar shows, set by the
+    /// GameObject plate (`0x626720`); its `GAMEOBJECT_BYTES_1` byte-3 watcher (`0x61bf80`)
+    /// re-drives the bar.
+    pub health_object: Option<u64>,
     /// Shows world-hover content, which fades when the hover is lost; a window hover never fades.
     pub world_owned: bool,
     /// Armed for a compare render: the next `SetInventoryItem` prepends "Currently Equipped"

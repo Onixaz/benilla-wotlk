@@ -524,7 +524,8 @@ pub(super) fn spawn_loaded_placements(
                     if !forms.require(key, WANT_STATIC, prio) {
                         continue;
                     }
-                    let has_portals = !m.portal_refs.is_empty() && !m.portal_infos.is_empty();
+                    // Portals, or a group only the flood leaves dark from outside.
+                    let has_portals = crate::wmo_portal::floods(m);
                     // No authored bounds, so a WMO never size-fades; the far clip bounds it.
                     let fade = emitter_fade(
                         p.transform,
@@ -642,8 +643,9 @@ pub(super) fn spawn_loaded_placements(
                             .insert(crate::exterior_cull::ExteriorScene);
                     }
                     // Tie each group's submeshes (`by_batch` is index-parallel with them) to the
-                    // instance. A portal-less building keeps every group visible but still gets an
-                    // instance when it has a WMOAreaTable identity, for the interior down-ray.
+                    // instance. A building the flood cannot narrow keeps every group visible but still
+                    // gets an instance when it has a WMOAreaTable identity, for the interior
+                    // down-ray.
                     if let Some(instance) = instance {
                         if has_portals {
                             // One shared key per group, not per submesh (a city has ~100k).

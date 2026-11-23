@@ -748,7 +748,7 @@ mod tests {
             let mut templates = crate::go_templates::GameObjectTemplates::default();
             let mut data = [0; 24];
             data[0] = LOCK as i32;
-            templates.insert(7, 3, "Chest".into(), &data);
+            templates.insert(7, 3, 0, "Chest".into(), &data);
             world.insert_resource(templates);
             world.spawn((SelfPlayer, Transform::default(), fx::caster(1.5)));
             let chest = world
