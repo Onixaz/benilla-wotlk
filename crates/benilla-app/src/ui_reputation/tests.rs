@@ -4,6 +4,7 @@ use benilla_protocol::messages::ObjectType;
 use super::rep_view::RepView;
 use super::*;
 use crate::net::{GuidIndex, SelfGuid};
+use crate::ui_script::live::UniqueSignals;
 
 /// The pane's bar reads [`RANK_BOUNDS`], the nameplate the rank function: they must agree.
 #[test]
@@ -121,6 +122,7 @@ fn standing_world() -> Option<(World, FactionCatalog)> {
     world.init_resource::<crate::ui_chat::ChatLog>();
     world.init_resource::<crate::ui_quest::QuestStatuses>();
     world.init_resource::<Messages<crate::ui_unit::CombatTextEvent>>();
+    world.insert_non_send_resource(UniqueSignals::default());
     Some((world, cat))
 }
 
@@ -147,6 +149,14 @@ fn standing(world: &mut World, rows: Vec<(u32, i32)>) {
             },
         )
         .unwrap();
+}
+
+/// Whether the quest log's update waits in the frame's unique signals, emptying them.
+fn quests_owed(world: &mut World) -> bool {
+    let mut signals = world.non_send_resource_mut::<UniqueSignals>();
+    let owed = signals.names().contains(&"QUEST_LOG_UPDATE");
+    signals.clear();
+    owed
 }
 
 fn lines(world: &World) -> usize {
@@ -187,6 +197,10 @@ fn the_rows_pick_their_lines_and_the_rank_moves_the_war_flag() {
         3,
         "change + rank for Stormwind, rank for Darnassus"
     );
+    assert!(
+        quests_owed(&mut world),
+        "a rank move owes the quest log's update"
+    );
     let store = world.resource::<Reputations>();
     assert_eq!(store.0[stormwind as usize], (flag::VISIBLE, 5100));
     assert_ne!(
@@ -203,7 +217,14 @@ fn the_rows_pick_their_lines_and_the_rank_moves_the_war_flag() {
         "a rise clears war"
     );
 
-    // A hidden faction prints nothing, first row or not, and is not revealed.
+    quests_owed(&mut world);
+
+    // A change inside one rank owes no update (`0x5d2228`).
+    standing(&mut world, vec![(stormwind, 5200)]);
+    assert!(!quests_owed(&mut world), "an in-rank change owes nothing");
+
+    // A hidden faction prints nothing, first row or not, and is not revealed, but its rank move
+    // still owes the update (`0x5d222a` -> `0x5d2256`).
     world.resource_mut::<Reputations>().0[stormwind as usize].0 = flag::HIDDEN;
     let before = lines(&world);
     standing(&mut world, vec![(stormwind, 40000)]);
@@ -212,6 +233,41 @@ fn the_rows_pick_their_lines_and_the_rank_moves_the_war_flag() {
         world.resource::<Reputations>().0[stormwind as usize].0 & flag::VISIBLE,
         0
     );
+    assert!(
+        quests_owed(&mut world),
+        "a hidden rank move owes the update"
+    );
+}
+
+/// The read verbs write nothing (`0x5cff20`, `0x5d0da0`, `0x5d1240`), so a read leaves the store
+/// unchanged for the reaction readers; a written flag marks it (`0x5d0a10`).
+#[test]
+fn a_read_leaves_the_store_unchanged_and_a_flag_write_marks_it() {
+    let Some((mut world, cat)) = standing_world() else {
+        return;
+    };
+    let stormwind = slot(&cat, "Stormwind");
+    world.resource_mut::<Reputations>().0[stormwind as usize].0 =
+        benilla_formats::faction_flags::VISIBLE;
+    enter_world(&mut world);
+    world.clear_trackers();
+    let changed = |world: &World| world.is_resource_changed::<Reputations>();
+    let read = with_table(&mut world, |list, t| {
+        (
+            list.shown(),
+            t.watched(),
+            t.slot_faction(stormwind).is_some(),
+        )
+    });
+    assert!(
+        read.is_some_and(|(n, w, row)| n > 0 && w.is_some() && row),
+        "{read:?}"
+    );
+    assert!(!changed(&world), "a read marks nothing");
+    with_table(&mut world, |_, t| {
+        t.write_flag(stormwind, FactionFlag::AtWar, true)
+    });
+    assert!(changed(&world), "a flag write marks the store");
 }
 
 /// A row that reveals its faction adds it to the list and announces its rank (`0x5d21d9` ->

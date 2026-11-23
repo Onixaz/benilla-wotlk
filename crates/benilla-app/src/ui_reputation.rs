@@ -115,6 +115,8 @@ pub(crate) struct AppFactions<'a> {
     /// The active player's descriptor, `None` before our create.
     pub(crate) player: Option<&'a ObjectFields>,
     pub(crate) net: Option<&'a NetCommands>,
+    /// A flag was written; the store reads as changed, as the at-war write re-reads reactions (`0x5d0b68`).
+    pub(crate) wrote: bool,
 }
 
 impl AppFactions<'_> {
@@ -204,6 +206,7 @@ impl FactionTable for AppFactions<'_> {
             FactionFlag::AtWar => f::AT_WAR,
             FactionFlag::Inactive => f::INACTIVE,
         };
+        self.wrote = true;
         let flags = &mut self.store.0[i].0;
         if set {
             *flags |= bit;
@@ -258,13 +261,20 @@ fn with_table<R>(
     Some(
         world.resource_scope(|world, mut list: Mut<ReputationList>| {
             world.resource_scope(|world, mut store: Mut<Reputations>| {
+                // The read verbs write nothing (`0x5cff20`, `0x5d0da0`, `0x5d1240`): only a written
+                // flag marks the store changed for the reaction readers.
                 let mut table = AppFactions {
-                    store: &mut store,
+                    store: store.bypass_change_detection(),
                     catalog: world.get_resource::<Factions>().map(|f| f.catalog()),
                     player: active_player(world),
                     net: world.get_resource::<NetCommands>(),
+                    wrote: false,
                 };
-                f(&mut list.0, &mut table)
+                let out = f(&mut list.0, &mut table);
+                if table.wrote {
+                    store.set_changed();
+                }
+                out
             })
         }),
     )
