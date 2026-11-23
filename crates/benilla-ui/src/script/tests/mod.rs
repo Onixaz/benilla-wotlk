@@ -132,20 +132,20 @@ fn get_bind_location_answers_the_pushed_name_and_never_nil() {
     );
 }
 
-/// `RequestTimePlayed()` queues the ask; `TIME_PLAYED_MSG` carries the answer.
+/// `RequestTimePlayed()` sends inside the call (`0x5158c1`); `TIME_PLAYED_MSG` carries the answer.
 #[test]
-fn request_time_played_queues_an_ask_and_the_answer_arrives_as_an_event() {
+fn request_time_played_sends_in_the_call_and_the_answer_arrives_as_an_event() {
     let mut s = crate::script::UiScript::new().unwrap();
-
-    assert_eq!(s.arity("RequestTimePlayed()").unwrap(), 0);
-    // A count, not a latch: the packet is empty, so two asks in a frame are two sends.
-    s.run("RequestTimePlayed() RequestTimePlayed()").unwrap();
+    let mut view = crate::script::live::TestView::default();
+    s.with_live(&mut view, |s| {
+        assert_eq!(s.arity("RequestTimePlayed()").unwrap(), 0);
+        // A count, not a latch: the packet is empty, so two asks in a call are two sends.
+        s.run("RequestTimePlayed() RequestTimePlayed()").unwrap();
+    });
     assert_eq!(
-        s.take_played_time_asks(),
-        3,
-        "the eval above plus two more — each ask is its own CMSG_PLAYED_TIME"
+        view.played_asks, 3,
+        "the eval above plus two more — each ask is its own CMSG_PLAYED_TIME, sent in its call"
     );
-    assert_eq!(s.take_played_time_asks(), 0, "the drain empties the queue");
 
     s.run(
         r#"

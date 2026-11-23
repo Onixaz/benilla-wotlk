@@ -53,6 +53,7 @@ impl Feed {
         let mut world = World::new();
         world.insert_non_send_resource(s);
         world.insert_resource(super::ChatLog::default());
+        world.init_resource::<crate::ui_script::live::UiEvents>();
         world.insert_resource(super::frames::ChatWindows::default());
         world.insert_resource(channels);
         world.insert_resource(crate::names::NameCache::default());
@@ -79,7 +80,7 @@ impl Feed {
 
     fn push(&mut self, notice: u8, channel: &str, tail: ChannelNoticeTail) {
         self.world
-            .resource_mut::<super::ChatLog>()
+            .resource_mut::<crate::ui_script::live::UiEvents>()
             .push_channel_notice(notice, channel.into(), &tail);
     }
 
@@ -398,7 +399,7 @@ fn the_wotlk_notice_arms_fire_their_requests_lines_and_suspension() {
 /// A join's trailing text queues a second notice line; the voice flag's set queues nothing.
 #[test]
 fn the_join_text_queues_a_second_line_and_the_voice_flag_nothing() {
-    let mut log = super::ChatLog::default();
+    let mut log = crate::ui_script::live::UiEvents::default();
     log.push_channel_notice(
         n::YOU_JOINED,
         "Mychan".into(),
@@ -407,11 +408,11 @@ fn the_join_text_queues_a_second_line_and_the_voice_flag_nothing() {
             text: Some("Welcome".into()),
         },
     );
-    assert_eq!(log.pending_len(), 2);
+    assert_eq!(log.take_chat().len(), 2);
     log.push_channel_notice(
         n::VOICE_ENABLED,
         "Mychan".into(),
         &ChannelNoticeTail::Actor(ANN),
     );
-    assert_eq!(log.pending_len(), 2, "the voice flag prints nothing");
+    assert!(log.take_chat().is_empty(), "the voice flag prints nothing");
 }

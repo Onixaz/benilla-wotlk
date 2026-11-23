@@ -156,6 +156,13 @@ pub trait LiveState {
         false
     }
 
+    /// Open the chat log (`chat`) or the combat log inside `LoggingChat`/`LoggingCombat`'s call when
+    /// its flag goes on and it is not open yet (`0x4fbcb1`): whether it is open after, `None` with
+    /// no host.
+    fn open_log(&mut self, _chat: bool) -> Option<bool> {
+        None
+    }
+
     /// Add `text` to the chat log on the catalog row's `chat_type` inside the call (`0x509dd0`): the
     /// line recorded and its event's name and arguments handed back to fire; `None` with no chat log.
     fn add_chat_line(
@@ -1855,6 +1862,12 @@ pub(crate) struct TestView {
     pub trainer_zeroes: u32,
     /// The chat lines the display added inside its calls, with their wire chat type.
     pub chat_lines: Vec<(u8, String)>,
+    /// The logs the logging verbs opened, `(chat, combat)`, and whether an open fails.
+    pub logs_opened: (bool, bool),
+    /// The played clock the refund and trade verbs read, and the `CMSG_PLAYED_TIME`s sent.
+    pub played: Option<i64>,
+    pub played_asks: u32,
+    pub log_open_fails: bool,
     /// The client's faction list and the faction table it reads.
     pub faction_list: super::FactionList,
     pub factions: super::StaticFactions,
@@ -2066,6 +2079,26 @@ impl LiveState for TestView {
     fn taxi_act(&mut self, act: super::TaxiAct) -> Option<super::TaxiOutcome> {
         self.taxi_acts.push(act);
         None
+    }
+
+    fn played_now(&self) -> Option<i64> {
+        self.played
+    }
+
+    fn send_played_time(&mut self) {
+        self.played_asks += 1;
+    }
+
+    fn open_log(&mut self, chat: bool) -> Option<bool> {
+        if self.log_open_fails {
+            return Some(false);
+        }
+        if chat {
+            self.logs_opened.0 = true;
+        } else {
+            self.logs_opened.1 = true;
+        }
+        Some(true)
     }
 
     /// A system line fires `CHAT_MSG_SYSTEM`, a skill line `CHAT_MSG_SKILL`, with the text alone.

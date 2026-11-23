@@ -91,10 +91,9 @@ fn parent_zone(areas: &AreaTableRes, id: u32) -> Option<u32> {
 }
 
 /// One broadcast's lines, resolved as its handler runs: the channels joined and the player's zone
-/// at the packet, the `ZONE_UNDER_ATTACK` template off the VM.
+/// at the packet, `template` the VM's `ZONE_UNDER_ATTACK` string.
 pub(super) fn broadcast_lines(
-    In(item): In<Broadcast>,
-    script: Option<NonSend<benilla_ui::script::UiScript>>,
+    In((item, template)): In<(Broadcast, Option<String>)>,
     channels: Res<ChannelState>,
     areas: Option<Res<AreaTableRes>>,
     messages: Option<Res<ServerMessages>>,
@@ -107,9 +106,6 @@ pub(super) fn broadcast_lines(
     match item {
         Broadcast::ZoneUnderAttack { area_id } => {
             // No catalog, template or row: with no name there is no line.
-            let template = script
-                .as_deref()
-                .and_then(|s| super::combat::global_string(s, "ZONE_UNDER_ATTACK"));
             let Some((areas, fmt)) = areas.as_ref().zip(template) else {
                 return Vec::new();
             };

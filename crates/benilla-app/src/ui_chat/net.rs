@@ -44,7 +44,9 @@ fn on_chat(
     mut server_said: MessageWriter<ServerSaidMessage>,
 ) {
     if let SessionEvent::Chat(m) = ev {
-        chat(m, &mut *chat_log, &social, &commands, &mut server_said);
+        if let Some(line) = chat(m, &social, &commands, &mut server_said) {
+            chat_log.push_line(line);
+        }
     }
 }
 
@@ -172,7 +174,10 @@ fn on_broadcast(In(ev): In<SessionEvent>, world: &mut World) {
     };
     // A defense broadcast outside the defense channels prints nothing, so the log is its only trace.
     info!("net: world broadcast — {b:?}");
-    match world.run_system_cached_with(super::broadcast::broadcast_lines, b) {
+    let template = world
+        .get_non_send_resource::<benilla_ui::script::UiScript>()
+        .and_then(|s| super::combat::global_string(s, "ZONE_UNDER_ATTACK"));
+    match world.run_system_cached_with(super::broadcast::broadcast_lines, (b, template)) {
         Ok(lines) => {
             for line in lines {
                 super::feed::add(world, line.into());
@@ -294,15 +299,15 @@ fn on_session_end(In(_): In<SessionEvent>, mut chat_log: ResMut<ChatLog>) {
     chat_log.clear_session();
 }
 
-/// A spoken line (`SMSG_MESSAGECHAT`). System lines (`0x0A`), the server's answers to GM
-/// commands, log at `info!` and go out as [`ServerSaidMessage`]; other chat logs at `debug!`.
+/// A spoken line (`SMSG_MESSAGECHAT`): the line the handler adds, `None` for one it drops. System
+/// lines (`0x0A`), the server's answers to GM commands, log at `info!` and go out as
+/// [`ServerSaidMessage`]; other chat logs at `debug!`.
 fn chat(
     m: ChatMessage,
-    chat_log: &mut dyn super::ChatSink,
     social: &SocialState,
     net_commands: &NetCommands,
     server_said: &mut MessageWriter<ServerSaidMessage>,
-) {
+) -> Option<super::ChatLine> {
     // Addon traffic: 1.12 has no addon opcode or chat type, so `LANG_ADDON` on any lane is the
     // whole test. The line never renders; it fires `CHAT_MSG_ADDON` once the sender's name
     // resolves. An ignored sender's fires nothing, as the reference drops ignored lines first, and
@@ -320,9 +325,9 @@ fn chat(
                     &format!("<- [{:#04x}] {:?}", m.chat_type, m.text),
                 );
             }
-            chat_log.push_addon(&m.text, m.chat_type, m.sender_guid);
+            return Some(super::feed::addon_line(&m.text, m.chat_type, m.sender_guid));
         }
-        return;
+        return None;
     }
     if m.chat_type == 0x0A {
         info!("net: server says — {}", m.text);
@@ -357,10 +362,13 @@ fn chat(
         ]
         .contains(&m.chat_type)
         {
-            return;
+            return None;
         }
     }
-    chat_log.push_wire(m);
+    Some(super::ChatLine::Wire {
+        msg: m,
+        waited: false,
+    })
 }
 
 /// The `/chatlist` roster (`SMSG_CHANNEL_LIST`). Members arrive as guids and are not resolved, so
@@ -503,22 +511,19 @@ mod tests {
         world.insert_resource(NetCommands(tx));
         world.insert_resource(SocialState::default());
         world.insert_resource(ChatLog::default());
-        world
+        let line = world
             .run_system_once(
-                move |mut chat_log: ResMut<ChatLog>,
-                      social: Res<SocialState>,
+                move |social: Res<SocialState>,
                       net_commands: Res<NetCommands>,
                       mut server_said: MessageWriter<ServerSaidMessage>| {
-                    chat(
-                        m.clone(),
-                        &mut *chat_log,
-                        &social,
-                        &net_commands,
-                        &mut server_said,
-                    );
+                    chat(m.clone(), &social, &net_commands, &mut server_said)
                 },
             )
             .unwrap();
+        // Outside the world the add queues the line (`0x509f48`).
+        if let Some(line) = line {
+            super::super::feed::add_now(&mut world, line);
+        }
         world.resource::<ChatLog>().pending_len()
     }
 
@@ -547,22 +552,19 @@ mod tests {
         world.insert_resource(SocialState::default());
         world.insert_resource(ChatLog::default());
         let m = a_party_line(LANGUAGE_ADDON, "Quiver\tVERSION:3.1.4");
-        world
+        let line = world
             .run_system_once(
-                move |mut chat_log: ResMut<ChatLog>,
-                      social: Res<SocialState>,
+                move |social: Res<SocialState>,
                       net_commands: Res<NetCommands>,
                       mut server_said: MessageWriter<ServerSaidMessage>| {
-                    chat(
-                        m.clone(),
-                        &mut *chat_log,
-                        &social,
-                        &net_commands,
-                        &mut server_said,
-                    );
+                    chat(m.clone(), &social, &net_commands, &mut server_said)
                 },
             )
             .unwrap();
+        // Outside the world the add queues the line (`0x509f48`).
+        if let Some(line) = line {
+            super::super::feed::add_now(&mut world, line);
+        }
         let log = world.resource::<ChatLog>();
         assert_eq!(
             log.pending_addons(),
@@ -677,7 +679,7 @@ mod tests {
     #[test]
     fn an_ignored_players_roll_is_dropped() {
         let mut world = World::new();
-        world.insert_resource(ChatLog::default());
+        world.init_resource::<UiEvents>();
         let mut social = SocialState::default();
         social.set_ignores_for_test(vec![0x21]);
         world.insert_resource(social);
@@ -691,7 +693,7 @@ mod tests {
             world.run_system_once_with(on_random_roll, ev).unwrap();
         }
         assert_eq!(
-            world.resource::<ChatLog>().pending_len(),
+            world.resource_mut::<UiEvents>().take_chat().len(),
             1,
             "only 0x22's roll queues"
         );

@@ -60,7 +60,6 @@ const ON_THE_QUEUE: &[(&str, &str)] = &[
     ("ui_chat/input/mod.rs", "drain_addon_chat_sends"),
     ("ui_chat/input/mod.rs", "drain_addon_message_sends"),
     ("ui_chat/input/mod.rs", "take_chat_lines"),
-    ("ui_chat/logging.rs", "sync_chat_logging"),
     ("ui_chat/net.rs", "feed_channel_roster_names"),
     ("ui_chat/recruitment.rs", "guild_recruitment_cascade"),
     ("ui_companion.rs", "drain_companions"),

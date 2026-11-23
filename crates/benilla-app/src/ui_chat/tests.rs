@@ -620,7 +620,7 @@ fn a_mode_change_notice_parks_for_its_member_lines() {
     let _data = benilla_formats::wow_data_or_skip!();
     use benilla_protocol::messages::{channel_notice, ChannelNoticeTail};
 
-    let mut log = super::feed::ChatLog::default();
+    let mut log = crate::ui_script::live::UiEvents::default();
     log.push_channel_notice(
         channel_notice::MODE_CHANGE,
         "World".into(),
@@ -630,9 +630,9 @@ fn a_mode_change_notice_parks_for_its_member_lines() {
             new_flags: 1,
         },
     );
-    assert_eq!(
-        log.pending_len(),
-        1,
+    let lines = log.take_chat();
+    assert!(
+        matches!(lines[..], [super::ChatLine::Mode { guid: 42, .. }]),
         "one mode change waits on the member's name"
     );
 
@@ -645,7 +645,7 @@ fn a_mode_change_notice_parks_for_its_member_lines() {
             text: None,
         },
     );
-    assert_eq!(log.pending_len(), 2);
+    assert!(matches!(log.take_chat()[..], [super::ChatLine::Event(_)]));
 }
 
 /// arg4, arg7, arg8 and arg9 are one channel record in the reference, defaulted together.
@@ -1074,7 +1074,6 @@ fn a_session_end_empties_the_window_and_the_boxs_memory() {
 
     super::frames::route(&mut s, &mut windows, &ev(K::Say, "hi there", "Bob"));
     super::frames::route(&mut s, &mut windows, &ev(K::Whisper, "psst", "Ann"));
-    log.push_event(ChatEvent::text_only(K::System, "queued".into()));
     assert_eq!(
         lines_in_window(&s),
         2,
@@ -1855,7 +1854,7 @@ fn an_inbound_addon_line_splits_on_the_first_tab_only() {
     #[allow(non_snake_case)]
     let (PARTY, RAID, GUILD, BATTLEGROUND, SAY) = (party, raid, guild, battleground, say);
 
-    let mut log = super::feed::ChatLog::default();
+    let mut log = crate::ui_script::live::UiEvents::default();
     log.push_addon("oRA\tSYNC:1", PARTY, 7);
     // Tabs in the message: only the first divides.
     log.push_addon("CTRA\tA\tB\tC", RAID, 7);
@@ -1867,7 +1866,7 @@ fn an_inbound_addon_line_splits_on_the_first_tab_only() {
     log.push_addon("X\ty", SAY, 7);
 
     assert_eq!(
-        log.pending_addons(),
+        super::feed::addon_parts(log.take_chat()),
         vec![
             ("oRA".into(), "SYNC:1".into(), "PARTY".into()),
             ("CTRA".into(), "A\tB\tC".into(), "RAID".into()),
@@ -1946,11 +1945,11 @@ fn an_addon_message_survives_its_own_send_and_receive() {
     assert_eq!(sent.distribution.token(), "PARTY");
 
     // The same text arrives as a PARTY line in LANG_ADDON.
-    let mut log = super::feed::ChatLog::default();
+    let mut log = crate::ui_script::live::UiEvents::default();
     log.push_addon(&sent.text, 0x01, 7);
 
     assert_eq!(
-        log.pending_addons(),
+        super::feed::addon_parts(log.take_chat()),
         vec![(
             "oRA".to_string(),
             "SYNC\t1\t2".to_string(),
@@ -2134,6 +2133,8 @@ fn a_combat_chat_kind_goes_to_the_chat_log() {
     let path = std::env::temp_dir().join(format!("benilla-chatlog-441-{}", std::process::id()));
     let _ = std::fs::remove_file(&path);
     let mut s = benilla_ui::script::UiScript::new().unwrap();
+    // `LoggingChat`'s flag, which the add reads (`0x50a975`).
+    s.set_logging_flags(true, false);
     let mut windows = super::frames::ChatWindows {
         logs: super::logging::ChatLogFile(super::logging::LogFile::at(&path)),
         ..Default::default()
@@ -2374,26 +2375,6 @@ fn the_posture_emotes_carry_no_swim_suppression_flag() {
             "posture emote {id} passes the emote gate while swimming"
         );
     }
-}
-
-/// `SMSG_LEVELUP_INFO`s park on `ChatLog` in arrival order and are taken once.
-#[test]
-fn level_ups_park_in_order_and_are_taken_once() {
-    use benilla_protocol::messages::LevelUpInfo;
-
-    let mut log = super::feed::ChatLog::default();
-    assert!(!log.has_level_ups());
-    let ding = |level| LevelUpInfo {
-        level,
-        health: 22,
-        powers: [15, 0, 0, 0, 0, 0, 0],
-        stats: [0, 1, 2, 3, 0],
-    };
-    log.push_level_up(ding(10));
-    log.push_level_up(ding(11));
-    assert!(log.has_level_ups());
-    assert_eq!(log.take_level_ups(), [ding(10), ding(11)]);
-    assert!(!log.has_level_ups(), "the entries were taken, not copied");
 }
 
 /// Fires `PLAYER_LEVEL_UP` with the nine reference args and returns every line the stock handler
@@ -2667,7 +2648,7 @@ fn afk_then_dnd_clears_the_afk_first() {
     world.insert_non_send_resource(benilla_ui::script::UiScript::new().expect("VM"));
     let (tx, rx) = crossbeam_channel::unbounded();
     world.insert_resource(NetCommands(tx));
-    world.init_resource::<super::feed::ChatLog>();
+    world.init_resource::<crate::ui_script::live::UiEvents>();
     world.init_resource::<super::away::AfkMirror>();
     world.init_resource::<crate::cvars::Cvars>();
     world.init_resource::<super::edit::ChannelState>();
@@ -2693,7 +2674,9 @@ fn afk_then_dnd_clears_the_afk_first() {
         .expect("drain");
 
     assert_eq!(
-        world.resource::<super::feed::ChatLog>().pending_lines(),
+        world
+            .resource::<crate::ui_script::live::UiEvents>()
+            .chat_texts(),
         vec![
             "You are now AFK: Away from Keyboard",
             "You are no longer AFK.",
@@ -2731,7 +2714,7 @@ fn a_named_language_rides_the_chat_command() {
     world.insert_non_send_resource(script);
     let (tx, rx) = crossbeam_channel::unbounded();
     world.insert_resource(NetCommands(tx));
-    world.init_resource::<super::feed::ChatLog>();
+    world.init_resource::<crate::ui_script::live::UiEvents>();
     world.init_resource::<super::away::AfkMirror>();
     world.init_resource::<crate::cvars::Cvars>();
     world.init_resource::<super::edit::ChannelState>();
@@ -2783,7 +2766,7 @@ fn a_channel_send_carries_the_numbered_slots_name() {
     world.insert_non_send_resource(benilla_ui::script::UiScript::new().expect("VM"));
     let (tx, rx) = crossbeam_channel::unbounded();
     world.insert_resource(NetCommands(tx));
-    world.init_resource::<super::feed::ChatLog>();
+    world.init_resource::<crate::ui_script::live::UiEvents>();
     world.init_resource::<super::away::AfkMirror>();
     world.init_resource::<crate::cvars::Cvars>();
     world.init_resource::<crate::ui_party::GroupState>();
@@ -2862,7 +2845,7 @@ fn an_empty_line_sends_nothing_but_afk_and_dnd() {
     world.insert_non_send_resource(benilla_ui::script::UiScript::new().expect("VM"));
     let (tx, rx) = crossbeam_channel::unbounded();
     world.insert_resource(NetCommands(tx));
-    world.init_resource::<super::feed::ChatLog>();
+    world.init_resource::<crate::ui_script::live::UiEvents>();
     world.insert_resource(super::away::AfkMirror(2));
     world.init_resource::<crate::cvars::Cvars>();
     world.init_resource::<crate::ui_party::GroupState>();
@@ -2904,7 +2887,9 @@ fn an_empty_line_sends_nothing_but_afk_and_dnd() {
         .expect("drain");
     assert_eq!(sent(&rx), vec![], "no empty line reaches the wire");
     assert_eq!(
-        world.resource::<super::feed::ChatLog>().pending_lines(),
+        world
+            .resource::<crate::ui_script::live::UiEvents>()
+            .chat_texts(),
         vec!["Unknown chat type \"BOGUS\"."],
         "no AFK clear; the type check precedes the gate"
     );

@@ -434,10 +434,9 @@ pub(crate) struct Model {
     pub(crate) console_lines: Vec<String>,
     /// `ConsoleAddMessage` lines for the console.
     pub(crate) console_prints: Vec<String>,
-    /// `LoggingChat` and `LoggingCombat`'s flags, and their change cue.
+    /// `LoggingChat` and `LoggingCombat`'s flags (`0xb759d0`).
     pub(crate) logging_chat: bool,
     pub(crate) logging_combat: bool,
-    pub(crate) logging_changed: bool,
     /// The default chat language; `None` is no player, so `GetDefaultLanguage()` returns nothing.
     pub(crate) default_language: Option<String>,
     /// `AcceptDuel`, `CancelDuel` and `StartDuel` calls; Lua sees duels only through events.
@@ -662,9 +661,6 @@ pub(crate) struct Model {
     /// A bound-but-tradeable item's `ITEM_FIELD_CREATE_PLAYED_TIME`, by guid, for an item the player
     /// owns with `ITEM_FIELD_FLAGS & 0x100` and no binding enchant.
     pub(crate) bound_trade_stamps: HashMap<u64, u32>,
-    /// The played clock (`player+0x194c`, `+0x1950`): the total seconds the server last said and
-    /// the `GetTime` second it arrived; `None` until then, when the clock reads 0 (`0x6cf440`).
-    pub(crate) played_time: Option<(u32, f64)>,
     /// `ContainerRefundItemPurchase` sends, item guids, for the app.
     pub(crate) refund_sends: Vec<u64>,
     /// A fixture's looted object, 0 with none, read where no view is lent.
@@ -1127,8 +1123,6 @@ pub(crate) struct Model {
     pub(crate) chat_sends: Vec<super::chat_send::ChatSend>,
     /// `SendAddonMessage` broadcasts: `LANG_ADDON`, four distributions, `prefix` TAB `message`.
     pub(crate) addon_sends: Vec<super::addon_message::AddonSend>,
-    /// `RequestTimePlayed()` calls, one empty `CMSG_PLAYED_TIME` each.
-    pub(crate) played_time_asks: u32,
     /// `OpeningCinematic()` calls, one empty `CMSG_OPENING_CINEMATIC` each.
     pub(crate) opening_cinematic_asks: u32,
     /// `GameMovieFinished()` calls, each a `StopMovie` (`0x51d590`).
@@ -1595,7 +1589,6 @@ impl Model {
             chat_records: Default::default(),
             logging_chat: false,
             logging_combat: false,
-            logging_changed: false,
             default_language: None,
             duel_requests: Vec::new(),
             mirror_timers: Default::default(),
@@ -1699,7 +1692,6 @@ impl Model {
             socket_sends: Vec::new(),
             refund_records: HashMap::new(),
             bound_trade_stamps: HashMap::new(),
-            played_time: None,
             refund_sends: Vec::new(),
             #[cfg(any(test, feature = "fixtures"))]
             loot_source: 0,
@@ -1891,7 +1883,6 @@ impl Model {
             minimap_ping: (0.0, 0.0),
             chat_sends: Vec::new(),
             addon_sends: Vec::new(),
-            played_time_asks: 0,
             opening_cinematic_asks: 0,
             game_movie_finished_calls: 0,
             screenshot_asks: 0,

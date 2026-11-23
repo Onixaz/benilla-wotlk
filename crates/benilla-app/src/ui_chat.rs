@@ -59,12 +59,14 @@ pub(crate) use edit::ChannelState;
 #[cfg(test)]
 pub(crate) use event::event_name;
 pub(crate) use event::{default_color, ChatEvent, ChatEventKind};
+#[cfg(test)]
+pub(crate) use feed::insert_add_resources;
 pub(crate) use feed::{
-    add_handed, enter_world, name_landed, ChatLog, ChatSink, XpLine, REST_STATE_KEYS,
+    add_now, enter_world, name_landed, ChatLine, ChatLog, ChatSink, XpLine, REST_STATE_KEYS,
 };
 /// The chat windows and the message display's in-call add, for the verbs' live view.
 pub(crate) use frames::{
-    add_chat_line, add_chat_line_now, add_combat_line_now, kind_of_type, ChatWindows,
+    add_chat_line_in_call, add_chat_line_now, add_combat_line_now, kind_of_type, ChatWindows,
 };
 /// The per-character chat cache's restore, called from the world-entry UI load: its two events
 /// must precede the session's first chat line and `PLAYER_LOGIN`.
@@ -191,6 +193,13 @@ impl Plugin for UiChatPlugin {
 /// Deviation: not run on benilla's same-character reconnect, which the reference lacks (it
 /// returns to the login screen), so the window keeps its scrollback there.
 fn end_session_chat(world: &mut World) {
+    // The logout closes both logs (`0x5072b0`).
+    if let Some(mut windows) = world.get_resource_mut::<ChatWindows>() {
+        windows.logs.0.close();
+    }
+    if let Some(mut file) = world.get_resource_mut::<logging::CombatLogFile>() {
+        file.0.close();
+    }
     let mut log = std::mem::take(&mut *world.resource_mut::<ChatLog>());
     // The windows' `Clear` runs Lua: the `World` is lent for it.
     crate::ui_script::safe_world::lend(world, |script| end_chat_session(Some(script), &mut log))

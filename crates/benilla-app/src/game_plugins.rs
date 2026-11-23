@@ -1716,7 +1716,6 @@ pub(crate) mod schedule_tests {
     const PHASE_BATCHED: &[(&str, &str)] = &[
         ("::minimap::feed_minimap_mask", "a feed in the drain phase: the minimap's mask shape, which no later drain writes"),
         ("::sound::ui::feed_drivers", "a feed in the drain phase: the device list, after the restart chain that writes it"),
-        ("::ui_chat::logging::sync_chat_logging", "a feed in the drain phase: the logging CVars' state, which no later drain writes"),
         ("::ui_companion::feed_companion_booth", "a feed in the drain phase: the booth's model, which no later drain writes"),
         ("::ui_honor::feed_pvp_name_strings", "a feed in the drain phase: the rank names, which no later drain writes"),
         ("::ui_models::sync_tiles", "a feed in the drain phase: the model tiles' state, which no later drain writes"),

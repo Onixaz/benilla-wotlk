@@ -8,7 +8,6 @@ use benilla_ui::script::UiScript;
 use crate::items::Items;
 use crate::net::{NetCommands, ObjectStore, SelfPlayer};
 use crate::sound::MessageSounds;
-use crate::ui_chat::ChatLog;
 
 use super::errors::{first_missing_totem, first_short_reagent, show_one};
 use super::{cast_fail, CastFail, Caster, Shown, Spells};
@@ -135,7 +134,6 @@ pub(crate) struct CastFailShow<'w, 's> {
     commands: Res<'w, NetCommands>,
     sub_classes: Option<Res<'w, crate::ui_items::ItemSubClasses>>,
     name_tables: FailNameTables<'w>,
-    chat: Option<ResMut<'w, ChatLog>>,
     sounds: Option<ResMut<'w, MessageSounds>>,
     /// The combat log's line: `0x808200` calls the error display, then the log's spell-failure
     /// line (`0x751ad0`).
@@ -179,7 +177,6 @@ impl CastFailShow<'_, '_> {
             .then(|| line.logged().to_string());
         show_one(
             script,
-            self.chat.as_deref_mut(),
             self.sounds.as_deref_mut(),
             "ui_action",
             Shown::keyed(line.key, line.text),

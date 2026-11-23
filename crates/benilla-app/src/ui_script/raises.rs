@@ -45,11 +45,6 @@ impl InTurn<'_> {
     pub(crate) fn is_some(&self) -> bool {
         self.vm.is_some()
     }
-
-    /// Whether the VM was inserted since this system last ran: a new session's.
-    pub(crate) fn is_added(&self) -> bool {
-        self.vm.as_ref().is_some_and(|vm| vm.is_added())
-    }
 }
 
 /// The VM's model while a system raises in turn: it derefs to the VM, every event raised through
@@ -187,11 +182,8 @@ pub(crate) fn then_fire<M>(
 }
 
 /// Whether raises wait on the handler queue: the raise step's trigger.
-pub(crate) fn waiting(
-    queue: Option<Res<UiEvents>>,
-    chat: Option<Res<crate::ui_chat::ChatLog>>,
-) -> bool {
-    queue.is_some_and(|q| !q.is_empty()) || chat.is_some_and(|c| c.has_handed())
+pub(crate) fn waiting(queue: Option<Res<UiEvents>>) -> bool {
+    queue.is_some_and(|q| !q.is_empty())
 }
 
 /// The UI phases a raise step follows: an [`InTurn`] system outside them chains its own step.

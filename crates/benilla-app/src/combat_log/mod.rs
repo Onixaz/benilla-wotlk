@@ -12,7 +12,6 @@ use bevy::prelude::*;
 
 use crate::combat_text::CombatTextSpawn;
 use crate::net::{GuidIndex, NetHandlerApp, ObjectStore, SelfGuid, ServerSoundMessage};
-use crate::ui_chat::ChatLog;
 use crate::ui_chat::ChatSink as _;
 use crate::ui_unit::CombatTextEvent;
 
@@ -412,11 +411,12 @@ fn on_exploration_xp(
 
 fn on_level_up(
     In(ev): In<SessionEvent>,
-    mut chat: ResMut<ChatLog>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
     mut tutorials: Option<MessageWriter<crate::tutorial::TutorialEvent>>,
 ) {
     if let SessionEvent::LevelUp(lv) = ev {
-        progress::level_up(lv, &mut chat, tutorials.as_mut());
+        progress::level_tutorials(lv.level, tutorials.as_mut());
+        progress::level_up(lv, &mut ui);
     }
 }
 

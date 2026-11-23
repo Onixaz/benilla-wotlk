@@ -185,6 +185,19 @@ pub(crate) fn answer_in_call(
         HostAsk::BindAnswers => {
             crate::ui_items::run_bind_answers(world).then_some(HostAnswer::Done)
         }
+        // The display's chat arm runs the chat add inside the call (`0x52183c` -> `0x509dd0`);
+        // what an enclosing turn queued stays its own.
+        HostAsk::ChatLine { chat_type, text } => {
+            let earlier = world
+                .get_resource_or_init::<crate::ui_script::live::UiEvents>()
+                .set_aside();
+            crate::ui_chat::add_chat_line_in_call(world, chat_type, text);
+            crate::ui_script::live::fire_handler_events(world);
+            world
+                .resource_mut::<crate::ui_script::live::UiEvents>()
+                .put_back(earlier);
+            Some(HostAnswer::Done)
+        }
     })
     .flatten()
 }

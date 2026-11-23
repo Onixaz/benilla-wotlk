@@ -1,5 +1,5 @@
 //! The chat add in its caller's turn (`0x509dd0`): lines queued outside the world until the UI's
-//! entry (`0x509f48`, `0x50ae30`), lines held on a missing name until its answer's callback
+//! entry (`0x509f48`, `0x50dfc3`), lines held on a missing name until its answer's callback
 //! (`0x509f92` -> `0x50ad82`, `0x503c80`), and the chat log's own composition (`0x50ab09`).
 
 use bevy::prelude::*;
@@ -29,25 +29,11 @@ fn world() -> (
     "#,
     )
     .unwrap();
-    let (tx, sent) = crossbeam_channel::unbounded();
     let mut world = World::new();
     world.insert_non_send_resource(s);
+    let sent = super::feed::insert_add_resources(&mut world);
+    // Outside the world until a test enters it (`0x4fb190`).
     world.insert_resource(super::ChatLog::default());
-    world.insert_resource(super::frames::ChatWindows::default());
-    world.insert_resource(super::edit::ChannelState::default());
-    world.insert_resource(crate::names::NameCache::default());
-    world.insert_resource(crate::chat_bubble::BubbleQueue::default());
-    world.insert_resource(crate::chat_bubble::BubbleConfig::default());
-    world.insert_resource(crate::creature_anim::GestureQueue::default());
-    world.insert_resource(crate::net::NetCommands(tx));
-    world.insert_resource(crate::net::SelfGuid::default());
-    world.insert_resource(crate::net::GuidIndex::default());
-    world.insert_resource(crate::world_state::WorldStates::default());
-    world.insert_resource(super::language::ChatLanguages::default());
-    world.insert_resource(crate::items::Items::default());
-    world.insert_resource(crate::text_filter::TextFilter::default());
-    world.insert_resource(crate::text_filter::TextFilterSwitches::default());
-    world.insert_resource(crate::net::ServerTime::default());
     (world, sent)
 }
 
@@ -71,13 +57,21 @@ fn system_line(text: &str) -> ChatLine {
     ChatEvent::text_only(ChatEventKind::System, text.into()).into()
 }
 
-/// Outside the world every line queues (`0x509f48`); the UI's entry adds them in order
-/// (`0x50ae30`), and one whose sender is not cached waits for its answer, asked once.
+/// Outside the world every line queues (`0x509f48`), its sender's name asked first with the
+/// answer's callback (`0x509e51`); the UI's entry adds them in order (`0x50dfc3`), and one whose
+/// sender is still not cached waits for its answer, asked once.
 #[test]
 fn lines_before_the_world_entry_are_added_at_it_and_an_unnamed_one_at_its_answer() {
     let (mut world, sent) = world();
     add(&mut world, system_line("first"));
     add(&mut world, addon_line());
+    assert!(
+        matches!(
+            sent.try_recv(),
+            Ok(crate::net::ClientCommand::NameQuery { guid: ANN })
+        ),
+        "the add asks the name ahead of its queue test"
+    );
     add(&mut world, system_line("second"));
     assert!(
         seen(&world).is_empty(),
@@ -91,10 +85,7 @@ fn lines_before_the_world_entry_are_added_at_it_and_an_unnamed_one_at_its_answer
         ["CHAT_MSG_SYSTEM:first:", "CHAT_MSG_SYSTEM:second:"],
         "the queued lines in order; the addon line waits on Ann's name"
     );
-    assert!(matches!(
-        sent.try_recv(),
-        Ok(crate::net::ClientCommand::NameQuery { guid: ANN })
-    ));
+    assert!(sent.try_recv().is_err(), "asked once");
 
     world
         .resource_mut::<crate::names::NameCache>()

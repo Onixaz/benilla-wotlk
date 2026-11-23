@@ -5,7 +5,7 @@
 use bevy::prelude::*;
 
 use benilla_protocol::messages::{
-    channel_notice, ChannelNoticeTail, ChatMessage, LevelUpInfo, MACRO_EXPANDED_TYPES,
+    channel_notice, ChannelNoticeTail, ChatMessage, MACRO_EXPANDED_TYPES,
 };
 
 use benilla_assets::{LockRecover, WorldAssets};
@@ -16,7 +16,10 @@ use crate::net::{GuidIndex, NetCommands, ObjectStore, SelfGuid};
 
 use super::edit::ChannelState;
 use super::event::{flag_of_tag, kind_of_wire, language_name, ChatEvent, ChatEventKind};
-use super::frames::{route, ChatWindows};
+#[cfg(test)]
+use super::frames::route;
+use super::frames::ChatWindows;
+use benilla_ui::script::UiScript;
 
 /// The text-emote sentence tables, read once off the patch chain.
 #[derive(Resource)]
@@ -106,7 +109,14 @@ impl From<ChatEvent> for ChatLine {
 impl ChatLine {
     /// A guid this line names whose answer came back empty (`0x503e5c`): the line is dropped.
     fn names_missing(&self, names: &NameCache) -> bool {
-        let guids = match self {
+        self.player_guids()
+            .into_iter()
+            .any(|g| g != 0 && names.answered_unknown(g))
+    }
+
+    /// The player guids whose names the line waits on, 0 for none.
+    fn player_guids(&self) -> [u64; 2] {
+        match self {
             ChatLine::Wire { msg, .. } => [
                 if needs_name(msg.chat_type) {
                     msg.sender_guid
@@ -124,16 +134,15 @@ impl ChatLine {
             ChatLine::XpGain { line } => [line.victim(), 0],
             ChatLine::HonorGain { victim, .. } => [*victim, 0],
             ChatLine::TextEmote { performer, .. } => [*performer, 0],
+            ChatLine::Mode { guid, .. } => [*guid, 0],
             _ => [0, 0],
-        };
-        guids
-            .into_iter()
-            .any(|g| g != 0 && names.answered_unknown(g))
+        }
     }
 }
 
 /// Fire `CHAT_MSG_ADDON(prefix, message, distribution, sender)`, not through [`route`]: it is no
 /// `ChatTypeInfo` key and takes four arguments, not ten.
+#[cfg(test)]
 pub(super) fn fire_addon_message(
     script: &mut benilla_ui::script::UiScript,
     prefix: String,
@@ -165,7 +174,7 @@ pub(super) fn text_emote_event(
 }
 
 /// The chat lines that wait: on a name (`0x50ad82`, each answer's callback adds them, `0x503edb`),
-/// or, while the UI is outside the world, on its entry (`0x509f48`, flushed at `0x50ae30`).
+/// or, while the UI is outside the world, on its entry (`0x509f48`, flushed at `0x50dfc3`).
 #[derive(Resource)]
 pub(crate) struct ChatLog {
     /// The held lines in add order, each with its queued mark (`node+0x2c`): set while the UI is
@@ -174,13 +183,8 @@ pub(crate) struct ChatLog {
     /// The add queues every line (`[0xac7a38]`): set from the start and at the world exit
     /// (`0x4fb190`), cleared at the UI's world entry (`0x50dfbd`).
     queue_chat: bool,
-    /// `SMSG_LEVELUP_INFO`s for `ui_unit`'s `PLAYER_LEVEL_UP` fire, oldest first.
-    level_ups: Vec<LevelUpInfo>,
     /// A channel invite waits on its inviter's name; another is dropped meanwhile (`0x50e79e`).
     invite_waiting: bool,
-    /// The lines a system on the temporary raise queue handed over, added at its raise step after
-    /// its raises ([`add_handed`]); a handler hands its lines to its `UiEvents` instead.
-    handed: Vec<ChatLine>,
 }
 
 impl Default for ChatLog {
@@ -188,50 +192,23 @@ impl Default for ChatLog {
         Self {
             pending: Vec::new(),
             queue_chat: true,
-            level_ups: Vec::new(),
             invite_waiting: false,
-            handed: Vec::new(),
         }
     }
 }
 
 impl ChatLog {
-    /// Whether a system on the raise queue handed lines its raise step adds.
-    pub(crate) fn has_handed(&self) -> bool {
-        !self.handed.is_empty()
-    }
-
-    /// Park a level-up for the `PLAYER_LEVEL_UP` fire.
-    pub(crate) fn push_level_up(&mut self, info: LevelUpInfo) {
-        self.level_ups.push(info);
-    }
-
-    /// Whether a level-up is parked; read first, so an empty take leaves the resource unchanged.
-    pub(crate) fn has_level_ups(&self) -> bool {
-        !self.level_ups.is_empty()
-    }
-
-    /// Take every parked level-up, oldest first.
-    pub(crate) fn take_level_ups(&mut self) -> Vec<LevelUpInfo> {
-        std::mem::take(&mut self.level_ups)
-    }
-
     /// Drop every held line on disconnect.
     pub(crate) fn clear_session(&mut self) {
         self.pending.clear();
     }
 
-    /// Every held and handed line, in order.
-    #[cfg(test)]
-    fn all_lines(&self) -> impl Iterator<Item = &ChatLine> {
-        self.pending.iter().map(|(p, _)| p).chain(&self.handed)
-    }
-
-    /// The held and handed addon lines as `(prefix, message, distribution)`.
+    /// The held addon lines as `(prefix, message, distribution)`.
     #[cfg(test)]
     pub(crate) fn pending_addons(&self) -> Vec<(String, String, String)> {
-        self.all_lines()
-            .filter_map(|p| match p {
+        self.pending
+            .iter()
+            .filter_map(|(p, _)| match p {
                 ChatLine::Addon {
                     prefix,
                     message,
@@ -246,16 +223,18 @@ impl ChatLog {
     /// How many held lines will render in a chat window; addon lines never do.
     #[cfg(test)]
     pub(crate) fn pending_len(&self) -> usize {
-        self.all_lines()
-            .filter(|p| !matches!(p, ChatLine::Addon { .. }))
+        self.pending
+            .iter()
+            .filter(|(p, _)| !matches!(p, ChatLine::Addon { .. }))
             .count()
     }
 
     /// The kind and text of every held event line, in order.
     #[cfg(test)]
     pub(crate) fn pending_events(&self) -> Vec<(Option<super::ChatEventKind>, String)> {
-        self.all_lines()
-            .filter_map(|p| match p {
+        self.pending
+            .iter()
+            .filter_map(|(p, _)| match p {
                 ChatLine::Event(e) => Some((e.kind, e.text.clone())),
                 _ => None,
             })
@@ -297,30 +276,10 @@ pub(crate) trait ChatSink {
         }
     }
 
-    /// Add an inbound addon line, which signals once its sender is named. The text splits on its
-    /// first tab, and with none it is all prefix; `distribution` names PARTY, RAID, GUILD and
-    /// BATTLEGROUND, any other type `"UNKNOWN"`.
+    /// Add an inbound addon line, which signals once its sender is named ([`addon_line`]).
+    #[cfg(test)]
     fn push_addon(&mut self, text: &str, chat_type: u8, guid: u64) {
-        let (prefix, message) = match text.find('\t') {
-            Some(i) => (text[..i].to_string(), text[i + 1..].to_string()),
-            None => (text.to_string(), String::new()),
-        };
-        // The inbound line's shared numbering, which the decoder maps the wire's type into.
-        use benilla_protocol::messages as m;
-        let distribution = match chat_type {
-            m::CHAT_MSG_PARTY => "PARTY",
-            m::CHAT_MSG_RAID => "RAID",
-            m::CHAT_MSG_GUILD => "GUILD",
-            m::CHAT_MSG_BATTLEGROUND => "BATTLEGROUND",
-            _ => "UNKNOWN",
-        }
-        .to_string();
-        self.push_line(ChatLine::Addon {
-            prefix,
-            message,
-            distribution,
-            guid,
-        });
+        self.push_line(addon_line(text, chat_type, guid));
     }
 
     /// Add a `/random` broadcast (`MSG_RANDOM_ROLL`), which waits on the roller's name.
@@ -366,30 +325,63 @@ pub(crate) trait ChatSink {
     }
 }
 
-impl ChatSink for ChatLog {
+impl ChatSink for crate::ui_script::live::UiEvents {
     fn push_line(&mut self, line: ChatLine) {
-        self.handed.push(line);
+        self.chat(line);
     }
 }
 
-/// Add the lines systems on the raise queue handed over, in order, at the raise step that fires
-/// their raises.
-pub(crate) fn add_handed(world: &mut World) {
-    loop {
-        let handed = match world.get_resource_mut::<ChatLog>() {
-            Some(mut log) if !log.handed.is_empty() => std::mem::take(&mut log.handed),
-            _ => return,
-        };
-        for line in handed {
-            add(world, line);
+/// A system that raises in turn adds its lines behind the raises it made so far.
+impl ChatSink for crate::ui_script::VmTurn<'_> {
+    fn push_line(&mut self, line: ChatLine) {
+        match self.queue() {
+            Some(queue) => queue.chat(line),
+            None => debug!("chat: no handler queue — line dropped"),
         }
     }
 }
 
-impl ChatSink for crate::ui_script::live::UiEvents {
-    fn push_line(&mut self, line: ChatLine) {
-        self.world(move |world| add(world, line));
+/// An inbound addon line: the text splits on its first tab, and with none it is all prefix;
+/// `distribution` names PARTY, RAID, GUILD and BATTLEGROUND, any other type `"UNKNOWN"`.
+pub(crate) fn addon_line(text: &str, chat_type: u8, guid: u64) -> ChatLine {
+    const TAB: char = '\u{9}';
+    let (prefix, message) = match text.find(TAB) {
+        Some(i) => (text[..i].to_string(), text[i + 1..].to_string()),
+        None => (text.to_string(), String::new()),
+    };
+    // The inbound line's shared numbering, which the decoder maps the wire's type into.
+    use benilla_protocol::messages as m;
+    let distribution = match chat_type {
+        m::CHAT_MSG_PARTY => "PARTY",
+        m::CHAT_MSG_RAID => "RAID",
+        m::CHAT_MSG_GUILD => "GUILD",
+        m::CHAT_MSG_BATTLEGROUND => "BATTLEGROUND",
+        _ => "UNKNOWN",
     }
+    .to_string();
+    ChatLine::Addon {
+        prefix,
+        message,
+        distribution,
+        guid,
+    }
+}
+
+/// The addon lines among `lines` as `(prefix, message, distribution)`.
+#[cfg(test)]
+pub(crate) fn addon_parts(lines: Vec<ChatLine>) -> Vec<(String, String, String)> {
+    lines
+        .into_iter()
+        .filter_map(|p| match p {
+            ChatLine::Addon {
+                prefix,
+                message,
+                distribution,
+                ..
+            } => Some((prefix, message, distribution)),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The lines one `SMSG_CHANNEL_NOTIFY` adds: a guid tail waits for its names, a join's trailing
@@ -756,12 +748,33 @@ pub(super) fn notice_event(
 /// Forest]") and a handler's `GetChannelName` still finds it. The reference flags the teardown,
 /// fires the event, then drops the record; its suspended leg skips the flag. Both arms mirror the
 /// list into the VM for `GetChannelName`.
+#[cfg(test)]
 pub(super) fn deliver(
     script: &mut benilla_ui::script::UiScript,
     windows: &mut ChatWindows,
     channels: &mut ChannelState,
     event: &mut ChatEvent,
 ) {
+    if deliver_before(script, channels, event) {
+        script.fire_event("CHANNEL_PASSWORD_REQUEST", password_request_args(event));
+    }
+    let after = deliver_mid(channels, event);
+    route(script, windows, event);
+    deliver_after(script, channels, event, after);
+}
+
+/// A `WRONG_PASSWORD` notice's `CHANNEL_PASSWORD_REQUEST` argument, ahead of the line with the
+/// wire name (`0x50e3aa`).
+fn password_request_args(event: &ChatEvent) -> Vec<benilla_ui::script::ScriptValue> {
+    vec![benilla_ui::script::ScriptValue::Str(event.channel.clone())]
+}
+
+/// [`deliver`]'s writes ahead of the line; whether a password request fires before it.
+fn deliver_before(
+    script: &mut benilla_ui::script::UiScript,
+    channels: &mut ChannelState,
+    event: &mut ChatEvent,
+) -> bool {
     let notice = event
         .notice_byte()
         .filter(|_| event.kind == Some(ChatEventKind::ChannelNotice));
@@ -779,13 +792,7 @@ pub(super) fn deliver(
     event.suspended = notice == Some(channel_notice::YOU_LEFT)
         && event.left_constant
         && channels.leave_asked(&event.channel) == Some(false);
-    if notice == Some(channel_notice::WRONG_PASSWORD) {
-        // Ahead of the line, with the wire name (`0x50e3aa`).
-        script.fire_event(
-            "CHANNEL_PASSWORD_REQUEST",
-            vec![benilla_ui::script::ScriptValue::Str(event.channel.clone())],
-        );
-    }
+    let password = notice == Some(channel_notice::WRONG_PASSWORD);
     if let Some(byte) = notice {
         // The server's half of every join and leave, for a log to tell a request from its answer.
         debug!(
@@ -829,6 +836,21 @@ pub(super) fn deliver(
         // Every confirmed join relists the channel pane before the notice prints (`0x507880`).
         script.set_channel_slots(channels.ui_slots());
     }
+    password
+}
+
+/// The wire names of a leave and a refusal, read before the stamp numbers the line.
+struct AfterLine {
+    leaving: Option<String>,
+    refused: Option<String>,
+}
+
+/// [`deliver`]'s reads just before the line: the wire names of a leave and a refusal, then the
+/// stamp.
+fn deliver_mid(channels: &mut ChannelState, event: &mut ChatEvent) -> AfterLine {
+    let notice = event
+        .notice_byte()
+        .filter(|_| event.kind == Some(ChatEventKind::ChannelNotice));
     // The wire name, kept before `stamp_channel` decorates arg4 with the slot number.
     let leaving = (notice == Some(channel_notice::YOU_LEFT)).then(|| event.channel.clone());
     // 3.3.5a drops the record after a `NOT_IN_AREA` or `NOT_IN_LFG` refusal, so the refused channel
@@ -840,7 +862,17 @@ pub(super) fn deliver(
     .then(|| event.channel.clone());
     // The channel renders numbered when its slot is known.
     channels.stamp_channel(event);
-    route(script, windows, event);
+    AfterLine { leaving, refused }
+}
+
+/// [`deliver`]'s writes after the line: a leave frees its slot unless suspended, a refusal frees
+/// its own; either relists the channel pane.
+fn deliver_after(
+    script: &mut benilla_ui::script::UiScript,
+    channels: &mut ChannelState,
+    event: &ChatEvent,
+    AfterLine { leaving, refused }: AfterLine,
+) {
     if let Some(name) = leaving {
         // A suspended leave keeps the record: the reference skips the teardown, so leaving a
         // capital keeps Trade's number for the re-join.
@@ -861,12 +893,9 @@ pub(super) fn deliver(
     }
 }
 
-/// The speaker's bubble and gesture, bundled for Bevy's sixteen-parameter limit on
-/// the chat add; the bubble has a 20 yd range test and two CVars, the gesture neither.
+/// The speaker's gesture, which the add selects ahead of the line (`0x50a1ce`).
 #[derive(bevy::ecs::system::SystemParam)]
 pub(super) struct SpeakerEffects<'w> {
-    bubbles: ResMut<'w, crate::chat_bubble::BubbleQueue>,
-    bubble_cfg: Res<'w, crate::chat_bubble::BubbleConfig>,
     gestures: ResMut<'w, crate::creature_anim::GestureQueue>,
 }
 
@@ -879,43 +908,92 @@ pub(super) fn gesture_prevented(speaker_flags: Option<u32>) -> bool {
     speaker_flags.is_some_and(|f| f & UNIT_FLAG_PREVENT_ANIM != 0)
 }
 
-/// One line through the add (`0x509dd0`): its names resolved, asked when missing, then built and
-/// [`route`]d with its events raised in turn; the line back when a name it needs is not cached yet
-/// (`0x509f92` -> `0x50ad82`).
-fn add_one(
-    In(item): In<ChatLine>,
-    mut script: crate::ui_script::InTurn,
-    mut log: ResMut<ChatLog>,
-    mut windows: ResMut<ChatWindows>,
-    mut channels: ResMut<ChannelState>,
-    names: Res<NameCache>,
-    mut speaker: SpeakerEffects,
-    commands: Res<NetCommands>,
-    // The text-emote tables, and our guid for the "are you the performer?" test.
-    emote_texts: Option<Res<EmoteTexts>>,
-    self_guid: Res<SelfGuid>,
-    // The `$`-macro subject: monster and BG lines expand against their addressee's descriptors.
-    guids: Res<GuidIndex>,
-    stores: Query<&ObjectStore>,
-    states: Res<crate::world_state::WorldStates>,
-    // An award line's `$a`: the achievement tables and the game date its link carries.
-    (award_db, award_time): (
-        Option<Res<crate::ui_achievement::Achievements>>,
-        Res<crate::net::ServerTime>,
+/// Everything the add reads to build a line, fetched apart from the VM.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(super) struct AddParams<'w, 's> {
+    log: ResMut<'w, ChatLog>,
+    channels: Res<'w, ChannelState>,
+    names: Res<'w, NameCache>,
+    speaker: SpeakerEffects<'w>,
+    commands: Res<'w, NetCommands>,
+    /// The text-emote tables, and our guid for the "are you the performer?" test.
+    emote_texts: Option<Res<'w, EmoteTexts>>,
+    self_guid: Res<'w, SelfGuid>,
+    /// The `$`-macro subject: monster and BG lines expand against their addressee's descriptors.
+    guids: Res<'w, GuidIndex>,
+    stores: Query<'w, 's, &'static ObjectStore>,
+    states: Res<'w, crate::world_state::WorldStates>,
+    /// An award line's `$a`: the achievement tables and the game date its link carries.
+    award: (
+        Option<Res<'w, crate::ui_achievement::Achievements>>,
+        Res<'w, crate::net::ServerTime>,
     ),
-    // The language gate: the word pool, this character's fluency and the GM bit.
-    langs: Res<super::language::ChatLanguages>,
-    // Item names for `TRADESKILL_LOG`, `FEEDPET_LOG`, `ITEMENCHANTMENT*`, `SPELLDURABILITYDAMAGE`.
-    items: Res<crate::items::Items>,
-    // The spam and profanity filters, which run in the reference's display function.
-    mut text_filter: crate::text_filter::ChatTextFilter,
-) -> Option<ChatLine> {
-    let Some(mut script) = script.turn() else {
-        return None;
-    };
+    /// The language gate: the word pool, this character's fluency and the GM bit.
+    langs: Res<'w, super::language::ChatLanguages>,
+    /// Item names for `TRADESKILL_LOG`, `FEEDPET_LOG`, `ITEMENCHANTMENT*`, `SPELLDURABILITYDAMAGE`.
+    items: Res<'w, crate::items::Items>,
+    /// The spam and profanity filters, which run in the reference's display function.
+    text_filter: crate::text_filter::ChatTextFilter<'w>,
+}
+
+/// What building a line left: the line back while a name it needs is not cached (`0x509f92` ->
+/// `0x50ad82`), else the steps that add it, in order, none for a line that prints nothing.
+enum Built {
+    Held(ChatLine),
+    Steps(Vec<Step>),
+}
+
+/// One step of an added line, run with the `World` after the build lets go of it.
+enum Step {
+    /// A raise with the `World` lent.
+    Fire(&'static str, Vec<benilla_ui::script::ScriptValue>),
+    /// A built line recorded on its type and its event raised (`0x50a8a5`, `0x50a8d5`), then logged.
+    Route(ChatEvent),
+    /// A channel notice: its channel writes around the line ([`deliver`]).
+    Deliver(ChatEvent),
+    /// A spoken line: its chat record, the line, then its bubble (`0x50a970`).
+    Speech {
+        event: ChatEvent,
+        record: benilla_ui::script::ChatRecord,
+        text: String,
+    },
+}
+
+/// `CHAT_MSG_ADDON`'s four arguments.
+fn addon_args(
+    prefix: String,
+    message: String,
+    distribution: String,
+    sender: String,
+) -> Vec<benilla_ui::script::ScriptValue> {
+    use benilla_ui::script::ScriptValue::Str;
+    vec![Str(prefix), Str(message), Str(distribution), Str(sender)]
+}
+
+/// Build one line through the add (`0x509dd0`): its names resolved, asked when missing, its text
+/// composed; the VM is read and its autocomplete written, nothing raised.
+#[allow(clippy::too_many_lines)] // one add, every line type's arm
+fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Built {
+    let AddParams {
+        mut log,
+        channels,
+        names,
+        mut speaker,
+        commands,
+        emote_texts,
+        self_guid,
+        guids,
+        stores,
+        states,
+        award: (award_db, award_time),
+        langs,
+        items,
+        mut text_filter,
+    } = p;
+    let mut steps = Vec::new();
     match item {
-        ChatLine::Event(mut event) => {
-            deliver(&mut script, &mut windows, &mut channels, &mut event);
+        ChatLine::Event(event) => {
+            steps.push(Step::Deliver(event));
         }
         ChatLine::Wire { msg, waited } => {
             let kind = kind_of_wire(msg.chat_type);
@@ -924,7 +1002,7 @@ fn add_one(
                     "chat: unmodeled wire type {:#04x} dropped: {:?}",
                     msg.chat_type, msg.text
                 );
-                return None;
+                return Built::Steps(steps);
             }
             // A monster line carries its name inline; a player line resolves its guid.
             let name = match &msg.sender_name {
@@ -935,7 +1013,7 @@ fn add_one(
                 _ => None,
             };
             if name.is_none() && needs_name(msg.chat_type) && msg.sender_guid != 0 {
-                return Some(ChatLine::Wire { msg, waited });
+                return Built::Held(ChatLine::Wire { msg, waited });
             }
             // A whisper in or out enters autocomplete, addon whispers aside (`0x57b7c0`).
             if matches!(
@@ -1002,10 +1080,10 @@ fn add_one(
                         "chat: dropping unexpandable [{:#04x}] {:?} (subject {subject_guid:#x})",
                         msg.chat_type, msg.text
                     );
-                    return None; // the reference prints no line
+                    return Built::Steps(steps); // the reference prints no line
                 } else if !waited {
                     // `subject_for_guid` sent the name query: hold the raw line until it lands.
-                    return Some(ChatLine::Wire { msg, waited: true });
+                    return Built::Held(ChatLine::Wire { msg, waited: true });
                 } else {
                     None // the second failure: show the raw text
                 }
@@ -1030,20 +1108,15 @@ fn add_one(
                     "chat: spam filter dropped [{:#04x}] {:?}",
                     msg.chat_type, text
                 );
-                return None;
+                return Built::Steps(steps);
             }
             text_filter.mask_chat(msg.chat_type, &mut text);
             let text = text;
             let mut event = ChatEvent {
                 kind,
                 text: text.clone(),
-                sender: name.unwrap_or_else(|| {
-                    if needs_name(msg.chat_type) && msg.sender_guid != 0 {
-                        "Unknown".to_string()
-                    } else {
-                        String::new()
-                    }
-                }),
+                // A player line got here named: an unnamed one is held above (`0x509f92`).
+                sender: name.unwrap_or_default(),
                 // The effective language, not the wire's: narration types and GM mode force
                 // 0, which also drops the `[Language]` header.
                 language: language_name(language).to_string(),
@@ -1054,7 +1127,7 @@ fn add_one(
             };
             channels.stamp_channel(&mut event);
             // The record is written under the line id the event carries (`0x4fdd80`).
-            script.record_chat(benilla_ui::script::ChatRecord {
+            let record = benilla_ui::script::ChatRecord {
                 chat_type: u32::from(msg.wire_type),
                 sender_guid: msg.sender_guid,
                 sender_word: msg.sender_word,
@@ -1062,18 +1135,11 @@ fn add_one(
                 channel: msg.channel.clone().unwrap_or_default(),
                 zone_channel: event.zone_channel_id,
                 text: text.clone(),
-                line_id: windows.line_id.wrapping_add(1),
+                line_id: 0,
                 time: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0, |d| d.as_secs() as u32),
-            });
-            route(&mut script, &mut windows, &event);
-            // The bubble gets the same text: the reference spawns it in this path.
-            if let Some(kind) = event.kind {
-                speaker
-                    .bubbles
-                    .push(&speaker.bubble_cfg, msg.sender_guid, kind, &text);
-            }
+            };
             // The gesture reads the raw type and `plain`, not the garbled text: the selector is
             // in the parser, on the buffer the handler hands the composer, so a Horde `lol`
             // laughs for every observer.
@@ -1094,6 +1160,12 @@ fn add_one(
             {
                 speaker.gestures.push(msg.sender_guid, gesture);
             }
+            // The bubble gets the same text: the reference spawns it in this path (`0x50a970`).
+            steps.push(Step::Speech {
+                event,
+                record,
+                text,
+            });
         }
         ChatLine::Notice {
             notice,
@@ -1110,7 +1182,7 @@ fn add_one(
             let invite = notice == channel_notice::INVITE;
             if a.is_none() || b.is_none() {
                 log.invite_waiting |= invite;
-                return Some(ChatLine::Notice {
+                return Built::Held(ChatLine::Notice {
                     notice,
                     channel,
                     a_guid,
@@ -1121,13 +1193,13 @@ fn add_one(
                 log.invite_waiting = false;
                 // A named inviter asks the player first (`0x50e7fb`, `0x4fb606`).
                 if let Some(name) = &a {
-                    script.fire_event(
+                    steps.push(Step::Fire(
                         "CHANNEL_INVITE_REQUEST",
                         vec![
                             benilla_ui::script::ScriptValue::Str(channel.clone()),
                             benilla_ui::script::ScriptValue::Str(name.clone()),
                         ],
-                    );
+                    ));
                 }
             }
             // Stamped against the channel list as it stands at delivery: the reference hands
@@ -1135,13 +1207,8 @@ fn add_one(
             // from the queued line's node (`+0x2c`) in the name-query callback, and the
             // composer looks it up among the joined channels. Unstamped, arg7-arg9 are empty
             // and the stock filter (`ChatFrame.lua:1374-1392`) drops the line.
-            if let Some(mut event) = notice_event(
-                notice,
-                channel,
-                Some(a.unwrap_or_else(|| "Unknown".into())),
-                b,
-            ) {
-                deliver(&mut script, &mut windows, &mut channels, &mut event);
+            if let Some(event) = notice_event(notice, channel, a, b) {
+                steps.push(Step::Deliver(event));
             }
         }
         ChatLine::Mode {
@@ -1152,17 +1219,17 @@ fn add_one(
         } => {
             // Only a cached name prints; a miss asks for it and prints nothing (`0x50cfe7`).
             let Some(name) = names.resolve(guid, &commands).map(str::to_string) else {
-                return None;
+                return Built::Steps(steps);
             };
             for token in mode_change_tokens(old_flags, new_flags) {
-                let mut event = ChatEvent {
+                let event = ChatEvent {
                     kind: Some(ChatEventKind::ChannelNoticeUser),
                     text: token.to_string(),
                     sender: name.clone(),
                     channel: channel.clone(),
                     ..Default::default()
                 };
-                deliver(&mut script, &mut windows, &mut channels, &mut event);
+                steps.push(Step::Deliver(event));
             }
         }
         ChatLine::Addon {
@@ -1172,14 +1239,17 @@ fn add_one(
             guid,
         } => {
             let Some(name) = names.resolve(guid, &commands).map(str::to_string) else {
-                return Some(ChatLine::Addon {
+                return Built::Held(ChatLine::Addon {
                     prefix,
                     message,
                     distribution,
                     guid,
                 });
             };
-            fire_addon_message(&mut script, prefix, message, distribution, name);
+            steps.push(Step::Fire(
+                "CHAT_MSG_ADDON",
+                addon_args(prefix, message, distribution, name),
+            ));
         }
         ChatLine::Roll {
             min,
@@ -1188,7 +1258,7 @@ fn add_one(
             guid,
         } => {
             let Some(name) = names.resolve(guid, &commands).map(str::to_string) else {
-                return Some(ChatLine::Roll {
+                return Built::Held(ChatLine::Roll {
                     min,
                     max,
                     roll,
@@ -1210,11 +1280,10 @@ fn add_one(
                 )
             };
             if let Some(text) = line {
-                route(
-                    &mut script,
-                    &mut windows,
-                    &ChatEvent::text_only(ChatEventKind::System, text),
-                );
+                steps.push(Step::Route(ChatEvent::text_only(
+                    ChatEventKind::System,
+                    text,
+                )));
             }
         }
         ChatLine::XpGain { line } => {
@@ -1223,17 +1292,16 @@ fn add_one(
                 None
             } else {
                 let Some(resolved) = names.resolve(victim, &commands).map(str::to_string) else {
-                    return Some(ChatLine::XpGain { line });
+                    return Built::Held(ChatLine::XpGain { line });
                 };
                 Some(resolved)
             };
             let line = xp_gain_line(&line, name.as_deref(), &globals(&script));
             if let Some(text) = line {
-                route(
-                    &mut script,
-                    &mut windows,
-                    &ChatEvent::text_only(ChatEventKind::CombatXpGain, text),
-                );
+                steps.push(Step::Route(ChatEvent::text_only(
+                    ChatEventKind::CombatXpGain,
+                    text,
+                )));
             }
         }
         ChatLine::HonorGain {
@@ -1246,7 +1314,7 @@ fn add_one(
                 None
             } else {
                 let Some(resolved) = names.resolve(victim, &commands).map(str::to_string) else {
-                    return Some(ChatLine::HonorGain {
+                    return Built::Held(ChatLine::HonorGain {
                         victim,
                         honor,
                         rank,
@@ -1273,11 +1341,10 @@ fn add_one(
                 &globals(&script),
             );
             if let Some(text) = line {
-                route(
-                    &mut script,
-                    &mut windows,
-                    &ChatEvent::text_only(ChatEventKind::CombatHonorGain, text),
-                );
+                steps.push(Step::Route(ChatEvent::text_only(
+                    ChatEventKind::CombatHonorGain,
+                    text,
+                )));
             }
         }
         ChatLine::TextEmote {
@@ -1291,7 +1358,7 @@ fn add_one(
                 .0
                 .and_then(|g| names.resolve(g, &commands).map(str::to_string));
             if performer_name.is_none() || your_name.is_none() {
-                return Some(ChatLine::TextEmote {
+                return Built::Held(ChatLine::TextEmote {
                     performer,
                     text_id,
                     target,
@@ -1301,7 +1368,7 @@ fn add_one(
             // player-only name cache misses; the animation rode `EmoteMessage`.
             let (Some(performer_name), Some(cat)) = (performer_name, emote_texts.as_deref()) else {
                 debug!("chat: text emote {text_id} from {performer:#x} has no sentence source");
-                return None;
+                return Built::Steps(steps);
             };
             let event = text_emote_event(
                 &cat.0,
@@ -1318,8 +1385,10 @@ fn add_one(
                 },
             );
             // No sentence is a real outcome: `/sit` prints nothing.
-            let Some(event) = event else { return None };
-            route(&mut script, &mut windows, &event);
+            let Some(event) = event else {
+                return Built::Steps(steps);
+            };
+            steps.push(Step::Route(event));
         }
         ChatLine::Combat(mut line) => {
             // The subject's name, asked once; guid 0 needs none.
@@ -1359,15 +1428,11 @@ fn add_one(
                 }
             }
             if wait {
-                return Some(ChatLine::Combat(line));
+                return Built::Held(ChatLine::Combat(line));
             }
             let composed = super::combat::compose_line(&script, line.family, line.me, &line.fills);
             if let Some(text) = composed {
-                route(
-                    &mut script,
-                    &mut windows,
-                    &ChatEvent::text_only(line.kind, text),
-                );
+                steps.push(Step::Route(ChatEvent::text_only(line.kind, text)));
             }
         }
         ChatLine::Discovery { area, xp } => {
@@ -1382,27 +1447,137 @@ fn add_one(
                 )
             };
             if let Some(toast) = toast {
-                script.fire_event(
+                steps.push(Step::Fire(
                     "UI_INFO_MESSAGE",
                     vec![benilla_ui::script::ScriptValue::Str(toast)],
-                );
+                ));
             }
             if let Some(text) = line {
-                route(
-                    &mut script,
-                    &mut windows,
-                    &ChatEvent::text_only(ChatEventKind::System, text),
-                );
+                steps.push(Step::Route(ChatEvent::text_only(
+                    ChatEventKind::System,
+                    text,
+                )));
             }
         }
     }
-    None
+    Built::Steps(steps)
 }
 
-/// Add `line` in the caller's turn (`0x509dd0`): queued while the UI is outside the world
-/// (`0x509f48`), held when a name it needs is not cached (`0x509f92` -> `0x50ad82`), else built and
-/// its event raised with the `World` lent before the caller goes on.
+/// One line through the add (`0x509dd0`): built with the parameters fetched, then each step run
+/// with no borrow held across its raise; the line back when a name it needs is not cached yet.
+fn add_one(world: &mut World, line: ChatLine) -> Option<ChatLine> {
+    let mut script = world.get_non_send_resource::<UiScript>()?.share();
+    let built = match world.run_system_cached_with(build, (line, script.share())) {
+        Ok(built) => built,
+        Err(e) => {
+            warn!("chat: the add did not run: {e}");
+            return None;
+        }
+    };
+    match built {
+        Built::Held(line) => Some(line),
+        Built::Steps(steps) => {
+            for step in steps {
+                run_step(world, &mut script, step);
+            }
+            None
+        }
+    }
+}
+
+/// Run one step of an added line with the `World` lent around its raise.
+fn run_step(world: &mut World, script: &mut UiScript, step: Step) {
+    match step {
+        Step::Fire(event, args) => crate::ui_script::safe_world::raise(world, event, args),
+        Step::Route(event) => route_in_world(world, script, &event, None),
+        Step::Speech {
+            event,
+            record,
+            text,
+        } => {
+            route_in_world(world, script, &event, Some(record));
+            // The bubble after the line (`0x50a970`).
+            if let Some(kind) = event.kind {
+                if world.contains_resource::<crate::chat_bubble::BubbleQueue>() {
+                    world.resource_scope(
+                        |world, mut bubbles: Mut<crate::chat_bubble::BubbleQueue>| {
+                            if let Some(cfg) =
+                                world.get_resource::<crate::chat_bubble::BubbleConfig>()
+                            {
+                                bubbles.push(cfg, event.sender_guid, kind, &text);
+                            }
+                        },
+                    );
+                }
+            }
+        }
+        Step::Deliver(mut event) => {
+            let Some(mut channels) = world.get_resource_mut::<ChannelState>() else {
+                return;
+            };
+            if deliver_before(script, &mut channels, &mut event) {
+                crate::ui_script::safe_world::raise(
+                    world,
+                    "CHANNEL_PASSWORD_REQUEST",
+                    password_request_args(&event),
+                );
+            }
+            let after = deliver_mid(&mut world.resource_mut::<ChannelState>(), &mut event);
+            route_in_world(world, script, &event, None);
+            deliver_after(
+                script,
+                &mut world.resource_mut::<ChannelState>(),
+                &event,
+                after,
+            );
+        }
+    }
+}
+
+/// The add's tail for a built line: the next line id and the chat record under it (`0x4fdd80`),
+/// the line recorded on its type and its event raised with the `World` lent (`0x50a8a5`, `0x4fdbc0`
+/// at `0x4fdd5c`), then the log's line, composed only while the log is open as the add finds it
+/// then (`0x50a975`).
+fn route_in_world(
+    world: &mut World,
+    script: &mut UiScript,
+    event: &ChatEvent,
+    record: Option<benilla_ui::script::ChatRecord>,
+) {
+    let Some(kind) = event.kind else {
+        warn!("chat: unroutable event (no kind): {:?}", event.text);
+        return;
+    };
+    let Some(mut windows) = world.get_resource_mut::<ChatWindows>() else {
+        return;
+    };
+    windows.line_id = windows.line_id.wrapping_add(1);
+    let line_id = windows.line_id;
+    if let Some(mut record) = record {
+        record.line_id = line_id;
+        script.record_chat(record);
+    }
+    let args = event.script_args_with_line(line_id);
+    crate::ui_script::safe_world::raise(world, super::event::event_name(kind), args);
+    // The flag as the listeners left it (`[0xb759d0]`).
+    if script.logging_flags().0 {
+        if let Some(mut windows) = world.get_resource_mut::<ChatWindows>() {
+            super::frames::log_added(&mut windows, event, kind, &globals(script));
+        }
+    }
+}
+
+/// Add `line` in the caller's turn (`0x509dd0`), behind what the caller queued so far.
 pub(crate) fn add(world: &mut World, line: ChatLine) {
+    crate::ui_script::live::fire_handler_events(world);
+    add_now(world, line);
+}
+
+/// The add (`0x509dd0`): the names it needs asked with the answer's callback, a whisper's sender
+/// entered in autocomplete (`0x509e51`, `0x509ee0`, `0x509f33`); then the line queued while the
+/// UI is outside the world (`0x509f48`), held when a name is not cached (`0x509f92` ->
+/// `0x50ad82`), else built and its event raised with the `World` lent before the caller goes on.
+pub(crate) fn add_now(world: &mut World, line: ChatLine) {
     let Some(log) = world.get_resource::<ChatLog>() else {
         return;
     };
@@ -1412,12 +1587,51 @@ pub(crate) fn add(world: &mut World, line: ChatLine) {
     {
         return;
     }
-    if log.queue_chat {
+    let queue_chat = log.queue_chat;
+    ask_names(world, &line);
+    if queue_chat {
         world.resource_mut::<ChatLog>().pending.push((line, true));
         return;
     }
-    if let Some(Some(held)) = crate::net::handlers::step(world, add_one, line) {
+    if let Some(held) = add_one(world, line) {
         world.resource_mut::<ChatLog>().pending.push((held, false));
+    }
+}
+
+/// The add's name lookups ahead of its queue test (`0x509f48`): each player guid the line names
+/// is asked with the answer's callback when missing (`0x509e51`, `0x509f33`), and a whisper's or
+/// its echo's cached sender entered in autocomplete, an addon whisper aside (`0x509ec7`-`0x509ee0`).
+fn ask_names(world: &mut World, line: &ChatLine) {
+    let (Some(names), Some(commands)) = (
+        world.get_resource::<NameCache>(),
+        world.get_resource::<NetCommands>(),
+    ) else {
+        return;
+    };
+    // A player guid: no high type nibble, and not all zero (`0x509e23`-`0x509e3d`).
+    let player = |g: u64| g >> 60 == 0 && g & 0x0f7f_ffff_ffff_ffff != 0;
+    for guid in line.player_guids() {
+        if player(guid) {
+            let _ = names.resolve(guid, commands);
+        }
+    }
+    let ChatLine::Wire { msg, .. } = line else {
+        return;
+    };
+    let sender = match &msg.sender_name {
+        Some(name) => Some(name.clone()),
+        None if needs_name(msg.chat_type) => names.peek(msg.sender_guid).map(str::to_string),
+        None => None,
+    };
+    let whisper = matches!(
+        msg.chat_type,
+        benilla_protocol::messages::CHAT_MSG_WHISPER
+            | benilla_protocol::messages::CHAT_MSG_WHISPER_INFORM
+    ) && msg.language != 0xFFFF_FFFF;
+    if let (true, Some(name)) = (whisper, sender) {
+        if let Some(mut script) = world.get_non_send_resource_mut::<UiScript>() {
+            script.note_autocomplete_contact(&name);
+        }
     }
 }
 
@@ -1447,7 +1661,7 @@ pub(crate) fn name_landed(world: &mut World) {
             }
             continue;
         }
-        if let Some(Some(back)) = crate::net::handlers::step(world, add_one, line) {
+        if let Some(back) = add_one(world, line) {
             kept.push((back, false));
         }
     }
@@ -1455,7 +1669,7 @@ pub(crate) fn name_landed(world: &mut World) {
 }
 
 /// The UI's world entry for chat (`0x5281b3` -> `0x50df80`): the add stops queueing (`0x50dfbd`)
-/// and the queued lines go through it in order (`0x50ae30`), one still missing a name held for
+/// and the queued lines go through it in order (`0x50dfc3`), one still missing a name held for
 /// its answer.
 pub(crate) fn enter_world(world: &mut World) {
     let Some(mut log) = world.get_resource_mut::<ChatLog>() else {
@@ -1469,20 +1683,49 @@ pub(crate) fn enter_world(world: &mut World) {
             kept.push((line, false));
             continue;
         }
-        if let Some(Some(back)) = crate::net::handlers::step(world, add_one, line) {
+        if let Some(back) = add_one(world, line) {
             kept.push((back, false));
         }
     }
     restore(world, kept);
 }
 
-/// The UI's entry, then the handed lines added and the held ones retried, as the handlers and the
-/// name answers would: a test's one pass over the chat add.
+/// The UI's entry, then the queued chat lines added and the held ones retried, as the handlers and
+/// the name answers would: a test's one pass over the chat add.
 #[cfg(test)]
 pub(crate) fn drain_for_test(world: &mut World) {
     enter_world(world);
-    add_handed(world);
+    crate::ui_script::live::fire_handler_events(world);
     name_landed(world);
+}
+
+/// Everything the add reads, defaulted, with the UI past its world entry; the wire's receiver.
+#[cfg(test)]
+pub(crate) fn insert_add_resources(
+    world: &mut World,
+) -> crossbeam_channel::Receiver<crate::net::ClientCommand> {
+    let (tx, sent) = crossbeam_channel::unbounded();
+    world.insert_resource(ChatLog {
+        queue_chat: false,
+        ..ChatLog::default()
+    });
+    world.init_resource::<crate::ui_script::live::UiEvents>();
+    world.init_resource::<ChatWindows>();
+    world.init_resource::<ChannelState>();
+    world.init_resource::<NameCache>();
+    world.init_resource::<crate::chat_bubble::BubbleQueue>();
+    world.init_resource::<crate::chat_bubble::BubbleConfig>();
+    world.init_resource::<crate::creature_anim::GestureQueue>();
+    world.insert_resource(NetCommands(tx));
+    world.init_resource::<SelfGuid>();
+    world.init_resource::<GuidIndex>();
+    world.init_resource::<crate::world_state::WorldStates>();
+    world.init_resource::<super::language::ChatLanguages>();
+    world.init_resource::<crate::items::Items>();
+    world.init_resource::<crate::text_filter::TextFilter>();
+    world.init_resource::<crate::text_filter::TextFilterSwitches>();
+    world.init_resource::<crate::net::ServerTime>();
+    sent
 }
 
 /// Put the walked lines back ahead of any a listener held during the walk.

@@ -163,7 +163,7 @@ type SkillBlock = Option<(u64, std::collections::HashMap<u16, u16>)>;
 /// these, silent for a line whose `SkillRaceClassInfo` flags carry `0x402` or that no row admits
 /// for this race and class, so a level-up prints none. Not `ui_action::show_messages`: that sink
 /// sends every chat row as `CHAT_MSG_SYSTEM`, and these two ask for `CHAT_MSG_SKILL` (23).
-fn skill_line(script: &UiScript, chat: &mut crate::ui_chat::ChatLog, key: &str, args: &[Arg<'_>]) {
+fn skill_line(script: &mut crate::ui_script::VmTurn, key: &str, args: &[Arg<'_>]) {
     let Some(template) = script
         .lua()
         .globals()
@@ -173,7 +173,7 @@ fn skill_line(script: &UiScript, chat: &mut crate::ui_chat::ChatLog, key: &str, 
     else {
         return;
     };
-    chat.push_event(crate::ui_chat::ChatEvent::text_only(
+    script.push_event(crate::ui_chat::ChatEvent::text_only(
         crate::ui_chat::ChatEventKind::Skill,
         benilla_ui::strings::fill(&template, args),
     ));
@@ -184,7 +184,6 @@ fn watch_skill_ups(
     self_guid: Res<crate::net::SelfGuid>,
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
     skill_lines: Option<Res<crate::ui_spellbook::SkillLines>>,
-    mut chat: ResMut<crate::ui_chat::ChatLog>,
     mut prev: Local<crate::ui_script::VmMemo<SkillBlock>>,
 ) {
     let (Some(guid), Ok(store)) = (self_guid.0, self_store.single()) else {
@@ -251,8 +250,7 @@ fn watch_skill_ups(
                             if announces() {
                                 debug!("chat: skill-up announced ({name} {old}→{value})");
                                 skill_line(
-                                    &script,
-                                    &mut chat,
+                                    &mut script,
                                     "ERR_SKILL_UP_SI",
                                     &[Arg::S(&name), Arg::D(i64::from(value))],
                                 );
@@ -266,12 +264,7 @@ fn watch_skill_ups(
                         if let Some(name) = name() {
                             if announces() {
                                 debug!("chat: skill-gain announced ({name} at {value})");
-                                skill_line(
-                                    &script,
-                                    &mut chat,
-                                    "ERR_SKILL_GAINED_S",
-                                    &[Arg::S(&name)],
-                                );
+                                skill_line(&mut script, "ERR_SKILL_GAINED_S", &[Arg::S(&name)]);
                             } else {
                                 debug!(
                                     "chat: skill-gain silenced ({name} at {value}, the 0x402 gate)"

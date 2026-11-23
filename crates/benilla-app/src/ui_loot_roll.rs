@@ -707,8 +707,17 @@ pub(crate) fn finish_line(world: &mut World, line_id: u32) {
             if let Some(text) = text {
                 ui.push_event(ChatEvent::text_only(ChatEventKind::Loot, text));
             }
+            // The roll closes after its line's listeners ran (`0x6fb937`, then `0x6fb953`).
             if let Some(roll_id) = node.closes {
-                rolls.close(roll_id, &mut *ui);
+                ui.world(move |world| {
+                    use crate::ui_script::live::UiEvents;
+                    if !world.contains_resource::<UiEvents>() {
+                        return;
+                    }
+                    world.resource_scope(|world, mut rolls: Mut<LootRolls>| {
+                        rolls.close(roll_id, &mut *world.resource_mut::<UiEvents>());
+                    });
+                });
             }
         },
         line_id,

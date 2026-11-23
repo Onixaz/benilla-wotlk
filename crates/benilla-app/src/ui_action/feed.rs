@@ -14,7 +14,7 @@ pub(super) fn feed_actions(mut script: crate::ui_script::InTurn, mut sink: Messa
 
     // The chat-kind lines an app caller showed through the VM with no chat log lent.
     for (chat_type, text) in script.take_chat_lines() {
-        sink.chat.push_event(crate::ui_chat::ChatEvent::text_only(
+        script.push_event(crate::ui_chat::ChatEvent::text_only(
             crate::ui_chat::kind_of_type(chat_type),
             text,
         ));

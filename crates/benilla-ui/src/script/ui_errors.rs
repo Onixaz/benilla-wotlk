@@ -56,11 +56,7 @@ impl super::UiScript {
             crate::messages::MsgKind::Chat => {
                 if !text.is_empty() {
                     let chat_type = crate::messages::by_key(key).map_or(0, |r| r.chat_type);
-                    if let Some(text) = self.add_chat_text(chat_type, text) {
-                        crate::script::model_mut_of(self.lua())
-                            .chat_lines
-                            .push((chat_type, text));
-                    }
+                    self.add_chat_text(chat_type, text);
                 }
                 return;
             }
@@ -70,25 +66,13 @@ impl super::UiScript {
         }
     }
 
-    /// The display's chat arm for a resolved line (`0x521814` -> `0x509dd0`): added to the chat log on `chat_type` in the caller's turn, its event fired with the `World` lent (`0x50a8a5`, `0x4fdd5c`); inside a host step's turn it is added at that step's raise. With no chat log lent the text comes back for the app's chat feed.
-    pub fn add_chat_text(&mut self, chat_type: u8, text: String) -> Option<String> {
+    /// The display's chat arm for a resolved line (`0x521814` -> `0x509dd0`): added through the chat add on `chat_type` in the caller's turn, inside a host step's turn at that step's raise; with no host lent the text waits for the app ([`Self::take_chat_lines`]).
+    pub fn add_chat_text(&mut self, chat_type: u8, text: String) {
         if super::world_loan::in_turn(self.lua()) {
-            super::world_loan::in_turn_or_now(self, move |s| {
-                if let Some(text) = s.add_chat_text(chat_type, text) {
-                    crate::script::model_mut_of(s.lua())
-                        .chat_lines
-                        .push((chat_type, text));
-                }
-            });
-            return None;
+            super::world_loan::in_turn_or_now(self, move |s| s.add_chat_text(chat_type, text));
+            return;
         }
-        match super::write_live(|l| l.add_chat_line(chat_type, &text)) {
-            Some(Some((event, args))) => {
-                self.fire_event(event, args);
-                None
-            }
-            _ => Some(text),
-        }
+        add_chat_text(self.lua(), chat_type, &text);
     }
 
     /// The keys of every line the display showed, in order, taken: the app's tests' record.
@@ -183,11 +167,22 @@ fn add_chat_line(lua: &Lua, key: &'static str, args: &[crate::strings::Arg<'_>])
     add_chat_text(lua, chat_type, &text);
 }
 
-/// Add `text` to the chat log on `chat_type` inside the call (`0x509dd0`), firing its event once
-/// the host lets go.
+/// Add `text` through the host's chat add on `chat_type` inside the call (`0x509dd0`), which
+/// records it and raises its event before returning (`0x50a8a5`, `0x50a8d5`); a lent view alone
+/// records it and the event fires here; with nothing lent it waits for the app.
 pub(crate) fn add_chat_text(lua: &Lua, chat_type: u8, text: &str) {
-    if let Some(Some((event, args))) = super::write_live(|l| l.add_chat_line(chat_type, text)) {
-        super::tick::fire_event_into(lua, event, args);
+    let ask = super::calls::HostAsk::ChatLine {
+        chat_type,
+        text: text.to_string(),
+    };
+    if super::calls::ask_host(lua, &ask).is_some() {
+        return;
+    }
+    match super::write_live(|l| l.add_chat_line(chat_type, text)) {
+        Some(Some((event, args))) => super::tick::fire_event_into(lua, event, args),
+        _ => crate::script::model_mut_of(lua)
+            .chat_lines
+            .push((chat_type, text.to_string())),
     }
 }
 

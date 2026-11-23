@@ -23,64 +23,57 @@ pub(crate) struct ChatWindows {
     pub line_id: u32,
 }
 
-/// Fire one event's `CHAT_MSG_*` at the VM, where the stock handler prints it, and tee its
-/// composed line to the chat log, which the reference writes C-side, not from Lua (`0x50a9a7`).
+/// Fire one event's `CHAT_MSG_*` at the VM, where the stock handler prints it, then tee its line to
+/// the chat log, which the reference composes C-side after the event, not from Lua (`0x50a975`).
+#[cfg(test)]
 pub(crate) fn route(
     script: &mut benilla_ui::script::UiScript,
     windows: &mut ChatWindows,
     event: &ChatEvent,
 ) {
-    // The VM's own globals, so the log line matches the window's.
-    let fire = record(windows, event, &|key| {
-        script.lua().globals().get::<String>(key).ok()
-    });
-    if let Some((name, args)) = fire {
-        script.fire_event(name, args);
+    let Some(kind) = event.kind else {
+        warn!("chat: unroutable event (no kind): {:?}", event.text);
+        return;
+    };
+    windows.line_id = windows.line_id.wrapping_add(1);
+    script.fire_event(
+        event_name(kind),
+        event.script_args_with_line(windows.line_id),
+    );
+    if script.logging_flags().0 {
+        log_added(windows, event, kind, &|key| {
+            script.lua().globals().get::<String>(key).ok()
+        });
     }
 }
 
-/// [`route`]'s half without the VM: the next line id and the log's tee, then the event's name and
-/// arguments for the caller to fire; `None` for an event with no kind.
-fn record(
+/// The chat log's line for an added line, written only while the log is open as the add finds it
+/// after the event (`0x50a975`).
+pub(crate) fn log_added(
     windows: &mut ChatWindows,
     event: &ChatEvent,
+    kind: ChatEventKind,
     get: &dyn Fn(&str) -> Option<String>,
-) -> Option<(&'static str, Vec<benilla_ui::script::ScriptValue>)> {
-    let Some(kind) = event.kind else {
-        warn!("chat: unroutable event (no kind): {:?}", event.text);
-        return None;
-    };
-    windows.line_id = windows.line_id.wrapping_add(1);
+) {
     if windows.logs.0.is_open() {
         if let Some(line) = log_line(event, kind, &windows.default_language, get) {
             windows.logs.0.record(line.as_bytes());
         }
     }
-    Some((
-        event_name(kind),
-        event.script_args_with_line(windows.line_id),
-    ))
-}
-
-/// The message display's chat line added inside a verb's call (`0x52183c` -> `0x509dd0`): `text`
-/// on the catalog row's chat type, the client's own index (26 a skill line, 0 a system line, the
-/// catalog's only two), recorded as [`route`] records it; the event's name and arguments for the
-/// verb to fire. Both compose as their bare text, so no `GlobalStrings` lookup is needed.
-pub(crate) fn add_chat_line(
-    windows: &mut ChatWindows,
-    chat_type: u8,
-    text: &str,
-) -> Option<(&'static str, Vec<benilla_ui::script::ScriptValue>)> {
-    record(
-        windows,
-        &ChatEvent::text_only(kind_of_type(chat_type), text.to_string()),
-        &|_| None,
-    )
 }
 
 /// A chat line an app handler or step adds in its turn (`0x509dd0`): recorded on `chat_type` (`0x50a8a5`) and its event raised with the `World` lent (`0x4fdbc0` at `0x4fdd5c`), queued while the UI is outside the world.
 pub(crate) fn add_chat_line_now(world: &mut World, chat_type: u8, text: String) {
     super::feed::add(
+        world,
+        ChatEvent::text_only(kind_of_type(chat_type), text).into(),
+    );
+}
+
+/// The message display's chat line added inside a verb's call (`0x52183c` -> `0x509dd0`), on the
+/// catalog row's chat type: 26 a skill line, 0 a system line, the catalog's only two.
+pub(crate) fn add_chat_line_in_call(world: &mut World, chat_type: u8, text: String) {
+    super::feed::add_now(
         world,
         ChatEvent::text_only(kind_of_type(chat_type), text).into(),
     );

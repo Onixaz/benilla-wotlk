@@ -406,7 +406,7 @@ fn a_welcomes_listener_does_not_see_the_feeds_later_lock_write() {
     use benilla_ui::script::UiScript;
     let mut app = App::new();
     app.init_resource::<InstanceState>()
-        .init_resource::<ChatLog>()
+        .init_resource::<crate::ui_chat::ChatLog>()
         .init_resource::<Time<Real>>()
         .init_resource::<crate::ui_script::live::UiEvents>()
         .add_systems(Update, feed_instance);

@@ -211,8 +211,10 @@ pub(crate) struct MainState<'w> {
     pub(crate) refunds: Option<NonSendMut<'w, crate::ui_socket::RefundRecords>>,
     pub(crate) guild_bank: Option<NonSendMut<'w, crate::ui_guild_bank::GuildBankState>>,
     pub(crate) spirit: Option<NonSendMut<'w, crate::ui_dialog_verbs::AreaSpiritHealer>>,
-    /// The chat windows, where the message display adds a chat line inside its call (`0x52183c`).
+    /// The chat windows, whose chat log `LoggingChat` opens inside its call (`0x4fbcb1`).
     pub(crate) chat: Option<ResMut<'w, crate::ui_chat::ChatWindows>>,
+    /// The combat log file `LoggingCombat` opens inside its call (`0x4fbcb1`).
+    pub(crate) combat_log_file: Option<ResMut<'w, crate::ui_chat::logging::CombatLogFile>>,
 }
 
 mod actions;
@@ -501,12 +503,12 @@ impl LiveState for LiveView<'_, '_> {
             .is_some()
     }
 
-    fn add_chat_line(
-        &mut self,
-        chat_type: u8,
-        text: &str,
-    ) -> Option<(&'static str, Vec<ScriptValue>)> {
-        crate::ui_chat::add_chat_line(self.lent.chat.as_deref_mut()?, chat_type, text)
+    fn open_log(&mut self, chat: bool) -> Option<bool> {
+        if chat {
+            Some(self.lent.chat.as_deref_mut()?.logs.0.open())
+        } else {
+            Some(self.lent.combat_log_file.as_deref_mut()?.0.open())
+        }
     }
 
     fn world_state_ui_count(&self) -> Option<usize> {
@@ -2581,6 +2583,8 @@ enum UiEvent {
     World(WorldStep),
     /// One cast or channel edge applied to the caster's cast state, its events fired in turn.
     CastEdge(crate::ui_cast::CastBarEdge),
+    /// A chat line through the chat add at its step (`0x509dd0` runs inside its caller).
+    Chat(crate::ui_chat::ChatLine),
 }
 
 /// An argument a system line's template takes.
@@ -2628,6 +2632,44 @@ impl UiEvents {
     /// Write state the VM owns in turn with the events around it; `write` may fire its own.
     pub(crate) fn write(&mut self, write: impl FnOnce(&mut UiScript) + Send + Sync + 'static) {
         self.0.push(UiEvent::Write(Box::new(write)));
+    }
+
+    /// Add `line` through the chat add in turn with the events around it (`0x509dd0`).
+    pub(crate) fn chat(&mut self, line: crate::ui_chat::ChatLine) {
+        self.0.push(UiEvent::Chat(line));
+    }
+
+    /// The kind and text of every chat event line queued, in order.
+    #[cfg(test)]
+    pub(crate) fn chat_events(&self) -> Vec<(Option<crate::ui_chat::ChatEventKind>, String)> {
+        self.0
+            .iter()
+            .filter_map(|e| match e {
+                UiEvent::Chat(crate::ui_chat::ChatLine::Event(e)) => Some((e.kind, e.text.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The text of every chat event line queued, in order.
+    #[cfg(test)]
+    pub(crate) fn chat_texts(&self) -> Vec<String> {
+        self.chat_events().into_iter().map(|(_, t)| t).collect()
+    }
+
+    /// Every chat line queued, taken in order; the rest stays.
+    #[cfg(test)]
+    pub(crate) fn take_chat(&mut self) -> Vec<crate::ui_chat::ChatLine> {
+        let mut out = Vec::new();
+        let mut kept = Vec::new();
+        for e in std::mem::take(&mut self.0) {
+            match e {
+                UiEvent::Chat(line) => out.push(line),
+                other => kept.push(other),
+            }
+        }
+        self.0 = kept;
+        out
     }
 
     /// Run `step` over the `World` in turn with the events around it; what it queues fires next.
@@ -2730,6 +2772,7 @@ impl UiEvents {
                 UiEvent::SystemLine(key, _) => key,
                 UiEvent::World(_) => "<world>",
                 UiEvent::CastEdge(_) => "<cast edge>",
+                UiEvent::Chat(_) => "<chat>",
             })
             .collect()
     }
@@ -2826,19 +2869,22 @@ pub(crate) fn fire_handler_events(world: &mut World) {
         return;
     };
     if queued.0.is_empty() {
-        crate::ui_chat::add_handed(world);
         return;
     }
     let mut events = std::collections::VecDeque::from(std::mem::take(&mut queued.0));
     let mut batch = Vec::new();
     while let Some(event) = events.pop_front() {
         match event {
-            step @ (UiEvent::World(_) | UiEvent::CastEdge(_) | UiEvent::SystemLine(..)) => {
+            step @ (UiEvent::World(_)
+            | UiEvent::CastEdge(_)
+            | UiEvent::SystemLine(..)
+            | UiEvent::Chat(_)) => {
                 fire_batch(world, &mut batch);
                 match step {
                     UiEvent::World(step) => step(world),
                     UiEvent::CastEdge(edge) => crate::ui_cast::apply_edge(world, edge),
                     UiEvent::SystemLine(key, args) => system_line(world, key, &args),
+                    UiEvent::Chat(line) => crate::ui_chat::add_now(world, line),
                     _ => unreachable!(),
                 }
                 // What the step queued fires in its turn, ahead of the rest.
@@ -2852,7 +2898,6 @@ pub(crate) fn fire_handler_events(world: &mut World) {
         }
     }
     fire_batch(world, &mut batch);
-    crate::ui_chat::add_handed(world);
 }
 
 /// A handler's system line added at its step (`0x5498f6`, `0x5cfb20` -> `0x509dd0`): its template
@@ -2890,7 +2935,10 @@ fn fire_batch(world: &mut World, batch: &mut Vec<UiEvent>) {
                 UiEvent::ClearCursor => script.clear_cursor_payload(),
                 UiEvent::Write(write) => write(script),
                 // Split out by the caller.
-                UiEvent::World(_) | UiEvent::CastEdge(_) | UiEvent::SystemLine(..) => {}
+                UiEvent::World(_)
+                | UiEvent::CastEdge(_)
+                | UiEvent::SystemLine(..)
+                | UiEvent::Chat(_) => {}
             }
         }
     });

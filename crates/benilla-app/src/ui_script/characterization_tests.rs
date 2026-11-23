@@ -9463,12 +9463,13 @@ fn group_loot_rolls_fire_from_their_handlers_with_the_rolls_read_at_the_call() {
                 "CHAT_MSG_LOOT Need Roll - 0 for |cffffffff|Hitem:593921:0:0:0:0:0:0:0:80|h[Charz Gem]|h|r by Probesix      0 0  0 1  0 | roll0=Charz Gem roll1=Charz Late roll2=nil rleft1=true".to_string(),
             ],
             vec![
+                // The won line is added (`0x6fb937`) before the roll closes (`0x6fb953`).
+                "CHAT_MSG_LOOT You won: |cffffffff|Hitem:593921:0:0:0:0:0:0:0:80|h[Charz Gem]|h|r      0 0  0 2  0 | roll0=Charz Gem roll1=Charz Late roll2=nil rleft1=true".to_string(),
                 "CANCEL_LOOT_ROLL 0 | roll0=nil roll1=Charz Late roll2=nil rleft1=true".to_string(),
-                "CHAT_MSG_LOOT You won: |cffffffff|Hitem:593921:0:0:0:0:0:0:0:80|h[Charz Gem]|h|r      0 0  0 2  0 | roll0=nil roll1=Charz Late roll2=nil rleft1=true".to_string(),
             ],
             vec![
+                "CHAT_MSG_LOOT Everyone passed on: |cffffffff|Hitem:593922:0:0:0:0:0:0:0:80|h[Charz Late]|h|r      0 0  0 3  0 | roll0=nil roll1=Charz Late roll2=nil rleft1=true".to_string(),
                 "CANCEL_LOOT_ROLL 1 | roll0=nil roll1=nil roll2=nil rleft1=false".to_string(),
-                "CHAT_MSG_LOOT Everyone passed on: |cffffffff|Hitem:593922:0:0:0:0:0:0:0:80|h[Charz Late]|h|r      0 0  0 3  0 | roll0=nil roll1=nil roll2=nil rleft1=false".to_string(),
             ],
         ]
     );
@@ -10081,9 +10082,10 @@ fn an_auction_house_fires_from_its_handlers_with_the_lists_read_at_the_call() {
             vec![at("AUCTION_ITEM_LIST_UPDATE", browse)],
             Vec::new(),
             vec![at("AUCTION_OWNED_LIST_UPDATE", owned)],
+            // The bid's line is added inside the handler ahead of the list's update (`0x509dd0`).
             vec![
-                at("AUCTION_ITEM_LIST_UPDATE", bid),
                 at("CHAT_MSG_SYSTEM Bid accepted.      0 0  0 1  0", bid),
+                at("AUCTION_ITEM_LIST_UPDATE", bid),
             ],
             vec![at("AUCTION_OWNED_LIST_UPDATE", bid)],
             vec![
@@ -10233,4 +10235,151 @@ fn set_current_title_sends_inside_the_call() {
         "both sent before the chunk returned"
     );
     assert_eq!(cur, 0, "the field waits for the server");
+}
+
+// ── Chat lines: the chat add in its caller's turn (#1283) ────────────────────────────────────────
+
+/// A player's guid that the name cache has not answered.
+const ANN: u64 = 0x31;
+
+/// A spoken `SAY` line from `ANN`, its name to be asked.
+fn say_from_ann(text: &str) -> SessionEvent {
+    SessionEvent::Chat(benilla_protocol::messages::ChatMessage {
+        chat_type: benilla_protocol::messages::CHAT_MSG_SAY,
+        language: 0,
+        sender_guid: ANN,
+        target_guid: 0,
+        sender_name: None,
+        channel: None,
+        text: text.into(),
+        chat_tag: 0,
+        achievement: 0,
+        wire_type: 0,
+        sender_word: 0,
+    })
+}
+
+/// Each `CHAT_MSG_SAY` the observer saw, as its text and sender.
+fn says(seen: &[Seen]) -> Vec<String> {
+    seen.iter()
+        .filter(|s| s.event == "CHAT_MSG_SAY")
+        .map(|s| s.args.split(' ').take(2).collect::<Vec<_>>().join(" "))
+        .collect()
+}
+
+/// `SMSG_MESSAGECHAT` adds its line in the handler (`0x509dd0`): a sender whose name is cached
+/// fires `CHAT_MSG_SAY` as the packet lands; one not cached holds the line (`0x509f92` ->
+/// `0x50ad82`) until the name answer's callback adds it (`0x503c80`, `0x503edb`), in whichever
+/// order the two packets come, and the name is asked once.
+#[test]
+fn a_spoken_line_fires_in_its_handler_or_at_its_names_answer() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    // The line first: held, its name asked, added at the answer in the same frame.
+    let seen = rig.packets(vec![say_from_ann("hello"), name_answer(ANN, "Ann")], 2);
+    assert_eq!(says(&seen), ["hello Ann"]);
+    let asks = rx
+        .try_iter()
+        .filter(|c| matches!(c, crate::net::ClientCommand::NameQuery { guid: ANN }))
+        .count();
+    assert_eq!(asks, 1, "the add asks the name once, with its callback");
+    // The name cached first: the line fires in its own handler.
+    let seen = rig.packets(vec![say_from_ann("again")], 1);
+    assert_eq!(says(&seen), ["again Ann"]);
+}
+
+/// The answer before the line: the line finds the name cached and fires in its handler.
+#[test]
+fn a_spoken_line_after_its_names_answer_fires_in_its_handler() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let seen = rig.packets(vec![name_answer(ANN, "Ann"), say_from_ann("hi")], 1);
+    assert_eq!(says(&seen), ["hi Ann"]);
+}
+
+/// `SMSG_PLAYED_TIME`'s handler (`0x401390`) raises `TIME_PLAYED_MSG(total, level)` itself
+/// (`0x401463`), for a shown answer alone (`0x4013f6`).
+#[test]
+fn played_time_fires_from_its_handler_for_a_shown_answer_only() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let answer = |show| SessionEvent::PlayedTime {
+        total: 360_000,
+        level: 7_200,
+        show,
+    };
+    let seen = rig.packets(vec![answer(false), answer(true)], 1);
+    assert_eq!(
+        pin(&seen, &["TIME_PLAYED_MSG"], &[]),
+        ["TIME_PLAYED_MSG 360000 7200"]
+    );
+}
+
+/// `RequestTimePlayed` (`0x515880`) sends `CMSG_PLAYED_TIME` inside the call (`0x5158c1`), asking for
+/// a shown answer, before the calling chunk goes on.
+#[test]
+fn request_time_played_sends_inside_the_call() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("RequestTimePlayed() RequestTimePlayed()").unwrap();
+    })
+    .expect("a VM");
+    let sent = rx
+        .try_iter()
+        .filter(|c| matches!(c, crate::net::ClientCommand::PlayedTime { show: true }))
+        .count();
+    assert_eq!(sent, 2, "each call sends before the chunk returns");
+}
+
+/// `SMSG_SERVER_MESSAGE` adds its `CHAT_MSG_SYSTEM` line in its handler (`0x50c980`), in wire order
+/// with the packets around it.
+#[test]
+fn a_server_message_adds_its_line_in_its_handler() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let seen = rig.packets(
+        vec![
+            SessionEvent::PlayedTime {
+                total: 1,
+                level: 1,
+                show: true,
+            },
+            SessionEvent::ServerMessage {
+                message_type: 3,
+                text: "charz".into(),
+            },
+            SessionEvent::PlayedTime {
+                total: 2,
+                level: 2,
+                show: true,
+            },
+        ],
+        1,
+    );
+    let order: Vec<&str> = seen
+        .iter()
+        .filter(|s| s.event == "TIME_PLAYED_MSG" || s.event == "CHAT_MSG_SYSTEM")
+        .map(|s| s.event.as_str())
+        .collect();
+    assert_eq!(
+        order,
+        ["TIME_PLAYED_MSG", "CHAT_MSG_SYSTEM", "TIME_PLAYED_MSG"],
+        "the broadcast's line between the two answers' events"
+    );
+    let line = seen
+        .iter()
+        .find(|s| s.event == "CHAT_MSG_SYSTEM")
+        .map(|s| s.args.clone())
+        .unwrap_or_default();
+    assert!(line.contains("charz"), "{line}");
 }

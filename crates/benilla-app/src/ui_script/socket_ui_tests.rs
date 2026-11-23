@@ -272,7 +272,6 @@ fn a_refundable_purchase_raises_the_refund_confirm() {
             ..Default::default()
         }),
     );
-    s.set_played_time(100_000);
     s.set_refund_record(
         CAPE,
         Some(benilla_ui::script::RefundView {

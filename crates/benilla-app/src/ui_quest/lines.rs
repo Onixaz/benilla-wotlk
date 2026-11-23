@@ -87,15 +87,13 @@ pub(crate) fn quest_landed(world: &mut World, quest_id: u32) {
     }
 }
 
-/// The turn-in (`0x6d0e10`): its lines, the chosen reward's latch read and zeroed (`0x6d1061`, `0x6d10bc`), then the window closes unless the quest chains on (`0x6d10ca`, `0x6d10d4`).
+/// The turn-in (`0x6d0e10`): its lines, each added in turn as the handler reaches it (`0x6d0e66`-`0x6d10b4`), the chosen reward's latch read and zeroed (`0x6d1061`, `0x6d10bc`), then the window closes unless the quest chains on (`0x6d10ca`, `0x6d10d4`).
 pub(crate) fn turn_in(world: &mut World, c: QuestComplete) {
     let chosen = world
         .get_non_send_resource_mut::<QuestGiver>()
         .map_or(0, |mut g| std::mem::take(&mut g.chosen_reward));
-    match world.run_system_cached_with(turn_in_lines, (c, chosen)) {
-        Ok(Some(chained)) => super::giver_finished(world, chained, c.quest_id, false),
-        Ok(None) => {}
-        Err(e) => warn!("ui_quest: the turn-in did not run: {e}"),
+    if let Some(Some(chained)) = crate::net::handlers::step(world, turn_in_lines, (c, chosen)) {
+        super::giver_finished(world, chained, c.quest_id, false);
     }
 }
 
@@ -156,7 +154,7 @@ fn turn_in_lines(
     // The honor, a tenth of the wire's: `COMBATLOG_HONORAWARD` and `HONOR_GAINED` (`0x6d0edb`-`0x6d0f55`).
     if c.honor as i32 > 0 {
         let honor = c.honor / 10;
-        sink.chat.push_pvp_credit(honor as i32, 0, 0);
+        script.push_pvp_credit(honor as i32, 0, 0);
         text("HONOR_GAINED", honor);
     }
     // `LEVEL_UP_CHAR_POINTS` as a `CHAT_MSG_MONEY` line (`0x6d0f5d`-`0x6d0fa6`).
@@ -165,9 +163,11 @@ fn turn_in_lines(
             "LEVEL_UP_CHAR_POINTS",
             vec![FillArg::D(i64::from(c.talents))],
         );
-        let get = |key: &str| benilla_ui::strings::global(script.lua(), key);
-        if let Some(line) = ui_error_text(&msg, &get) {
-            sink.chat.push_event(crate::ui_chat::ChatEvent::text_only(
+        let line = ui_error_text(&msg, &|key: &str| {
+            benilla_ui::strings::global(script.lua(), key)
+        });
+        if let Some(line) = line {
+            script.push_event(crate::ui_chat::ChatEvent::text_only(
                 crate::ui_chat::ChatEventKind::Money,
                 line,
             ));
@@ -296,6 +296,7 @@ mod tests {
     fn app() -> (App, crossbeam_channel::Receiver<ClientCommand>) {
         let (tx, rx) = crossbeam_channel::unbounded();
         let mut app = App::new();
+        let _wire = crate::ui_chat::insert_add_resources(app.world_mut());
         app.insert_resource(NetCommands(tx))
             .init_resource::<TurnIns>()
             .init_non_send_resource::<QuestGiver>()
@@ -304,8 +305,6 @@ mod tests {
             .init_non_send_resource::<crate::ui_quest_log::QuestExpiries>()
             .init_resource::<Items>()
             .init_non_send_resource::<crate::items::RecordWaits>()
-            .init_resource::<UiEvents>()
-            .init_resource::<crate::ui_chat::ChatLog>()
             .init_resource::<crate::sound::MessageSounds>()
             .add_message::<crate::ui_unit::CombatTextEvent>();
         let script = UiScript::new().unwrap();
@@ -320,6 +319,13 @@ mod tests {
                 ERR_QUEST_REWARD_ITEM_MULT_IS = "Received %d of item: %s."
                 LEVEL_UP_CHAR_POINTS = "You have gained %d talent points."
                 GOLD_AMOUNT = "%d Gold"; SILVER_AMOUNT = "%d Silver"; COPPER_AMOUNT = "%d Copper"
+                COMBATLOG_HONORAWARD = "You have been awarded %d honor points."
+                Seen = {}
+                local f = CreateFrame("Frame")
+                for _, e in ipairs({ "CHAT_MSG_SYSTEM", "CHAT_MSG_MONEY", "CHAT_MSG_COMBAT_HONOR_GAIN", "QUEST_FINISHED" }) do
+                    f:RegisterEvent(e)
+                end
+                f:SetScript("OnEvent", function(_, e, a1) Seen[#Seen + 1] = { e, a1 or "" } end)
                 "#,
             )
             .unwrap();
@@ -327,10 +333,27 @@ mod tests {
         (app, rx)
     }
 
+    /// Every event the spy saw, `EVENT:arg1`, in order.
+    fn seen(app: &App) -> Vec<String> {
+        app.world()
+            .non_send_resource::<UiScript>()
+            .eval::<Vec<Vec<String>>>("return Seen")
+            .unwrap()
+            .into_iter()
+            .map(|e| format!("{}:{}", e[0], e[1]))
+            .collect()
+    }
+
+    /// The chat lines added, their text alone, in order.
     fn chat(app: &App) -> Vec<String> {
         app.world()
-            .resource::<crate::ui_chat::ChatLog>()
-            .pending_lines()
+            .non_send_resource::<UiScript>()
+            .eval::<Vec<Vec<String>>>("return Seen")
+            .unwrap()
+            .into_iter()
+            .filter(|e| e[0].starts_with("CHAT_MSG_"))
+            .map(|e| e[1].clone())
+            .collect()
     }
 
     fn complete(quest_id: u32) -> QuestComplete {
@@ -430,6 +453,44 @@ mod tests {
         );
         assert_eq!(app.world().resource::<TurnIns>().waiting(), 0);
         assert!(reward_waits(&app).is_empty());
+    }
+
+    /// Each line is added inside the handler as `0x6d0e10` reaches it (`0x6d0e66`-`0x6d10b4`), on its own
+    /// chat type (the honor award `CHAT_MSG_COMBAT_HONOR_GAIN`, the talents `CHAT_MSG_MONEY`), all
+    /// before the window closes and `QUEST_FINISHED` fires (`0x6d10ca`, `0x58cb98`).
+    #[test]
+    fn a_turn_ins_lines_fire_in_the_handler_before_the_window_closes() {
+        let (mut app, _rx) = app();
+        {
+            let world = app.world_mut();
+            world.non_send_resource_mut::<QuestGiver>().open(
+                0xF130_0000_0000_0007,
+                crate::ui_quest::QuestView::Greeting(Default::default()),
+            );
+            world
+                .resource_mut::<QuestLog>()
+                .insert_template(template(7, "Kobold Camp Cleanup", 0));
+            turn_in(
+                world,
+                QuestComplete {
+                    quest_id: 7,
+                    xp: 450,
+                    honor: 150,
+                    talents: 1,
+                    ..Default::default()
+                },
+            );
+        }
+        assert_eq!(
+            seen(&app),
+            [
+                "CHAT_MSG_SYSTEM:Kobold Camp Cleanup completed.",
+                "CHAT_MSG_SYSTEM:Experience gained: 450.",
+                "CHAT_MSG_COMBAT_HONOR_GAIN:You have been awarded 15 honor points.",
+                "CHAT_MSG_MONEY:You have gained 1 talent points.",
+                "QUEST_FINISHED:",
+            ]
+        );
     }
 
     /// An unknown item's answer prints nothing (`0x6cd8c6`).
