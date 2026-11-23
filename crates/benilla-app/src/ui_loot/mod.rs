@@ -116,10 +116,26 @@ pub(crate) struct LootState {
 /// wire, the latch and the caller's sink.
 pub(crate) struct LootStep<'a> {
     pub(crate) items: &'a Items,
+    /// The carried-count check at the call (`0x754dd0`), over the bags as they stand.
+    pub(crate) carry: &'a CarryCheck<'a>,
     pub(crate) waits: &'a mut RecordWaits,
     pub(crate) net: &'a NetCommands,
     pub(crate) latch: &'a mut LootLatch,
     pub(crate) sink: &'a mut dyn SignalSink,
+}
+
+/// The carried-count check a take runs on `(item_id, record, count)`.
+pub(crate) type CarryCheck<'a> =
+    dyn Fn(u32, &benilla_protocol::ItemInfo, u32) -> Option<benilla_ui::script::CarryRefusal> + 'a;
+
+/// A check that refuses nothing, for a step with no bags.
+#[cfg(test)]
+pub(crate) fn no_carry_limit(
+    _: u32,
+    _: &benilla_protocol::ItemInfo,
+    _: u32,
+) -> Option<benilla_ui::script::CarryRefusal> {
+    None
 }
 
 /// `CloseLoot`'s flags (`0x523640`): send the release, keep an item's loot open, show
@@ -146,6 +162,8 @@ enum LootAction {
         wire_slot: u8,
         display_id: u32,
         item_id: u32,
+        /// The row's stack, the carried-count check's `count` (`0x58927c`).
+        count: u32,
         /// `MASTER` opens the master-loot dropdown instead of a take.
         slot_type: u8,
     },
@@ -534,8 +552,9 @@ impl LootState {
     /// signal (`0x589184`-`0x58919f`); an item row branches on its slot type, a roll in progress and
     /// a locked row refusing with their line (`0x589200`, `0x589217`) and a master-loot row opening
     /// the candidate list (`0x589230`); else its record, read with no callback, is needed
-    /// (`0x589259`), and a bind-on-pickup row signals `LOOT_BIND_CONFIRM` (`0x5892c4`) where any
-    /// other plays its pickup sound and sends (`0x5892df`, `0x5892f1`).
+    /// (`0x589259`), and a bind-on-pickup row runs the carried-count check, refusing with its line
+    /// (`0x589298`), then signals `LOOT_BIND_CONFIRM` (`0x5892c4`), where any other plays its pickup
+    /// sound and sends (`0x5892df`, `0x5892f1`).
     fn take(&mut self, index: u32, held: bool, step: &mut LootStep) -> Took {
         match self.action_at(index) {
             Some(LootAction::Money) => {
@@ -558,6 +577,7 @@ impl LootState {
                 wire_slot,
                 display_id,
                 item_id,
+                count,
                 slot_type,
             }) => {
                 let Some(record) = step.items.template_cached(item_id) else {
@@ -565,6 +585,11 @@ impl LootState {
                     return Took::Nothing;
                 };
                 if bind_confirm_required(record, slot_type) {
+                    if let Some(refusal) = (step.carry)(item_id, record, count) {
+                        debug!("ui_loot: row {index} refused by the carried count");
+                        step.sink.line(carry_line(refusal));
+                        return Took::Nothing;
+                    }
                     step.sink.fire(
                         "LOOT_BIND_CONFIRM",
                         vec![ScriptValue::Int(i64::from(index))],
@@ -673,6 +698,7 @@ impl LootState {
         let (tx, _rx) = crossbeam_channel::unbounded();
         let mut step = LootStep {
             items: &Items::default(),
+            carry: &no_carry_limit,
             waits: &mut RecordWaits::default(),
             net: &NetCommands(tx),
             latch: &mut LootLatch::default(),
@@ -745,6 +771,7 @@ impl LootState {
             wire_slot: it.slot,
             display_id: it.display_info_id,
             item_id: it.item_id,
+            count: it.count,
             slot_type: it.slot_type,
         })
     }
@@ -1097,10 +1124,14 @@ pub(super) fn with_window(
     let mut waits = world
         .remove_non_send_resource::<RecordWaits>()
         .unwrap_or_default();
+    let carry = |item_id: u32, record: &benilla_protocol::ItemInfo, count: u32| {
+        crate::ui_items::carry_refusal_in(world, item_id, record, count)
+    };
     let closed = f(
         &mut loot,
         &mut LootStep {
             items: world.resource::<Items>(),
+            carry: &carry,
             waits: &mut waits,
             net: world.resource::<NetCommands>(),
             latch: &mut latch,
@@ -1254,10 +1285,22 @@ impl LootSourceObjects<'_, '_> {
     }
 }
 
+/// The carried-count check's message (`0x754e2a`, `0x754ea7`): the category's quantity, then its
+/// name.
+pub(crate) fn carry_line(refusal: benilla_ui::script::CarryRefusal) -> crate::ui_action::UiError {
+    use crate::ui_action::{FillArg, UiError};
+    let key = refusal.key();
+    match refusal {
+        benilla_ui::script::CarryRefusal::MaxCount => UiError::key(key),
+        benilla_ui::script::CarryRefusal::Category { quantity, name } => {
+            UiError::args(key, vec![FillArg::D(i64::from(quantity)), FillArg::S(name)])
+        }
+    }
+}
+
 /// Whether a take must raise `LOOT_BIND_CONFIRM` first (`0x589140`): bind on pickup, uncommon or
-/// better, not multi-drop, and not an `OWNER` slot. Not ported: the hold-count check `0x754dd0`
-/// the reference runs before the dialog, which refuses an item past its `MaxCount` or limit
-/// category with a red error.
+/// better, not multi-drop, and not an `OWNER` slot; the take then runs the carried-count check
+/// before the dialog (`0x589298`).
 fn bind_confirm_required(t: &benilla_protocol::ItemInfo, kind: u8) -> bool {
     kind != slot_type::OWNER
         && t.bonding == BIND_WHEN_PICKED_UP
@@ -1576,6 +1619,7 @@ mod tests {
         fn step(&mut self) -> LootStep<'_> {
             LootStep {
                 items: &self.items,
+                carry: &no_carry_limit,
                 waits: &mut self.waits,
                 net: &self.net,
                 latch: &mut self.latch,
@@ -1981,6 +2025,63 @@ mod tests {
             vec![1],
             "the event carries the row out, 1-based and display-side"
         );
+    }
+
+    /// `0x589298`: a bind-on-pickup row runs the carried-count check before the dialog; at the
+    /// limit it shows the line and neither confirms nor sends, below it the dialog opens.
+    #[test]
+    fn a_bop_row_past_the_carried_count_is_refused_before_the_dialog() {
+        use benilla_protocol::field::*;
+        use benilla_protocol::ObjectFields;
+        const ME: u64 = 0x77;
+        let (mut app, rx) = drain_with(0, vec![item(0, FELSTRIKER, 1)], &[], "");
+        let world = app.world_mut();
+        world.resource_mut::<Items>().insert_template(
+            FELSTRIKER,
+            Some(ItemInfo {
+                quality: 4,
+                bonding: 1,
+                max_count: 1,
+                ..crate::items::test_template("Felstriker")
+            }),
+        );
+        let me = world
+            .spawn(crate::net::ObjectStore(ObjectFields::from_pairs(&[])))
+            .id();
+        world
+            .resource_mut::<crate::net::GuidIndex>()
+            .0
+            .insert(ME, me);
+        world.insert_resource(crate::net::SelfGuid(Some(ME)));
+        let _ = crate::ui_action::take_lines_in_turn();
+        run_lua(world, "LootSlot(1)");
+        assert_eq!(confirms(&mut app), vec![1], "none held: below the count");
+        assert_eq!(pending_confirm(&app), Some(1));
+
+        // One held in the backpack: the next is past the count.
+        let world = app.world_mut();
+        crate::items::test_spawn_item(
+            world,
+            0xF1,
+            ObjectFields::from_pairs(&[
+                (FIELD_OBJECT_ENTRY, FELSTRIKER),
+                (FIELD_ITEM_STACK_COUNT, 1),
+            ]),
+            false,
+        );
+        let mut store = world.get_mut::<crate::net::ObjectStore>(me).unwrap();
+        store.0 = ObjectFields::from_pairs(&[
+            (FIELD_PLAYER_PACK_SLOT_1, 0xF1),
+            (FIELD_PLAYER_PACK_SLOT_1 + 1, 0),
+        ]);
+        run_lua(world, "LootSlot(1)");
+        assert_eq!(confirms(&mut app), vec![1], "no second dialog");
+        assert!(sent(&rx).is_empty(), "nothing goes out");
+        let lines: Vec<_> = crate::ui_action::take_lines_in_turn()
+            .into_iter()
+            .map(|l| l.key)
+            .collect();
+        assert_eq!(lines, ["ERR_ITEM_MAX_COUNT"], "shown in the take's call");
     }
 
     /// `ConfirmLootSlot` (`0x589300`).

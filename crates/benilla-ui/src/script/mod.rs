@@ -310,7 +310,8 @@ pub use arena_team::{
 };
 pub use auction::{
     AuctionBid, AuctionCategory, AuctionHighBidder, AuctionItemRow, AuctionListState, AuctionQuery,
-    AuctionStartRequest, AuctionState, AuctionSubCategory, BIDDER, LIST, OWNER, SORT_COLUMNS,
+    AuctionStartRequest, AuctionState, AuctionSubCategory, CarryRefusal, BIDDER, LIST, OWNER,
+    SORT_COLUMNS,
 };
 pub use aura::{AuraFacts, AuraState, UnitAuraSlots};
 pub(crate) use backdrop::set_edge_blend as backdrop_set_edge_blend;

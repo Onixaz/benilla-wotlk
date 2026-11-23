@@ -42,6 +42,8 @@ pub(crate) struct LiveView<'w, 's> {
     enchants: Option<Res<'w, crate::items::Enchants>>,
     /// The item cache, a refund ask's template test (`0x62d580`).
     items: Option<Res<'w, crate::items::Items>>,
+    /// `ItemLimitCategory.dbc`, the carried-count check's category rows (`0x754e49`).
+    limits: Option<Res<'w, crate::ui_trade::ItemLimitCategories>>,
     /// The item records' callbacks, which a verb's ask joins in turn with every subsystem's.
     record_waits: Option<NonSendMut<'w, crate::items::RecordWaits>>,
     /// The main-thread state a verb writes inside its call.
@@ -166,6 +168,13 @@ pub(crate) struct LiveView<'w, 's> {
     petition: Option<crate::ui_petition::PetitionLive<'w, 's>>,
     /// Every dressing-room pane's model and what a try-on reads.
     pub(crate) dressup: crate::ui_dressup::DressUpLive<'w>,
+}
+
+impl crate::ui_items::ObjectLookup for LiveView<'_, '_> {
+    fn object(&self, guid: u64) -> Option<&benilla_protocol::ObjectFields> {
+        let &entity = self.index.as_ref()?.0.get(&guid)?;
+        self.stores.get(entity).ok().map(|s| &s.0)
+    }
 }
 
 /// The player's cast state: the pending cast (`0x805f30`), the queued on-swing strike, the
@@ -341,6 +350,15 @@ impl LiveState for LiveView<'_, '_> {
 
     fn active_player(&self) -> Option<u64> {
         self.self_guid.as_ref()?.0
+    }
+
+    fn carry_refusal(&self, item_id: u32, count: u32) -> Option<benilla_ui::script::CarryRefusal> {
+        use crate::ui_items::ObjectLookup;
+        let items = self.items.as_deref()?;
+        let record = items.template_cached(item_id)?;
+        let store = self.object(self.active_player()?)?;
+        let limits = self.limits.as_deref().map(|l| &l.0);
+        crate::ui_items::carry_refusal(store, self, items, limits, item_id, record, count)
     }
 
     /// An app without the net plugin boots in control.
