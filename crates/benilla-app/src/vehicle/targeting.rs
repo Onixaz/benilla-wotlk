@@ -907,6 +907,7 @@ mod tests {
             spell_id: 66218,
             reason: 0,
             arg: None,
+            arg2: None,
             wire_reason: 0,
         };
         assert_eq!(s.answer(&refused), Answer::Refused);
