@@ -316,17 +316,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some((spell_id, _)) = spell else {
                 return Ok(MultiValue::new());
             };
-            let skills = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data")
-                .skills
-                .entries
-                .clone();
+            let skills = super::skills::listed_ranks(lua);
             let skill = |line: u32| {
                 skills
                     .iter()
-                    .find(|e| e.skill_id == line)
-                    .map_or((0, 0), |e| (e.value, e.max))
+                    .find(|e| e.0 == line)
+                    .map_or((0, 0), |e| (e.1, e.2))
             };
             let link = with_spell_source(lua, |s| s.spell_link(spell_id, &skill)).flatten();
             let Some((name, trade)) = link else {

@@ -490,7 +490,7 @@ pub(crate) use simplehtml::{
     apply_element_font_parts as apply_simplehtml_font_parts,
     element_of_xml_tag as simplehtml_element_of_xml_tag,
 };
-pub use skills::{SkillEntry, SkillLive, SkillRequest, SkillsState};
+pub use skills::{SkillEntry, SkillList, SkillLive, SkillRequest, SkillsState};
 pub use social::{FriendInfo, SocialRequest, SocialState, WhoInfo, WhoRecords};
 pub use sound::{MusicRequest, SoundRequest};
 pub use spell_info::{SpellInfo, SpellInfoSource, SpellStatEffect, SpellStatEffects};

@@ -10872,3 +10872,57 @@ fn set_current_title_sends_inside_the_call() {
     );
     assert_eq!(cur, 0, "the field waits for the server");
 }
+
+/// A reload keeps the skill list: the UI shutdown leaves it (`0x52b03e` -> `0x528f00`) and only the
+/// game shutdown frees it (`0x5291c2` -> `0x5cd3a0`), so the reloaded files read the folded list at
+/// `VARIABLES_LOADED`, `PLAYER_LOGIN` and `PLAYER_ENTERING_WORLD` (`0x5281a6`), and the world
+/// entry's rebuild after it (`0x528226` -> `0x5cd9b0`) re-expands every group (`0x5cd9e1`).
+#[test]
+fn a_reload_reads_the_skill_list_until_the_world_entrys_rebuild() {
+    use benilla_protocol::field::{FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_UNIT_BYTES_0};
+    // A human warrior with Swords (43) at 100 of 400.
+    let Some(mut rig) = Rig::login(&[
+        OBJECT_TYPE_PLAYER,
+        (FIELD_UNIT_BYTES_0, 1 | 1 << 8 | 1 << 24),
+        (SKILL, 43),
+        (SKILL + 1, 100 | 400 << 16),
+    ]) else {
+        return;
+    };
+    const VERBS: &[&str] = &["skills", "skill2"];
+    super::live::with_live_world(rig.app.world_mut(), |s| s.run("CollapseSkillHeader(1)"))
+        .expect("a VM")
+        .unwrap();
+    rig.run(1);
+    rig.take();
+    assert_eq!(
+        rig.live_now().line(VERBS),
+        "NOW | skills=1 skill2=100",
+        "the fold hides Swords"
+    );
+    rig.app
+        .world()
+        .non_send_resource::<benilla_ui::script::UiScript>()
+        .run("ReloadUI()")
+        .unwrap();
+    rig.run(4);
+    let reload = rig.take();
+    assert_eq!(
+        pin(
+            &reload,
+            &[
+                "VARIABLES_LOADED",
+                "PLAYER_LOGIN",
+                "PLAYER_ENTERING_WORLD",
+                "SKILL_LINES_CHANGED"
+            ],
+            VERBS
+        ),
+        vec![
+            "VARIABLES_LOADED | skills=1 skill2=100",
+            "PLAYER_LOGIN | skills=1 skill2=100",
+            "PLAYER_ENTERING_WORLD | skills=1 skill2=100",
+            "SKILL_LINES_CHANGED | skills=2 skill2=100",
+        ]
+    );
+}

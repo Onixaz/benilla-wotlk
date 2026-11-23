@@ -126,6 +126,8 @@ pub(crate) struct LiveView<'w, 's> {
     /// The player's book, which the book update builds (`0x53ca70`), and the rank chains.
     book: Option<Res<'w, crate::ui_spellbook::SpellBook>>,
     skill_lines: Option<Res<'w, crate::ui_spellbook::SkillLines>>,
+    /// The client's skill list (`0xc22ae8`-`0xc22b18`), which the skill verbs read and write in their call.
+    skills: Option<ResMut<'w, crate::ui_char::SkillInfo>>,
     /// The totem table and the tool search's inputs.
     totems: crate::ui_totem::TotemLive<'w, 's>,
     /// The targeting cursor's unit and range checks, `SpellCanTargetUnit`'s (`0x804190`).
@@ -2061,6 +2063,14 @@ impl LiveState for LiveView<'_, '_> {
         let fields = &self.stores.get(entity).ok()?.0;
         let catalog = self.skill_lines.as_deref().map(|l| &*l.catalog);
         Some(crate::ui_char::skill_slot(fields, catalog, skill_id))
+    }
+
+    fn skill_list(&self) -> Option<&benilla_ui::script::SkillList> {
+        self.skills.as_deref().map(|l| &l.0)
+    }
+
+    fn skill_list_mut(&mut self) -> Option<&mut benilla_ui::script::SkillList> {
+        self.skills.as_deref_mut().map(|l| &mut l.0)
     }
 
     fn skill_points(&self) -> Option<u32> {

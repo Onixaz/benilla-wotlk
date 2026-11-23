@@ -1081,6 +1081,16 @@ pub trait LiveState {
         None
     }
 
+    /// The client's skill list at the call (`0xc22ae8`-`0xc22b18`), which a UI reload keeps; `None` where no view lends it.
+    fn skill_list(&self) -> Option<&super::SkillList> {
+        None
+    }
+
+    /// The skill list, for a binding that writes it in its call (the fold, the selection, the skill-ups).
+    fn skill_list_mut(&mut self) -> Option<&mut super::SkillList> {
+        None
+    }
+
     /// The active player's `PLAYER_CHARACTER_POINTS2` at the call (`0x5cd970`), `None` with no active player held.
     fn skill_points(&self) -> Option<u32> {
         None

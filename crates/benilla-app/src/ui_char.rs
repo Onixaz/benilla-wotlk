@@ -110,13 +110,28 @@ fn fixed(v: f32) -> i64 {
     (v * 32.0).round() as i64
 }
 
-/// The character window's booth; its bindings are `benilla-ui`'s `char_stats`.
+/// The client's skill list (`0xc22ae8`-`0xc22b18`): set up by the game start (`0x52b81e` -> `0x5ce880`), written by the rebuild (`0x5cd9b0`), kept across a UI reload, freed by the game shutdown (`0x5291c2` -> `0x5cd3a0`).
+#[derive(Resource, Default)]
+pub(crate) struct SkillInfo(pub(crate) benilla_ui::script::SkillList);
+
+/// The character window's booth and the skill list; the bindings are `benilla-ui`'s `char_stats` and `skills`.
 pub(crate) struct UiCharPlugin;
 
 impl Plugin for UiCharPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, sync_char_booth.in_set(UiFeed));
+        app.init_resource::<SkillInfo>()
+            .add_systems(Update, sync_char_booth.in_set(UiFeed))
+            // After the UI shutdown's `PLAYER_LEAVING_WORLD` and `PLAYER_LOGOUT` (`0x529160`: `0x528f00`, then `0x5291c2`).
+            .add_systems(
+                OnExit(crate::char_select::ClientState::InWorld),
+                free_skills.after(crate::ui_script::end_ui_session),
+            );
     }
+}
+
+/// The game shutdown's free of the skill list (`0x5cd3a0`).
+fn free_skills(mut list: ResMut<SkillInfo>) {
+    *list = SkillInfo::default();
 }
 
 /// The yaw `CharacterModelFrame` draws onto the booth, read each frame as the model frame renders (`0x960240`), the facing its rotate buttons write (`0x9606e0`); written only on change, so the booth is not marked changed every frame.
@@ -162,7 +177,7 @@ pub(crate) fn skills_state(
     }
 }
 
-/// The skill list's rebuild (`0x5cd9b0`): with the active player held, the list rebuilt off its fields, every group expanded, then `SKILL_LINES_CHANGED` (`0x5cd5e0`), in turn with the step's other raises.
+/// The skill list's rebuild (`0x5cd9b0`): with the active player held, the list rebuilt off its fields, every group expanded, then `SKILL_LINES_CHANGED` (`0x5cd5e0`); run in turn with the step's other raises.
 pub(crate) fn rebuild_skills(world: &mut World) {
     let state = {
         let mut me = world.query_filtered::<&ObjectStore, With<SelfPlayer>>();
@@ -174,14 +189,13 @@ pub(crate) fn rebuild_skills(world: &mut World) {
             .map(|l| l.catalog.clone());
         skills_state(&store.0, catalog.as_deref())
     };
+    if let Some(mut list) = world.get_resource_mut::<SkillInfo>() {
+        list.0.rebuild(state);
+    }
     match world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
-        Some(mut ui) => {
-            ui.write(move |script| script.set_skills(state));
-            ui.fire("SKILL_LINES_CHANGED", Vec::new());
-        }
+        Some(mut ui) => ui.fire("SKILL_LINES_CHANGED", Vec::new()),
         None => {
             crate::ui_script::live::with_live_world(world, |script| {
-                script.set_skills(state);
                 script.fire_event("SKILL_LINES_CHANGED", Vec::new());
             });
         }
