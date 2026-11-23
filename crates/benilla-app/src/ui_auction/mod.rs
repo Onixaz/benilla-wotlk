@@ -119,8 +119,8 @@ pub(crate) struct AuctionWireLog {
     pub(crate) sells: Vec<Vec<u32>>,
 }
 
-/// Each list's sort criteria, front first: set once at the game's start (`0x5a0ba0`), kept across
-/// sessions.
+/// Each list's sort criteria, front first: set at each game start (`0x52b832` -> `0x5a0ba0`), kept
+/// across the houses of one game.
 #[derive(Clone)]
 pub(crate) struct Criteria(pub(crate) [Vec<(u8, bool)>; 3]);
 
@@ -162,7 +162,8 @@ pub(crate) struct AuctionOpen {
     last_bidder_page: u32,
     /// The bid in flight, which a `BID_PLACED` result writes into the browse row (`[0xc0f43c]`).
     last_bid_amount: u32,
-    /// The outbid auctions, `(house, auction)`: kept across sessions, sent with each bidder query.
+    /// The outbid auctions, `(house, auction)`: kept across the houses of one game, sent with each
+    /// bidder query.
     pub(crate) outbid: Vec<(u32, u32)>,
     /// `[0xc0f434]` with its state.
     pub(crate) multisell: Option<MultiSell>,
@@ -183,6 +184,33 @@ impl AuctionOpen {
             *slot = AuctionListSlot::default();
         }
         self.last_bidder_page = 0;
+    }
+
+    /// The game start (`0x5a0ba0`): the criteria at their defaults, no outbid ids, no get-all yet.
+    fn initialize_game(&mut self) {
+        self.criteria = Criteria::default();
+        self.outbid.clear();
+        self.last_get_all = None;
+        self.last_query = [None; 3];
+        self.pending = [0; 3];
+    }
+
+    /// The world entry (`0x59dfb0`): no auctioneer, the gates and pending counts zeroed, the
+    /// browse list and every total empty, the query delay back at its default.
+    fn enter_world(&mut self) {
+        self.auctioneer = None;
+        self.house_id = 0;
+        self.last_query = [None; 3];
+        self.pending = [0; 3];
+        self.lists[LIST].entries.clear();
+        for slot in &mut self.lists {
+            slot.total = 0;
+        }
+        self.can_get_owner = false;
+        self.can_get_bidder = false;
+        self.pending_items = [0; 3];
+        self.pending_sold = 0;
+        self.delay_secs = DEFAULT_QUERY_DELAY_SECS;
     }
 
     /// The close's state (`0x59f198`-`0x59f22b`): no auctioneer, no owner or bidder asks, the lists
@@ -395,6 +423,7 @@ impl AuctionLookups<'_, '_> {
             item_id: w.item_entry,
             random_property_id: roll,
             name,
+            base_name: template.map(|t| t.name.clone()),
             texture,
             count: w.count,
             quality,
@@ -816,12 +845,78 @@ fn close_legs(world: &mut World) {
     }
 }
 
+/// The world leave's auction part (`0x528d55` -> `0x59f150`): with a house open,
+/// `AUCTION_HOUSE_CLOSED` fires while it is still open; then a pending multi-sell fails and the
+/// interact target clears on the auctioneer (`0x59f189`), whose interaction close runs the close
+/// again when it held the target (`0x51304a`); then the house empties and the sell slot clears.
+pub(crate) fn leave_world(world: &mut World) {
+    let Some(auctioneer) = world
+        .get_resource::<AuctionOpen>()
+        .and_then(|a| a.auctioneer)
+    else {
+        return;
+    };
+    match world.get_resource_mut::<UiEvents>() {
+        Some(mut ui) => {
+            ui.fire("AUCTION_HOUSE_CLOSED", Vec::new());
+            ui.world(move |w| close_after_event(w, auctioneer));
+        }
+        None => close_after_event(world, auctioneer),
+    }
+}
+
+/// The close after its event, on a house a listener did not close already.
+fn close_after_event(world: &mut World, auctioneer: u64) {
+    let open = world
+        .get_resource::<AuctionOpen>()
+        .is_some_and(|a| a.auctioneer == Some(auctioneer));
+    if !open {
+        return;
+    }
+    let pending = world
+        .get_resource_mut::<AuctionOpen>()
+        .is_some_and(|mut a| a.pending_sell() && a.multisell.take().is_some());
+    if pending {
+        if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
+            ui.write(|s| s.end_auction_multisell(true));
+        }
+    }
+    crate::ui_session::clear_interact_target(world, auctioneer);
+    let empty = |w: &mut World| {
+        if let Some(mut auction) = w.get_resource_mut::<AuctionOpen>() {
+            auction.end_session();
+        }
+        if let Some(mut ui) = w.get_resource_mut::<UiEvents>() {
+            ui.write(UiScript::clear_auction_sell_item);
+        }
+    };
+    match world.get_resource_mut::<UiEvents>() {
+        Some(mut ui) => ui.world(empty),
+        None => empty(world),
+    }
+}
+
+/// The world entry's auction part (`0x52823f` -> `0x59dfb0`): the sell slot clears, the house's
+/// gates and counts reset, and the Auctions tab and each list's selection are forgotten.
+pub(crate) fn enter_world(world: &mut World) {
+    if let Some(mut auction) = world.get_resource_mut::<AuctionOpen>() {
+        auction.enter_world();
+    }
+    if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
+        ui.write(UiScript::enter_auction_world);
+    }
+}
+
 pub(crate) struct UiAuctionPlugin;
 
 impl Plugin for UiAuctionPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
-        app.init_resource::<AuctionOpen>();
+        app.init_resource::<AuctionOpen>().add_systems(
+            OnEnter(crate::char_select::ClientState::InWorld),
+            // A game start runs the house's init (`0x52b832` -> `0x5a0ba0`).
+            |mut auction: ResMut<AuctionOpen>| auction.initialize_game(),
+        );
     }
 }
 

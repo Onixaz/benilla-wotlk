@@ -204,11 +204,8 @@ fn pending_sales(sales: &[AuctionPendingSale], step: &mut Step) {
 /// `buyer:bid:buyout:deposit:cut` with the buyer in hex), or `None` for any other mail; it expires
 /// when its money is delivered (`0x59ebc3`).
 fn sold_entry(sale: &AuctionPendingSale, now: f64) -> Option<AuctionEntry> {
-    let fields: Vec<u32> = sale
-        .subject
-        .split(':')
-        .map(|f| f.trim().parse::<i64>().unwrap_or(0) as u32)
-        .collect();
+    // The parse reads the first four fields and ignores the rest, so `item:0:2:id:count` is a sale.
+    let fields: Vec<u32> = sale.subject.split(':').take(4).map(leading_int).collect();
     let [item, property, action, auction_id] = fields[..] else {
         return None;
     };
@@ -241,6 +238,26 @@ fn sold_entry(sale: &AuctionPendingSale, now: f64) -> Option<AuctionEntry> {
         expires_at: now + f64::from(sale.days_left) * 86_400.0,
         sold: true,
     })
+}
+
+/// A subject field's number as the subject parse reads it (`0x59a4a0`): an optional `-`, then
+/// the digits up to the first other character.
+fn leading_int(field: &str) -> u32 {
+    let (neg, digits) = match field.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, field),
+    };
+    let n = digits
+        .bytes()
+        .take_while(u8::is_ascii_digit)
+        .fold(0u32, |n, d| {
+            n.wrapping_mul(10).wrapping_add(u32::from(d - b'0'))
+        });
+    if neg {
+        n.wrapping_neg()
+    } else {
+        n
+    }
 }
 
 /// Which list callback a record or name read left.
@@ -403,7 +420,10 @@ fn command_result(
             }
             auction_action::BID_PLACED => {
                 ui.line(UiError::key("ERR_AUCTION_BID_PLACED"));
-                a.outbid.retain(|&(_, id)| id != auction_id);
+                // The outbid clear drops the first entry of the id alone (`0x59ba10`).
+                if let Some(i) = a.outbid.iter().position(|&(_, id)| id == auction_id) {
+                    a.outbid.remove(i);
+                }
                 a.can_get_bidder = true;
                 let page = a.last_bidder_page;
                 bidder_list(a, look, page);
@@ -599,15 +619,9 @@ fn on_name_record(
     }
 }
 
-/// The house dies with the socket; the criteria and the outbid ids stay.
+/// The house dies with the socket, the outbid ids with the game's shutdown (`0x59e090`).
 fn on_session_end(In(_): In<SessionEvent>, mut auction: ResMut<AuctionOpen>) {
-    let criteria = std::mem::take(&mut auction.criteria);
-    let outbid = std::mem::take(&mut auction.outbid);
-    *auction = AuctionOpen {
-        criteria,
-        outbid,
-        ..Default::default()
-    };
+    *auction = AuctionOpen::default();
 }
 
 #[cfg(test)]
@@ -852,6 +866,100 @@ mod tests {
             kept,
             vec![3, 9],
             "the sold row stays, the live ones are replaced"
+        );
+    }
+
+    /// The subject parse reads four fields and ignores the rest (`0x59a4a0`): the servers' own
+    /// `item:0:2:auction:count` is a sale, and each field is its leading number.
+    #[test]
+    fn a_sale_subject_reads_its_first_four_fields() {
+        let sale = |subject: &str| AuctionPendingSale {
+            subject: subject.into(),
+            body: "               5:150:400:20:5:0:0".into(),
+            mail_id: 1,
+            mail_template: 0,
+            days_left: 0.5,
+        };
+        let e = sold_entry(&sale(&format!("{LINEN}:0:2:9:5")), 0.0).expect("a sale");
+        assert_eq!(
+            (e.wire.item_entry, e.wire.auction_id, e.wire.bidder_guid),
+            (LINEN, 9, 5)
+        );
+        assert_eq!(
+            sold_entry(&sale(&format!("{LINEN}:0:2:9x")), 0.0).map(|e| e.wire.auction_id),
+            Some(9)
+        );
+        assert!(sold_entry(&sale(&format!("{LINEN}:0:2")), 0.0).is_none());
+        assert!(sold_entry(&sale(&format!("{LINEN}:0:3:9:5")), 0.0).is_none());
+    }
+
+    /// A placed bid clears the first outbid entry of its id alone (`0x59ba10`).
+    #[test]
+    fn a_placed_bid_clears_one_outbid_entry() {
+        let (mut app, _rx) = app();
+        open(&mut app);
+        app.world_mut().resource_mut::<AuctionOpen>().outbid = vec![(1, 4), (1, 5), (1, 4)];
+        command(
+            &mut app,
+            4,
+            auction_action::BID_PLACED,
+            auction_error::OK,
+            AuctionCommandTail::BidPlaced { new_min_outbid: 1 },
+        );
+        assert_eq!(
+            app.world().resource::<AuctionOpen>().outbid,
+            vec![(1, 5), (1, 4)]
+        );
+    }
+
+    /// The world leave closes an open house (`0x528d55`): `AUCTION_HOUSE_CLOSED`, then the house
+    /// empties; a closed house raises nothing.
+    #[test]
+    fn the_world_leave_closes_the_house() {
+        let (mut app, _rx) = app();
+        super::super::leave_world(app.world_mut());
+        assert!(raised(&mut app).is_empty(), "no house, no event");
+        open(&mut app);
+        list(&mut app, vec![row(1, LINEN)]);
+        let _ = raised(&mut app);
+        super::super::leave_world(app.world_mut());
+        assert_eq!(
+            app.world().resource::<UiEvents>().names(),
+            vec!["AUCTION_HOUSE_CLOSED", "<world>"],
+            "the event fires with the house still open"
+        );
+        assert_eq!(
+            app.world().resource::<AuctionOpen>().auctioneer,
+            Some(AUCTIONEER)
+        );
+        crate::ui_script::live::fire_handler_events(app.world_mut());
+        let a = app.world().resource::<AuctionOpen>();
+        assert_eq!(a.auctioneer, None);
+        assert!(a.lists[LIST].entries.is_empty());
+    }
+
+    /// The game start sets the criteria back to their defaults and forgets the outbid ids
+    /// (`0x5a0ba0`); the world entry zeroes the gates and pending counts (`0x59dfb0`).
+    #[test]
+    fn the_game_start_resets_the_criteria_and_outbids() {
+        let mut a = AuctionOpen::default();
+        a.criteria.0[LIST] = vec![(5, true)];
+        a.outbid.push((1, 4));
+        a.last_get_all = Some(1.0);
+        a.initialize_game();
+        assert_eq!(
+            a.criteria.0[LIST],
+            benilla_ui::script::auction_default_criteria()[LIST]
+        );
+        assert!(a.outbid.is_empty());
+        assert_eq!(a.last_get_all, None);
+        a.open(AUCTIONEER, 1);
+        a.pending_items[LIST] = 2;
+        a.pending[OWNER] = 1;
+        a.enter_world();
+        assert_eq!(
+            (a.auctioneer, a.pending_items, a.pending),
+            (None, [0; 3], [0; 3])
         );
     }
 

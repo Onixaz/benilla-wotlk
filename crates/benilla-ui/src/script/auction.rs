@@ -86,6 +86,8 @@ pub struct AuctionItemRow {
     pub random_property_id: u32,
     /// `None` while the item template query is in flight: the row then answers as a miss.
     pub name: Option<String>,
+    /// The record's own name, no suffix: the name sort's key (`0x59b460`); `None` reads [`Self::name`].
+    pub base_name: Option<String>,
     pub texture: Option<String>,
     pub count: u32,
     pub quality: Option<u32>,
@@ -350,8 +352,15 @@ fn compare_column(column: u8, a: &AuctionItemRow, b: &AuctionItemRow) -> std::cm
                 .unwrap_or(Ordering::Equal)
         }),
         4 => b.bidder_status.cmp(&a.bidder_status),
+        // The record's name without the random property's suffix (`0x59b4d2`).
         5 if cached => {
-            let key = |r: &AuctionItemRow| r.name.as_deref().unwrap_or("").to_lowercase();
+            let key = |r: &AuctionItemRow| {
+                r.base_name
+                    .as_deref()
+                    .or(r.name.as_deref())
+                    .unwrap_or("")
+                    .to_lowercase()
+            };
             key(a).cmp(&key(b))
         }
         6 => {
@@ -533,16 +542,15 @@ fn criteria(model: &Model, list: usize) -> Vec<(u8, bool)> {
 }
 
 fn set_criteria(model: &mut Model, list: usize, criteria: Vec<(u8, bool)>) {
-    let mut criteria = Some(criteria);
-    if super::write_live(|l| l.set_auction_criteria(list, criteria.take().expect("set once")))
+    if super::write_live(|l| l.set_auction_criteria(list, criteria.clone()))
         .flatten()
         .is_some()
     {
         return;
     }
     #[cfg(any(test, feature = "fixtures"))]
-    if let Some(c) = criteria {
-        model.auction_sort[list] = c;
+    {
+        model.auction_sort[list] = criteria;
     }
     #[cfg(not(any(test, feature = "fixtures")))]
     let _ = (model, criteria);
@@ -567,15 +575,15 @@ fn apply_sort(model: &mut crate::script::ModelGuard<'_>, list: usize) {
 
 /// Send `packet` inside the call; a fixture records it.
 fn send(model: &mut Model, packet: AuctionPacket) {
-    let mut packet = Some(packet);
-    if super::write_live(|l| l.auction_send(packet.take().expect("sent once")))
+    // A view that does not lend the house declines it, and the fixture keeps the packet.
+    if super::write_live(|l| l.auction_send(packet.clone()))
         .flatten()
         .is_some()
     {
         return;
     }
     #[cfg(any(test, feature = "fixtures"))]
-    model.auction_sent.extend(packet);
+    model.auction_sent.push(packet);
     #[cfg(not(any(test, feature = "fixtures")))]
     let _ = (model, packet);
 }
@@ -626,6 +634,15 @@ impl super::UiScript {
             return;
         }
         clear_sell_item(&mut self.model_mut());
+    }
+
+    /// The world entry's part (`0x59dfb0`): the sell slot clears with `NEW_AUCTION_UPDATE` when it
+    /// held an item, the Auctions tab reads hidden and no list keeps a selection.
+    pub fn enter_auction_world(&mut self) {
+        let mut model = self.model_mut();
+        clear_sell_item(&mut model);
+        model.auction_tab_showing = false;
+        model.auction_selected = [0; 3];
     }
 
     /// A multi-sell's end in a handler's turn: its items unlock, the slot clears and, on a
@@ -1526,16 +1543,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 buyout,
                 minutes,
             };
-            let mut sell = Some(sell);
-            let live = super::write_live(|l| {
-                l.auction_multisell_start(sell.take().expect("started once"))
-            })
-            .flatten()
-            .is_some();
+            let live = super::write_live(|l| l.auction_multisell_start(sell.clone()))
+                .flatten()
+                .is_some();
             #[cfg(any(test, feature = "fixtures"))]
-            if let Some(sell) = sell {
+            if !live {
                 model.auction_multisell = Some(sell);
             }
+            #[cfg(not(any(test, feature = "fixtures")))]
+            let _ = sell;
             let next = |model: &mut crate::script::ModelGuard<'_>| {
                 let step = if live {
                     super::write_live(|l| l.auction_sell_next()).flatten()
@@ -1885,6 +1901,25 @@ mod tests {
             rows,
         };
         state
+    }
+
+    /// The name sort reads the record's own name (`0x59b4d2`): two rolls of one item tie on it, and
+    /// the next criterion decides.
+    #[test]
+    fn the_name_sort_ignores_the_suffix() {
+        let row = |auction_id: u32, suffix: &str, count: u32| AuctionItemRow {
+            auction_id,
+            name: Some(format!("Bandit Cinch {suffix}")),
+            base_name: Some("Bandit Cinch".into()),
+            count,
+            ..Default::default()
+        };
+        let rows = [row(1, "of the Wolf", 2), row(2, "of the Bear", 1)];
+        assert_eq!(
+            auction_sort_order(&rows, &[(5, false), (9, false)]),
+            vec![1, 0],
+            "the quantity decides, not the suffix"
+        );
     }
 
     fn sorts(s: &UiScript, kind: &str) -> Vec<(String, bool)> {
