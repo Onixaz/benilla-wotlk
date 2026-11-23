@@ -586,9 +586,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetTalentLink(tab, index[, isInspect[, isPet[, groupIndex[, isPreview]]]]) (`0x5c7ce0`):
+    // GetTalentLink(tab, index[, isInspect[, isPet[, groupIndex]]]) (`0x5c7ce0`):
     // `|cff4e96f7|Htalent:<id>:<rank>|h[<name>]|h|r` (`0x61a550`), the rank 0-based or -1; a pet
-    // talent the pet may not take has none (`0x5c7ddf`).
+    // talent the pet may not take has none (`0x5c7ddf`). The usage text names a sixth isPreview,
+    // but the preview-over-rank flag is argument 5 read again as a boolean (`0x5c7e13`).
     g.set(
         "GetTalentLink",
         lua.create_function(|lua, args: MultiValue| {
@@ -608,7 +609,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let rank = group_of(info, inspect, pet, script_group(info, args.get(4)))
                     .and_then(|g| g.item(t.id))
                     .map_or(-1, |i| {
-                        if flag_arg(args.get(5)) {
+                        if super::binding_abi::bool_or_default(args.get(4), false) {
                             i.preview
                         } else {
                             i.rank

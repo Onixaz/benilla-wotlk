@@ -312,6 +312,33 @@ fn a_link_names_the_talent_and_its_zero_based_rank() {
     });
 }
 
+/// The preview-over-rank flag is argument 5, the group index read again as a boolean
+/// (`0x5c7e13`); a sixth argument is never read, whatever the usage text says.
+#[test]
+fn a_link_takes_the_preview_rank_when_the_group_index_reads_true() {
+    let mut s = UiScript::new().unwrap();
+    let mut v = view();
+    s.with_live(&mut v, |s| {
+        s.run("AddPreviewTalentPoints(1, 1, 1)").unwrap();
+        let links: (String, String, String, String) = s
+            .eval(
+                "return GetTalentLink(1, 1, false, false, 1), \
+                 GetTalentLink(1, 1, false, false, nil, true), \
+                 GetTalentLink(1, 1), GetTalentLink(1, 1, false, false, '1')",
+            )
+            .unwrap();
+        assert_eq!(
+            links,
+            (
+                "|cff4e96f7|Htalent:10:2|h[A]|h|r".into(),
+                "|cff4e96f7|Htalent:10:1|h[A]|h|r".into(),
+                "|cff4e96f7|Htalent:10:1|h[A]|h|r".into(),
+                "|cff4e96f7|Htalent:10:2|h[A]|h|r".into(),
+            )
+        );
+    });
+}
+
 #[test]
 fn switching_groups_casts_the_activation_spell() {
     let mut s = UiScript::new().unwrap();
