@@ -28,7 +28,6 @@ use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, ObjectStore, SelfGuid, SelfPlayer};
 use crate::ui_action::signals::SignalSink;
 use crate::ui_chat::{ChatEvent, ChatEventKind, ChatLog};
-use crate::ui_script::UiDrain;
 
 /// The frames up at once (`0x6fb180`, `0x6fb2c0`: `[0xca0694] < 4`).
 const MAX_SHOWN_ROLLS: u32 = 4;
@@ -465,11 +464,7 @@ pub(crate) struct UiLootRollPlugin;
 impl Plugin for UiLootRollPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
-        app.init_resource::<LootRolls>().add_systems(
-            Update,
-            // After the input pass, so a vote sends the same frame.
-            crate::ui_script::raises::then_fire(drain_loot_rolls).in_set(UiDrain),
-        );
+        app.init_resource::<LootRolls>();
     }
 }
 
@@ -821,45 +816,35 @@ impl LootRollsLive<'_> {
     }
 }
 
-/// Drain the Lua votes: each confirm raises its popup, `CONFIRM_DISENCHANT_ROLL (id, 3)` for
-/// Disenchant, else `CONFIRM_LOOT_ROLL (id, rollType)`; each vote is one `CMSG_LOOT_ROLL`, which
-/// closes our frame and finishes the roll (`0x6fbc70`).
-fn drain_loot_rolls(
-    mut script: crate::ui_script::InTurn,
-    mut rolls: ResMut<LootRolls>,
-    commands: Res<NetCommands>,
-) {
-    let Some(mut script) = script.turn() else {
+/// A vote past its confirm and its mask, inside its call (`0x6fbc70`): `CMSG_LOOT_ROLL` with the
+/// roll's wire identity (`0x6fbdab`), then `CANCEL_LOOT_ROLL`, the frame freed and the roll
+/// finished (`0x6fbdc2`-`0x6fbdd1`), and a waiting roll shown (`0x6fbdd5`), raised as the call
+/// returns.
+pub(crate) fn vote_in_call(world: &mut World, roll_id: u32, roll_type: u8) {
+    use crate::ui_script::live::UiEvents;
+    if !world.contains_resource::<NetCommands>() {
+        return;
+    }
+    let Some(mut rolls) = world.remove_resource::<LootRolls>() else {
         return;
     };
-    for (roll_id, roll_type) in script.take_loot_roll_confirms() {
-        debug!("ui_loot_roll: confirm for {roll_type} on roll {roll_id}");
-        let event = if roll_type == benilla_protocol::messages::roll_vote::DISENCHANT {
-            "CONFIRM_DISENCHANT_ROLL"
-        } else {
-            "CONFIRM_LOOT_ROLL"
-        };
-        script.fire_event(
-            event,
-            vec![
-                ScriptValue::Int(roll_id as i64),
-                ScriptValue::Int(roll_type as i64),
-            ],
-        );
-    }
-    for (roll_id, roll_type) in script.take_loot_roll_votes() {
-        match rolls.vote(roll_id, &mut *script) {
-            Some((looted_target, item_slot)) => {
-                debug!("ui_loot_roll: vote {roll_type} on roll {roll_id}");
-                let _ = commands.0.send(ClientCommand::LootRoll {
+    let mut ui = world.remove_resource::<UiEvents>().unwrap_or_default();
+    match rolls.vote(roll_id, &mut ui) {
+        Some((looted_target, item_slot)) => {
+            debug!("ui_loot_roll: vote {roll_type} on roll {roll_id}");
+            let _ = world
+                .resource::<NetCommands>()
+                .0
+                .send(ClientCommand::LootRoll {
                     looted_target,
                     item_slot,
                     roll_type,
                 });
-            }
-            None => debug!("ui_loot_roll: RollOnLoot({roll_id}) — no open roll, ignored"),
         }
+        None => debug!("ui_loot_roll: vote on roll {roll_id} — no open roll, ignored"),
     }
+    world.insert_resource(rolls);
+    world.insert_resource(ui);
 }
 
 #[cfg(test)]
@@ -1146,11 +1131,7 @@ mod tests {
             .init_resource::<crate::net::GuidIndex>()
             .init_resource::<crate::ui_script::live::UiEvents>()
             .init_resource::<Time<bevy::time::Real>>()
-            .insert_resource(NetCommands(tx))
-            .add_systems(
-                Update,
-                crate::ui_script::raises::then_fire(drain_loot_rolls),
-            );
+            .insert_resource(NetCommands(tx));
         app.insert_non_send_resource(RecordWaits::default());
         let script = benilla_ui::script::UiScript::new().unwrap();
         script

@@ -2009,8 +2009,6 @@ pub(crate) mod schedule_tests {
          "not a system: the lock steps of the item drains here hand it the locks their VM queues filled"),
         ("ui_logout.rs", "feed_logout", Because::PlayerRoundTrip,
          "both packets answer the `CMSG_LOGOUT_REQUEST`/cancel the game menu sent"),
-        ("ui_loot_roll.rs", "drain_loot_rolls", Because::FilledByVm,
-         "only a Need/Greed/Pass click queues a confirm or vote, held in the VM"),
         ("ui_macro/mod.rs", "load_macros", Because::MemoLatched,
          "`MacroFiles.loaded` is a `VmMemo`, so a new session re-reads the files and re-fires UPDATE_MACROS; also `InWorldGated`"),
         ("ui_macro/mod.rs", "note_dirty_macros", Because::FilledByVm,

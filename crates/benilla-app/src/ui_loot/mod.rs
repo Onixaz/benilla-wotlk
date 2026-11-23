@@ -1214,6 +1214,9 @@ pub(crate) fn run_verb(world: &mut World, verb: LootVerb) {
             };
             loot.give_master_loot(slot, target, net);
         }
+        LootVerb::Roll { roll_id, roll_type } => {
+            crate::ui_loot_roll::vote_in_call(world, roll_id, roll_type);
+        }
         // `CloseLoot(1, 0, noUI)` (`0x5888c0`): the close chain up to `LOOT_CLOSED` (`0x523784`).
         LootVerb::Close { no_ui } => with_window(world, |loot, step| {
             let flags = CloseFlags {

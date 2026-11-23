@@ -205,6 +205,8 @@ local VERBS = {
     { "roll1", function() return (select(2, GetLootRollItemInfo(1))) end },
     { "roll2", function() return (select(2, GetLootRollItemInfo(2))) end },
     { "rleft1", function() return GetLootRollTimeLeft(1) > 0 end },
+    { "need0", function() return (select(9, GetLootRollItemInfo(0))) end },
+    { "need1", function() return (select(9, GetLootRollItemInfo(1))) end },
     { "l1", function() return (select(2, GetLootSlotInfo(1))) end },
     { "l2", function() return (select(2, GetLootSlotInfo(2))) end },
     { "l3", function() return (select(2, GetLootSlotInfo(3))) end },
@@ -8770,6 +8772,159 @@ fn group_loot_rolls_fire_from_their_handlers_with_the_rolls_read_at_the_call() {
                 "CHAT_MSG_LOOT Everyone passed on: |cffffffff|Hitem:593922:0:0:0:0:0:0:0:80|h[Charz Late]|h|r      0 0  0 3  0 | roll0=nil roll1=nil roll2=nil rleft1=false".to_string(),
             ],
         ]
+    );
+}
+
+/// The roll votes act inside their call (`0x588d60`, `0x588dd0` -> `0x6fbc70`), and a roll's Need
+/// reason reads the carried-count check (`0x6fa7db`):
+/// - with Need off the vote mask, a held `MaxCount` 1 item's roll reads Need reason 2, a plain
+///   one's 1;
+/// - `RollOnLoot` on a plain roll sends `CMSG_LOOT_ROLL` and has fired `CANCEL_LOOT_ROLL`, then the
+///   waiting fifth roll's `START_LOOT_ROLL` (`0x6fbdc2`, `0x6fbdd5`), by its return;
+/// - Need on a bind-on-pickup roll fires `CONFIRM_LOOT_ROLL (id, 1)` inside the call and sends
+///   nothing (`0x6fbd22`); `ConfirmLootRoll` then sends and cancels inside its own;
+/// - a finished roll takes no second vote (`0x6fbcab`).
+#[test]
+fn the_roll_votes_act_inside_their_call_and_need_reads_the_carried_count() {
+    use benilla_protocol::field::{
+        FIELD_ITEM_STACK_COUNT, FIELD_OBJECT_ENTRY, FIELD_PLAYER_PACK_SLOT_1,
+    };
+    use benilla_protocol::messages::LootStartRoll;
+    const CORPSE: u64 = 0x0000_0000_0000_0A99;
+    const RING: u32 = 0x9_2001;
+    const GEM: u32 = 0x9_2002;
+    const BOP: u32 = 0x9_2003;
+    const HELD: u64 = 0x4000_0000_0000_0A01;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let template = |entry: u32, info: benilla_protocol::ItemInfo| SessionEvent::ItemTemplate {
+        entry,
+        info: Some(Box::new(info)),
+    };
+    let pack = FIELD_PLAYER_PACK_SLOT_1;
+    rig.packets(
+        vec![
+            template(
+                RING,
+                benilla_protocol::ItemInfo {
+                    max_count: 1,
+                    ..crate::items::test_template("Charz Ring")
+                },
+            ),
+            template(GEM, crate::items::test_template("Charz Gem")),
+            template(
+                BOP,
+                benilla_protocol::ItemInfo {
+                    quality: 4,
+                    bonding: 1,
+                    ..crate::items::test_template("Charz Bound")
+                },
+            ),
+            SessionEvent::ItemCreate {
+                guid: HELD,
+                container: false,
+                fields: ObjectFields::from_pairs(&[
+                    (FIELD_OBJECT_ENTRY, RING),
+                    (FIELD_ITEM_STACK_COUNT, 1),
+                ])
+                .into_created(ObjectType::Item),
+            },
+            self_values(&[(pack, HELD as u32), (pack + 1, (HELD >> 32) as u32)]),
+        ],
+        2,
+    );
+    let start = |item_slot: u32, item_id: u32, vote_mask: u8| {
+        SessionEvent::LootStartRoll(LootStartRoll {
+            looted_target: CORPSE,
+            map_id: 0,
+            item_slot,
+            item_id,
+            random_suffix: 0,
+            random_property_id: 0,
+            count: 1,
+            countdown_ms: 60_000,
+            vote_mask,
+        })
+    };
+    let opened = rig.packets(
+        vec![
+            // Need refused by the server: its reason explains the button (`0x6fa7e8`).
+            start(0, RING, 0x0D),
+            start(1, GEM, 0x0D),
+            start(2, BOP, 0x0F),
+            start(3, GEM, 0x0F),
+            start(4, GEM, 0x0F),
+        ],
+        3,
+    );
+    assert_eq!(
+        pin(&opened, &["START_LOOT_ROLL"], &["need0", "need1"]),
+        vec![
+            "START_LOOT_ROLL 0 60000 | need0=2 need1=nil",
+            "START_LOOT_ROLL 1 60000 | need0=2 need1=1",
+            "START_LOOT_ROLL 2 60000 | need0=2 need1=1",
+            "START_LOOT_ROLL 3 60000 | need0=2 need1=1",
+        ],
+        "four frames up, the fifth waits"
+    );
+    rx.try_iter().for_each(drop);
+    let run = |rig: &mut Rig, body: &str| -> Vec<Seen> {
+        let chunk = format!(
+            "local function mark(m) CHARZ_LOG[#CHARZ_LOG + 1] = 'MARK\\t' .. m .. '\\t' .. CHARZ_ANSWERS() end \
+             CHARZ_LOG = {{}} {body} local t = CHARZ_LOG CHARZ_LOG = {{}} return t"
+        );
+        let lines =
+            super::live::with_live_world(rig.app.world_mut(), |s| s.eval::<Vec<String>>(&chunk))
+                .expect("a VM")
+                .expect("the chunk runs");
+        lines.iter().map(|l| Seen::parse(l)).collect()
+    };
+    const EVENTS: &[&str] = &[
+        "MARK",
+        "START_LOOT_ROLL",
+        "CANCEL_LOOT_ROLL",
+        "CONFIRM_LOOT_ROLL",
+    ];
+    let seen = run(
+        &mut rig,
+        "mark('a') RollOnLoot(1, 2) mark('b') RollOnLoot(1, 1) mark('c') RollOnLoot(2, 1) \
+         mark('d') ConfirmLootRoll(2, 1) mark('e')",
+    );
+    assert_eq!(
+        pin(&seen, EVENTS, &[]),
+        vec![
+            "MARK a",
+            "CANCEL_LOOT_ROLL 1",
+            "START_LOOT_ROLL 4 60000",
+            "MARK b",
+            "MARK c",
+            "CONFIRM_LOOT_ROLL 2 1",
+            "MARK d",
+            "CANCEL_LOOT_ROLL 2",
+            "MARK e",
+        ]
+    );
+    let sent: Vec<_> = rx.try_iter().collect();
+    assert!(
+        matches!(
+            sent[..],
+            [
+                crate::net::ClientCommand::LootRoll {
+                    looted_target: CORPSE,
+                    item_slot: 1,
+                    roll_type: 2,
+                },
+                crate::net::ClientCommand::LootRoll {
+                    looted_target: CORPSE,
+                    item_slot: 2,
+                    roll_type: 1,
+                },
+            ]
+        ),
+        "{sent:?}"
     );
 }
 

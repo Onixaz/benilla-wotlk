@@ -237,6 +237,9 @@ pub enum LootVerb {
     MasterGive { slot: u32, candidate: u32 },
     /// `CloseLoot([noUI])`: the close chain with `(1, 0, noUI)` (`0x5888b0` -> `0x523640`).
     Close { no_ui: bool },
+    /// A `RollOnLoot` or `ConfirmLootRoll` vote past its confirm and its vote mask: the send, then
+    /// the frame's close and the roll's finish (`0x6fbd43`-`0x6fbdd5`); `roll_type` the byte sent.
+    Roll { roll_id: u32, roll_type: u8 },
 }
 
 /// The verbs that press inside their call off a queued intent: each casts or sends before it returns, so the caller's next line reads what the press armed.

@@ -84,6 +84,33 @@ fn setup_counted(extra: &[&str]) -> (UiScript, usize) {
     (s, built)
 }
 
+/// The votes that went out to the host since the last read, as `(rollID, rollType)`.
+fn roll_votes(s: &mut UiScript) -> Vec<(u32, u8)> {
+    s.take_loot_verbs()
+        .into_iter()
+        .filter_map(|v| match v {
+            benilla_ui::script::LootVerb::Roll { roll_id, roll_type } => Some((roll_id, roll_type)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The roll confirms up, `CONFIRM_LOOT_ROLL`'s then `CONFIRM_DISENCHANT_ROLL`'s, as the popup's
+/// `(data, data2)`; each is hidden as it is read.
+fn roll_confirms(s: &mut UiScript) -> Vec<(u32, u8)> {
+    ["CONFIRM_LOOT_ROLL", "CONFIRM_DISENCHANT_ROLL"]
+        .into_iter()
+        .filter_map(|which| {
+            let (d, d2) = s
+                .eval::<(i64, i64)>(&format!(
+                    "local d = StaticPopup_FindVisible('{which}') if not d then return -1, -1 end                      d:Hide() return d.data, d.data2"
+                ))
+                .ok()?;
+            (d >= 0).then_some((d as u32, d2 as u8))
+        })
+        .collect()
+}
+
 fn setup() -> UiScript {
     setup_counted(&[]).0
 }
@@ -248,10 +275,10 @@ fn start_loot_roll_claims_frames_in_order_and_paints_the_roll() {
     s.mouse_button(nx, ny, "LeftButton", true);
     s.mouse_button(nx, ny, "LeftButton", false);
     assert!(
-        s.take_loot_roll_votes().is_empty(),
+        roll_votes(&mut s).is_empty(),
         "a BoP Need must not reach the wire before the confirm"
     );
-    assert_eq!(s.take_loot_roll_confirms(), vec![(7, 1)], "Need on roll 7");
+    assert_eq!(roll_confirms(&mut s), vec![(7, 1)], "Need on roll 7");
 }
 
 /// `CONFIRM_LOOT_ROLL` opens the dialog carrying `(rollID, rollType)` (`UIParent.lua:517-523`);
@@ -263,7 +290,7 @@ fn the_bop_confirm_popup_lands_the_withheld_vote() {
     let mut s = setup();
     s.set_loot_rolls(rolls());
 
-    // The app fires this after draining the confirm queue (`ui_loot_roll::drain_loot_rolls`).
+    // `RollOnLoot` fires this inside its call (`0x6fbd22`).
     s.fire_event(
         "CONFIRM_LOOT_ROLL",
         vec![ScriptValue::Int(7), ScriptValue::Int(1)],
@@ -298,7 +325,7 @@ fn the_bop_confirm_popup_lands_the_withheld_vote() {
         "Okay"
     );
 
-    assert!(s.take_loot_roll_votes().is_empty());
+    assert!(roll_votes(&mut s).is_empty());
 
     s.eval::<bool>(
         "local d = StaticPopup_FindVisible(\"CONFIRM_LOOT_ROLL\")\n\
@@ -307,7 +334,7 @@ fn the_bop_confirm_popup_lands_the_withheld_vote() {
     .unwrap();
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     assert_eq!(
-        s.take_loot_roll_votes(),
+        roll_votes(&mut s),
         vec![(7, 1)],
         "OK on the confirm sends the Need the gate withheld"
     );
@@ -549,7 +576,7 @@ fn ctrl_and_shift_on_the_roll_icon_preview_and_post_its_link() {
     s.mouse_button(x, y, "LeftButton", true);
     s.mouse_button(x, y, "LeftButton", false);
     assert!(
-        s.take_loot_roll_votes().is_empty() && s.take_loot_roll_confirms().is_empty(),
+        roll_votes(&mut s).is_empty() && roll_confirms(&mut s).is_empty(),
         "an unmodified icon click votes nothing"
     );
 
@@ -577,7 +604,7 @@ fn ctrl_and_shift_on_the_roll_icon_preview_and_post_its_link() {
             "re-dress first, then try the rolled item on"
         );
         assert!(
-            s.take_loot_roll_votes().is_empty() && s.take_loot_roll_confirms().is_empty(),
+            roll_votes(&mut s).is_empty() && roll_confirms(&mut s).is_empty(),
             "no modified icon click may vote"
         );
 
@@ -585,7 +612,7 @@ fn ctrl_and_shift_on_the_roll_icon_preview_and_post_its_link() {
         s.mouse_button(nx, ny, "LeftButton", true);
         s.mouse_button(nx, ny, "LeftButton", false);
         assert_eq!(
-            s.take_loot_roll_votes(),
+            roll_votes(&mut s),
             vec![(8, 1)],
             "the Need button still votes"
         );
@@ -726,8 +753,8 @@ fn the_3_3_5a_group_loot_frame_paints_the_vote_mask_and_sends_disenchant() {
         )
         .unwrap());
     s.run("GroupLootFrame1.disenchantButton:Click()").unwrap();
-    assert_eq!(s.take_loot_roll_votes(), vec![(1, 3)]);
-    assert!(s.take_loot_roll_confirms().is_empty());
+    assert_eq!(roll_votes(&mut s), vec![(1, 3)]);
+    assert!(roll_confirms(&mut s).is_empty());
     let errors: Vec<String> = s
         .take_errors()
         .into_iter()
