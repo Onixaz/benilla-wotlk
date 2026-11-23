@@ -456,9 +456,9 @@ impl FactionList {
         false
     }
 
-    /// The header collapse (`0x5d1d20`) by 0-based row: a header row folds itself and its
-    /// sub-headers (`0x5d1e23`); any other row, or none, folds or opens every header
-    /// (`0x5d1dd3`). `false` when no header matched, the one arm that neither sorts nor raises
+    /// The header collapse (`0x5d1d20`) by 0-based row: a header row folds (`0x5d1dd3`) or opens
+    /// (`0x5d1e23`) itself and its sub-headers; any other row, or none, folds or opens every header
+    /// (`0x5d1e3a`). `false` when no header matched, the one arm that neither sorts nor raises
     /// `UPDATE_FACTION`; otherwise the caller raises the sort's.
     pub fn collapse(&mut self, t: &dyn FactionTable, row: usize, fold: bool) -> bool {
         match self.rows.get(row).filter(|r| r.is_header) {
@@ -1393,7 +1393,7 @@ mod tests {
     }
 
     /// With no view lent the list is empty: the fold verbs still sort and raise `UPDATE_FACTION`
-    /// (`0x5d1dd3`).
+    /// (`0x5d1e3a`).
     #[test]
     fn with_no_view_the_list_is_empty_and_the_fold_still_repaints() {
         let s = UiScript::new().expect("VM");

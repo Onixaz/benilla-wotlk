@@ -8724,7 +8724,7 @@ fn achievement_packets_fire_from_their_handlers_with_the_lists_read_at_the_call(
 /// other order reads; a reveal announces
 /// the rank (`0x5d09f2`) before the sort grows the count (`0x5d208e`); the war flag reads set at its
 /// `UPDATE_FACTION` (`0x5d0898`); the watched field's watch raises with `"player"` (`0x6cdde1`);
-/// a fold verb raises inside its call (`0x5d1e23`).
+/// a fold verb raises inside its call (`0x5d1dd3` -> `0x5d1bfa`).
 #[test]
 fn reputation_handlers_fire_at_their_steps_with_the_list_read_at_the_call() {
     use benilla_protocol::field::{FIELD_PLAYER_WATCHED_FACTION_INDEX, FIELD_UNIT_BYTES_0};
