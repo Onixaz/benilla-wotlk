@@ -138,7 +138,20 @@ pub(crate) fn dispatch_until_entry(
     rx: &crossbeam_channel::Receiver<SessionEvent>,
 ) {
     let handlers = world.remove_resource::<NetHandlers>().unwrap_or_default();
-    let mut hold = world.remove_resource::<UiLoadHold>().unwrap_or_default();
+    world.get_resource_or_init::<UiLoadHold>();
+    world.resource_scope(|world, mut hold: Mut<UiLoadHold>| {
+        drain_held(world, rx, &handlers, hold.bypass_change_detection());
+    });
+    world.insert_resource(handlers);
+}
+
+/// [`dispatch_until_entry`]'s loop over the held packets, then the channel's.
+fn drain_held(
+    world: &mut World,
+    rx: &crossbeam_channel::Receiver<SessionEvent>,
+    handlers: &NetHandlers,
+    hold: &mut UiLoadHold,
+) {
     if hold.awaiting && crate::ui_script::ingame_ui_up_in(world) {
         hold.awaiting = false;
     }
@@ -190,8 +203,6 @@ pub(crate) fn dispatch_until_entry(
             hold.held.len()
         );
     }
-    world.insert_resource(handlers);
-    world.insert_resource(hold);
 }
 
 /// The world session's packets held for the in-game UI's load: 12340 loads the UI (`0x4db8f5`) a tick before it sends the login (`0x4db95a`), so every packet of the session reaches a loaded UI and fires into it; here the login goes out first, so what arrives behind `Connected` waits, in wire order, until the load has run.

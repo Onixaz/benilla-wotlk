@@ -709,11 +709,11 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 "Usage: GetCategoryNumAchievements(categoryID)",
             )?;
             let all = matches!(args.get(1), Some(Value::Boolean(true)));
-            let faction = AchievementModel::player_faction(&model(lua));
             let Some(db) = db_of() else { return none() };
-            let Some((listed, completed)) =
-                with_book(|book, _| category_num(faction, &db, book, category, all))
-            else {
+            let Some((listed, completed)) = with_book(|book, l| {
+                let faction = AchievementModel::player_faction(l);
+                category_num(faction, &db, book, category, all)
+            }) else {
                 return none();
             };
             values(vec![num(listed as f64), num(completed as f64)])
@@ -731,10 +731,9 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 0,
                 "Usage: GetComparisonCategoryNumAchievements(categoryID)",
             )?;
-            let m = model(lua);
             let Some(db) = db_of() else { return none() };
-            let Some(count) = with_book(|book, _| {
-                let faction = AchievementModel::inspect_faction(&m, book.inspect_guid);
+            let Some(count) = with_book(|book, l| {
+                let faction = AchievementModel::inspect_faction(l, book.inspect_guid);
                 let mut count = 0;
                 for a in db.rows() {
                     let statistic = a.flags & flag::STATISTIC != 0;
@@ -763,12 +762,13 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetAchievementInfo",
         lua.create_function(|lua, args: MultiValue| {
             let first = number_or_usage(lua, &args, 0, "Usage: GetAchievementInfo(achievementID)")?;
-            let m = model(lua);
             let Some(db) = db_of() else { return none() };
             let index = number(lua, &args, 1);
-            let faction = AchievementModel::player_faction(&m);
-            with_book(|book, _| achievement_info(lua, faction, &db, book, first, index))
-                .unwrap_or_else(none)
+            with_book(|book, l| {
+                let faction = AchievementModel::player_faction(l);
+                achievement_info(lua, faction, &db, book, first, index)
+            })
+            .unwrap_or_else(none)
         })?,
     )?;
 
@@ -969,14 +969,14 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     // with no achievement table loaded, a book of none.
     g.set(
         "GetNumCompletedAchievements",
-        lua.create_function(|lua, ()| {
-            let m = model(lua);
+        lua.create_function(|_, ()| {
             let Some(db) = db_of() else {
                 return values(vec![num(0.0), num(0.0)]);
             };
-            let faction = AchievementModel::player_faction(&m);
-            let (total, completed) =
-                with_book(|b, _| num_completed(&db, &b.completed, faction)).unwrap_or((0, 0));
+            let (total, completed) = with_book(|b, l| {
+                num_completed(&db, &b.completed, AchievementModel::player_faction(l))
+            })
+            .unwrap_or((0, 0));
             values(vec![num(total as f64), num(completed as f64)])
         })?,
     )?;
@@ -984,13 +984,12 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     // GetNumComparisonCompletedAchievements() (`0x5b3dc0`), the same two numbers.
     g.set(
         "GetNumComparisonCompletedAchievements",
-        lua.create_function(|lua, ()| {
-            let m = model(lua);
+        lua.create_function(|_, ()| {
             let Some(db) = db_of() else {
                 return values(vec![num(0.0), num(0.0)]);
             };
-            let (total, completed) = with_book(|b, _| {
-                let faction = AchievementModel::inspect_faction(&m, b.inspect_guid);
+            let (total, completed) = with_book(|b, l| {
+                let faction = AchievementModel::inspect_faction(l, b.inspect_guid);
                 num_completed(&db, &b.inspect_completed, faction)
             })
             .unwrap_or((0, 0));
@@ -1104,6 +1103,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 v,
                 "Usage: AddAchievementComparisonUnit(unitToken)",
             )?;
+            // The token resolved at the call through the lent view (`0x5b1ae8` -> `0x60abf0`).
             let guid = model(lua).token_guid(&token);
             let Some(guid) = guid.filter(|&g| g != 0) else {
                 return none();
@@ -1201,6 +1201,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 .flatten()
                 .unwrap_or(false);
             if added {
+                // Fired inside the call, held (`0x5b241b`) or added (`0x5b24b6`).
                 crate::script::tick::fire_event_into(
                     lua,
                     "TRACKED_ACHIEVEMENT_UPDATE",
@@ -1228,6 +1229,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                     .unwrap_or(false)
             });
             if removed {
+                // Fired inside the call (`0x5b2513`).
                 crate::script::tick::fire_event_into(
                     lua,
                     "TRACKED_ACHIEVEMENT_UPDATE",

@@ -220,6 +220,7 @@ fn feed_zone_events(
     areas: Option<Res<AreaTableRes>>,
     factions: Option<Res<Factions>>,
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
+    movers: Query<(), With<crate::net::ActiveMover>>,
     roster: Option<Res<crate::char_select::Roster>>,
     mut cache: Local<crate::ui_script::VmMemo<ZoneCache>>,
     mut place: ResMut<PlayerPlace>,
@@ -232,8 +233,8 @@ fn feed_zone_events(
     if fresh_vm {
         *ids = ZoneIds::default();
     }
-    // The zone update runs on the active player's timer and skips with no active player (`0x6d7c0b`).
-    if self_store.is_empty() {
+    // The zone update skips with neither the active mover (`0x6d7be2`) nor the active player (`0x6d7c01`) held (`0x6d7c0b`).
+    if movers.is_empty() && self_store.is_empty() {
         return;
     }
     let Some(leaf) = world.area() else { return };

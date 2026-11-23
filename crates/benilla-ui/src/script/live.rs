@@ -1014,6 +1014,12 @@ pub trait LiveState {
         None
     }
 
+    /// A held player's PvP faction index (`0x6d6e90`), `None` for a guid that is no held player
+    /// (the lookup with the player type mask, `0x5b3d0a`, `0x5b3bf0`).
+    fn player_pvp_faction(&self, _guid: u64) -> Option<i32> {
+        None
+    }
+
     /// A player's name-cache record read with no callback, which asks nothing (`0x5b58b0`'s owner name).
     fn cached_player_name(&self, _guid: u64) -> Option<String> {
         None
@@ -1652,6 +1658,8 @@ pub(crate) struct TestView {
     pub player_names: std::collections::HashMap<u64, String>,
     pub name_asks: Vec<u64>,
     pub inspect_achievement_queries: Vec<u64>,
+    /// Each held player's PvP faction index; a guid absent here is no held player.
+    pub player_factions: std::collections::HashMap<u64, i32>,
 }
 
 /// The gossip globals a test view lends.
@@ -1726,6 +1734,10 @@ impl LiveState for TestView {
 
     fn achievement_book_mut(&mut self) -> Option<&mut super::AchievementBook> {
         Some(&mut self.achievements)
+    }
+
+    fn player_pvp_faction(&self, guid: u64) -> Option<i32> {
+        self.player_factions.get(&guid).copied()
     }
 
     fn cached_player_name(&self, guid: u64) -> Option<String> {

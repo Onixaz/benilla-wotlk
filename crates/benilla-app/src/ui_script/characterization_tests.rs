@@ -46,6 +46,7 @@ local VERBS = {
     { "achcrit", function() return CHARZ_CRIT and (select(4, GetAchievementCriteriaInfo(CHARZ_CRIT))) end },
     { "achtracked", function() return GetNumTrackedAchievements() end },
     { "achdone", function() return (select(2, GetNumCompletedAchievements())) end },
+    { "achtotal", function() return (GetNumCompletedAchievements()) end },
     { "achpts", function() return GetTotalAchievementPoints() end },
     { "repn", function() return GetNumFactions() end },
     { "repsw", function() return (select(6, GetFactionInfoByID(72))) end },
@@ -590,7 +591,7 @@ fn quest_template(src_item_id: u32) -> SessionEvent {
     }))
 }
 
-/// The load runs before our create, as 12340's UI init runs before its login (`0x4db8f5`, `0x4db95a`): the files' own events find no active player, so `HasFullControl` answers nil until the create.
+/// The load runs before our create, as 12340's UI init runs before its login (`0x4db8f5`, `0x4db95a`): the files' own events find no active player, so `HasFullControl`'s active-player lookup (`0x611616`) fails its test (`0x611620`) and it answers nil until the create.
 #[test]
 fn login_fires_the_load_events_in_order() {
     let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
@@ -1114,7 +1115,7 @@ fn zone_change() {
     );
 }
 
-/// The zone update runs on the active player's timer (`0x6d7bb0`) and skips with no active player (`0x6d7c0b`): an area under no player of ours fires nothing until our create.
+/// The zone update (`0x6d7bb0`) reads the active mover (`0x6d7be2`), else the active player (`0x6d7c01`), and skips with neither held (`0x6d7c0b`): an area under no unit of ours fires nothing until a mover is held.
 #[test]
 fn no_zone_event_fires_without_our_player() {
     let Some(mut rig) = Rig::login(&[]) else {
@@ -1132,10 +1133,35 @@ fn no_zone_event_fires_without_our_player() {
         .insert_resource(benilla_world::terrain_stream::CurrentArea(Some(12)));
     rig.run(3);
     let alone = rig.take();
-    let created = rig.packets(vec![self_create(&[])], 3);
+    // A unit of the server's that we steer (the Eye of Acherus' case) is the active mover.
+    let eye = SessionEvent::ObjectCreate {
+        guid: PET,
+        kind: EntityKind::Unit,
+        display_id: None,
+        position: [-8949.0, -132.0, 83.5],
+        orientation: 0.0,
+        scale: 1.0,
+        speeds: None,
+        mover: None,
+        transport_progress: None,
+        transport: None,
+        spline: None,
+        vehicle: None,
+        attack_target: None,
+        spawned: true,
+        fields: ObjectFields::from_pairs(&[(FIELD_UNIT_HEALTH, 500), (FIELD_UNIT_MAXHEALTH, 500)])
+            .into_created(ObjectType::Unit),
+    };
+    rig.packets(vec![eye], 1);
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::player::Player>()
+        .foreign_mover = Some(PET);
+    rig.run(3);
+    let moved = rig.take();
     assert_eq!(pin(&alone, events, verbs), Vec::<String>::new());
     assert_eq!(
-        pin(&created, events, verbs),
+        pin(&moved, events, verbs),
         vec!["ZONE_CHANGED_NEW_AREA | zone=Elwynn Forest"]
     );
 }
@@ -8470,12 +8496,6 @@ fn a_loot_window_fires_from_its_handlers_with_the_rows_read_at_the_call() {
     );
 }
 
-/// The achievement handlers fire at their steps with the lists read at the call (`0x5b3160`,
-/// `0x5b3020`): a criteria update's `CRITERIA_UPDATE` (`0x5b3224`) reads the new counter and not the
-/// unit flags a later packet of the same frame sets; the earn's tracked removal (`0x5b3136`) is
-/// read at its own `TRACKED_ACHIEVEMENT_UPDATE`, ahead of `ACHIEVEMENT_EARNED` (`0x5b3148`); the
-/// other order reads the flags. A reload keeps the lists, and the tracked list's load re-announces
-/// each id before `VARIABLES_LOADED` (`0x5128d0` -> `0x5b3840`).
 /// 12340 loads the in-game UI (`0x4db8f5`, registering the list's handler at `0x52b87d` and loading FrameXML at `0x52baa3`) before it logs in (`0x4db95a`): the login's achievement list fires its events (`0x5b3478`, `0x5b3484`) into the loaded UI, after `VARIABLES_LOADED`.
 #[test]
 fn the_login_achievement_list_fires_into_the_loaded_ui() {
@@ -8503,6 +8523,85 @@ fn the_login_achievement_list_fires_into_the_loaded_ui() {
     );
 }
 
+/// `SetAchievementComparisonUnit` resolves its token at the call (`0x5b1ae8`): a target set earlier
+/// in the same chunk, before any feed runs, is the compared guid (`0x5b1b08`).
+#[test]
+fn the_comparison_unit_resolves_its_token_at_the_call() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let answer = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval::<String>(
+            "local before = tostring((SetAchievementComparisonUnit('target'))) \
+             TargetUnit('player') \
+             return before .. ' ' .. tostring(SetAchievementComparisonUnit('target'))",
+        )
+    })
+    .expect("a VM")
+    .expect("the chunk runs");
+    assert_eq!(answer, "nil 1");
+    let book = &rig
+        .app
+        .world()
+        .resource::<crate::ui_achievement::PlayerAchievements>()
+        .0;
+    assert_eq!(book.inspect_guid(), ME);
+}
+
+/// A reload keeps the active player (`0x52b03e` -> `0x528f00` leaves the object manager alone), so
+/// the reloaded files' `VARIABLES_LOADED` reads the faction filter at the call (`0x5b3d0a`,
+/// `0x5b3d1e`): a Human's completed Horde-only achievement is neither listed nor counted.
+#[test]
+fn a_reload_reads_the_faction_filter_with_the_player_held() {
+    use benilla_protocol::field::FIELD_UNIT_BYTES_0;
+    use benilla_protocol::messages::AllAchievementData;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER, (FIELD_UNIT_BYTES_0, 1)]) else {
+        return;
+    };
+    let horde = {
+        let data = benilla_formats::wow_data().expect("install");
+        let mut chain = benilla_formats::open_chain(&data).unwrap();
+        let cat = benilla_formats::load_achievement_catalog(&mut chain).unwrap();
+        cat.achievements
+            .iter()
+            .find(|a| a.faction == 0 && a.flags & 0x8a3 == 0 && a.category > 0 && a.category != 81)
+            .expect("a Horde-only achievement")
+            .id
+    };
+    let date = benilla_ui::script::WowDate::from_date(0, 1, 9).0;
+    let list = rig.packets(
+        vec![SessionEvent::AllAchievementData(AllAchievementData {
+            achievements: vec![(horde, date)],
+            criteria: Vec::new(),
+        })],
+        2,
+    );
+    rig.app
+        .world()
+        .non_send_resource::<benilla_ui::script::UiScript>()
+        .run("ReloadUI()")
+        .unwrap();
+    rig.run(4);
+    let reload = rig.take();
+    let events = &["RECEIVED_ACHIEVEMENT_LIST", "VARIABLES_LOADED"];
+    let at_list = pin(&list, events, &["achdone", "achtotal"]);
+    assert_eq!(at_list.len(), 1);
+    assert!(
+        at_list[0].starts_with("RECEIVED_ACHIEVEMENT_LIST | achdone=0 "),
+        "{at_list:?}"
+    );
+    assert_eq!(
+        pin(&reload, events, &["achdone", "achtotal"]),
+        vec![at_list[0].replace("RECEIVED_ACHIEVEMENT_LIST", "VARIABLES_LOADED")]
+    );
+}
+
+/// The achievement handlers fire at their steps with the lists read at the call (`0x5b3160`,
+/// `0x5b3020`): a criteria update's `CRITERIA_UPDATE` (`0x5b3224`) reads the new counter and not the
+/// unit flags a later packet of the same frame sets; the earn's tracked removal (`0x5b3136`) is
+/// read at its own `TRACKED_ACHIEVEMENT_UPDATE`, ahead of `ACHIEVEMENT_EARNED` (`0x5b3148`); the
+/// other order reads the flags. A reload keeps the lists, and the tracked list's load re-announces
+/// each id before `VARIABLES_LOADED` (`0x5128d0` -> `0x5b3840`).
 #[test]
 fn achievement_packets_fire_from_their_handlers_with_the_lists_read_at_the_call() {
     use benilla_protocol::messages::{AchievementEarned, AllAchievementData, CriteriaProgress};

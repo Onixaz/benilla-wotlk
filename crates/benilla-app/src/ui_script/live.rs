@@ -1938,6 +1938,10 @@ impl LiveState for LiveView<'_, '_> {
         self.achievements.book_mut()
     }
 
+    fn player_pvp_faction(&self, guid: u64) -> Option<i32> {
+        self.player_side(guid).map(i32::from)
+    }
+
     fn cached_player_name(&self, guid: u64) -> Option<String> {
         self.achievements.cached_name(guid)
     }
