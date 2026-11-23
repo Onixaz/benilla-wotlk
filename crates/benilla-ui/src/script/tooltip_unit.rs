@@ -252,6 +252,19 @@ fn set_subject(lua: &Lua, h: FrameHandle, guid: Option<u64>) {
 /// Drive the `<name>StatusBar` child from a unit snapshot (`None` hides it); FrameXML's
 /// `HealthBar_OnValueChanged` colours the fill.
 fn update_bar(lua: &Lua, h: FrameHandle, unit: Option<&UnitState>) {
+    drive_bar(
+        lua,
+        h,
+        unit.map(|u| {
+            let max = u.max_health.max(1) as f32;
+            (max, u.health.min(u.max_health.max(1)) as f32)
+        }),
+    );
+}
+
+/// Set the `<name>StatusBar` child to `0..max` at `value` and show it, or hide it on `None`, then
+/// fire its `OnValueChanged` when the value moved.
+fn drive_bar(lua: &Lua, h: FrameHandle, fill: Option<(f32, f32)>) {
     let bar = {
         let model = crate::script::model_mut_of(lua);
         let name = model.arena.frame(h).and_then(|f| f.name.clone());
@@ -263,11 +276,10 @@ fn update_bar(lua: &Lua, h: FrameHandle, unit: Option<&UnitState>) {
         let Some(f) = model.arena.frame_mut(bar) else {
             return;
         };
-        match (&mut f.kind_state, unit) {
-            (KindState::StatusBar(sb), Some(u)) => {
+        match (&mut f.kind_state, fill) {
+            (KindState::StatusBar(sb), Some((max, v))) => {
                 sb.min = 0.0;
-                sb.max = u.max_health.max(1) as f32;
-                let v = u.health.min(u.max_health.max(1)) as f32;
+                sb.max = max;
                 let changed = (sb.value - v).abs() > f32::EPSILON;
                 sb.value = v;
                 (changed, true)
@@ -484,6 +496,50 @@ impl super::UiScript {
         set_world_owned(&self.lua, h);
         show_or_hide_empty(&self.lua, h);
         true
+    }
+
+    /// Put a destructible building's health under the GameObject plate just shown, as 12340's
+    /// plate does for type 33 (`0x626720`): the bar on `0..1` at `health`, the building's
+    /// `GAMEOBJECT_BYTES_1` byte 3 over 255, and the building kept as the bar's subject for
+    /// [`Self::object_health`]. `false` when no plate is up.
+    pub fn world_tooltip_object_health(&mut self, guid: u64, health: f32) -> bool {
+        let h = {
+            let mut model = self.model_mut();
+            let Some(h) = model.arena.lookup("GameTooltip") else {
+                return false;
+            };
+            match model.arena.frame_mut(h).map(|f| &mut f.kind_state) {
+                Some(KindState::Tooltip(t)) => t.health_object = Some(guid),
+                _ => return false,
+            }
+            h
+        };
+        drive_bar(&self.lua, h, Some((1.0, health.clamp(0.0, 1.0))));
+        true
+    }
+
+    /// A building's health moved: re-drive the bar of every tooltip whose subject it is, fading
+    /// ones too, as the field watcher (`0x61bf80`) does.
+    pub fn object_health(&mut self, guid: u64, health: f32) {
+        let hits: Vec<FrameHandle> = {
+            let model = self.model_ref();
+            model
+                .arena
+                .tooltip_kinds()
+                .iter()
+                .copied()
+                .filter(|&h| {
+                    model.frame_to_id.contains_key(&h)
+                        && matches!(
+                            model.arena.frame(h).map(|f| &f.kind_state),
+                            Some(KindState::Tooltip(t)) if t.health_object == Some(guid)
+                        )
+                })
+                .collect()
+        };
+        for h in hits {
+            drive_bar(&self.lua, h, Some((1.0, health.clamp(0.0, 1.0))));
+        }
     }
 
     /// Show the minimap blip tooltip (an `AreaPOI` or quest-dot name): one gold line, faint gold

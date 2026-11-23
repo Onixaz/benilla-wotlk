@@ -640,6 +640,7 @@ fn net_entity_of(
 pub(crate) struct GoGateInputs<'w> {
     pub(crate) templates: Res<'w, crate::go_templates::GameObjectTemplates>,
     pub(crate) factions: Option<Res<'w, super::ring::Factions>>,
+    pub(crate) destructibles: Option<Res<'w, crate::entities::destructible::Destructibles>>,
 }
 
 pub(super) fn update_hovered_object(
@@ -762,7 +763,7 @@ pub(super) fn update_hovered_object(
             store.0.gameobject_flags(),
             store.0.gameobject_dynamic_flags(),
             guid.and_then(|g| go_gate.templates.get(g))
-                .map(|t| t.highlight_column),
+                .map(|t| t.mouseover_column(go_gate.destructibles.as_deref())),
             crate::target::cursor_mode::go_reaction(
                 go_gate.factions.as_deref(),
                 store.0.gameobject_faction(),
@@ -869,7 +870,7 @@ pub(super) fn update_hovered_object(
             store.0.gameobject_type_id(),
             store.0.gameobject_flags(),
             store.0.gameobject_dynamic_flags(),
-            tmpl.map(|t| t.highlight_column),
+            tmpl.map(|t| t.mouseover_column(go_gate.destructibles.as_deref())),
             reaction,
             crate::target::cursor_mode::GoOverrides {
                 channel_owned: crate::target::cursor_mode::fishing_channel_owned(
@@ -885,7 +886,7 @@ pub(super) fn update_hovered_object(
                     guid.0,
                     store.0.gameobject_type_id(),
                     tmpl.map(|t| t.name.as_str()),
-                    tmpl.map(|t| t.highlight_column),
+                    tmpl.map(|t| t.mouseover_column(go_gate.destructibles.as_deref())),
                 ));
             }
             return;
@@ -897,7 +898,7 @@ pub(super) fn update_hovered_object(
                 guid.0,
                 store.0.gameobject_type_id(),
                 tmpl.map(|t| t.name.as_str()),
-                tmpl.map(|t| t.highlight_column),
+                tmpl.map(|t| t.mouseover_column(go_gate.destructibles.as_deref())),
                 occlusion.distance,
             ));
             // `lock` holds only an object past the eligibility gate, the hit kept in the part's

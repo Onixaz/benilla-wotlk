@@ -80,6 +80,7 @@ tables! {
         "DeathThudLookups" => death_thud::death_thud_lookups_schema(),
         "DeclinedWord" => declined_words::declined_word_schema(),
         "DeclinedWordCases" => declined_words::declined_word_cases_schema(),
+        "DestructibleModelData" => destructible_model_data::schema(),
         "DungeonEncounter" => dungeon_encounter::schema(),
         "DungeonMap" => dungeon_map::schema(),
         "DungeonMapChunk" => dungeon_map::chunk_schema(),

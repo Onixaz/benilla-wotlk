@@ -372,7 +372,7 @@ const GO_TYPE_MAX: i32 = 35;
 const GO_TYPE_GUARDPOST: i32 = 21;
 const GO_TYPE_28: i32 = 28;
 /// DUNGEON_DIFFICULTY (31), DESTRUCTIBLE_BUILDING (33) and TRAPDOOR (35): their use test is constant
-/// false (`0x427a90`); 33's own mouseover test (`0x70df30`) is #243.
+/// false (`0x427a90`); 33's mouseover test (`0x70df30`) reads its `DestructibleModelData` row.
 const GO_TYPE_DUNGEON_DIFFICULTY: i32 = 31;
 const GO_TYPE_DESTRUCTIBLE_BUILDING: i32 = 33;
 const GO_TYPE_TRAPDOOR: i32 = 35;
@@ -537,7 +537,8 @@ pub(crate) fn go_reaction(
 
 /// Whether a picked object becomes the mouseover at all (`[vtbl+0x54]`): false publishes the null
 /// mouseover, so no tooltip, brighten or cursor. For a GameObject it is the type's slot `+0xc`, not
-/// the cursor's slot. `highlight_column` is GENERIC's `data[1]` or CAPTURE_POINT's `data[19]`;
+/// the cursor's slot. `highlight_column` is GENERIC's `data[1]` or CAPTURE_POINT's `data[19]`, or
+/// whether a DESTRUCTIBLE_BUILDING's row allows it;
 /// `None`, a template not yet answered, reads eligible.
 pub(crate) fn mouseover_eligible(
     type_id: i32,
@@ -553,7 +554,9 @@ pub(crate) fn mouseover_eligible(
         | GO_TYPE_DUEL_ARBITER
         | GO_TYPE_FISHINGHOLE
         | GO_TYPE_AURA_GENERATOR => true,
-        GO_TYPE_GENERIC | GO_TYPE_CAPTURE_POINT => highlight_column.unwrap_or(true),
+        GO_TYPE_GENERIC | GO_TYPE_CAPTURE_POINT | GO_TYPE_DESTRUCTIBLE_BUILDING => {
+            highlight_column.unwrap_or(true)
+        }
         // Every other type's `+0xc` forwards to its own `+0x14`.
         _ => highlightable_flags(type_id, flags, dyn_flags, reaction, overrides),
     }

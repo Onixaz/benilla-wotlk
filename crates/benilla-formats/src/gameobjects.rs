@@ -18,6 +18,11 @@ pub struct GameObjectCatalog {
 }
 
 impl GameObjectCatalog {
+    /// Build from `displayId → model path` rows, for tests.
+    pub fn from_models(models: HashMap<u32, String>) -> Self {
+        GameObjectCatalog { models }
+    }
+
     pub fn model_path(&self, display_id: u32) -> Option<&str> {
         self.models.get(&display_id).map(String::as_str)
     }
