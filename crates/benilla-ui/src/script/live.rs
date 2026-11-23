@@ -1055,6 +1055,80 @@ pub trait LiveState {
         None
     }
 
+    /// The inbox's shown rows and the server's whole count (`[0xbeb1d8]`, `[0xbeb1dc]`); `None` where no view lends the mail.
+    fn mail_inbox_counts(&self) -> Option<(usize, u32)> {
+        None
+    }
+
+    /// Inbox row `index` (0-based) resolved at the call, `text` the global strings and `military` the 24-hour clock: each record `read` names leaves its callback on a miss (`0x56d4b0`, `0x56d460`); `Some(None)` past the rows, `None` where no view lends the mail.
+    fn mail_row(
+        &mut self,
+        _index: usize,
+        _read: super::MailRead,
+        _text: &dyn Fn(&str) -> Option<String>,
+        _military: bool,
+    ) -> Option<Option<super::MailInboxRow>> {
+        None
+    }
+
+    /// The mark-as-read of inbox row `index` (0-based) inside the call (`0x56fe30`): the packet sent and the row turned read, then the signals it raises in order, none for no unread row; `None` where no view lends the mail.
+    fn mail_mark_read(&mut self, _index: usize) -> Option<Vec<&'static str>> {
+        None
+    }
+
+    /// A return or delete in flight on inbox row `index` (0-based) (`+0x2940`); `None` where no view lends the mail.
+    fn mail_mark_delete_pending(&mut self, _index: usize) -> Option<()> {
+        None
+    }
+
+    /// `HasNewMail()`'s test (`0x56f350`); `None` where no view lends the mail.
+    fn mail_has_new(&self) -> Option<bool> {
+        None
+    }
+
+    /// The delivered senders' names (`0x56f3a0`), a miss leaving the sender's callback (`0x56f3e0`); `None` where no view lends the mail.
+    fn mail_latest_senders(
+        &mut self,
+        _text: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<Vec<Option<String>>> {
+        None
+    }
+
+    /// The usable stationery list, rebuilt first (`0x56fc80`) on `rebuild` with no stationery record in flight; `None` where no view lends the mail.
+    fn mail_stationeries(&mut self, _rebuild: bool) -> Option<Vec<super::StationeryView>> {
+        None
+    }
+
+    /// `Package.dbc`'s rows; `None` where no view lends the mail.
+    fn mail_packages(&self) -> Option<Vec<super::PackageView>> {
+        None
+    }
+
+    /// Send `packet` to the open mailbox inside the call, as the verb's own send does; a take
+    /// with `auto_loot` keeps looting its mail (`0x5703c5`). `None` where no view lends the mail.
+    fn mail_send(&mut self, _packet: super::MailPacket) -> Option<()> {
+        None
+    }
+
+    /// The complaint about the sender of the mail `message_id` inside the call (`0x56faf0`): with
+    /// the complaint system on, a repeat is told back, else the sender joins the complained list
+    /// and the report goes out; `None` where no view lends the mail.
+    fn mail_complain(&mut self, _message_id: u32) -> Option<super::MailComplaint> {
+        None
+    }
+
+    /// `CloseMail`'s state legs inside the call (`0x571a40`): with a mailbox open, the interact
+    /// target cleared on it (`0x571a5e`), then the mailbox and the auto-loot zeroed (`0x571a6a`).
+    /// `Some(held)`, `held` when the mailbox held the target, whose interaction close ran the mail
+    /// close too (`0x51302d`); `Some(None)` with no mailbox; `None` where no view lends the mail.
+    fn mail_close(&mut self) -> Option<Option<bool>> {
+        None
+    }
+
+    /// The close's tail (`0x571a99`, `0x5717a7`): the query an arrival deferred while the mailbox
+    /// was open, sent once.
+    fn mail_close_query(&mut self) {}
+
     /// What the trade offer's gates read off held item `item` (`0x587aff`-`0x587bcf`, `0x5877b0`, `0x5d896d`); `None` with no item store held.
     fn trade_item_facts(&self, _item: u64) -> Option<super::TradeItemFacts> {
         None
