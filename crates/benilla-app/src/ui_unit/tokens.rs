@@ -102,14 +102,17 @@ pub(crate) fn base(w: &impl UnitWorld, base: UnitBase) -> Option<u64> {
             pets.get(usize::try_from(row).ok()?).copied()
         }
         // The player's transport while seated (`0x60ac87`).
-        UnitBase::Vehicle => w
-            .seat()
-            .filter(|p| p.state == crate::vehicle::SEATED)
-            .map(|p| p.vehicle),
+        UnitBase::Vehicle => seated_vehicle(w.seat()),
         UnitBase::Focus | UnitBase::Npc | UnitBase::QuestNpc => None,
         // Listed in commentator mode alone, which benilla never asks for.
         UnitBase::Commentator(_) => None,
     }
+}
+
+/// The `"vehicle"` token's unit: the player's transport while seated (`0x60ac87`).
+pub(crate) fn seated_vehicle(seat: Option<Passenger>) -> Option<u64> {
+    seat.filter(|p| p.state == crate::vehicle::SEATED)
+        .map(|p| p.vehicle)
 }
 
 /// [`live_fields`]' store, for the arena's pet read.
