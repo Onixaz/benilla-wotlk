@@ -106,6 +106,8 @@ pub(crate) enum CastBarEdge {
     AuraCancel(u32),
     /// The item use's rest after its form leave (`0x709338` -> `0x726ce0`): the bind deferral and the cast (`0x70933d`), after the drop's listeners.
     ItemUseRest(crate::ui_items::ItemUseRest),
+    /// A profession opener's open of the crafting list (`0x80d0ab` -> `0x5de120`), at the press's step.
+    TradeSkillOpen(u32),
 }
 
 impl CastBarEdge {
@@ -122,6 +124,7 @@ impl CastBarEdge {
                 | Self::ItemUseRest(_)
                 | Self::PendingBail
                 | Self::ItemUnlocked(_)
+                | Self::TradeSkillOpen(_)
         )
     }
 
@@ -342,6 +345,13 @@ impl PressSignals<'_, '_> {
         }
     }
 
+    /// A profession opener's open (`0x80d0ab` -> `0x5de120`), run at the press's step.
+    pub(crate) fn trade_skill_open(&mut self, spell_id: u32) {
+        if let Some(edges) = self.edges.as_mut() {
+            edges.0.push(CastBarEdge::TradeSkillOpen(spell_id));
+        }
+    }
+
     /// The cast attempt's rungs after the cursor's stop, run after its selection update.
     pub(crate) fn ladder_rest(&mut self, rest: crate::spell::LadderRest) {
         if let Some(edges) = self.edges.as_mut() {
@@ -500,6 +510,7 @@ impl PressSignals<'_, '_> {
                 | CastBarEdge::AuraCancel(_)
                 | CastBarEdge::ItemUseRest(_)
                 | CastBarEdge::ItemUnlocked(_)
+                | CastBarEdge::TradeSkillOpen(_)
                 | CastBarEdge::PendingBail => {}
                 // Shown in place by `fire`.
                 CastBarEdge::Refused(_) | CastBarEdge::Line(_) => {}
@@ -862,6 +873,10 @@ pub(crate) fn apply_edge(world: &mut World, edge: CastBarEdge) {
         crate::ui_loot::unlock_item_now(world, guid);
         return;
     }
+    if let CastBarEdge::TradeSkillOpen(spell_id) = edge {
+        crate::ui_tradeskill::set_trade_skill(world, spell_id);
+        return;
+    }
     if let CastBarEdge::CastItemCancelled(item) = edge {
         if let Some(mut ui) = world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
             ui.write(move |script| script.cast_item_cancelled(item));
@@ -997,6 +1012,7 @@ fn edge_system(
         | CastBarEdge::AuraCancel(_)
         | CastBarEdge::ItemUseRest(_)
         | CastBarEdge::ItemUnlocked(_)
+        | CastBarEdge::TradeSkillOpen(_)
         | CastBarEdge::PendingBail => {}
         CastBarEdge::Selection => crate::ui_action::signals::selection(&mut ui),
         CastBarEdge::Signal(event) => ui.fire(event, Vec::new()),
@@ -1515,10 +1531,7 @@ mod tests {
             .init_resource::<UiEvents>()
             .init_resource::<UnitCasts>()
             .init_resource::<InterruptSchools>()
-            .insert_resource(crate::ui_script::UiClock {
-                anchor: std::time::Instant::now(),
-                ui_now: 100.0,
-            })
+            .insert_resource(crate::ui_script::UiClock { ui_now: 100.0 })
             .init_resource::<SelfGuid>()
             .init_resource::<GuidIndex>()
             .init_resource::<crate::names::NameCache>()

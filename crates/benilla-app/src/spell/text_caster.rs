@@ -5,7 +5,6 @@
 use std::collections::BTreeSet;
 
 use benilla_formats::{PlayerValue, SpellDisplay};
-use bevy::ecs::change_detection::DetectChanges;
 
 use crate::items::Items;
 use crate::net::ObjectStore;
@@ -193,36 +192,6 @@ impl benilla_formats::Caster for TextCaster<'_> {
 
     fn cast_speed(&self) -> f32 {
         self.store.0.unit_mod_cast_speed().unwrap_or(1.0)
-    }
-}
-
-/// The known set and the player's auras for a system that parses spell text, and whether either
-/// moved since that system last ran.
-#[derive(bevy::ecs::system::SystemParam)]
-pub(crate) struct CasterSources<'w, 's> {
-    actions: Option<bevy::prelude::Res<'w, crate::ui_action::PlayerActions>>,
-    auras: bevy::prelude::Query<
-        'w,
-        's,
-        bevy::prelude::Ref<'static, UnitAuras>,
-        bevy::prelude::With<crate::net::SelfPlayer>,
-    >,
-}
-
-impl CasterSources<'_, '_> {
-    /// A learn, an unlearn or an aura change since the system last ran.
-    pub(crate) fn changed(&self) -> bool {
-        self.known_changed() || self.auras_changed()
-    }
-
-    /// The book's resource was written since the system last ran.
-    pub(crate) fn known_changed(&self) -> bool {
-        self.actions.as_ref().is_some_and(|a| a.is_changed())
-    }
-
-    /// The player's aura table was written since the system last ran.
-    pub(crate) fn auras_changed(&self) -> bool {
-        self.auras.single().is_ok_and(|a| a.is_changed())
     }
 }
 

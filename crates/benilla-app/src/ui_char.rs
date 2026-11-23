@@ -267,7 +267,7 @@ pub(crate) fn skill_value_read(slot: &benilla_protocol::messages::PlayerSkillSlo
     }
 }
 
-/// The skill value watch (`0x6da4a0`) on slot `slot`, its old raw value half `old`: a read (`0x6da4fa`) that differs from `old` fires the stat events (`0x6da509`), rebuilds the list (`0x6da531`) and raises the gain or rank line (`0x6da59f`); then the trainer's refresh (`0x6da5f3`), the trade-skill list's refresh (`0x6da5fa`, the trade-skill module's, #1282) and the merchant's (`0x6da602`).
+/// The skill value watch (`0x6da4a0`) on slot `slot`, its old raw value half `old`: a read (`0x6da4fa`) that differs from `old` fires the stat events (`0x6da509`), rebuilds the list (`0x6da531`) and raises the gain or rank line (`0x6da59f`); then the trainer's refresh (`0x6da5f3`), the trade-skill list's refresh in place (`0x6da5fa`) and the merchant's (`0x6da602`).
 pub(crate) fn skill_value_watch(world: &mut World, slot: u8, old: u16) {
     let moved = {
         let mut me = world.query_filtered::<&ObjectStore, With<SelfPlayer>>();
@@ -292,12 +292,14 @@ pub(crate) fn skill_value_watch(world: &mut World, slot: u8, old: u16) {
         }
     }
     crate::ui_script::live::in_turn(world, crate::ui_trainer::refresh);
+    crate::ui_script::live::in_turn(world, crate::ui_tradeskill::refresh_in_place);
     crate::ui_script::live::in_turn(world, crate::ui_merchant::refresh);
 }
 
-/// The skill max and permanent-bonus watch (`0x6cddb0`): the trainer's refresh, the trade-skill list's refresh (`0x6cddb7`, the trade-skill module's, #1282), then the rebuild (`0x6cddbf`).
+/// The skill max and permanent-bonus watch (`0x6cddb0`): the trainer's refresh, the trade-skill list's refresh in place (`0x6cddb7`), then the rebuild (`0x6cddbf`).
 pub(crate) fn skill_max_watch(world: &mut World) {
     crate::ui_script::live::in_turn(world, crate::ui_trainer::refresh);
+    crate::ui_script::live::in_turn(world, crate::ui_tradeskill::refresh_in_place);
     crate::ui_script::live::in_turn(world, rebuild_skills);
 }
 

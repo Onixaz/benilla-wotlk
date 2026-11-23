@@ -455,6 +455,10 @@ pub(crate) enum RecordWait {
     Buyback,
     /// The trainer's, from a recipe's description read (`0x595b02` -> `0x593ca0`).
     Trainer,
+    /// The tradeskill list's, from a rebuild's product read (`0x5d9f80`).
+    TradeSkillList,
+    /// The tradeskill list's, from a reagent's or tool's read (`0x5de100`).
+    TradeSkillItem,
     /// The petition vendor's, from a row's read (`0x5a1fb0` -> `0x5a1f30`).
     PetitionVendor,
     /// A dressing-room pane's try-on, from its record read (`0x5980fa` -> `0x5980b0`).

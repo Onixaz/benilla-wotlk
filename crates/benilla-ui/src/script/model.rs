@@ -9,8 +9,8 @@ use super::{
     auction, backdrop, bind_confirm, calendar, camera_view, char_stats, chat_window, colorselect,
     combat_log, container, cursor, death, duel, follow, guild, inspect, lfg, macros, mirror_timer,
     parse_unit_token, party, petition, pvp, quest, quest_log, session, simplehtml, skills, slider,
-    social, stable, trade, tradeskill, unit_menu, weapon_enchant, FontObject, MusicRequest,
-    RegionData, ScriptValue, SoundRequest, UnitState, UnitTokenParse,
+    social, stable, trade, unit_menu, weapon_enchant, FontObject, MusicRequest, RegionData,
+    ScriptValue, SoundRequest, UnitState, UnitTokenParse,
 };
 
 // ── The Rust-side model ──
@@ -794,8 +794,10 @@ pub(crate) struct Model {
     #[cfg(any(test, feature = "fixtures"))]
     pub(crate) taxi: Option<super::taxi::TaxiUiState>,
 
-    /// The open tradeskill window, its filters and repeat.
-    pub(crate) trade_skill: tradeskill::TradeSkillModel,
+    /// A test's tradeskill window and the recipes it answers, read where the lent view does not
+    /// hold the list.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) trade_skill: Option<Box<super::tradeskill::TradeSkillFixture>>,
 
     /// The dungeon finder.
     pub(crate) lfg: lfg::LfgModel,
@@ -1730,7 +1732,8 @@ impl Model {
             trainer: None,
             #[cfg(any(test, feature = "fixtures"))]
             taxi: None,
-            trade_skill: Default::default(),
+            #[cfg(any(test, feature = "fixtures"))]
+            trade_skill: None,
             lfg: Default::default(),
             calendar: Default::default(),
             #[cfg(any(test, feature = "fixtures"))]

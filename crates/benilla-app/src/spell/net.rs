@@ -1420,12 +1420,19 @@ fn learned_spell(
             }
         }
     }
+    let recipe =
+        display.is_some_and(|d| d.attributes & benilla_formats::SPELL_ATTR_IS_TRADESKILL != 0);
     if let Some(d) = display {
         if d.attributes & ATTR_DO_NOT_DISPLAY != 0 {
+            // A recipe joins its line's list after the registrar, which rebuilds whole (`0x6e7c1a`).
+            if recipe {
+                errors.trade_list_refresh();
+            }
             return None;
         }
-        if d.attributes & benilla_formats::SPELL_ATTR_IS_TRADESKILL != 0 {
+        if recipe {
             announce_learn(spell_id, spells, errors);
+            errors.trade_list_refresh();
             return None;
         }
         if d.is_companion(summons) {
@@ -1445,11 +1452,17 @@ fn learned_spell(
 /// Where a learn's writes signal, in its order: a bar slot it wrote (`0x5aae80`) and its line.
 trait LearnOut: crate::ui_action::signals::SignalSink {
     fn slot_changed(&mut self, slot: u8);
+    /// The tradeskill list's whole rebuild, at this step (`0x5dd5a0`).
+    fn trade_list_refresh(&mut self);
 }
 
 impl LearnOut for crate::ui_script::live::UiEvents {
     fn slot_changed(&mut self, slot: u8) {
         crate::ui_action::slots::changed_in_turn(self, slot);
+    }
+
+    fn trade_list_refresh(&mut self) {
+        self.world(crate::ui_tradeskill::refresh_whole);
     }
 }
 
@@ -1457,6 +1470,8 @@ impl LearnOut for crate::ui_script::live::UiEvents {
 #[cfg(test)]
 impl LearnOut for crate::ui_action::signals::LinesSeen {
     fn slot_changed(&mut self, _: u8) {}
+
+    fn trade_list_refresh(&mut self) {}
 }
 
 /// `Attributes & 0x80`: the registrar's first exit (`0x54265c`).
@@ -1501,11 +1516,18 @@ fn removed_spell(
     spell_id: u32,
     actions: &mut PlayerActions,
     spells: Option<&Spells>,
-    errors: &mut dyn crate::ui_action::signals::SignalSink,
+    errors: &mut dyn LearnOut,
 ) {
     debug!("net: removed spell {spell_id}");
     if actions.spells.remove(&spell_id) {
         actions.dirty = true;
+        // A recipe leaves its line's list, which rebuilds whole (`0x6e72e6`).
+        if spells
+            .and_then(|s| s.catalog.get(spell_id))
+            .is_some_and(|d| d.attributes & benilla_formats::SPELL_ATTR_IS_TRADESKILL != 0)
+        {
+            errors.trade_list_refresh();
+        }
     }
     announce_unlearn(spell_id, spells, errors);
 }
@@ -2650,6 +2672,10 @@ mod tests {
         fn slot_changed(&mut self, slot: u8) {
             self.0.push(format!("slot {slot}"));
         }
+
+        fn trade_list_refresh(&mut self) {
+            self.0.push("trade list".into());
+        }
     }
 
     /// The rank below leaves its button for the new rank (`0x5aafd0`) before the registrar
@@ -2696,6 +2722,46 @@ mod tests {
         );
         assert_eq!(bar.buttons[&0].action, 143, "the rank replaced in place");
         assert_eq!(order.0, ["slot 0", "ERR_LEARN_SPELL_S"]);
+    }
+
+    /// A learned recipe's line goes out from the registrar (`0x6e7b52` -> `0x542030`) before its
+    /// list rebuilds whole (`0x6e7c1a`); a hidden recipe skips the line but still rebuilds.
+    #[test]
+    fn a_learned_recipe_announces_before_its_list_rebuilds() {
+        for (attributes, expect) in [
+            (
+                benilla_formats::SPELL_ATTR_IS_TRADESKILL,
+                &["ERR_LEARN_RECIPE_S", "trade list"][..],
+            ),
+            (
+                benilla_formats::SPELL_ATTR_IS_TRADESKILL | ATTR_DO_NOT_DISPLAY,
+                &["trade list"][..],
+            ),
+        ] {
+            let spells = catalog_with(
+                3275,
+                benilla_formats::SpellDisplay {
+                    name: "Linen Bandage".to_string(),
+                    attributes,
+                    ..Default::default()
+                },
+            );
+            let mut order = LearnOrder::default();
+            learned_spell(
+                3275,
+                (
+                    &mut PlayerActions::default(),
+                    &mut crate::ui_action::ActionSlots::default(),
+                ),
+                Some(&spells),
+                &mut order,
+                &mut LearnedInTab::default(),
+                live(),
+                &no_bar(),
+                &Default::default(),
+            );
+            assert_eq!(order.0, expect, "attributes {attributes:#x}");
+        }
     }
 
     /// Heroic Strike carries `SPELL_ATTR_ABILITY`, so the reference lands on `0x38`, the ability

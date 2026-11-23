@@ -198,17 +198,12 @@ fn seed_class_names(world: &World, script: &mut UiScript) {
 /// clock back at zero puts every converted cooldown start in the past, which stock
 /// `CooldownFrame_SetTimer` hides (`Cooldown.lua:3`).
 fn seed_vm_clock(world: &mut World, script: &mut UiScript) {
-    let (anchor, elapsed) = world
+    let elapsed = world
         .get_resource::<Time<bevy::time::Real>>()
-        .map_or_else(Default::default, |t| {
-            (t.last_update(), t.elapsed_secs_f64())
-        });
+        .map_or(0.0, |t| t.elapsed_secs_f64());
     script.set_now(elapsed);
     if let Some(mut clock) = world.get_resource_mut::<UiClock>() {
-        *clock = UiClock {
-            anchor: anchor.unwrap_or_else(std::time::Instant::now),
-            ui_now: elapsed,
-        };
+        *clock = UiClock { ui_now: elapsed };
     }
 }
 
@@ -1658,7 +1653,13 @@ mod tests {
             enabled: true,
         };
         let triple = armed
-            .ui_triple(clock.anchor, clock.ui_now)
+            .ui_triple(
+                world
+                    .resource::<Time<bevy::time::Real>>()
+                    .last_update()
+                    .expect("updated"),
+                clock.ui_now,
+            )
             .expect("a running cooldown pushes a triple");
         assert_eq!(
             triple,

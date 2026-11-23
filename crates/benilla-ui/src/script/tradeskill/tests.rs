@@ -399,7 +399,7 @@ fn the_repeat_runs_on_the_cast_edges() {
     let mut s = open();
     s.run("SelectTradeSkill(8) DoTradeSkill(8, 5)").unwrap();
     assert_eq!(
-        s.take_trade_skill_casts(),
+        s.trade_skill_list_mut(|t| std::mem::take(&mut t.casts)),
         [(7421, 2)],
         "capped by numAvailable"
     );
@@ -408,27 +408,31 @@ fn the_repeat_runs_on_the_cast_edges() {
         1,
         "no repeat before the cast went (`0x5dacbb`)"
     );
-    s.trade_skill_cast_sent(7421, 2);
+    s.trade_skill_list_mut(|t| t.set_recast(7421, 2));
     assert_eq!(
         s.eval::<i64>("return GetTradeskillRepeatCount()").unwrap(),
         2,
         "capped by numAvailable"
     );
-    s.trade_skill_cast_started(7421);
-    assert!(s.trade_skill_cast_done(7421));
-    assert!(!s.trade_skill_cast_done(7421), "the second go spends it");
+    s.trade_skill_list_mut(|t| {
+        t.commit_pending_recast(7421);
+        assert!(t.do_recast(7421).0);
+        assert!(!t.do_recast(7421).0, "the second go spends it");
+    });
     assert_eq!(
         s.eval::<i64>("return GetTradeskillRepeatCount()").unwrap(),
         1
     );
 
     s.run("DoTradeSkill(8, 2)").unwrap();
-    for (spell, times) in s.take_trade_skill_casts() {
-        s.trade_skill_cast_sent(spell, times);
-    }
-    s.trade_skill_cast_started(7421);
-    s.trade_skill_cast_failed(7421);
-    assert!(!s.trade_skill_cast_done(7421));
+    s.trade_skill_list_mut(|t| {
+        for (spell, times) in std::mem::take(&mut t.casts) {
+            t.set_recast(spell, times);
+        }
+        t.commit_pending_recast(7421);
+        assert_eq!(t.cast_failed(7421), 1);
+        assert!(!t.do_recast(7421).0);
+    });
 }
 
 /// Another line resets the filters and selection; the same line keeps them across a close.
@@ -451,33 +455,45 @@ fn a_line_switch_resets_the_filters() {
     );
 }
 
-/// A product template in flight holds the list back.
+/// A product record in flight files and counts the recipes (`0x5dd889`) but runs no filter pass
+/// (`0x5ddeb7`): no headers, and the filtered count stands until the record lands.
 #[test]
-fn a_pending_product_holds_the_list() {
+fn a_pending_product_files_the_recipes_without_the_filter_pass() {
     let mut s = UiScript::new().unwrap();
     let mut st = enchanting();
     st.recipes[1].group = None;
     s.set_trade_skill(Some(st));
     assert_eq!(s.eval::<i64>("return GetNumTradeSkills()").unwrap(), 0);
+    assert_eq!(
+        s.trade_skill_list_mut(|l| l.entry_count()),
+        enchanting().recipes.len()
+    );
     s.set_trade_skill(Some(enchanting()));
     assert_eq!(s.eval::<i64>("return GetNumTradeSkills()").unwrap(), 8);
 }
 
-/// A switch to a line whose product is in flight shows nothing of the old line meanwhile.
+/// A switch to a line whose product is in flight indexes the new line's recipes in spell order,
+/// under the old filtered count (`0x5dd889`, `0x5ddeb7`).
 #[test]
-fn a_pending_switch_drops_the_old_lines_list() {
+fn a_pending_switch_indexes_the_new_recipes_under_the_old_count() {
     let mut s = open();
     let mut other = enchanting();
     other.line = 164;
     other.recipes.reverse();
     other.recipes[0].group = None;
+    let second = other.recipes[1].name.clone();
+    let count = other.recipes.len();
     s.set_trade_skill(Some(other));
-    assert_eq!(s.eval::<i64>("return GetNumTradeSkills()").unwrap(), 0);
+    assert_eq!(s.eval::<i64>("return GetNumTradeSkills()").unwrap(), 8);
+    assert_eq!(s.trade_skill_list_mut(|l| l.entry_count()), count);
     assert_eq!(
-        s.eval::<i64>("return select(3, GetTradeSkillInfo(2))")
-            .unwrap(),
-        0
+        s.eval::<String>("return (GetTradeSkillInfo(2))").unwrap(),
+        second
     );
+    assert!(s
+        .eval::<Option<String>>(&format!("return (GetTradeSkillInfo({}))", count + 1))
+        .unwrap()
+        .is_none());
 }
 
 /// The description, the links and the closed state.
@@ -532,18 +548,24 @@ fn links_description_and_the_closed_line() {
     );
 }
 
-/// `CloseTradeSkill` queues the close for the app and fires TRADE_SKILL_CLOSE itself.
+/// `CloseTradeSkill` clears the line and fires TRADE_SKILL_CLOSE inside its call (`0x5da8b0`).
 #[test]
 fn close_trade_skill_fires_the_close() {
     let mut s = open();
     s.run("DoTradeSkill(2)").unwrap();
     // The host's cast went, so the repeat stands for the close to stop.
-    for (spell, times) in s.take_trade_skill_casts() {
-        s.trade_skill_cast_sent(spell, times);
-    }
+    s.trade_skill_list_mut(|t| {
+        for (spell, times) in std::mem::take(&mut t.casts) {
+            t.set_recast(spell, times);
+        }
+    });
     signalled();
     s.run("CloseTradeSkill()").unwrap();
-    assert!(s.take_trade_skill_close());
+    assert_eq!(
+        s.trade_skill_list_mut(|t| t.line),
+        0,
+        "the close clears the line in the call"
+    );
     assert_eq!(
         signalled(),
         ["UPDATE_TRADESKILL_RECAST", "TRADE_SKILL_CLOSE"]

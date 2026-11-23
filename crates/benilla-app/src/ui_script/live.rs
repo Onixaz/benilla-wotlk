@@ -73,8 +73,11 @@ pub(crate) struct LiveView<'w, 's> {
     pub(crate) slots: Option<ResMut<'w, crate::ui_action::ActionSlots>>,
     /// The item locks (`item+0x394` bit 0): a verb locks and unlocks in the call (`0x513740`, `0x513770`).
     pub(crate) pending: Option<ResMut<'w, crate::pending_item_ops::PendingItemOps>>,
-    /// The open trade-skill book (`[0xc235a4]`), the current and selected tests' trade arm.
+    /// The tradeskill statics (`0xc235a0`-`0xc23604`): the list the verbs read and write, and the
+    /// open line, the current and selected tests' trade arm (`[0xc235a4]`).
     pub(crate) trade: Option<ResMut<'w, crate::ui_tradeskill::TradeSkillOpen>>,
+    /// What the tradeskill verbs read of the game at the call.
+    trade_live: crate::ui_tradeskill::TradeSkillLive<'w, 's>,
     /// The usable caches (`0x53cf10`), which every loan owns: a verb's site refreshes them.
     pub(crate) usable: Option<ResMut<'w, crate::ui_action::usable_cache::UsableCaches>>,
     /// The macros' bound spells, a macro slot's spell (`0x5a89f0`), which an edit's parse writes.
@@ -370,7 +373,7 @@ impl crate::ui_spell_info::CallReads for LiveView<'_, '_> {
         }
         now.auto_repeat = self.cast.auto_repeat.as_deref().and_then(|a| a.0);
         now.attacking = !self.engaged.is_empty();
-        now.trade_line = self.trade.as_deref().and_then(|t| t.line);
+        now.trade_line = self.trade.as_deref().and_then(|t| t.line());
         now.race_class = crate::spell::race_class(store);
         now.critter = store.and_then(|s| s.0.unit_critter());
         now.auras = me.and_then(|(e, _)| self.auras.get(e).ok());
@@ -1267,7 +1270,7 @@ impl LiveState for LiveView<'_, '_> {
                 .skill_lines
                 .as_deref()
                 .and_then(|l| l.catalog.spell_to_line(spell_id, race, class));
-            if line.is_some() && line == self.trade.as_deref().and_then(|t| t.line) {
+            if line.is_some() && line == self.trade.as_deref().and_then(|t| t.line()) {
                 return true;
             }
         }
@@ -2745,6 +2748,71 @@ impl LiveState for LiveView<'_, '_> {
         if let Some(t) = self.trainer.as_mut() {
             t.zero();
         }
+    }
+
+    fn trade_skill(&self) -> Option<&benilla_ui::script::TradeSkillList> {
+        self.trade.as_deref().map(|t| &t.list)
+    }
+
+    fn trade_skill_mut(&mut self) -> Option<&mut benilla_ui::script::TradeSkillList> {
+        self.trade.as_deref_mut().map(|t| &mut t.list)
+    }
+
+    fn trade_skill_line(&self) -> benilla_ui::script::TradeSkillLineView {
+        let line = self.trade.as_deref().map_or(0, |t| t.list.line);
+        self.trade_live.line_view(line)
+    }
+
+    fn trade_skill_recipe(
+        &self,
+        spell_id: u32,
+    ) -> Option<benilla_ui::script::TradeSkillRecipeView> {
+        self.trade_live.recipe(spell_id)
+    }
+
+    fn trade_skill_reagent(
+        &mut self,
+        _spell_id: u32,
+        item: u32,
+    ) -> benilla_ui::script::TradeSkillReagentView {
+        self.trade_live
+            .reagent(item, self.record_waits.as_deref_mut())
+    }
+
+    fn trade_skill_tools(&mut self, spell_id: u32) -> Vec<(String, bool)> {
+        self.trade_live
+            .tools(spell_id, self.record_waits.as_deref_mut())
+    }
+
+    fn trade_skill_description(
+        &self,
+        spell_id: u32,
+        global: benilla_ui::script::GlobalStrings<'_>,
+    ) -> Option<String> {
+        let empty = std::collections::BTreeSet::new();
+        let known = self.actions.as_deref().map_or(&empty, |a| &a.spells);
+        self.trade_live.description(spell_id, known, global)
+    }
+
+    fn trade_skill_list_link(&self) -> Option<String> {
+        let list = &self.trade.as_deref()?.list;
+        let empty = std::collections::BTreeSet::new();
+        let known = self.actions.as_deref().map_or(&empty, |a| &a.spells);
+        self.trade_live.list_link(list.opener, list.line, known)
+    }
+
+    fn trade_skill_filter_spell(
+        &self,
+        spell_id: u32,
+        min: i32,
+        max: i32,
+        name: Option<&str>,
+        global: benilla_ui::script::GlobalStrings<'_>,
+    ) -> bool {
+        let empty = std::collections::BTreeSet::new();
+        let known = self.actions.as_deref().map_or(&empty, |a| &a.spells);
+        self.trade_live
+            .filter_spell(spell_id, min, max, name, known, global)
     }
 
     fn close_gossip(&mut self) -> u32 {
