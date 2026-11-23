@@ -9921,118 +9921,6 @@ fn a_mailbox_fires_from_its_handlers_with_the_inbox_read_at_the_call() {
     );
 }
 
-/// The known-titles watches fire `KNOWN_TITLES_UPDATE` with `"player"` from the values handler,
-/// once per moved u64 field (registered once per u64 at `0x6e53cf`, the event at `0x6cdde1`), with
-/// the whole update applied; a chosen-title update has no such watch. A handler of the event reads
-/// the title fields at its packet's step: a later packet in the same frame is not yet applied.
-#[test]
-fn known_titles_watches_fire_per_field_with_the_fields_read_at_the_call() {
-    use benilla_protocol::field::{FIELD_PLAYER_CHOSEN_TITLE, FIELD_PLAYER_KNOWN_TITLES};
-    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER, (FIELD_PLAYER_KNOWN_TITLES, 1 << 1)])
-    else {
-        return;
-    };
-    const VERBS: &[&str] = &["titlecur", "known1", "known70"];
-    let lines = |seen: &[Seen]| pin(seen, &["KNOWN_TITLES_UPDATE"], VERBS);
-    let rows: i64 = super::live::with_live_world(rig.app.world_mut(), |s| {
-        s.eval::<i64>("return GetNumTitles()")
-    })
-    .expect("a VM")
-    .unwrap();
-    assert!(rows > 100, "CharTitles.dbc's row count plus 1: {rows}");
-    assert_eq!(
-        rig.live_now()
-            .line(&["titlecur", "known1", "known70", "titlename"]),
-        "NOW | titlecur=0 known1=1 known70=0 titlename=Private "
-    );
-    // Both halves of the first u64 and the low half of the second: two watches, one each.
-    let both = rig.packets(
-        vec![self_values(&[
-            (FIELD_PLAYER_KNOWN_TITLES, 1 << 1 | 1 << 5),
-            (FIELD_PLAYER_KNOWN_TITLES + 1, 1),
-            (FIELD_PLAYER_KNOWN_TITLES + 2, 1 << 6),
-        ])],
-        2,
-    );
-    let chosen = rig.packets(vec![self_values(&[(FIELD_PLAYER_CHOSEN_TITLE, 1)])], 2);
-    // The known update ahead of a chosen-title update in one frame, then behind one.
-    let known_first = rig.packets(
-        vec![
-            self_values(&[(FIELD_PLAYER_KNOWN_TITLES + 2, 0)]),
-            self_values(&[(FIELD_PLAYER_CHOSEN_TITLE, 0)]),
-        ],
-        2,
-    );
-    let chosen_first = rig.packets(
-        vec![
-            self_values(&[(FIELD_PLAYER_CHOSEN_TITLE, 1)]),
-            self_values(&[(FIELD_PLAYER_KNOWN_TITLES + 2, 1 << 6)]),
-        ],
-        2,
-    );
-    assert_eq!(
-        lines(&both),
-        vec![
-            "KNOWN_TITLES_UPDATE player | titlecur=0 known1=1 known70=1",
-            "KNOWN_TITLES_UPDATE player | titlecur=0 known1=1 known70=1",
-        ]
-    );
-    assert!(lines(&chosen).is_empty(), "{chosen:?}");
-    assert_eq!(
-        lines(&known_first),
-        vec!["KNOWN_TITLES_UPDATE player | titlecur=1 known1=1 known70=0"],
-        "the chosen title's packet is not yet applied"
-    );
-    assert_eq!(
-        lines(&chosen_first),
-        vec!["KNOWN_TITLES_UPDATE player | titlecur=1 known1=1 known70=1"]
-    );
-    assert_eq!(
-        rig.live_now().line(VERBS),
-        "NOW | titlecur=1 known1=1 known70=1"
-    );
-    // The high half of the first u64 alone: its watch fires once, the new bit read at the call.
-    let high = rig.packets(
-        vec![self_values(&[(FIELD_PLAYER_KNOWN_TITLES + 1, 1 | 1 << 8)])],
-        2,
-    );
-    assert_eq!(
-        pin(&high, &["KNOWN_TITLES_UPDATE"], &["known40"]),
-        vec!["KNOWN_TITLES_UPDATE player | known40=1"]
-    );
-}
-
-/// `SetCurrentTitle` (`0x522e30`) sends `CMSG_SET_TITLE` with the mask inside the call (`0x522efb`),
-/// "None" as -1, before the calling chunk goes on; the chosen title moves only when the server's
-/// field update lands.
-#[test]
-fn set_current_title_sends_inside_the_call() {
-    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
-        return;
-    };
-    let (tx, rx) = crossbeam_channel::unbounded();
-    rig.app.insert_resource(crate::net::NetCommands(tx));
-    let sends = |rx: &crossbeam_channel::Receiver<crate::net::ClientCommand>| {
-        rx.try_iter()
-            .filter_map(|c| match c {
-                crate::net::ClientCommand::SetTitle { mask_id } => Some(mask_id),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-    };
-    let cur = super::live::with_live_world(rig.app.world_mut(), |s| {
-        s.eval::<i64>("SetCurrentTitle(1) SetCurrentTitle(-1.7) return GetCurrentTitle()")
-    })
-    .expect("a VM")
-    .unwrap();
-    assert_eq!(
-        sends(&rx),
-        vec![1, -1],
-        "both sent before the chunk returned"
-    );
-    assert_eq!(cur, 0, "the field waits for the server");
-}
-
 /// The character sheet's watches (`0x6e5180`): a skill value fires the three stat events, rebuilds the list and fires `SKILL_LINES_CHANGED` (`0x6da509`, `0x6da531`); a rating fires `COMBAT_RATING_UPDATE` then the rebuild (`0x6cddf0`); the damage mods `PLAYER_DAMAGE_DONE_MODS` (`0x6cddd0`); each verb reads the fields at the call, so a packet behind in the same frame is not yet seen.
 #[test]
 fn sheet_watches_fire_in_the_values_handler_with_the_fields_read_at_the_call() {
@@ -10568,4 +10456,116 @@ fn an_auction_house_fires_from_its_handlers_with_the_lists_read_at_the_call() {
             ],
         ]
     );
+}
+
+/// The known-titles watches fire `KNOWN_TITLES_UPDATE` with `"player"` from the values handler,
+/// once per moved u64 field (registered once per u64 at `0x6e53cf`, the event at `0x6cdde1`), with
+/// the whole update applied; a chosen-title update has no such watch. A handler of the event reads
+/// the title fields at its packet's step: a later packet in the same frame is not yet applied.
+#[test]
+fn known_titles_watches_fire_per_field_with_the_fields_read_at_the_call() {
+    use benilla_protocol::field::{FIELD_PLAYER_CHOSEN_TITLE, FIELD_PLAYER_KNOWN_TITLES};
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER, (FIELD_PLAYER_KNOWN_TITLES, 1 << 1)])
+    else {
+        return;
+    };
+    const VERBS: &[&str] = &["titlecur", "known1", "known70"];
+    let lines = |seen: &[Seen]| pin(seen, &["KNOWN_TITLES_UPDATE"], VERBS);
+    let rows: i64 = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval::<i64>("return GetNumTitles()")
+    })
+    .expect("a VM")
+    .unwrap();
+    assert!(rows > 100, "CharTitles.dbc's row count plus 1: {rows}");
+    assert_eq!(
+        rig.live_now()
+            .line(&["titlecur", "known1", "known70", "titlename"]),
+        "NOW | titlecur=0 known1=1 known70=0 titlename=Private "
+    );
+    // Both halves of the first u64 and the low half of the second: two watches, one each.
+    let both = rig.packets(
+        vec![self_values(&[
+            (FIELD_PLAYER_KNOWN_TITLES, 1 << 1 | 1 << 5),
+            (FIELD_PLAYER_KNOWN_TITLES + 1, 1),
+            (FIELD_PLAYER_KNOWN_TITLES + 2, 1 << 6),
+        ])],
+        2,
+    );
+    let chosen = rig.packets(vec![self_values(&[(FIELD_PLAYER_CHOSEN_TITLE, 1)])], 2);
+    // The known update ahead of a chosen-title update in one frame, then behind one.
+    let known_first = rig.packets(
+        vec![
+            self_values(&[(FIELD_PLAYER_KNOWN_TITLES + 2, 0)]),
+            self_values(&[(FIELD_PLAYER_CHOSEN_TITLE, 0)]),
+        ],
+        2,
+    );
+    let chosen_first = rig.packets(
+        vec![
+            self_values(&[(FIELD_PLAYER_CHOSEN_TITLE, 1)]),
+            self_values(&[(FIELD_PLAYER_KNOWN_TITLES + 2, 1 << 6)]),
+        ],
+        2,
+    );
+    assert_eq!(
+        lines(&both),
+        vec![
+            "KNOWN_TITLES_UPDATE player | titlecur=0 known1=1 known70=1",
+            "KNOWN_TITLES_UPDATE player | titlecur=0 known1=1 known70=1",
+        ]
+    );
+    assert!(lines(&chosen).is_empty(), "{chosen:?}");
+    assert_eq!(
+        lines(&known_first),
+        vec!["KNOWN_TITLES_UPDATE player | titlecur=1 known1=1 known70=0"],
+        "the chosen title's packet is not yet applied"
+    );
+    assert_eq!(
+        lines(&chosen_first),
+        vec!["KNOWN_TITLES_UPDATE player | titlecur=1 known1=1 known70=1"]
+    );
+    assert_eq!(
+        rig.live_now().line(VERBS),
+        "NOW | titlecur=1 known1=1 known70=1"
+    );
+    // The high half of the first u64 alone: its watch fires once, the new bit read at the call.
+    let high = rig.packets(
+        vec![self_values(&[(FIELD_PLAYER_KNOWN_TITLES + 1, 1 | 1 << 8)])],
+        2,
+    );
+    assert_eq!(
+        pin(&high, &["KNOWN_TITLES_UPDATE"], &["known40"]),
+        vec!["KNOWN_TITLES_UPDATE player | known40=1"]
+    );
+}
+
+/// `SetCurrentTitle` (`0x522e30`) sends `CMSG_SET_TITLE` with the mask inside the call (`0x522efb`),
+/// "None" as -1, before the calling chunk goes on; the chosen title moves only when the server's
+/// field update lands.
+#[test]
+fn set_current_title_sends_inside_the_call() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let sends = |rx: &crossbeam_channel::Receiver<crate::net::ClientCommand>| {
+        rx.try_iter()
+            .filter_map(|c| match c {
+                crate::net::ClientCommand::SetTitle { mask_id } => Some(mask_id),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let cur = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval::<i64>("SetCurrentTitle(1) SetCurrentTitle(-1.7) return GetCurrentTitle()")
+    })
+    .expect("a VM")
+    .unwrap();
+    assert_eq!(
+        sends(&rx),
+        vec![1, -1],
+        "both sent before the chunk returned"
+    );
+    assert_eq!(cur, 0, "the field waits for the server");
 }
