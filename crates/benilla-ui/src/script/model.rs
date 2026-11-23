@@ -7,10 +7,10 @@ use crate::widget::{FrameHandle, RegionHandle, WidgetArena};
 
 use super::{
     auction, backdrop, bind_confirm, calendar, camera_view, char_stats, chat_window, colorselect,
-    combat_log, container, cursor, death, duel, follow, guild, inspect, lfg, macros, mail,
-    mirror_timer, parse_unit_token, party, petition, pvp, quest, quest_log, reputation, session,
-    simplehtml, skills, slider, social, stable, trade, tradeskill, unit_menu, weapon_enchant,
-    FontObject, MusicRequest, RegionData, ScriptValue, SoundRequest, UnitState, UnitTokenParse,
+    combat_log, container, cursor, death, duel, follow, guild, inspect, lfg, macros, mirror_timer,
+    parse_unit_token, party, petition, pvp, quest, quest_log, reputation, session, simplehtml,
+    skills, slider, social, stable, trade, tradeskill, unit_menu, weapon_enchant, FontObject,
+    MusicRequest, RegionData, ScriptValue, SoundRequest, UnitState, UnitTokenParse,
 };
 
 // ── The Rust-side model ──
@@ -868,11 +868,12 @@ pub(crate) struct Model {
 
     #[cfg(any(test, feature = "fixtures"))]
     /// A fixture's inbox, rows 1-based, read where no view is lent.
-    pub(crate) mail: mail::MailState,
+    pub(crate) mail: super::mail::MailState,
     /// A mailbox is open.
     pub(crate) mail_mailbox: bool,
-    /// The mail verbs' packets, in call order.
-    pub(crate) mail_commands: Vec<mail::MailCommand>,
+    #[cfg(any(test, feature = "fixtures"))]
+    /// The packets the mail verbs sent where no view is lent, in call order.
+    pub(crate) mail_sent: Vec<super::mail::MailPacket>,
     /// A mail command awaits its result; most verbs wait it out.
     pub(crate) mail_command_pending: bool,
     /// A send awaits its result.
@@ -892,12 +893,12 @@ pub(crate) struct Model {
     pub(crate) mail_latest_senders: Vec<Option<String>>,
     #[cfg(any(test, feature = "fixtures"))]
     /// The usable stationery, in the picker's order.
-    pub(crate) mail_stationeries: Vec<mail::StationeryView>,
+    pub(crate) mail_stationeries: Vec<super::mail::StationeryView>,
     /// `SelectStationery`'s `Stationery.dbc` id; 0 is none, which silences `SendMail`.
     pub(crate) mail_stationery: u32,
     #[cfg(any(test, feature = "fixtures"))]
     /// `Package.dbc`'s rows in file order, `GetPackageInfo`'s list.
-    pub(crate) mail_packages: Vec<mail::PackageView>,
+    pub(crate) mail_packages: Vec<super::mail::PackageView>,
     /// `SelectPackage`'s `Package.dbc` id; 0 is none.
     pub(crate) mail_package: u32,
     #[cfg(any(test, feature = "fixtures"))]
@@ -1819,9 +1820,10 @@ impl Model {
             ui_time_offset: 0,
             kb_motd: String::new(),
             #[cfg(any(test, feature = "fixtures"))]
-            mail: mail::MailState::default(),
+            mail: super::mail::MailState::default(),
             mail_mailbox: false,
-            mail_commands: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
+            mail_sent: Vec::new(),
             mail_command_pending: false,
             mail_send_pending: false,
             mail_next_update: None,

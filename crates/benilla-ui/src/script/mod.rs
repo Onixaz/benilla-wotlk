@@ -446,8 +446,9 @@ pub use macros::{
     MAX_MACRO_INDEX, MAX_MACRO_NAME,
 };
 pub use mail::{
-    MailAttachmentView, MailCommand, MailInboxRow, MailInvoice, MailRead, MailSendRequest,
-    MailState, PackageView, StationeryView, MAIL_ATTACHMENT_SLOTS, MAIL_SEND_SLOTS, STATIONERY_GM,
+    MailAttachmentView, MailComplaint, MailInboxRow, MailInvoice, MailPacket, MailRead,
+    MailSendRequest, MailState, PackageView, StationeryView, MAIL_ATTACHMENT_SLOTS,
+    MAIL_SEND_SLOTS, STATIONERY_GM,
 };
 pub use measure::TextMeasure;
 pub use merchant::{

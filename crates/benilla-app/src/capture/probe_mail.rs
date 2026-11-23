@@ -32,8 +32,6 @@ const MAILBOX_AT: [f32; 3] = [-9455.99, 45.82, 56.44];
 const GO_TYPE_MAILBOX: i32 = 19;
 /// Wider than the interaction gate, so a slightly-off `.go` landing still finds it.
 const MAILBOX_SCAN_RANGE: f32 = 10.0;
-/// The wait before using the mailbox again after the reader closed it.
-const REOPEN_SECS: f64 = 0.2;
 /// The GM-mailed and Send-tab stacks: Linen Cloth and Silk Cloth.
 const LINEN: u32 = 2589;
 const SILK: u32 = 4306;
@@ -154,9 +152,6 @@ struct MailProbe {
     mailbox: Option<u64>,
     /// The one step onto a mailbox found past the interaction reach went out.
     stepped: bool,
-    /// When to use the mailbox again after the reader closed it: a frame on, once the drain has
-    /// taken the close the VM queued, which would otherwise clear the reopened session.
-    reopen_at: Option<f64>,
     passes: u32,
     fails: u32,
     exited: bool,
@@ -347,11 +342,6 @@ fn mail_step(
             info!("PROBE_MAIL: t={now:.2} HasNewMail={lit} senders=[{senders}]");
             probe.traced = Some((lit, senders));
         }
-    }
-
-    if probe.reopen_at.is_some_and(|at| now >= at) {
-        probe.reopen_at = None;
-        clicks.extend(probe.mailbox);
     }
 
     let step = probe.step;
@@ -601,7 +591,7 @@ fn mail_step(
                     &format!("PickupContainerItem({bag}, {slot}) DeleteCursorItem()"),
                 );
                 // The reader took the interaction and closed the mailbox: use it again.
-                probe.reopen_at = Some(now + REOPEN_SECS);
+                clicks.extend(probe.mailbox);
                 probe.go(Step::TakeMoney, now);
             } else if probe.timed_out(now, ACTION_TIMEOUT_SECS) {
                 let shown = lua_bool(script, "ItemTextFrame:IsShown()");
@@ -609,7 +599,7 @@ fn mail_step(
                 probe.fail(&format!(
                     "(b3) — the reader never showed the letter (shown {shown}, text {text:?})"
                 ));
-                probe.reopen_at = Some(now + REOPEN_SECS);
+                clicks.extend(probe.mailbox);
                 probe.go(Step::TakeMoney, now);
             }
         }

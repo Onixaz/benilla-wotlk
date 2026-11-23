@@ -79,6 +79,7 @@ fn linen_bag() -> ContainerState {
                 quality: Some(1),
                 texture: Some("Interface\\Icons\\INV_Fabric_Linen_01".into()),
                 link: Some("|cffffffff|Hitem:2589|h[Linen Cloth]|h|r".into()),
+                guid: 0x100 + u64::from(slot),
                 ..Default::default()
             },
         );
@@ -259,8 +260,8 @@ fn reading_a_letter_marks_it_read_once() {
     assert!(matches!(invoice, Value::Nil));
     s.run("GetInboxText(1)").unwrap();
     assert_eq!(
-        s.take_mail_commands(),
-        vec![MailCommand::MarkRead { message_id: 7 }],
+        s.take_mail_sent(),
+        vec![MailPacket::MarkRead { message_id: 7 }],
         "an already-read mail sends nothing"
     );
     assert_eq!(s.arity("GetInboxText(5)").unwrap(), 4);
@@ -270,12 +271,12 @@ fn reading_a_letter_marks_it_read_once() {
 fn check_inbox_waits_for_a_mailbox_a_free_command_and_a_minute() {
     let mut s = UiScript::new().unwrap();
     s.run("CheckInbox()").unwrap();
-    assert!(s.take_mail_commands().is_empty(), "no mailbox");
+    assert!(s.take_mail_sent().is_empty(), "no mailbox");
     s.open_mailbox();
     s.run("CheckInbox() CheckInbox()").unwrap();
     assert_eq!(
-        s.take_mail_commands(),
-        vec![MailCommand::GetList],
+        s.take_mail_sent(),
+        vec![MailPacket::GetList],
         "the second waits on the first's result"
     );
     s.mail_command_done(false);
@@ -289,10 +290,7 @@ fn check_inbox_waits_for_a_mailbox_a_free_command_and_a_minute() {
     .unwrap();
     s.run("CheckInbox()").unwrap();
     s.tick(0.0);
-    assert!(
-        s.take_mail_commands().is_empty(),
-        "throttled to once a minute"
-    );
+    assert!(s.take_mail_sent().is_empty(), "throttled to once a minute");
     assert_eq!(
         s.eval::<i64>("return FIRED").unwrap(),
         1,
@@ -300,7 +298,7 @@ fn check_inbox_waits_for_a_mailbox_a_free_command_and_a_minute() {
     );
     s.tick(61.0);
     s.run("CheckInbox()").unwrap();
-    assert_eq!(s.take_mail_commands(), vec![MailCommand::GetList]);
+    assert_eq!(s.take_mail_sent(), vec![MailPacket::GetList]);
 }
 
 #[test]
@@ -319,25 +317,25 @@ fn takes_return_and_delete_follow_the_references_gates() {
         .eval::<bool>("return InboxItemCanDelete(1) == nil")
         .unwrap());
     s.run("DeleteInboxItem(1)").unwrap();
-    assert!(s.take_mail_commands().is_empty());
+    assert!(s.take_mail_sent().is_empty());
     s.run("ReturnInboxItem(1)").unwrap();
     assert_eq!(
-        s.take_mail_commands(),
-        vec![MailCommand::Return { message_id: 1 }]
+        s.take_mail_sent(),
+        vec![MailPacket::Return { message_id: 1 }]
     );
     s.run("TakeInboxMoney(1)").unwrap();
-    assert!(s.take_mail_commands().is_empty(), "one command at a time");
+    assert!(s.take_mail_sent().is_empty(), "one command at a time");
     s.mail_command_done(false);
 
     // A COD the purse cannot pay is refused locally.
     s.run("TakeInboxItem(3, 1)").unwrap();
-    assert!(s.take_mail_commands().is_empty());
+    assert!(s.take_mail_sent().is_empty());
     assert_eq!(s.take_shown(), vec!["ERR_NOT_ENOUGH_MONEY"]);
 
     s.run("TakeInboxItem(2, 1)").unwrap();
     assert_eq!(
-        s.take_mail_commands(),
-        vec![MailCommand::TakeItem {
+        s.take_mail_sent(),
+        vec![MailPacket::TakeItem {
             message_id: 2,
             item_guid_low: 0x31,
             auto_loot: false
@@ -349,15 +347,12 @@ fn takes_return_and_delete_follow_the_references_gates() {
     assert!(s.eval::<bool>("return InboxItemCanDelete(4) == 1").unwrap());
     s.run("DeleteInboxItem(4)").unwrap();
     assert_eq!(
-        s.take_mail_commands(),
-        vec![MailCommand::Delete { message_id: 4 }]
+        s.take_mail_sent(),
+        vec![MailPacket::Delete { message_id: 4 }]
     );
     s.mail_command_done(false);
     s.run("DeleteInboxItem(4)").unwrap();
-    assert!(
-        s.take_mail_commands().is_empty(),
-        "a delete already in flight"
-    );
+    assert!(s.take_mail_sent().is_empty(), "a delete already in flight");
 }
 
 #[test]
@@ -373,10 +368,10 @@ fn auto_loot_takes_the_money_then_the_first_attachment() {
     let mut s = opened(vec![r]);
     s.run("AutoLootMailItem(1)").unwrap();
     assert_eq!(
-        s.take_mail_commands(),
+        s.take_mail_sent(),
         vec![
-            MailCommand::TakeMoney { message_id: 1 },
-            MailCommand::TakeItem {
+            MailPacket::TakeMoney { message_id: 1 },
+            MailPacket::TakeItem {
                 message_id: 1,
                 item_guid_low: 0x31,
                 auto_loot: true
@@ -390,14 +385,11 @@ fn send_mail_needs_a_target_a_subject_a_stationery_and_no_money_with_cod() {
     let mut s = opened(vec![]);
     s.set_money(10_000);
     s.run("SendMail('Jaina', 'Hi', 'x')").unwrap();
-    assert!(s.take_mail_commands().is_empty(), "no stationery");
+    assert!(s.take_mail_sent().is_empty(), "no stationery");
     select_default_stationery(&mut s);
     s.run("SendMail('', 'Hi', 'x') SendMail('Jaina', '', 'x')")
         .unwrap();
-    assert!(
-        s.take_mail_commands().is_empty(),
-        "an empty target or subject"
-    );
+    assert!(s.take_mail_sent().is_empty(), "an empty target or subject");
     // COD with no attachment stores nothing.
     s.run("SetSendMailCOD(50)").unwrap();
     assert_eq!(s.eval::<i64>("return GetSendMailCOD()").unwrap(), 0);
@@ -405,8 +397,8 @@ fn send_mail_needs_a_target_a_subject_a_stationery_and_no_money_with_cod() {
         .eval::<bool>("return SetSendMailMoney(1234) == 1")
         .unwrap());
     s.run("SendMail('Jaina', 'Hi', nil)").unwrap();
-    match s.take_mail_commands().as_slice() {
-        [MailCommand::Send(req)] => {
+    match s.take_mail_sent().as_slice() {
+        [MailPacket::Send(req)] => {
             assert_eq!((req.target.as_str(), req.subject.as_str()), ("Jaina", "Hi"));
             assert_eq!(
                 (req.body.as_str(), req.money, req.stationery),
@@ -417,7 +409,7 @@ fn send_mail_needs_a_target_a_subject_a_stationery_and_no_money_with_cod() {
         other => panic!("one send, got {other:?}"),
     }
     s.run("SendMail('Jaina', 'Hi', 'again')").unwrap();
-    assert!(s.take_mail_commands().is_empty(), "a send in flight");
+    assert!(s.take_mail_sent().is_empty(), "a send in flight");
     assert!(
         s.run("SendMail(nil, 'Hi', 'x')").is_err(),
         "a non-string target raises"
@@ -449,12 +441,16 @@ fn attachments_fill_free_slots_lock_their_bag_slots_and_cost_postage() {
     // COD now stores, and money with COD sends nothing.
     s.run("SetSendMailCOD(50) SetSendMailMoney(5)").unwrap();
     s.run("SendMail('Jaina', 'Hi', '')").unwrap();
-    assert!(s.take_mail_commands().is_empty());
+    assert!(s.take_mail_sent().is_empty());
     s.run("SetSendMailMoney(0) SendMail('Jaina', 'Hi', '')")
         .unwrap();
-    match s.take_mail_commands().as_slice() {
-        [MailCommand::Send(req)] => {
-            assert_eq!(req.items, vec![(0, 0, 1), (1, 0, 2)]);
+    match s.take_mail_sent().as_slice() {
+        [MailPacket::Send(req)] => {
+            assert_eq!(
+                req.items,
+                vec![(0, 0x101), (1, 0x102)],
+                "each guid read at the call"
+            );
             assert_eq!(req.cod, 50);
         }
         other => panic!("one send, got {other:?}"),
@@ -522,7 +518,123 @@ fn opening_resets_the_form_before_mail_show_and_closing_ends_the_session() {
         s.eval::<Vec<String>>("return FIRED").unwrap(),
         ["MAIL_CLOSED"]
     );
-    assert_eq!(s.take_mail_commands(), vec![MailCommand::Close]);
+    assert!(s.take_mail_sent().is_empty(), "a close sends nothing");
+}
+
+/// The mail a view lends, recording what the verbs do inside the call.
+#[derive(Default)]
+struct Mailbox {
+    /// Whether the mailbox is open and holds the interact target.
+    open: bool,
+    held: bool,
+    /// Each call, in order.
+    calls: Vec<String>,
+}
+
+impl crate::script::live::LiveState for Mailbox {
+    fn unit_flags(&self, _guid: u64) -> Option<u32> {
+        None
+    }
+    fn unit_health(&self, _guid: u64) -> Option<u32> {
+        None
+    }
+    fn active_player(&self) -> Option<u64> {
+        None
+    }
+    fn has_control(&self) -> bool {
+        true
+    }
+    fn far_sight(&self) -> bool {
+        false
+    }
+    fn mail_send(&mut self, packet: MailPacket) -> Option<()> {
+        self.calls.push(format!("{packet:?}"));
+        Some(())
+    }
+    fn mail_close(&mut self) -> Option<Option<bool>> {
+        self.calls.push("close".into());
+        if !std::mem::take(&mut self.open) {
+            return Some(None);
+        }
+        Some(Some(std::mem::take(&mut self.held)))
+    }
+    fn mail_close_query(&mut self) {
+        self.calls.push("query".into());
+    }
+}
+
+/// `CloseMail` on a mailbox holding the interact target (`0x571a40`): the clear's interaction close
+/// runs the mail close first (`0x571a5e` -> `0x51302d` -> `0x571730`), its `MAIL_CLOSED`
+/// (`0x571795`) and query, then the verb's own (`0x571a88`, `0x571a99`); with the target held
+/// elsewhere, the verb's alone; with no mailbox, nothing. Each runs inside the call.
+#[test]
+fn closing_a_mailbox_that_holds_the_target_fires_mail_closed_twice_inside_the_call() {
+    let mut s = UiScript::new().unwrap();
+    s.run(
+        r#"FIRED = {}
+           local f = CreateFrame("Frame")
+           f:RegisterEvent("MAIL_CLOSED")
+           f:SetScript("OnEvent", function(_, event) table.insert(FIRED, event) end)"#,
+    )
+    .unwrap();
+    s.open_mailbox();
+    let fired = |s: &mut UiScript| {
+        s.tick(0.0);
+        s.eval::<usize>("local n = #FIRED FIRED = {} return n")
+            .unwrap()
+    };
+    let _ = fired(&mut s);
+    let mut view = Mailbox {
+        open: true,
+        held: true,
+        ..Default::default()
+    };
+    crate::script::live::lending(&mut view, || s.run("CloseMail()").unwrap());
+    assert_eq!(fired(&mut s), 2);
+    assert_eq!(view.calls, ["close", "query", "query"]);
+
+    s.open_mailbox();
+    let _ = fired(&mut s);
+    let mut view = Mailbox {
+        open: true,
+        ..Default::default()
+    };
+    crate::script::live::lending(&mut view, || s.run("CloseMail()").unwrap());
+    assert_eq!(
+        fired(&mut s),
+        1,
+        "the target held elsewhere: the verb's own"
+    );
+    assert_eq!(view.calls, ["close", "query"]);
+
+    let mut view = Mailbox::default();
+    crate::script::live::lending(&mut view, || s.run("CloseMail()").unwrap());
+    assert_eq!(fired(&mut s), 0, "no mailbox");
+    assert_eq!(view.calls, ["close"]);
+}
+
+/// The take verbs send inside the call (`0x56eebf`, `0x571311`), so code after the call reads the
+/// command in flight and a second take waits it out.
+#[test]
+fn a_take_sends_inside_its_call() {
+    let mut s = opened(vec![row(1, &[(0, attachment(2589, 77, 5))])]);
+    s.set_money(1_000);
+    let mut view = Mailbox::default();
+    crate::script::live::lending(&mut view, || {
+        s.run("TakeInboxItem(1, 1) TakeInboxItem(1, 1)").unwrap()
+    });
+    assert_eq!(
+        view.calls,
+        [format!(
+            "{:?}",
+            MailPacket::TakeItem {
+                message_id: 1,
+                item_guid_low: 77,
+                auto_loot: false
+            }
+        )]
+    );
+    assert!(s.take_mail_sent().is_empty(), "nothing left for later");
 }
 
 #[test]

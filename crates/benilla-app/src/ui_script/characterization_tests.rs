@@ -8539,9 +8539,10 @@ fn group_loot_rolls_fire_from_their_handlers_with_the_rolls_read_at_the_call() {
     );
 }
 
-/// A mailbox from open to its mail read: a sender's name and an auction notice's item in flight at
+/// A mailbox from open to its close: a sender's name and an auction notice's item in flight at
 /// the list, each landing; a money take, then one that purges the emptied notice; the next-mail
-/// reply; and a mark-as-read from the text read, each event with the inbox verbs' answers at it.
+/// reply; a mark-as-read from the text read; a return, on the wire inside its call; and the close,
+/// each event with the inbox verbs' answers at it.
 #[test]
 fn a_mailbox_fires_from_its_handlers_with_the_inbox_read_at_the_call() {
     use benilla_protocol::messages::{
@@ -8554,7 +8555,7 @@ fn a_mailbox_fires_from_its_handlers_with_the_inbox_read_at_the_call() {
     let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
         return;
     };
-    let (tx, _rx) = crossbeam_channel::unbounded();
+    let (tx, rx) = crossbeam_channel::unbounded();
     rig.app.insert_resource(crate::net::NetCommands(tx));
     let template = |entry: u32, name: &str| SessionEvent::ItemTemplate {
         entry,
@@ -8653,7 +8654,29 @@ fn a_mailbox_fires_from_its_handlers_with_the_inbox_read_at_the_call() {
         .expect("the text read runs");
     rig.run(3);
     let read = rig.take();
-    let got: Vec<Vec<String>> = [open, list, name, late, money, purge, next, read]
+    // `ReturnInboxItem` sends inside its call (`0x56f115`): the packet is out before it returns.
+    while rx.try_recv().is_ok() {}
+    super::live::with_live_world(rig.app.world_mut(), |s| s.run("ReturnInboxItem(1)"))
+        .expect("a VM")
+        .expect("the return runs");
+    let sent: Vec<_> = rx.try_iter().collect();
+    assert!(
+        matches!(
+            sent.as_slice(),
+            [crate::net::ClientCommand::MailReturnToSender {
+                mailbox: MAILBOX,
+                mail_id: 11,
+                sender: SENDER,
+            }]
+        ),
+        "the return on the wire inside the call, got {sent:?}"
+    );
+    super::live::with_live_world(rig.app.world_mut(), |s| s.run("CloseMail()"))
+        .expect("a VM")
+        .expect("the close runs");
+    rig.run(3);
+    let closed = rig.take();
+    let got: Vec<Vec<String>> = [open, list, name, late, money, purge, next, read, closed]
         .iter()
         .map(|seen| pin(seen, EVENTS, VERBS))
         .collect();
@@ -8704,6 +8727,18 @@ fn a_mailbox_fires_from_its_handlers_with_the_inbox_read_at_the_call() {
             vec![
                 at("UPDATE_PENDING_MAIL", read),
                 at("MAIL_INBOX_UPDATE", read)
+            ],
+            // `CloseMail` on the mailbox the show made the interact target (`0x56dbe2`): the
+            // target's clear (`0x571a5e`) runs the mail close (`0x51302d` -> `0x571730`), its
+            // `MAIL_CLOSED` (`0x571795`) and the query the reply deferred (`0x5717a7`), which
+            // stamps "no mail" (`0x56ffb5`, read by `HasNewMail` at `0x56f353`); then the verb's
+            // own `MAIL_CLOSED` (`0x571a88`). The rows stay listed until a world change.
+            vec![
+                at("MAIL_CLOSED", read),
+                at(
+                    "MAIL_CLOSED",
+                    "mailn=2/2 m1from=Charzsend m1money=0 m1read=1 m2subj=Outbid on Charz Late hasnew=nil"
+                ),
             ],
         ]
     );

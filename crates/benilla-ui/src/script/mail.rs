@@ -1,8 +1,8 @@
 //! The mail bindings, 12340's mail verbs. The verbs read the client's inbox, its arrival state
 //! and the stationery at the call through the live view, each read leaving its callbacks on the
 //! records it missed ([`MailRead`]); with no view lent, a fixture's (`UiScript::set_mail`). They
-//! gate on the reference's command-pending flag and queue [`MailCommand`]s the app sends. Indices
-//! are 1-based, as `MailFrame.lua` uses them.
+//! gate on the reference's command-pending flag and send each [`MailPacket`] inside the call, as
+//! 12340's verbs do. Indices are 1-based, as `MailFrame.lua` uses them.
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -187,39 +187,62 @@ pub struct MailSendRequest {
     pub package: u32,
     pub money: u32,
     pub cod: u32,
-    /// `(send slot, bag, 1-based slot)` per attachment; the app resolves each guid.
-    pub items: Vec<(u8, i64, u32)>,
+    /// `(send slot, item guid)` per attachment, read off its bag slot at the call.
+    pub items: Vec<(u8, u64)>,
 }
 
-/// A mail verb's packet, drained by the app. Rows are named by message id.
+/// A mail verb's packet to the open mailbox, sent inside the call as 12340's verb sends it.
+/// Rows are named by message id.
 #[derive(Clone, Debug, PartialEq)]
-pub enum MailCommand {
-    /// `CMSG_GET_MAIL_LIST`.
+pub enum MailPacket {
+    /// `CMSG_GET_MAIL_LIST` (`0x56e4e5`), and the complaint's re-ask (`0x56fc53`).
     GetList,
     /// `CMSG_MAIL_MARK_AS_READ`, from `GetInboxText` on an unread mail (`0x56fe30`).
     MarkRead { message_id: u32 },
-    /// `CMSG_MAIL_TAKE_MONEY`.
+    /// `CMSG_MAIL_TAKE_MONEY` (`0x56eebf`, `0x570490`).
     TakeMoney { message_id: u32 },
-    /// `CMSG_MAIL_TAKE_ITEM`; `auto_loot` when `AutoLootMailItem` has more slots to take
-    /// (`0x5703c5`).
+    /// `CMSG_MAIL_TAKE_ITEM` (`0x571311`, `0x57036e`); `auto_loot` when `AutoLootMailItem` has
+    /// more slots to take, the mail it keeps looting (`0x5703c5`).
     TakeItem {
         message_id: u32,
         item_guid_low: u32,
         auto_loot: bool,
     },
-    /// `CMSG_MAIL_CREATE_TEXT_ITEM`.
+    /// `CMSG_MAIL_CREATE_TEXT_ITEM` (`0x56efd7`).
     TextItem { message_id: u32 },
-    /// `CMSG_MAIL_RETURN_TO_SENDER`.
+    /// `CMSG_MAIL_RETURN_TO_SENDER` (`0x56f115`), naming the row's sender.
     Return { message_id: u32 },
-    /// `CMSG_MAIL_DELETE` with the player's reason.
+    /// `CMSG_MAIL_DELETE` with the player's reason (`0x56f24a`).
     Delete { message_id: u32 },
-    /// `CMSG_COMPLAIN` about a mail's sender, from `ComplainInboxItem` (`0x56faf0`); the app
-    /// holds the complaint system's status and its complained-about list.
-    Complain { message_id: u32 },
-    /// `CMSG_SEND_MAIL`.
+    /// `CMSG_SEND_MAIL` (`0x570b85`).
     Send(MailSendRequest),
-    /// `CloseMail`: the window closed; the app ends its session.
-    Close,
+}
+
+/// What `ComplainInboxItem`'s complaint (`0x56faf0`) did, for the verb to raise.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MailComplaint {
+    /// The complaint system is off, or no such row: nothing.
+    Refused,
+    /// The sender was already complained about: the `COMPLAINT_ADDED` line (`0x56fb97`).
+    Again,
+    /// The sender joined the list and the report went out (`0x56fbb4`, `0x56fc0f`), for the row
+    /// at this 0-based index.
+    Filed(usize),
+}
+
+/// Send `packet` to the open mailbox inside the call; with no view lent, a fixture records it.
+fn send(model: &mut Model, packet: MailPacket) {
+    let mut packet = Some(packet);
+    if super::write_live(|l| l.mail_send(packet.take().expect("sent once")))
+        .flatten()
+        .is_some()
+    {
+        return;
+    }
+    #[cfg(any(test, feature = "fixtures"))]
+    model.mail_sent.extend(packet);
+    #[cfg(not(any(test, feature = "fixtures")))]
+    let _ = (model, packet);
 }
 
 /// `ClearSendMail` (`0x56d4d0`): each attachment unlocks, firing `ITEM_LOCK_CHANGED`, then money,
@@ -410,9 +433,10 @@ impl super::UiScript {
         set_field!(self, mail_latest_senders, senders);
     }
 
-    /// Drain the queued mail packets, in call order.
-    pub fn take_mail_commands(&mut self) -> Vec<MailCommand> {
-        drain_field!(self, mail_commands)
+    #[cfg(any(test, feature = "fixtures"))]
+    /// The packets the mail verbs sent with no view lent, in call order.
+    pub fn take_mail_sent(&mut self) -> Vec<MailPacket> {
+        drain_field!(self, mail_sent)
     }
 
     /// The mailbox opener (`0x56da60`) and `SMSG_SHOW_MAILBOX` (`0x56dbc0`): the mailbox opens, the
@@ -426,8 +450,9 @@ impl super::UiScript {
         self.fire_event("MAIL_SHOW", vec![]);
     }
 
-    /// `CloseMail(false)` (`0x571730`) from the engine, as the interaction range does: the form
-    /// clears silently and an open mailbox fires `MAIL_CLOSED`, queueing [`MailCommand::Close`].
+    /// `CloseMail(false)` (`0x571730`) from the interaction close (`0x51302d`), the interact target
+    /// already zeroed: the form clears silently and an open mailbox fires `MAIL_CLOSED`
+    /// (`0x571795`); the app ends its session and sends the deferred query.
     pub fn close_mailbox(&mut self) {
         close_mail(&mut self.model_mut());
     }
@@ -496,14 +521,12 @@ impl super::UiScript {
     }
 }
 
-/// `CloseMail(false)`: `ClearSendMail(false)`, then with a mailbox open the close event and the
-/// app's session end.
+/// `CloseMail(false)`: `ClearSendMail(false)`, then with a mailbox open the close event.
 fn close_mail(model: &mut crate::script::ModelGuard<'_>) {
     clear_send_mail(model, false);
     if model.mail_mailbox {
         model.mail_mailbox = false;
         signal_event(model, "MAIL_CLOSED", vec![]);
-        model.mail_commands.push(MailCommand::Close);
     }
 }
 
@@ -835,7 +858,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // ComplainInboxItem(index) (`0x571350`): the complaint (`0x56faf0`) needs no command in flight,
-    // an open mailbox and a mail `CanComplainInboxItem` passes; the app checks the status.
+    // an open mailbox and a mail `CanComplainInboxItem` passes, and runs inside the call: a sender
+    // already complained about prints `COMPLAINT_ADDED` (`0x56fb97`); else the report goes out,
+    // `CLOSE_INBOX_ITEM` fires on the row (`0x56fc22`) and the inbox is asked again (`0x56fc53`).
     g.set(
         "ComplainInboxItem",
         lua.create_function(|lua, index: Value| {
@@ -849,9 +874,21 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(());
             };
             let message_id = r.message_id;
-            model
-                .mail_commands
-                .push(MailCommand::Complain { message_id });
+            match super::write_live(|l| l.mail_complain(message_id)).flatten() {
+                Some(MailComplaint::Again) => {
+                    drop(model);
+                    if let Ok(text) = lua.globals().get::<String>("COMPLAINT_ADDED") {
+                        // A system line (`0x56fb69`-`0x56fb87` push chat type 0).
+                        super::ui_errors::add_chat_text(lua, 0, &text);
+                    }
+                }
+                Some(MailComplaint::Filed(i)) => {
+                    let row = ScriptValue::Int(i as i64 + 1);
+                    signal_event(&mut model, "CLOSE_INBOX_ITEM", vec![row]);
+                    send(&mut model, MailPacket::GetList);
+                }
+                Some(MailComplaint::Refused) | None => {}
+            }
             Ok(())
         })?,
     )?;
@@ -911,7 +948,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             }
             model.mail_next_update = Some(now + CHECK_INBOX_THROTTLE_SECS);
             model.mail_command_pending = true;
-            model.mail_commands.push(MailCommand::GetList);
+            send(&mut model, MailPacket::GetList);
             Ok(())
         })?,
     )?;
@@ -929,9 +966,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .filter(|r| r.money != 0)
                 .map(|r| r.message_id)
             {
-                model
-                    .mail_commands
-                    .push(MailCommand::TakeMoney { message_id: id });
+                send(&mut model, MailPacket::TakeMoney { message_id: id });
                 model.mail_command_pending = true;
             }
             Ok(())
@@ -951,9 +986,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .filter(|r| r.has_letter && r.flags & flags::COPIED == 0)
                 .map(|r| r.message_id)
             {
-                model
-                    .mail_commands
-                    .push(MailCommand::TextItem { message_id: id });
+                send(&mut model, MailPacket::TextItem { message_id: id });
                 model.mail_command_pending = true;
             }
             Ok(())
@@ -979,11 +1012,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             {
                 return Ok(());
             }
+            send(
+                &mut model,
+                MailPacket::Return {
+                    message_id: r.message_id,
+                },
+            );
             set_delete_pending(&mut model, index);
-            let id = r.message_id;
-            model
-                .mail_commands
-                .push(MailCommand::Return { message_id: id });
             model.mail_command_pending = true;
             Ok(())
         })?,
@@ -1004,11 +1039,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if r.delete_pending || !r.can_delete() {
                 return Ok(());
             }
+            send(
+                &mut model,
+                MailPacket::Delete {
+                    message_id: r.message_id,
+                },
+            );
             set_delete_pending(&mut model, index);
-            let id = r.message_id;
-            model
-                .mail_commands
-                .push(MailCommand::Delete { message_id: id });
             model.mail_command_pending = true;
             Ok(())
         })?,
@@ -1041,18 +1078,22 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 crate::script::ui_errors::show_now(lua, "ERR_NOT_ENOUGH_MONEY");
                 return Ok(());
             }
-            model.mail_commands.push(MailCommand::TakeItem {
-                message_id: id,
-                item_guid_low: guid,
-                auto_loot: false,
-            });
+            send(
+                &mut model,
+                MailPacket::TakeItem {
+                    message_id: id,
+                    item_guid_low: guid,
+                    auto_loot: false,
+                },
+            );
             model.mail_command_pending = true;
             Ok(())
         })?,
     )?;
 
-    // AutoLootMailItem(index) (`0x571450`): the money, then the first attachment; the app takes
-    // the rest one result at a time (`0x570410`, `0x570270`).
+    // AutoLootMailItem(index) (`0x571450`): the money sent with no command in flight (`0x570490`),
+    // then past the COD check the first attachment (`0x57036e`); the send result takes the rest
+    // one at a time (`0x570410`, `0x570270`).
     g.set(
         "AutoLootMailItem",
         lua.create_function(|lua, index: Value| {
@@ -1065,9 +1106,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(());
             };
             if r.money != 0 {
-                model.mail_commands.push(MailCommand::TakeMoney {
-                    message_id: r.message_id,
-                });
+                send(
+                    &mut model,
+                    MailPacket::TakeMoney {
+                        message_id: r.message_id,
+                    },
+                );
             }
             if crate::script::live::money(&model) < u64::from(r.cod) {
                 drop(model);
@@ -1076,22 +1120,44 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             }
             let mut filled = r.attachments.iter().flatten().filter(|a| a.item_id != 0);
             if let Some(a) = filled.next() {
-                model.mail_commands.push(MailCommand::TakeItem {
-                    message_id: r.message_id,
-                    item_guid_low: a.item_guid_low,
-                    auto_loot: filled.next().is_some(),
-                });
+                let auto_loot = filled.next().is_some();
+                send(
+                    &mut model,
+                    MailPacket::TakeItem {
+                        message_id: r.message_id,
+                        item_guid_low: a.item_guid_low,
+                        auto_loot,
+                    },
+                );
                 model.mail_command_pending = true;
             }
             Ok(())
         })?,
     )?;
 
-    // CloseMail() (`0x571a40`).
+    // CloseMail() (`0x571a40`): the form clears silently (`0x571a42`); with a mailbox open the
+    // interact target's clear runs first (`0x571a5e`), whose interaction close takes the mail
+    // window when the mailbox held it (`0x51302d`): `MAIL_CLOSED` (`0x571795`) and the deferred
+    // query; then the verb's own `MAIL_CLOSED` (`0x571a88`) and query (`0x571a99`), which the first
+    // already sent.
     g.set(
         "CloseMail",
         lua.create_function(|lua, ()| {
-            close_mail(&mut crate::script::model_mut_of(lua));
+            let mut model = crate::script::model_mut_of(lua);
+            clear_send_mail(&mut model, false);
+            match super::write_live(|l| l.mail_close()).flatten() {
+                Some(Some(held)) => {
+                    model.mail_mailbox = false;
+                    if held {
+                        signal_event(&mut model, "MAIL_CLOSED", vec![]);
+                        super::write_live(|l| l.mail_close_query());
+                    }
+                    signal_event(&mut model, "MAIL_CLOSED", vec![]);
+                    super::write_live(|l| l.mail_close_query());
+                }
+                Some(None) => {}
+                None => close_mail(&mut model),
+            }
             Ok(())
         })?,
     )?;
@@ -1121,23 +1187,25 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if model.mail_stationery == 0 {
                 return Ok(());
             }
-            // Each attachment must still be the player's, else the slot drops (`0x570a7c`).
+            // Each attachment must still be the player's, else the slot drops (`0x570a7c`); the
+            // packet names each by its guid (`0x570b21`).
             let mut items = Vec::new();
             for i in 0..SEND_ARRAY {
                 let Some(it) = model.mail_send_items[i].clone() else {
                     continue;
                 };
-                let present = super::container::live_slot(&model, it.bag, it.slot)
-                    .is_some_and(|s| s.item_id == it.item_id);
-                if !present {
+                let guid = super::container::live_slot(&model, it.bag, it.slot)
+                    .filter(|s| s.item_id == it.item_id && s.guid != 0)
+                    .map(|s| s.guid);
+                let Some(guid) = guid else {
                     drop(model);
                     crate::script::ui_errors::show_now(lua, "ERR_ITEM_NOT_FOUND");
                     let mut model = crate::script::model_mut_of(lua);
                     model.mail_send_items[i] = None;
                     signal_event(&mut model, "MAIL_SEND_INFO_UPDATE", vec![]);
                     return Ok(());
-                }
-                items.push((i as u8, it.bag, it.slot));
+                };
+                items.push((i as u8, guid));
             }
             let (money, cod) = (model.mail_send_money, model.mail_send_cod);
             if (money != 0 && cod != 0) || (money == 0 && cod != 0 && items.is_empty()) {
@@ -1157,7 +1225,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 cod,
                 items,
             };
-            model.mail_commands.push(MailCommand::Send(request));
+            send(&mut model, MailPacket::Send(request));
             model.mail_send_pending = true;
             model.mail_command_pending = true;
             Ok(())
@@ -1525,8 +1593,8 @@ fn mark_as_read(model: &mut crate::script::ModelGuard<'_>, index: usize) {
         r.flags |= flags::READ;
         let id = r.message_id;
         model
-            .mail_commands
-            .push(MailCommand::MarkRead { message_id: id });
+            .mail_sent
+            .push(MailPacket::MarkRead { message_id: id });
     }
 }
 

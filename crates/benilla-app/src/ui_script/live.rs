@@ -1950,6 +1950,35 @@ impl LiveState for LiveView<'_, '_> {
         Some(())
     }
 
+    fn mail_send(&mut self, packet: benilla_ui::script::MailPacket) -> Option<()> {
+        self.mail.as_mut()?.send(packet);
+        Some(())
+    }
+
+    fn mail_complain(&mut self, message_id: u32) -> Option<benilla_ui::script::MailComplaint> {
+        Some(self.mail.as_mut()?.complain(message_id))
+    }
+
+    fn mail_close(&mut self) -> Option<Option<bool>> {
+        let mail = self.mail.as_mut()?;
+        let Some(mailbox) = mail.mailbox() else {
+            return Some(None);
+        };
+        // The clear on the mailbox (`0x571a5e`); its window leg runs in the verb.
+        let held = self
+            .tabard
+            .target_mut()
+            .is_some_and(|t| t.clear_in_call(mailbox));
+        mail.end_session();
+        Some(Some(held))
+    }
+
+    fn mail_close_query(&mut self) {
+        if let Some(mail) = self.mail.as_mut() {
+            mail.close_query();
+        }
+    }
+
     fn mail_has_new(&self) -> Option<bool> {
         Some(self.mail.as_ref()?.has_new())
     }
