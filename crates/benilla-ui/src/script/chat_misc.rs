@@ -120,12 +120,17 @@ pub(super) fn install_console_exec(lua: &Lua) -> mlua::Result<()> {
             let (name, value) = line
                 .split_once(char::is_whitespace)
                 .map_or((line.as_str(), ""), |(n, v)| (n, v.trim()));
-            let mut model = crate::script::model_mut_of(lua);
-            let is_cvar = model.cvars.contains_key(&name.to_ascii_lowercase());
+            let is_cvar = crate::script::model_mut_of(lua)
+                .cvars
+                .contains_key(&name.to_ascii_lowercase());
             if is_cvar && !value.is_empty() {
+                super::cvars::set_callback(lua, name);
+                let mut model = crate::script::model_mut_of(lua);
                 super::cvars::write_cvar(&mut model, name, value.to_string());
             } else {
-                model.console_lines.push(line.clone());
+                crate::script::model_mut_of(lua)
+                    .console_lines
+                    .push(line.clone());
             }
             Ok(())
         })?,

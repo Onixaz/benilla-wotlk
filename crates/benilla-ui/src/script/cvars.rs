@@ -361,6 +361,13 @@ fn store(model: &mut Model, key: &str, value: String) -> Option<String> {
 
 /// A by-name write from a binding (`SetCVar`, `ConsoleExec`, `SetGamma`, `SetWorldDetail`): the
 /// change is queued only when the value moved. `false`, with a warning, for an unknown name.
+/// A registered row's callback, run ahead of the store on every set, whichever verb sets it (`0x7668c0`).
+pub(super) fn set_callback(lua: &Lua, name: &str) {
+    if name.eq_ignore_ascii_case("previewTalents") && read_cvar(lua, name, |_| ()).is_some() {
+        super::talent::preview_talents_changed(lua);
+    }
+}
+
 pub(super) fn write_cvar(model: &mut Model, name: &str, value: String) -> bool {
     let key = name.to_ascii_lowercase();
     if !model.cvars.contains_key(&key) {
@@ -662,12 +669,7 @@ pub(super) fn install_cvar_verbs(lua: &Lua) -> mlua::Result<()> {
                     return Err(mlua::Error::runtime(format!("\"{name}\" is read-only")));
                 }
             }
-            // The row's callback runs ahead of the store, on every set (`0x7668c0`).
-            if name.eq_ignore_ascii_case("previewTalents")
-                && read_cvar(lua, &name, |_| ()).is_some()
-            {
-                super::talent::preview_talents_changed(lua);
-            }
+            set_callback(lua, &name);
             {
                 let mut model = crate::script::model_mut_of(lua);
                 if !write_cvar(&mut model, &name, value.clone()) {

@@ -668,5 +668,20 @@ fn the_preview_cvar_resets_the_preview_inside_the_call() {
             2,
             "an unchanged value runs it again; an unknown name runs none"
         );
+        s.run("AddPreviewTalentPoints(1, 1, 1) PREV = {} ConsoleExec('previewTalents 0')")
+            .unwrap();
+        assert_eq!(
+            s.eval::<Vec<String>>("return PREV").unwrap(),
+            vec![
+                "PREVIEW_TALENT_POINTS_CHANGED 0,0,0,-1:0:1",
+                "PREVIEW_PET_TALENT_POINTS_CHANGED 0,0,0,0:0:1",
+            ],
+            "a console set runs the same callback ahead of its store"
+        );
+        assert_eq!(
+            s.eval::<String>("return GetCVar('previewTalents')")
+                .unwrap(),
+            "0"
+        );
     });
 }
