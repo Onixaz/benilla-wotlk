@@ -530,6 +530,39 @@ fn the_pet_tree_is_its_own_set_with_one_group() {
     });
 }
 
+/// The side flags go through the bool-or-default reader (`0x815500`; `0x5c61ab`, `0x5c5dfe`,
+/// `0x5c8163`): `0`, `"0"`, `"false"` and `"off"` pick the player's side, where Lua truthiness
+/// would pick the pet's.
+#[test]
+fn a_zero_or_off_flag_reads_the_players_side() {
+    let mut s = UiScript::new().unwrap();
+    let mut v = pet_view();
+    s.with_live(&mut v, |s| {
+        for off in ["0", "'0'", "'false'", "'off'"] {
+            let tab: String = s
+                .eval(&format!("return GetTalentTabInfo(1, {off}, {off})"))
+                .unwrap();
+            assert_eq!(tab, "Fire", "{off} is false");
+            let groups: i64 = s
+                .eval(&format!("return GetNumTalentGroups(false, {off})"))
+                .unwrap();
+            assert_eq!(groups, 2, "{off}: the player's two groups");
+        }
+        assert_eq!(
+            s.eval::<String>("return GetTalentTabInfo(1, 0, 1)")
+                .unwrap(),
+            "Ferocity",
+            "1 is true"
+        );
+        s.run("LearnTalent(1, 1, 0)").unwrap();
+    });
+    assert_eq!(
+        v.talent_learns,
+        vec![(None, 10, 2)],
+        "LearnTalent(1, 1, 0) is the player's"
+    );
+}
+
 /// Tier 2 opens at 3 points for a pet (`0x5c73d0`), where the player's needs 5; the learns carry
 /// the pet's guid.
 #[test]

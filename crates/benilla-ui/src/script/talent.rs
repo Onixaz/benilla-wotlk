@@ -167,9 +167,10 @@ fn number_of(v: &Value) -> Option<f64> {
     }
 }
 
-/// A boolean argument as the reference reads it: nil and false are false, anything else true.
+/// A verb's `isInspect`, `isPet` or `isPreview` through the bool-or-default reader with default 0
+/// (`0x815500`; `0x5c5cce`, `0x5c7886`): `0`, `"0"`, `"false"` and `"off"` are false.
 fn flag_arg(v: Option<&Value>) -> bool {
-    !matches!(v, None | Some(Value::Nil) | Some(Value::Boolean(false)))
+    super::binding_abi::bool_or_default(v, false)
 }
 
 fn int_arg(args: &MultiValue, i: usize) -> Option<i64> {
