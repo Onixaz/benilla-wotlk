@@ -42,6 +42,11 @@ fn on_time_sync_req(
     if me.is_empty() {
         return;
     }
+    answer_time_sync(&commands, counter);
+}
+
+/// `CMSG_TIME_SYNC_RESP` for `counter`, stamped with the clock now (`0x6dc04d`, `0x6e9bb0`).
+pub(crate) fn answer_time_sync(commands: &NetCommands, counter: u32) {
     let client_ms = benilla_protocol::client_uptime_ms();
     super::move_trace::time_sync(counter, client_ms);
     let _ = commands
