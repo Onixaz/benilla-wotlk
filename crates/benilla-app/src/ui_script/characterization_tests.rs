@@ -52,6 +52,7 @@ local VERBS = {
     { "repsw", function() return (select(6, GetFactionInfoByID(72))) end },
     { "repwar", function() return (select(7, GetFactionInfoByID(72))) end },
     { "repwatch", function() return (GetWatchedFactionInfo()) end },
+    { "rep5", function() return (GetFactionInfo(5)) end },
     { "control", function() return HasFullControl() end },
     { "dead", function() return UnitIsDeadOrGhost("player") end },
     { "isdead", function() return UnitIsDead("player") end },
@@ -4988,8 +4989,8 @@ fn the_world_entry_looks_the_possess_spell_up_after_entering_the_world() {
             ],
             &["possess", "possname"]
         ),
-        // No faction packet before the entry, so no feed push ahead of it; the faction list's
-        // world entry raises twice, its fold's sort and its own (`0x5d2e0f`, `0x5d2e17` -> `0x5d1bfa`).
+        // The faction list's world entry raises at its fold's sort and at its own sort (`0x5d2e0f`,
+        // `0x5d2e17` -> `0x5d1bfa`).
         vec![
             "PLAYER_ENTERING_WORLD | possess=false possname=nil",
             "PET_BAR_UPDATE | possess=false possname=nil",
@@ -5889,7 +5890,7 @@ fn currency_triggers_build_the_list_and_fire_from_their_handlers() {
             "UPDATE_FACTION",
             "CURRENCY_DISPLAY_UPDATE"
         ],
-        "no faction packet came; the list's world entry raises its fold's sort and its own          (`0x5d2e0f`, `0x5d2e17` -> `0x5d1bfa`)"
+        "the faction list's world entry raises at its fold's sort and at its own sort (`0x5d2e0f`, `0x5d2e17` -> `0x5d1bfa`)"
     );
     let bit = rig
         .app
@@ -8721,8 +8722,9 @@ fn achievement_packets_fire_from_their_handlers_with_the_lists_read_at_the_call(
 /// `0x5d1bfa`), then its own (`0x5d2e90`); a standing's change line (`0x5d21b2`), its `FACTION`
 /// combat text (`0x50b9f4`), rank line (`0x5d2243`) and closing `UPDATE_FACTION` (`0x5d2342`)
 /// read the new standing and not the combat flag a later packet of the frame sets, which the
-/// other order reads; a reveal announces
-/// the rank (`0x5d09f2`) before the sort grows the count (`0x5d208e`); the war flag reads set at its
+/// other order reads; a reveal announces the rank (`0x5d09f2`) with the sort's count
+/// (`0x5cff24`) and the uncounted row in reach (`0x5d11a5`), before the sort grows the count
+/// (`0x5d208e`); the war flag reads set at its
 /// `UPDATE_FACTION` (`0x5d0898`); the watched field's watch raises with `"player"` (`0x6cdde1`);
 /// a fold verb raises inside its call (`0x5d1dd3` -> `0x5d1bfa`).
 #[test]
@@ -8751,6 +8753,16 @@ fn reputation_handlers_fire_at_their_steps_with_the_list_read_at_the_call() {
         "QUEST_LOG_UPDATE",
     ];
     const VERBS: &[&str] = &["repn", "repsw", "repwar", "repwatch", "combat"];
+    let rep5 = |seen: &[Seen]| -> Vec<String> {
+        seen.iter()
+            .filter(|s| ["CHAT_MSG_SYSTEM", "UPDATE_FACTION"].contains(&s.event.as_str()))
+            .map(|s| {
+                let mut s = s.clone();
+                s.args.clear();
+                s.line(&["repn", "rep5"])
+            })
+            .collect()
+    };
     let lines = |seen: &[Seen]| -> Vec<String> {
         seen.iter()
             .filter(|s| EVENTS.contains(&s.event.as_str()))
@@ -8841,6 +8853,15 @@ fn reputation_handlers_fire_at_their_steps_with_the_list_read_at_the_call() {
         vec![
             "CHAT_MSG_SYSTEM | repn=3 repsw=9200 repwar=nil repwatch=nil combat=nil",
             "UPDATE_FACTION | repn=4 repsw=9200 repwar=nil repwatch=nil combat=nil",
+        ]
+    );
+    // Rows Classic, Alliance, Stormwind, Inactive, then Ironforge's: at the announce the fifth row
+    // is the added one; the sort files it under Alliance and moves "Inactive" there.
+    assert_eq!(
+        rep5(&reveal),
+        vec![
+            "CHAT_MSG_SYSTEM | repn=3 rep5=Ironforge",
+            "UPDATE_FACTION | repn=4 rep5=Inactive",
         ]
     );
     assert_eq!(
@@ -8963,6 +8984,72 @@ fn a_faction_without_a_slot_answers_by_id_neutral_and_watched_with_the_field_at_
         read(&mut rig),
         format!("{name}|{d}|4|0|3000|0|nil|1|nil|nil|nil|nil|nil"),
         "watching Stormwind"
+    );
+}
+
+/// The standing handler shows tutorial 15, raised 1-based, to a player of level 10 or more
+/// (`0x5d2328`, `0x5d2333`), after its lines and before its closing `UPDATE_FACTION` (`0x5d2342`); at level 9
+/// it shows nothing.
+#[test]
+fn a_standing_shows_tutorial_15_from_level_10_before_its_update_faction() {
+    use benilla_protocol::field::FIELD_UNIT_BYTES_0;
+    let stormwind = {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).unwrap();
+        let cat = benilla_formats::load_faction_catalog(&mut chain).unwrap();
+        cat.reputation_faction(72).unwrap().rep_index as u32
+    };
+    let Some(mut rig) = Rig::login_after(
+        vec![SessionEvent::TutorialFlags(vec![0; 32])],
+        &[
+            OBJECT_TYPE_PLAYER,
+            (FIELD_UNIT_BYTES_0, 1 | 1 << 8),
+            (FIELD_UNIT_LEVEL, 9),
+        ],
+    ) else {
+        return;
+    };
+    let mut standings = vec![(0u8, 0i32); 128];
+    standings[stormwind as usize] = (benilla_formats::faction_flags::VISIBLE, 0);
+    rig.packets(vec![SessionEvent::Reputations { standings }], 2);
+    let delta = |standing: i32| SessionEvent::ReputationDelta {
+        bonus: 0.0,
+        show_effect: false,
+        standings: vec![(stormwind, standing)],
+    };
+    let events = &[
+        "CHAT_MSG_COMBAT_FACTION_CHANGE",
+        "TUTORIAL_TRIGGER",
+        "UPDATE_FACTION",
+    ];
+    let shown = |seen: &[Seen]| -> Vec<String> {
+        seen.iter()
+            .filter(|s| events.contains(&s.event.as_str()))
+            .map(|s| {
+                let mut s = s.clone();
+                if s.event.starts_with("CHAT_MSG") {
+                    s.args.clear();
+                }
+                s.line(&[])
+            })
+            .collect()
+    };
+    let at_9 = rig.packets(vec![delta(100)], 2);
+    assert_eq!(
+        shown(&at_9),
+        vec!["CHAT_MSG_COMBAT_FACTION_CHANGE", "UPDATE_FACTION"],
+        "level 9"
+    );
+    rig.packets(vec![self_values(&[(FIELD_UNIT_LEVEL, 10)])], 2);
+    let at_10 = rig.packets(vec![delta(200)], 2);
+    assert_eq!(
+        shown(&at_10),
+        vec![
+            "CHAT_MSG_COMBAT_FACTION_CHANGE",
+            "TUTORIAL_TRIGGER 16",
+            "UPDATE_FACTION"
+        ],
+        "level 10"
     );
 }
 

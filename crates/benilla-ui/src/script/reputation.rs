@@ -238,13 +238,24 @@ impl FactionList {
     /// returned for the fold (`0x5d2e0f`) and the sort (`0x5d2e17`) the caller runs next, each
     /// raising `UPDATE_FACTION`. The selection stands.
     pub fn enter_world(&mut self, t: &dyn FactionTable) -> usize {
+        self.begin_world_entry();
+        for slot in t.met_slots() {
+            self.add_visible(t, slot);
+        }
+        self.end_world_entry()
+    }
+
+    /// The world entry's clear (`0x5d2c17`-`0x5d2c31`): no rows, no headers, every fold open.
+    pub fn begin_world_entry(&mut self) {
         self.rows.clear();
         self.headers.clear();
         self.collapsed.clear();
         self.shown = 0;
-        for slot in t.met_slots() {
-            self.add_visible(t, slot);
-        }
+    }
+
+    /// The world entry's "Inactive" header row after its walk (`0x5d2db0`-`0x5d2e04`), its 0-based
+    /// index returned for the fold.
+    pub fn end_world_entry(&mut self) -> usize {
         self.add_header(INACTIVE, 0);
         self.rows.push(Row {
             rep_list_id: -1,
@@ -258,7 +269,9 @@ impl FactionList {
 
     /// The visible-faction add (`0x5d08d0`): one row per slot, a header by its stored flag, then
     /// the rows of every ancestor header, "Other" for a parentless one. `false` for a slot already
-    /// listed; the caller announces a new one (`0x5d09f2`).
+    /// listed; the caller announces a new one (`0x5d09f2`). The announce is the add's last step but
+    /// the count's increment (`0x5d09fa`), which no verb reads apart: `GetNumFactions` reads the
+    /// sort's count (`0x5cff24`) and the index verbs reach the uncounted row (`0x5d11a5`).
     pub fn add_visible(&mut self, t: &dyn FactionTable, rep_list_id: u32) -> bool {
         let rep = i64::from(rep_list_id);
         if self.rows.iter().any(|r| r.rep_list_id == rep) {
