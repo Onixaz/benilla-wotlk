@@ -146,7 +146,7 @@ fn the_tab_and_talent_tuples_read_the_state_at_the_call() {
     );
 }
 
-/// No player held: `meetsPrereq` reads nil (`0x5c7800`), and nothing is learned (`0x5c8114`).
+/// No player held: `meetsPrereq` reads nil (`0x5c7800`), and nothing is learned (`0x5c81df`).
 #[test]
 fn without_the_unit_nothing_meets_and_nothing_learns() {
     let mut s = UiScript::new().unwrap();
@@ -160,7 +160,7 @@ fn without_the_unit_nothing_meets_and_nothing_learns() {
     assert!(v.talent_learns.is_empty());
 }
 
-/// A required spell meets once known or a higher rank of it is (`0x5c79f3`).
+/// A required spell meets once known or a higher rank of it is (`0x5c7b67`, `0x5c7b76`).
 #[test]
 fn a_required_spell_reads_the_known_spells_at_the_call() {
     let mut s = UiScript::new().unwrap();

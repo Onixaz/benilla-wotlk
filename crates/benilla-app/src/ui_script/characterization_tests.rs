@@ -10251,9 +10251,9 @@ fn the_learn_verbs_send_inside_the_call() {
     );
 }
 
-/// The pet setter lays the family's tree (`0x5d6ab6` -> `0x5c9df0`), and the pet body
+/// The pet setter lays the family's tree (`0x5d6aa0` -> `0x5c9df0`), and the pet body
 /// (`0x6cd78e` -> `0x5c9f10`) raises `PET_TALENT_UPDATE` with its group read (`0x5c9f50`); the pet's
-/// leave empties both (`0x5d6aa0`).
+/// leave empties both (`0x5d6ab6`).
 #[test]
 fn the_pet_talent_packet_raises_pet_talent_update_over_the_familys_tree() {
     use benilla_protocol::field::FIELD_UNIT_BYTES_0;

@@ -1066,7 +1066,7 @@ pub trait LiveState {
         None
     }
 
-    /// The unit a talent verb acts for (`0x5c8114`): the pet's first guid held as a unit, else the active player held; `None` without it.
+    /// The unit a talent verb acts for (`0x5c81df`): the pet's first guid held as a unit, else the active player held; `None` without it.
     fn talent_unit(&self, _pet: bool) -> Option<u64> {
         None
     }

@@ -124,7 +124,7 @@ pub struct PetSpellCooldown {
 pub struct PetSpells {
     /// The pet, possessed minion or charmed creature; zero means the bar is gone.
     pub pet_guid: u64,
-    /// The pet's `CreatureFamily.dbc` id, which picks its talent tabs (`0x5d6ab6`).
+    /// The pet's `CreatureFamily.dbc` id, which picks its talent tabs (`0x5d6aa0`).
     pub family: u16,
     /// The possess or charm aura's remaining ms; 0 for a real pet.
     pub duration_ms: u32,

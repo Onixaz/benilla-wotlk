@@ -4,7 +4,7 @@
 //! whole (`0x5c9e50`), then raises `PLAYER_TALENT_UPDATE` and, when the active group moved,
 //! `ACTIVE_TALENT_GROUP_CHANGED(new, old)` (`0x5c9ecf`).
 //!
-//! The pet's tabs follow the family the pet setter names (`0x5d6ab6` into `0x5c9df0`), and its
+//! The pet's tabs follow the family the pet setter names (`0x5d6aa0` into `0x5c9df0`), and its
 //! group the pet body, which raises `PET_TALENT_UPDATE` (`0x5c9f10`). The inspected player's tabs
 //! follow the inspect target (`0x5c9f70`), and its groups `SMSG_INSPECT_TALENT` for that target,
 //! whose handler raises `INSPECT_TALENT_READY` (`0x6ce0c0`). `CHARACTER_POINTS_CHANGED` is our
@@ -72,7 +72,8 @@ fn shutdown(mut state: ResMut<TalentState>) {
     state.0.shutdown();
 }
 
-/// Whether a packet's rank names a rank spell with a spell record (`0x5c9332`, `0x5c934e`).
+/// Whether a packet's rank names a rank spell with a spell record: the talent row (`0x5c934e`),
+/// a rank under 9 naming a spell (`0x5c935f`, `0x5c9364`), its spell record (`0x5c93a1`).
 fn rank_is_valid(catalog: &TalentCatalog, spells: &Spells, id: u32, rank: i32) -> bool {
     catalog
         .talent_by_id(id)

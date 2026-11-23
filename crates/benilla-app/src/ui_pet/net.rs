@@ -165,7 +165,7 @@ pub(crate) fn set_pet_tail(
         bar.attacking = false;
         if !head {
             ui.world(zero_pet_combo);
-            // The pet's talent tabs emptied (`0x5d6aa0`).
+            // The pet's talent tabs emptied (`0x5d6ab6`).
             ui.world(|world| crate::ui_talent::update_pet_tabs(world, 0));
         } else {
             if let Some(held) = held {
@@ -175,7 +175,7 @@ pub(crate) fn set_pet_tail(
                     ui.fire("PET_UI_CLOSE", Vec::new());
                 }
             }
-            // The pet's talent tabs for the family the setter was handed (`0x5d6ab6`).
+            // The pet's talent tabs for the family the setter was handed (`0x5d6aa0`).
             let family = u32::from(bar.spells.family);
             ui.world(move |world| crate::ui_talent::update_pet_tabs(world, family));
         }
@@ -968,7 +968,7 @@ mod tests {
         let mut ui = crate::ui_script::live::UiEvents::default();
         let changed = pet_spells(a_bar(0x2A), None, &mut bar, &mut list);
         set_pet_tail(changed, &mut bar, &mut possess, None, true, &mut ui);
-        // The pet's talent tabs follow its family between the combat tests and `UNIT_PET` (`0x5d6ab6`).
+        // The pet's talent tabs follow its family between the combat tests and `UNIT_PET` (`0x5d6aa0`).
         assert_eq!(
             ui.names(),
             [
@@ -982,7 +982,7 @@ mod tests {
         let mut ui = crate::ui_script::live::UiEvents::default();
         let changed = pet_spells(PetSpells::default(), None, &mut bar, &mut list);
         set_pet_tail(changed, &mut bar, &mut possess, None, true, &mut ui);
-        // The combo zero, then the talent tabs' reset (`0x5d6aa0`).
+        // The combo zero, then the talent tabs' reset (`0x5d6ab6`).
         assert_eq!(
             ui.names(),
             [

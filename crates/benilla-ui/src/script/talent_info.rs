@@ -90,7 +90,7 @@ pub struct TalentGroup {
     tabs: Vec<GroupTab>,
     /// `GroupInfo+0x38`.
     pub unspent: i32,
-    /// `GlyphProperties.dbc` ids, 0 for none (`+0x3c`, `0x5c9818`).
+    /// `GlyphProperties.dbc` ids, 0 for none (`+0x3c`, `0x5c987b`).
     pub glyphs: [u32; 6],
 }
 

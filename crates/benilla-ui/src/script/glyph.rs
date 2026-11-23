@@ -584,7 +584,7 @@ mod tests {
         s
     }
 
-    /// A view lending one talent group whose first glyph is 181, the packet's (`0x5c9818`).
+    /// A view lending one talent group whose first glyph is 181, the packet's (`0x5c987b`).
     fn glyph_view() -> TestView {
         let mut info = TalentInfo::default();
         info.update_talent_data(

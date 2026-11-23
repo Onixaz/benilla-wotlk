@@ -68,7 +68,7 @@ pub struct TalentView {
     /// `Talent.dbc` flags bit 0 (`TalentRec+0x4c`), the tuple's `isExceptional`.
     pub exceptional: bool,
     pub prereqs: Vec<TalentPrereqView>,
-    /// `requiredSpellID`, 0 for none; `meetsPrereq` asks whether we know it (`0x5c79f3`).
+    /// `requiredSpellID` (`0x5c7b30`), 0 for none; `meetsPrereq` asks whether we know it (`0x5c7b67`).
     pub required_spell: u32,
     /// The required spell's name, for the `ITEM_REQ_SKILL` line while it is unknown.
     pub required_spell_name: Option<String>,
@@ -228,7 +228,7 @@ struct InfoRow {
 /// `GetTalentInfo`'s read (`0x5c7800`): `None` for the placeholder — an inspected pet, a talent not
 /// there, a pet talent the pet may not take (`0x5c7902`) or a rank naming no spell. `meetsPrereq`
 /// is, for an inspected talent, a rank held (`0x5c7b93`); else a unit to read and,
-/// for the player, the required spell known or a higher rank of it (`0x5c79f3`).
+/// for the player, the required spell known or a higher rank of it (`0x5c7b67`, `0x5c7b76`).
 fn talent_info_row(args: &MultiValue) -> Option<InfoRow> {
     let (tab, index) = (int_arg(args, 0)? - 1, int_arg(args, 1)? - 1);
     let (inspect, pet) = flags_at(args, 2);
@@ -847,7 +847,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // LearnTalent(tab, index[, isPet]) (`0x5c80e0`): with the unit resolved (`0x5c8114`), the
+    // LearnTalent(tab, index[, isPet]) (`0x5c80e0`): with the unit resolved (`0x5c81df`), the
     // active group's next rank below the max, sent in the call: `CMSG_LEARN_TALENT`, or
     // `CMSG_PET_LEARN_TALENT` with the pet's guid (`0x5c8288`); a pet talent the pet
     // may not take sends nothing (`0x5c820c`). Points and prerequisites are the server's to

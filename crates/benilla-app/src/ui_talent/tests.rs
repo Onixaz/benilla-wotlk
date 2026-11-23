@@ -99,7 +99,7 @@ pub(crate) fn catalogs() -> (TalentCatalog, benilla_formats::SpellCatalog) {
     )
 }
 
-/// The packet readers' rank check over the install's catalogs (`0x5c9332`).
+/// The packet readers' rank check over the install's catalogs (`0x5c9364`).
 pub(crate) fn valid_over<'a>(
     catalog: &'a TalentCatalog,
     spells: &'a benilla_formats::SpellCatalog,
@@ -143,7 +143,7 @@ fn an_inactive_groups_unspent_is_the_total_less_its_spent() {
         .all(|t| t.icon.is_some()));
 }
 
-/// A rank naming no rank spell is dropped by the reader (`0x5c9332`): a talent id no row has, or
+/// A rank naming no rank spell is dropped by the reader (`0x5c9364`): a talent id no row has, or
 /// a rank past the talent's ranks.
 #[test]
 fn a_rank_with_no_spell_is_dropped_by_the_reader() {
