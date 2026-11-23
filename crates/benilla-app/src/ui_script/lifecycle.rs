@@ -331,7 +331,8 @@ fn unpark_boot_vm(world: &mut World) {
 /// that fires or drains into a VM with no frames loses what it sends. The reference likewise
 /// processes no world state before its UI is up: world entry runs after the same iteration's
 /// inbound drain (its container entered once per process), socket threads only enqueue (`SMSG_PONG`
-/// the one bypass), and the login request waits for the UI.
+/// the one bypass), and the login request waits for the UI; the drain holds what arrives behind
+/// `Connected` until the load ([`crate::net::handlers::UiLoadHold`]).
 ///
 /// Two terms, because the latch trails the wire by a frame: `apply_net_updates` drains `Connected`
 /// and the login burst behind it in one pass, and the `InWorld` transition that arms the latch and
