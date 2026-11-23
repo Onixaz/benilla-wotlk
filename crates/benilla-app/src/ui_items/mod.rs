@@ -8,6 +8,7 @@
 //! through [`send_item_use`]. A send locks its items in [`PendingItemOps`] until a field watch,
 //! the post-init or a refusal unlocks them ([`watch`]).
 
+use benilla_protocol::messages::ItemInfo;
 use benilla_protocol::messages::{
     BAG_PLAYER_INVENTORY, SLOT_BAG_FIRST, SLOT_BANK_BAG_FIRST, SLOT_BANK_FIRST, SLOT_KEYRING_FIRST,
     SLOT_PACK_FIRST,
@@ -295,9 +296,9 @@ pub(crate) fn find_carried_at(
 /// `(bag_index, slot)` and the guid, and returns `Some` to stop. The order is the reference's and
 /// load-bearing: equipment 0-18, each bag slot 19-22 then its contents, backpack 23-38, bank 39-66,
 /// each bank bag 67-73 then its contents, keyring.
-fn walk_inventory<T>(
+fn walk_inventory<T, O: ObjectLookup + ?Sized>(
     store: &ObjectFields,
-    objects: &Objects,
+    objects: &O,
     scope: InventoryScope,
     mut visit: impl FnMut(u8, u8, u64) -> Option<T>,
 ) -> Option<T> {
@@ -395,7 +396,7 @@ pub(crate) fn count_of(
     scope: InventoryScope,
 ) -> u32 {
     let mut total = 0u32;
-    walk_inventory::<()>(store, objects, scope, |_, _, guid| {
+    walk_inventory::<(), _>(store, objects, scope, |_, _, guid| {
         if let Some(fields) = objects.object(guid) {
             if fields.object_entry() == Some(entry) {
                 total += fields.item_stack_count().unwrap_or(1);
@@ -406,11 +407,123 @@ pub(crate) fn count_of(
     total
 }
 
+/// The object manager's lookup by guid, which the inventory walk reads each slot's item through.
+pub(crate) trait ObjectLookup {
+    fn object(&self, guid: u64) -> Option<&ObjectFields>;
+}
+
+impl ObjectLookup for Objects<'_, '_> {
+    fn object(&self, guid: u64) -> Option<&ObjectFields> {
+        Objects::object(self, guid)
+    }
+}
+
+/// The lookup over a `World` a verb holds inside its call.
+pub(crate) struct WorldObjects<'a>(pub(crate) &'a World);
+
+impl ObjectLookup for WorldObjects<'_> {
+    fn object(&self, guid: u64) -> Option<&ObjectFields> {
+        let entity = *self
+            .0
+            .get_resource::<crate::net::GuidIndex>()?
+            .0
+            .get(&guid)?;
+        self.0.get::<ObjectStore>(entity).map(|s| &s.0)
+    }
+}
+
+/// `ITEM_FIELD_FLAGS` wrapped (`0x8`): a wrapped gift counts at any durability.
+const ITEM_FIELD_FLAG_WRAPPED: u32 = 0x8;
+/// `ITEM_FIELD_FLAGS` `0x10`: an item the walk passes over.
+const ITEM_FIELD_FLAG_SKIPPED: u32 = 0x10;
+
+/// The walk's item-state filter without mask `0x80` (`0x754792`-`0x7547c7`): a broken item (some
+/// maximum durability, none left) not wrapped, and an item flagged `0x10`, are passed over.
+fn walk_takes(fields: &ObjectFields) -> bool {
+    let flags = fields.item_flags().unwrap_or(0);
+    let broken =
+        fields.item_max_durability().unwrap_or(0) > 0 && fields.item_durability().unwrap_or(0) == 0;
+    (flags & ITEM_FIELD_FLAG_WRAPPED != 0 || !broken) && flags & ITEM_FIELD_FLAG_SKIPPED == 0
+}
+
+/// The carried-count check (`0x754dd0`) on `count` more of `item_id`, whose record is `record`:
+/// with a `MaxCount`, the stacks of `item_id` held (mask `0x4f`: worn, bags, backpack, bank,
+/// keyring) plus `count` may not pass it (`0x754e1d`); with a limit category, the stacks of every
+/// held item whose cached record names that category plus `count` may not pass the row's quantity
+/// (`0x754e49`, `0x754e93`). The row's flags are not read. Both sums skip what the walk's state
+/// filter passes over. A category with no row (no client data) refuses nothing.
+pub(crate) fn carry_refusal(
+    store: &ObjectFields,
+    objects: &(impl ObjectLookup + ?Sized),
+    items: &Items,
+    limits: Option<&benilla_formats::ItemLimitCategoryCatalog>,
+    item_id: u32,
+    record: &ItemInfo,
+    count: u32,
+) -> Option<benilla_ui::script::CarryRefusal> {
+    use benilla_ui::script::CarryRefusal;
+    // The sum over the 0x4f walk of the stacks `pick` takes (`0x754560`, `0x754590`: `[+0x20]`).
+    let held = |pick: &dyn Fn(&ObjectFields) -> bool| {
+        let mut total = 0i64;
+        walk_inventory::<(), _>(store, objects, InventoryScope::QUEST_ITEMS, |_, _, guid| {
+            if let Some(fields) = objects.object(guid) {
+                if walk_takes(fields) && pick(fields) {
+                    total += i64::from(fields.item_stack_count().unwrap_or(1));
+                }
+            }
+            None
+        });
+        total
+    };
+    let count = i64::from(count);
+    if record.max_count != 0 {
+        let current = held(&|f| f.object_entry() == Some(item_id));
+        if count + current > i64::from(record.max_count) {
+            return Some(CarryRefusal::MaxCount);
+        }
+    }
+    let category = record.item_limit_category;
+    if category != 0 {
+        let row = limits?.get(category)?;
+        // The held item's own record, from the cache alone (`0x75459d`).
+        let current = held(&|f| {
+            f.object_entry()
+                .and_then(|e| items.template_cached(e))
+                .is_some_and(|t| t.item_limit_category == category)
+        });
+        if count + current > i64::from(row.quantity) {
+            return Some(CarryRefusal::Category {
+                quantity: row.quantity,
+                name: row.name.clone(),
+            });
+        }
+    }
+    None
+}
+
+/// [`carry_refusal`] inside a verb's call, over the `World` it holds: our player object, the item
+/// cache and `ItemLimitCategory.dbc`; `None` with no player held.
+pub(crate) fn carry_refusal_in(
+    world: &World,
+    item_id: u32,
+    record: &ItemInfo,
+    count: u32,
+) -> Option<benilla_ui::script::CarryRefusal> {
+    let objects = WorldObjects(world);
+    let me = world.get_resource::<crate::net::SelfGuid>()?.0?;
+    let store = objects.object(me)?;
+    let items = world.get_resource::<Items>()?;
+    let limits = world
+        .get_resource::<crate::ui_trade::ItemLimitCategories>()
+        .map(|l| &l.0);
+    carry_refusal(store, &objects, items, limits, item_id, record, count)
+}
+
 /// The charges left on the player's copies of `entry` (`0x754d50` with mask 0): each copy's first
 /// spell charges, negative ones counted as their size.
 pub(crate) fn charges_of(store: &ObjectFields, objects: &Objects, entry: u32) -> u32 {
     let mut total = 0u32;
-    walk_inventory::<()>(store, objects, InventoryScope::DEFAULT, |_, _, guid| {
+    walk_inventory::<(), _>(store, objects, InventoryScope::DEFAULT, |_, _, guid| {
         if let Some(fields) = objects.object(guid) {
             if fields.object_entry() == Some(entry) {
                 total += fields.item_spell_charges(0).unwrap_or(0).unsigned_abs();
@@ -428,7 +541,7 @@ pub(crate) fn carried_counts(
     objects: &Objects,
 ) -> std::collections::HashMap<u32, u32> {
     let mut counts = std::collections::HashMap::new();
-    walk_inventory::<()>(store, objects, InventoryScope::CARRIED, |_, _, guid| {
+    walk_inventory::<(), _>(store, objects, InventoryScope::CARRIED, |_, _, guid| {
         if let Some(fields) = objects.object(guid) {
             if let Some(entry) = fields.object_entry() {
                 *counts.entry(entry).or_insert(0) += fields.item_stack_count().unwrap_or(1);
@@ -448,7 +561,7 @@ pub(crate) fn tool_categories(
     scope: InventoryScope,
 ) -> Vec<u32> {
     let mut categories = Vec::new();
-    walk_inventory::<()>(store, objects, scope, |_, _, guid| {
+    walk_inventory::<(), _>(store, objects, scope, |_, _, guid| {
         let entry = objects.object(guid).and_then(|f| f.object_entry());
         if let Some(t) = entry.and_then(|e| items.template(e, guid, commands)) {
             if t.totem_category != 0 {
@@ -1968,6 +2081,224 @@ mod count_of_tests {
             count_of(&store, &objs.get(), AMMO, InventoryScope::QUEST_ITEMS),
             2,
             "last backpack slot + last bank bag, with buyback between them untouched"
+        );
+    }
+}
+
+/// The carried-count check (`0x754dd0`): the `MaxCount` leg over the stacks of the item, then the
+/// limit category's over every held item of the category, at the limit and below it.
+#[cfg(test)]
+mod carry_tests {
+    use super::{carry_refusal, TestObjects};
+    use benilla_formats::{ItemLimitCategory, ItemLimitCategoryCatalog};
+    use benilla_protocol::field::*;
+    use benilla_protocol::ObjectFields;
+    use benilla_ui::script::CarryRefusal;
+
+    const UNIQUE: u32 = 6_948; // a MaxCount 1 item
+    const STONE: u32 = 5_512; // a category item
+    const OTHER_STONE: u32 = 19_004; // another of its category
+    const CATEGORY: u32 = 7;
+
+    fn player(slots: &[(u16, u64)]) -> ObjectFields {
+        let mut pairs = Vec::new();
+        for &(slot, guid) in slots {
+            let base = match slot {
+                0..=22 => FIELD_PLAYER_INV_SLOT_HEAD + 2 * slot,
+                23..=38 => FIELD_PLAYER_PACK_SLOT_1 + 2 * (slot - 23),
+                39..=66 => FIELD_PLAYER_BANK_SLOT_1 + 2 * (slot - 39),
+                _ => FIELD_PLAYER_KEYRING_SLOT_1 + 2 * (slot - 86),
+            };
+            pairs.push((base, guid as u32));
+            pairs.push((base + 1, (guid >> 32) as u32));
+        }
+        ObjectFields::from_pairs(&pairs)
+    }
+
+    fn item(objects: &mut TestObjects, guid: u64, entry: u32, stack: u32, extra: &[(u16, u32)]) {
+        let mut pairs = vec![(FIELD_OBJECT_ENTRY, entry), (FIELD_ITEM_STACK_COUNT, stack)];
+        pairs.extend_from_slice(extra);
+        objects.spawn(guid, ObjectFields::from_pairs(&pairs));
+    }
+
+    fn items() -> crate::items::Items {
+        let mut items = crate::items::Items::default();
+        for entry in [STONE, OTHER_STONE] {
+            let mut t = crate::items::test_template("Healthstone");
+            t.item_limit_category = CATEGORY;
+            items.insert_template(entry, Some(t));
+        }
+        items
+    }
+
+    fn limits() -> ItemLimitCategoryCatalog {
+        ItemLimitCategoryCatalog::from_rows([ItemLimitCategory {
+            id: CATEGORY,
+            name: "Healthstone".into(),
+            quantity: 3,
+            // The row's flags are not read (`0x754e93` compares the quantity alone).
+            flags: 1,
+        }])
+    }
+
+    fn unique() -> benilla_protocol::messages::ItemInfo {
+        let mut t = crate::items::test_template("Ring");
+        t.max_count = 1;
+        t
+    }
+
+    fn stone() -> benilla_protocol::messages::ItemInfo {
+        let mut t = crate::items::test_template("Healthstone");
+        t.item_limit_category = CATEGORY;
+        t
+    }
+
+    /// `0x754e1d`: below `MaxCount` passes, at it the next one refuses, a bank copy counts.
+    #[test]
+    fn a_max_count_item_refuses_at_its_count() {
+        let mut objs = TestObjects::new();
+        let (items, limits) = (items(), limits());
+        let none = player(&[]);
+        assert_eq!(
+            carry_refusal(
+                &none,
+                &objs.get(),
+                &items,
+                Some(&limits),
+                UNIQUE,
+                &unique(),
+                1
+            ),
+            None,
+            "none held, one more is at the count"
+        );
+        assert_eq!(
+            carry_refusal(
+                &none,
+                &objs.get(),
+                &items,
+                Some(&limits),
+                UNIQUE,
+                &unique(),
+                2
+            ),
+            Some(CarryRefusal::MaxCount),
+            "a stack of two passes the count alone"
+        );
+        item(&mut objs, 0xB1, UNIQUE, 1, &[]);
+        let banked = player(&[(40, 0xB1)]);
+        assert_eq!(
+            carry_refusal(
+                &banked,
+                &objs.get(),
+                &items,
+                Some(&limits),
+                UNIQUE,
+                &unique(),
+                1
+            ),
+            Some(CarryRefusal::MaxCount),
+            "a banked copy counts (mask 0x4f)"
+        );
+    }
+
+    /// `0x754e49`-`0x754e93`: every held item of the category counts toward the row's quantity.
+    #[test]
+    fn a_category_item_refuses_at_the_rows_quantity() {
+        let mut objs = TestObjects::new();
+        let (items, limits) = (items(), limits());
+        item(&mut objs, 0xA1, STONE, 1, &[]);
+        item(&mut objs, 0xA2, OTHER_STONE, 1, &[]);
+        let two = player(&[(23, 0xA1), (24, 0xA2)]);
+        assert_eq!(
+            carry_refusal(&two, &objs.get(), &items, Some(&limits), STONE, &stone(), 1),
+            None,
+            "two held, a third is at the quantity"
+        );
+        let refused = Some(CarryRefusal::Category {
+            quantity: 3,
+            name: "Healthstone".into(),
+        });
+        assert_eq!(
+            carry_refusal(&two, &objs.get(), &items, Some(&limits), STONE, &stone(), 2),
+            refused,
+            "a stack of two passes it"
+        );
+        item(&mut objs, 0xA3, OTHER_STONE, 1, &[]);
+        let three = player(&[(23, 0xA1), (24, 0xA2), (86, 0xA3)]);
+        assert_eq!(
+            carry_refusal(
+                &three,
+                &objs.get(),
+                &items,
+                Some(&limits),
+                STONE,
+                &stone(),
+                1
+            ),
+            refused,
+            "the keyring's copy counts too, whatever its entry"
+        );
+        assert_eq!(
+            carry_refusal(&three, &objs.get(), &items, None, STONE, &stone(), 1),
+            None,
+            "no row, no refusal"
+        );
+    }
+
+    /// `0x754792`-`0x7547c7`: a broken item and one flagged `0x10` are passed over; a wrapped one
+    /// counts broken or not.
+    #[test]
+    fn the_walk_passes_over_a_broken_item() {
+        let mut objs = TestObjects::new();
+        let (items, limits) = (items(), limits());
+        let broken = [(FIELD_ITEM_MAXDURABILITY, 40), (FIELD_ITEM_DURABILITY, 0)];
+        item(&mut objs, 0xC1, UNIQUE, 1, &broken);
+        let held = player(&[(0, 0xC1)]);
+        assert_eq!(
+            carry_refusal(
+                &held,
+                &objs.get(),
+                &items,
+                Some(&limits),
+                UNIQUE,
+                &unique(),
+                1
+            ),
+            None,
+            "a broken copy is not counted"
+        );
+        let mut wrapped = broken.to_vec();
+        wrapped.push((FIELD_ITEM_FLAGS, 0x8));
+        item(&mut objs, 0xC2, UNIQUE, 1, &wrapped);
+        let held = player(&[(23, 0xC2)]);
+        assert_eq!(
+            carry_refusal(
+                &held,
+                &objs.get(),
+                &items,
+                Some(&limits),
+                UNIQUE,
+                &unique(),
+                1
+            ),
+            Some(CarryRefusal::MaxCount),
+            "a wrapped copy counts at any durability"
+        );
+        item(&mut objs, 0xC3, UNIQUE, 1, &[(FIELD_ITEM_FLAGS, 0x10)]);
+        let held = player(&[(23, 0xC3)]);
+        assert_eq!(
+            carry_refusal(
+                &held,
+                &objs.get(),
+                &items,
+                Some(&limits),
+                UNIQUE,
+                &unique(),
+                1
+            ),
+            None,
+            "a 0x10 item is not counted"
         );
     }
 }

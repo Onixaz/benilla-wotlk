@@ -156,6 +156,7 @@ fn a_looted_heirloom_reads_the_source_units_level() {
                     quantity: 1,
                     quality: Some(7),
                     is_coin: false,
+                    coins: 0,
                     item_id: 9100,
                     link: Some(
                         "|cffe6cc80|Hitem:9100:0:0:0:0:0:0:0:0|h[Heirloom Chest]|h|r".into(),

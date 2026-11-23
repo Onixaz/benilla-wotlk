@@ -528,3 +528,70 @@ impl DerefMut for Lent {
         &mut self.script
     }
 }
+
+/// The loot verbs a test's calls left waiting where no `World` was lent, by kind; the other calls
+/// stay queued.
+pub(crate) trait LootVerbsExt {
+    /// `LootSlot`'s rows, in call order.
+    fn take_loot_picks(&mut self) -> Vec<u32>;
+    /// `ConfirmLootSlot`'s rows, in call order.
+    fn take_loot_confirms(&mut self) -> Vec<u32>;
+    /// The last `CloseLoot`'s `noUI`, if one was made.
+    fn take_loot_close(&mut self) -> Option<bool>;
+    /// `GiveMasterLoot`'s (slot, candidate) pairs, in call order.
+    fn take_loot_master_gives(&mut self) -> Vec<(u32, u32)>;
+}
+
+/// Take the waiting loot verbs `pick` answers for, leaving every other call queued in its order.
+fn take_loot_where<T>(
+    s: &mut UiScript,
+    pick: impl Fn(benilla_ui::script::LootVerb) -> Option<T>,
+) -> Vec<T> {
+    let mut taken = Vec::new();
+    let mut rest = Vec::new();
+    for call in s.take_script_calls() {
+        match call {
+            benilla_ui::script::ScriptCall::Loot(verb) if pick(verb).is_some() => {
+                taken.extend(pick(verb));
+            }
+            other => rest.push(other),
+        }
+    }
+    s.requeue_script_calls(rest);
+    taken
+}
+
+impl LootVerbsExt for UiScript {
+    fn take_loot_picks(&mut self) -> Vec<u32> {
+        use benilla_ui::script::LootVerb;
+        take_loot_where(self, |v| match v {
+            LootVerb::Slot(slot) => Some(slot),
+            _ => None,
+        })
+    }
+
+    fn take_loot_confirms(&mut self) -> Vec<u32> {
+        use benilla_ui::script::LootVerb;
+        take_loot_where(self, |v| match v {
+            LootVerb::Confirm(slot) => Some(slot),
+            _ => None,
+        })
+    }
+
+    fn take_loot_close(&mut self) -> Option<bool> {
+        use benilla_ui::script::LootVerb;
+        take_loot_where(self, |v| match v {
+            LootVerb::Close { no_ui } => Some(no_ui),
+            _ => None,
+        })
+        .pop()
+    }
+
+    fn take_loot_master_gives(&mut self) -> Vec<(u32, u32)> {
+        use benilla_ui::script::LootVerb;
+        take_loot_where(self, |v| match v {
+            LootVerb::MasterGive { slot, candidate } => Some((slot, candidate)),
+            _ => None,
+        })
+    }
+}

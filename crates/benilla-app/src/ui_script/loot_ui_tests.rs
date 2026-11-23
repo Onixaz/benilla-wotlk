@@ -3,6 +3,8 @@
 
 use benilla_ui::script::{LootRow, LootState, ScriptValue};
 
+use super::test_live::LootVerbsExt;
+
 /// Errors from the loot code itself; the production load carries unrelated 3.3.5a gaps.
 fn loot_errors(errors: impl IntoIterator<Item = String>) -> Vec<String> {
     errors
@@ -22,6 +24,7 @@ fn row(name: &str, quality: u32, locked: bool) -> Option<LootRow> {
         quantity: 1,
         quality: Some(quality),
         is_coin: false,
+        coins: 0,
         item_id: 117,
         link: None,
         random_property_id: 0,
@@ -34,11 +37,12 @@ fn coin_epic_and_locked() -> LootState {
     LootState {
         rows: vec![
             Some(LootRow {
-                name: Some("4 Copper".into()),
+                name: None,
                 texture: Some("Interface\\Icons\\INV_Misc_Coin_06".into()),
                 quantity: 0,
                 quality: Some(0),
                 is_coin: true,
+                coins: 4,
                 ..Default::default()
             }),
             row("Felstriker", 4, false),

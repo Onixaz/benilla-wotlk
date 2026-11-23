@@ -40,6 +40,11 @@ pub(crate) fn apply_in_call(lua: &mlua::Lua, call: ScriptCall) -> bool {
         }
         return true;
     }
+    // A loot verb acts and raises inside the call (`0x589140`, `0x589300`, `0x5893a0`, `0x523640`).
+    if let ScriptCall::Loot(verb) = call {
+        return with_world(|world| in_call_step(world, |w| crate::ui_loot::run_verb(w, verb)))
+            .is_some();
+    }
     // The verbs that press off a queued intent: their drain, each press at its own step.
     if let ScriptCall::Press(verb) = call {
         return with_world(|world| press_verb(world, verb)).is_some();
@@ -318,7 +323,7 @@ fn apply_one(
                 }
             }
             // Applied by the caller, which holds no borrow for its view write.
-            ScriptCall::DestroyTotem(_) | ScriptCall::Press(_) => {}
+            ScriptCall::DestroyTotem(_) | ScriptCall::Press(_) | ScriptCall::Loot(_) => {}
             ScriptCall::UseItem { bag, slot } => appliers.p5().use_item(script, bag, slot),
             ScriptCall::InteractObject(guid) => appliers.p0().interact_object(guid),
             ScriptCall::UseContainerItem { bag, slot } => {

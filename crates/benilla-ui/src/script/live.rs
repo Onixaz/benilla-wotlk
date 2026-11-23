@@ -276,6 +276,11 @@ pub trait LiveState {
         None
     }
 
+    /// The carried-count check (`0x754dd0`) on `count` more of `item_id`, its record cached: why it refuses, `None` when it passes, the record is not cached or no view lends the bags.
+    fn carry_refusal(&self, _item_id: u32, _count: u32) -> Option<super::CarryRefusal> {
+        None
+    }
+
     /// How many of `item_id` our bags hold for a quest at the call (`0x58cbed`-`0x58cbfb`), `None` where no view lends them.
     fn carried_quest_item(&self, _item_id: u32) -> Option<u32> {
         None
@@ -1605,6 +1610,9 @@ pub(crate) fn arena_teams(slots: [super::ArenaTeamSlotView; 3]) -> TestView {
 pub(crate) struct TestView {
     /// The active player's guid.
     pub player: Option<u64>,
+    /// The carried-count check's answer, and the `(item_id, count)` it was asked, in order.
+    pub carry: Option<super::CarryRefusal>,
+    pub carry_asks: std::cell::RefCell<Vec<(u32, u32)>>,
     /// Each held unit's `(flags, health)`.
     pub units: std::collections::HashMap<u64, (u32, u32)>,
     /// The control flag; the default view has lost control.
@@ -1818,6 +1826,11 @@ impl LiveState for TestView {
     ) -> bool {
         f(&mut self.faction_list, &mut self.factions);
         true
+    }
+
+    fn carry_refusal(&self, item_id: u32, count: u32) -> Option<super::CarryRefusal> {
+        self.carry_asks.borrow_mut().push((item_id, count));
+        self.carry.clone()
     }
 
     fn achievement_db(&self) -> Option<std::sync::Arc<super::AchievementDb>> {

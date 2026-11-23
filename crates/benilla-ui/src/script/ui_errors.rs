@@ -191,6 +191,22 @@ pub(crate) fn add_chat_text(lua: &Lua, chat_type: u8, text: &str) {
     }
 }
 
+/// The carried-count check's message (`0x754e2a`, `0x754ea7`): the limit category's line takes the
+/// row's quantity then its name.
+pub(crate) fn show_carry_refusal(lua: &Lua, refusal: &super::CarryRefusal) {
+    match refusal {
+        super::CarryRefusal::MaxCount => show_now(lua, refusal.key()),
+        super::CarryRefusal::Category { quantity, name } => show_filled(
+            lua,
+            refusal.key(),
+            &[
+                crate::strings::Arg::D(i64::from(*quantity)),
+                crate::strings::Arg::S(name),
+            ],
+        ),
+    }
+}
+
 /// [`show_now`] for a line with one argument: a red or yellow line fills and fires inside the call, a chat line is added to the chat log inside it (#1306).
 pub(crate) fn show_now_arg(lua: &Lua, key: &'static str, arg: &super::PetitionArg) {
     use super::PetitionArg;
@@ -199,6 +215,12 @@ pub(crate) fn show_now_arg(lua: &Lua, key: &'static str, arg: &super::PetitionAr
         PetitionArg::S(s) => crate::strings::Arg::S(s),
         PetitionArg::D(d) => crate::strings::Arg::D(*d),
     };
+    show_filled(lua, key, &[text_arg]);
+}
+
+/// [`show_now`] for a line its `args` fill: a red or yellow line fires inside the call, a chat line
+/// is added to the chat log inside it.
+fn show_filled(lua: &Lua, key: &'static str, args: &[crate::strings::Arg<'_>]) {
     // Every row's sound goes first, a chat row's too (`0x52172d`, `0x521765`).
     if crate::messages::by_key(key).is_some() {
         crate::script::model_mut_of(lua).message_sounds.push(key);
@@ -206,12 +228,12 @@ pub(crate) fn show_now_arg(lua: &Lua, key: &'static str, arg: &super::PetitionAr
     let event = match crate::messages::kind_of(key) {
         crate::messages::MsgKind::Error => "UI_ERROR_MESSAGE",
         crate::messages::MsgKind::Info => "UI_INFO_MESSAGE",
-        crate::messages::MsgKind::Chat => return add_chat_line(lua, key, &[text_arg]),
+        crate::messages::MsgKind::Chat => return add_chat_line(lua, key, args),
     };
     let Some(text) = lua.globals().get::<Option<String>>(key).ok().flatten() else {
         return;
     };
-    let text = crate::strings::fill(&text, &[text_arg]);
+    let text = crate::strings::fill(&text, args);
     if text.is_empty() {
         return;
     }
