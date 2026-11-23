@@ -59,6 +59,8 @@ local VERBS = {
     { "known40", function() return IsTitleKnown(40) end },
     { "skills", function() return GetNumSkillLines() end },
     { "skill2", function() return (select(4, GetSkillLineInfo(2))) end },
+    { "tailor", function() local _, t = GetSpellLink(3908) return t and t:match("Htrade:%d+:(%d+:%d+)") end },
+    { "alch", function() local _, t = GetSpellLink(2259) return t and t:match("Htrade:%d+:(%d+:%d+)") end },
     { "rating6", function() return GetCombatRating(6) end },
     { "spdmg", function() return GetSpellBonusDamage(2) end },
     { "mainatk", function() return (UnitAttackBothHands("player")) end },
@@ -10937,6 +10939,36 @@ fn a_reload_reads_the_skill_list_until_the_world_entrys_rebuild() {
             "PLAYER_LOGIN | skills=1 skill2=100",
             "PLAYER_ENTERING_WORLD | skills=1 skill2=100",
             "SKILL_LINES_CHANGED | skills=2 skill2=100",
+        ]
+    );
+}
+
+/// `GetSpellLink`'s trade link reads the active player at the call (`0x5db120`-`0x5db134`): a stat listener ahead of the rebuild (`0x6da509` before `0x6da531`) reads the new rank, and a line the player lacks reads slot 128's halves, the free professions (`0x6dc213`).
+#[test]
+fn the_trade_link_reads_the_rank_at_the_call() {
+    use benilla_protocol::field::{
+        FIELD_PLAYER_CHARACTER_POINTS2, FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_UNIT_BYTES_0,
+    };
+    let pair = |lo: u32, hi: u32| lo | hi << 16;
+    // A human warrior with Tailoring (197) at 100 of 150, +5 permanent, and two free professions.
+    let Some(mut rig) = Rig::login(&[
+        OBJECT_TYPE_PLAYER,
+        (FIELD_UNIT_BYTES_0, 1 | 1 << 8 | 1 << 24),
+        (SKILL, 197),
+        (SKILL + 1, pair(100, 150)),
+        (SKILL + 2, pair(0, 5)),
+        (FIELD_PLAYER_CHARACTER_POINTS2, 2),
+    ]) else {
+        return;
+    };
+    const VERBS: &[&str] = &["tailor", "alch"];
+    assert_eq!(rig.live_now().line(VERBS), "NOW | tailor=105:155 alch=2:0");
+    let value = rig.packets(vec![self_values(&[(SKILL + 1, pair(101, 150))])], 2);
+    assert_eq!(
+        pin(&value, &["UNIT_ATTACK", "SKILL_LINES_CHANGED"], &["tailor"]),
+        vec![
+            "UNIT_ATTACK player | tailor=106:155",
+            "SKILL_LINES_CHANGED | tailor=106:155",
         ]
     );
 }

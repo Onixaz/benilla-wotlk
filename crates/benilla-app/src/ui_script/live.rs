@@ -2211,6 +2211,14 @@ impl LiveState for LiveView<'_, '_> {
         Some(crate::ui_char::skill_slot(fields, catalog, skill_id))
     }
 
+    fn skill_link_ranks(&self, skill_id: u32) -> Option<(u32, u32)> {
+        let entity = self.player_entity(self.active_player()?)?;
+        Some(crate::ui_char::link_ranks(
+            &self.stores.get(entity).ok()?.0,
+            skill_id,
+        ))
+    }
+
     fn skill_list(&self) -> Option<&benilla_ui::script::SkillList> {
         self.skills.as_deref().map(|l| &l.0)
     }

@@ -240,6 +240,23 @@ pub(crate) fn fire_skill_stat_events(ui: &mut crate::ui_script::live::UiEvents) 
     }
 }
 
+/// A line's `(rank, max)` as the trade-link builder reads them (`0x5db120`-`0x5db134`): the slot search (`0x6dc1c0`) runs to index 128 for a line the player lacks (`0x6dc213`), whose reads land on `PLAYER_CHARACTER_POINTS2` and `PLAYER_TRACK_CREATURES`; the value (`0x51a250`) and the max (`0x594710`) each add the permanent bonus when positive.
+pub(crate) fn link_ranks(fields: &benilla_protocol::ObjectFields, skill_id: u32) -> (u32, u32) {
+    let (value, max, perm) = (0..PLAYER_SKILL_SLOTS)
+        .filter_map(|i| fields.player_skill(i))
+        .find(|s| u32::from(s.skill_id) == skill_id)
+        .map_or_else(
+            || {
+                let points = fields.player_free_professions().unwrap_or(0);
+                let track = fields.player_track_creatures();
+                (points as u16, (points >> 16) as u16, (track >> 16) as u16)
+            },
+            |s| (s.value, s.max, s.perm_bonus as u16),
+        );
+    let read = |half: u16| u32::from(half) + if half > 0 { u32::from(perm) } else { 0 };
+    (read(value), read(max))
+}
+
 /// The skill value reader (`0x51a250`): the value half (`0x51a286`), plus the permanent-bonus half read unsigned when the value is positive (`0x51a291`-`0x51a299`).
 pub(crate) fn skill_value_read(slot: &benilla_protocol::messages::PlayerSkillSlot) -> i32 {
     let value = i32::from(slot.value);
@@ -1083,6 +1100,36 @@ mod tests {
     use super::*;
     use benilla_protocol::messages::ObjectFields;
     use bevy::ecs::system::RunSystemOnce;
+
+    /// The trade link's ranks (`0x5db120`-`0x5db134`): each half adds the permanent bonus when positive, and a line the player lacks reads slot 128, the fields after the array.
+    #[test]
+    fn the_trade_link_reads_the_slot_at_the_call_and_runs_off_the_end_for_a_missing_line() {
+        const F_SKILL: u16 = benilla_protocol::field::FIELD_PLAYER_SKILL_INFO_1_1;
+        let pair = |lo: u16, hi: u16| u32::from(lo) | (u32::from(hi) << 16);
+        // Slot 0: Tailoring (197) 150/225, +5 permanent; slot 1: Mining (186) 0/75, +7 permanent.
+        let mut pairs = vec![
+            (F_SKILL, pair(197, 2)),
+            (F_SKILL + 1, pair(150, 225)),
+            (F_SKILL + 2, pair(0, 5)),
+            (F_SKILL + 3, pair(186, 0)),
+            (F_SKILL + 4, pair(0, 75)),
+            (F_SKILL + 5, pair(0, 7)),
+            // Slot 128's value|max and temp|perm: PLAYER_CHARACTER_POINTS2 and PLAYER_TRACK_CREATURES.
+            (F_SKILL + 3 * 128 + 1, 2),
+        ];
+        let fields = ObjectFields::from_pairs(&pairs);
+        assert_eq!(link_ranks(&fields, 197), (155, 230));
+        assert_eq!(link_ranks(&fields, 186), (0, 82));
+        assert_eq!(link_ranks(&fields, 171), (2, 0));
+        // A tracked type at bit 16 or above is the run-off's permanent bonus.
+        pairs.push((F_SKILL + 3 * 128 + 2, pair(0, 3)));
+        let fields = ObjectFields::from_pairs(&pairs);
+        assert_eq!(link_ranks(&fields, 171), (5, 0));
+        assert_eq!(
+            F_SKILL + 3 * 128 + 1,
+            benilla_protocol::field::FIELD_PLAYER_CHARACTER_POINTS2
+        );
+    }
 
     /// The reference's split; a value-0 line skips the permanent add.
     #[test]

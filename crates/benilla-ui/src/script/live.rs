@@ -1088,6 +1088,11 @@ pub trait LiveState {
         None
     }
 
+    /// A line's `(rank, max)` as the trade-link builder reads the active player at the call (`0x5db120`-`0x5db134`); `None` with no active player held (`0x5db08f`).
+    fn skill_link_ranks(&self, _skill_id: u32) -> Option<(u32, u32)> {
+        None
+    }
+
     /// The client's skill list at the call (`0xc22ae8`-`0xc22b18`), which a UI reload keeps; `None` where no view lends it.
     fn skill_list(&self) -> Option<&super::SkillList> {
         None

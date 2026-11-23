@@ -167,17 +167,6 @@ fn write_list<R>(lua: &Lua, f: impl FnOnce(&mut SkillList) -> R) -> R {
     (f.take().expect("unrun"))(&mut crate::script::model_mut_of(lua).skill_list)
 }
 
-/// Each listed line's `(id, value, max)` as the rebuild left it, read at the call.
-pub(crate) fn listed_ranks(lua: &Lua) -> Vec<(u32, u32, u32)> {
-    read_list(lua, |list, _| {
-        list.state
-            .entries
-            .iter()
-            .map(|e| (e.skill_id, e.value, e.max))
-            .collect()
-    })
-}
-
 /// `e` with the player's slot read at the call (`0x5cdfe7`): a line the player no longer holds reads 0; with no view lent, as rebuilt.
 fn live_entry<'a>(
     e: &'a SkillEntry,
