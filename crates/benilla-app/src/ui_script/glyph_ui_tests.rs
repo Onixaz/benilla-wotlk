@@ -1,17 +1,16 @@
 //! The stock 3.3.5a glyph window (`Blizzard_GlyphUI`) on the production load, inside the stock
 //! talent window, over the glyph model the live client builds: the install's glyph tables, the
 //! six sockets AzerothCore opens at level 80 (`GlyphSlot.dbc` 21-26, all unlocked) and one major
-//! glyph inscribed in socket 1 of the active group.
+//! glyph inscribed in socket 1 of the active group, which the talent state lent at the call holds.
 
-use super::test_live::SpellAnswersExt;
-use std::collections::{BTreeSet, HashMap};
+use super::test_live::{lending, lent_view, SpellAnswersExt};
 
 use benilla_ui::script::{
     GlyphPlacement, GlyphSockets, GlyphTargeting, ScriptCall, ScriptValue, SpellInfo,
-    SpellInfoSource, SpellTooltipView, UiScript, UnitState,
+    SpellInfoSource, SpellTooltipView, TalentInfo, UiScript, UnitState,
 };
 
-use crate::ui_talent::{build_pages, PlayerTalentGroups};
+use crate::ui_talent::tests::{body, valid_over, TalentTestView};
 
 const DWARF: u8 = 3;
 const HUNTER: u8 = 3;
@@ -47,8 +46,9 @@ struct Model {
     major_name: String,
 }
 
-/// A level 80 hunter's trees and both groups, the glyph tables, the sockets and one glyph.
-fn push_model(s: &mut UiScript) -> Model {
+/// A level 80 hunter's trees and both groups, the glyph tables, the sockets and one glyph; the
+/// talent state to lend.
+fn push_model(s: &mut UiScript) -> (Model, TalentTestView) {
     let data = benilla_formats::wow_data().expect("install");
     let mut chain = benilla_formats::open_chain(&data).unwrap();
     let talents = benilla_formats::load_talent_catalog(&mut chain).unwrap();
@@ -86,18 +86,13 @@ fn push_model(s: &mut UiScript) -> Model {
             ..Default::default()
         }),
     );
-    let mut held = PlayerTalentGroups::fresh(0);
-    held.ranks = vec![HashMap::new(), HashMap::new()];
-    held.glyphs = vec![[major, 0, 0, 0, 0, 0], [0; 6]];
-    s.set_talents(build_pages(
-        &talents,
-        &BTreeSet::new(),
-        &spells,
-        DWARF,
-        HUNTER,
-        (0, 0),
-        &held,
-    ));
+    let mut info = TalentInfo::default();
+    info.update_talent_data(
+        &body(0, 0, vec![(vec![], vec![major as u16]), (vec![], vec![])]),
+        &valid_over(&talents, &spells),
+    );
+    let pages = crate::ui_talent::player_pages(&talents, &spells, DWARF, HUNTER);
+    info.enter_world(|| Some(pages));
     s.set_glyph_catalog(crate::ui_glyph::catalog_view(&glyphs, &spells));
     s.set_spell_info_source(std::rc::Rc::new(Names(spells.clone())));
     s.set_glyph_sockets(GlyphSockets {
@@ -113,11 +108,16 @@ fn push_model(s: &mut UiScript) -> Model {
             ..Default::default()
         },
     );
-    s.fire_event("PLAYER_TALENT_UPDATE", Vec::<ScriptValue>::new());
-    model
+    let view = TalentTestView {
+        info,
+        units: (Some(0x10), None),
+        ..Default::default()
+    };
+    (model, view)
 }
 
 fn open_glyph_tab(s: &mut UiScript) {
+    s.fire_event("PLAYER_TALENT_UPDATE", Vec::<ScriptValue>::new());
     s.run("ToggleTalentFrame()").unwrap();
     s.run(
         r#"
@@ -140,22 +140,24 @@ fn the_glyphs_tab_shows_the_inscribed_glyph_and_the_open_sockets() {
     let (mut s, _load_failures) =
         super::layer_tests::production_load_with("glyphs", false, "", |_| {});
     let _ = s.take_errors();
-    let m = push_model(&mut s);
-    open_glyph_tab(&mut s);
-    let errors = glyph_errors(s.take_errors());
-    assert!(errors.is_empty(), "glyph window errors: {errors:#?}");
+    let (m, mut v) = push_model(&mut s);
+    lending(&mut v, || {
+        open_glyph_tab(&mut s);
+        let errors = glyph_errors(s.take_errors());
+        assert!(errors.is_empty(), "glyph window errors: {errors:#?}");
 
-    let (enabled, kind, spell, icon): (Option<i64>, i64, i64, String) =
-        s.eval("return GetGlyphSocketInfo(1)").unwrap();
-    assert_eq!(
-        (enabled, kind, spell),
-        (Some(1), 1, i64::from(m.major_spell))
-    );
-    assert!(icon.contains("Glyph"), "a glyph icon: {icon}");
-    let second: (Option<i64>, i64, Option<i64>) = s.eval("return GetGlyphSocketInfo(2)").unwrap();
-    assert_eq!(second, (Some(1), 2, None), "socket 2 is an open minor");
-    s.run(
-        r#"
+        let (enabled, kind, spell, icon): (Option<i64>, i64, i64, String) =
+            s.eval("return GetGlyphSocketInfo(1)").unwrap();
+        assert_eq!(
+            (enabled, kind, spell),
+            (Some(1), 1, i64::from(m.major_spell))
+        );
+        assert!(icon.contains("Glyph"), "a glyph icon: {icon}");
+        let second: (Option<i64>, i64, Option<i64>) =
+            s.eval("return GetGlyphSocketInfo(2)").unwrap();
+        assert_eq!(second, (Some(1), 2, None), "socket 2 is an open minor");
+        s.run(
+            r#"
         assert(IsAddOnLoaded("Blizzard_GlyphUI"), "the glyph addon loaded")
         assert(GlyphFrame:IsShown(), "the glyph frame is up")
         assert(GlyphFrameGlyph1.glyph:IsShown(), "socket 1 draws its glyph")
@@ -167,46 +169,47 @@ fn the_glyphs_tab_shows_the_inscribed_glyph_and_the_open_sockets() {
         assert(select(3, GetGlyphSocketInfo(1, 2)) == nil, "and empty")
         assert(GetGlyphSocketInfo(1, 3) == nil, "no group 3")
         "#,
-    )
-    .unwrap();
-    let link: String = s.eval("return GetGlyphLink(1)").unwrap();
-    assert_eq!(
-        link,
-        format!("|cff66bbff|Hglyph:21:{}|h[{}]|h|r", m.major, m.major_name)
-    );
-    assert_eq!(s.eval::<String>("return GetGlyphLink(2)").unwrap(), "");
-
-    // The hover: name, type, description and the remove hint; an open minor's hint.
-    let lines = |s: &mut UiScript, frame: &str| -> Vec<String> {
-        s.run(&format!(
-            "GlyphFrameGlyph_OnEnter({frame}) GameTooltip:Show()"
-        ))
-        .unwrap();
-        s.eval::<Vec<String>>(
-            "local t = {} for i = 1, GameTooltip:NumLines() do \
-             t[i] = _G['GameTooltipTextLeft' .. i]:GetText() end return t",
         )
-        .unwrap()
-    };
-    assert_eq!(
-        lines(&mut s, "GlyphFrameGlyph1"),
-        [
-            m.major_name.as_str(),
-            "Major Glyph",
-            "Your glyph does a thing.",
-            "<Shift Right Click to Remove>"
-        ]
-    );
-    assert_eq!(
-        lines(&mut s, "GlyphFrameGlyph2"),
-        [
-            "Empty",
-            "Minor Glyph",
-            "Use a Glyph from your inventory to inscribe your spellbook."
-        ]
-    );
-    let errors = glyph_errors(s.take_errors());
-    assert!(errors.is_empty(), "glyph window errors: {errors:#?}");
+        .unwrap();
+        let link: String = s.eval("return GetGlyphLink(1)").unwrap();
+        assert_eq!(
+            link,
+            format!("|cff66bbff|Hglyph:21:{}|h[{}]|h|r", m.major, m.major_name)
+        );
+        assert_eq!(s.eval::<String>("return GetGlyphLink(2)").unwrap(), "");
+
+        // The hover: name, type, description and the remove hint; an open minor's hint.
+        let lines = |s: &mut UiScript, frame: &str| -> Vec<String> {
+            s.run(&format!(
+                "GlyphFrameGlyph_OnEnter({frame}) GameTooltip:Show()"
+            ))
+            .unwrap();
+            s.eval::<Vec<String>>(
+                "local t = {} for i = 1, GameTooltip:NumLines() do \
+             t[i] = _G['GameTooltipTextLeft' .. i]:GetText() end return t",
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            lines(&mut s, "GlyphFrameGlyph1"),
+            [
+                m.major_name.as_str(),
+                "Major Glyph",
+                "Your glyph does a thing.",
+                "<Shift Right Click to Remove>"
+            ]
+        );
+        assert_eq!(
+            lines(&mut s, "GlyphFrameGlyph2"),
+            [
+                "Empty",
+                "Minor Glyph",
+                "Use a Glyph from your inventory to inscribe your spellbook."
+            ]
+        );
+        let errors = glyph_errors(s.take_errors());
+        assert!(errors.is_empty(), "glyph window errors: {errors:#?}");
+    });
 }
 
 /// Shift-right-click on the inscribed socket asks `CONFIRM_REMOVE_GLYPH` with the glyph's name,
@@ -221,66 +224,58 @@ fn a_shift_right_click_removes_the_glyph_after_the_confirm() {
     let (mut s, _load_failures) =
         super::layer_tests::production_load_with("glyphs", false, "", |_| {});
     let _ = s.take_errors();
-    let m = push_model(&mut s);
-    open_glyph_tab(&mut s);
-    let _ = s.take_glyph_removes();
+    let (m, mut v) = push_model(&mut s);
+    lending(&mut v, || {
+        open_glyph_tab(&mut s);
+        let _ = s.take_glyph_removes();
 
-    s.set_modifiers(true, false, false);
-    s.run(r#"GlyphFrameGlyph1:Click("RightButton")"#).unwrap();
-    s.set_modifiers(false, false, false);
-    let text: String = s.eval("return StaticPopup1Text:GetText()").unwrap();
-    assert!(
-        text.contains(&m.major_name),
-        "the confirm names the glyph: {text}"
-    );
-    assert!(s.take_glyph_removes().is_empty(), "nothing before Accept");
-    s.run("StaticPopup1Button1:Click()").unwrap();
-    assert_eq!(s.take_glyph_removes(), vec![0]);
+        s.set_modifiers(true, false, false);
+        s.run(r#"GlyphFrameGlyph1:Click("RightButton")"#).unwrap();
+        s.set_modifiers(false, false, false);
+        let text: String = s.eval("return StaticPopup1Text:GetText()").unwrap();
+        assert!(
+            text.contains(&m.major_name),
+            "the confirm names the glyph: {text}"
+        );
+        assert!(s.take_glyph_removes().is_empty(), "nothing before Accept");
+        s.run("StaticPopup1Button1:Click()").unwrap();
+        assert_eq!(s.take_glyph_removes(), vec![0]);
 
-    // An unmodified right-click asks nothing.
-    s.run(r#"GlyphFrameGlyph1:Click("RightButton")"#).unwrap();
-    assert!(!s
-        .eval::<bool>("return StaticPopup1:IsShown() == 1")
-        .unwrap());
+        // An unmodified right-click asks nothing.
+        s.run(r#"GlyphFrameGlyph1:Click("RightButton")"#).unwrap();
+        assert!(!s
+            .eval::<bool>("return StaticPopup1:IsShown() == 1")
+            .unwrap());
 
-    // The server's answer: the group empties, then the field edge fires the watcher's event.
-    let mut held = PlayerTalentGroups::fresh(0);
-    held.ranks = vec![HashMap::new(), HashMap::new()];
-    held.glyphs = vec![[0; 6], [0; 6]];
-    let data = benilla_formats::wow_data().expect("install");
-    let mut chain = benilla_formats::open_chain(&data).unwrap();
-    let talents = benilla_formats::load_talent_catalog(&mut chain).unwrap();
-    let spells = benilla_formats::load_spell_catalog(&mut chain).unwrap();
-    s.set_talents(build_pages(
-        &talents,
-        &BTreeSet::new(),
-        &spells,
-        DWARF,
-        HUNTER,
-        (0, 0),
-        &held,
-    ));
-    s.fire_event("GLYPH_REMOVED", vec![ScriptValue::Int(1)]);
-    assert!(s
-        .eval::<bool>("return not GlyphFrameGlyph1.glyph:IsShown()")
-        .unwrap());
-    let errors = glyph_errors(s.take_errors());
-    assert!(errors.is_empty(), "glyph window errors: {errors:#?}");
+        // The server's answer: the group empties, then the field edge fires the watcher's event.
+        lent_view::<TalentTestView, _>(|v| {
+            v.info.update_talent_data(
+                &body(0, 0, vec![(vec![], vec![]), (vec![], vec![])]),
+                &|_, _| true,
+            )
+        });
+        s.fire_event("GLYPH_REMOVED", vec![ScriptValue::Int(1)]);
+        assert!(s
+            .eval::<bool>("return not GlyphFrameGlyph1.glyph:IsShown()")
+            .unwrap());
+        let errors = glyph_errors(s.take_errors());
+        assert!(errors.is_empty(), "glyph window errors: {errors:#?}");
+    });
 }
 
 /// With a glyph item's cast targeting, the open sockets of its type match and a click places it:
 /// the matching socket queues the bind, a full or mismatched socket the reference's refusals.
 #[test]
 fn a_targeting_glyph_matches_its_sockets_and_a_click_places_it() {
-    crate::ui_script::test_live::lending(&mut crate::ui_script::test_live::View, || {
-        benilla_formats::wow_data_or_skip!();
-        let _l = crate::local_state::test_env::ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let (mut s, _load_failures) =
-            super::layer_tests::production_load_with("glyphs", false, "", |_| {});
-        let _ = s.take_errors();
-        let m = push_model(&mut s);
+    benilla_formats::wow_data_or_skip!();
+    let _l = crate::local_state::test_env::ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _load_failures) =
+        super::layer_tests::production_load_with("glyphs", false, "", |_| {});
+    let _ = s.take_errors();
+    let (m, mut v) = push_model(&mut s);
+    lending(&mut v, || {
         open_glyph_tab(&mut s);
         let _ = s.take_script_calls();
 

@@ -5,9 +5,60 @@
 mod common;
 
 use benilla_ui::script::{
-    QuadContent, SpellTooltipView, TalentGroupView, TalentPrereqView, TalentRankView,
-    TalentTabView, TalentUiState, TalentView, UiScript, UnitState,
+    LiveState, QuadContent, SpellTooltipView, TalentInfo, TalentPacket, TalentPacketGroup,
+    TalentPages, TalentPrereqView, TalentRankView, TalentTabView, TalentView, UiScript, UnitState,
 };
+
+/// The talent state lent at each call.
+struct Fixture(TalentInfo);
+
+impl LiveState for Fixture {
+    fn unit_flags(&self, _guid: u64) -> Option<u32> {
+        None
+    }
+
+    fn unit_health(&self, _guid: u64) -> Option<u32> {
+        None
+    }
+
+    fn active_player(&self) -> Option<u64> {
+        Some(1)
+    }
+
+    fn has_control(&self) -> bool {
+        true
+    }
+
+    fn far_sight(&self) -> bool {
+        false
+    }
+
+    fn talent_info(&self) -> Option<&TalentInfo> {
+        Some(&self.0)
+    }
+
+    fn talent_unit(&self, pet: bool) -> Option<u64> {
+        (!pet).then_some(1)
+    }
+}
+
+/// `pages` with one group holding `ranks` and two points unspent, as the world entry lays it.
+fn lay(pages: TalentPages, ranks: Vec<(u32, u8)>) -> Fixture {
+    let mut info = TalentInfo::default();
+    info.update_talent_data(
+        &TalentPacket {
+            unspent: 2,
+            active: 0,
+            groups: vec![TalentPacketGroup {
+                talents: ranks,
+                glyphs: Vec::new(),
+            }],
+        },
+        &|_, _| true,
+    );
+    info.enter_world(|| Some(pages));
+    Fixture(info)
+}
 
 /// The talent window's load prefix, in the production order.
 const FILES: &[&str] = &[
@@ -57,13 +108,12 @@ fn ranks(first: u32, name: &str, icon: &str, n: u32) -> Vec<TalentRankView> {
 
 /// A rank-3 prereq two tiers up the same column, the empty cell between carrying the branch.
 /// `points_spent` of 10 or more unlocks tier 3 (yellow, `1`); fewer draws it gray (`-1`).
-fn fixture(points_spent: u32) -> TalentUiState {
+fn fixture(points_spent: u32) -> (TalentPages, Vec<(u32, u8)>) {
     let rend = TalentView {
         id: 1,
         tier: 1,
         column: 3,
         ranks: ranks(201, "Improved Rend", "Ability_Gouge", 3),
-        required_spell_known: true,
         ..Default::default()
     };
     let deep_wounds = TalentView {
@@ -71,8 +121,13 @@ fn fixture(points_spent: u32) -> TalentUiState {
         tier: 3,
         column: 3,
         ranks: ranks(301, "Deep Wounds", "Ability_BackStab", 3),
-        prereqs: vec![TalentPrereqView { index: 0, rank: 2 }],
-        required_spell_known: true,
+        prereqs: vec![TalentPrereqView {
+            talent: 1,
+            rank: 2,
+            seat: Some((1, 3)),
+            spell: 1,
+            name: Some("Improved Rend".into()),
+        }],
         ..Default::default()
     };
     // Improved Rend holds three of the points; the rest sit in talents this page does not show.
@@ -82,40 +137,36 @@ fn fixture(points_spent: u32) -> TalentUiState {
     filler.column = 1;
     filler.ranks = ranks(501, "Filler", "Ability_Gouge", rest.max(1) as u32);
     let mut talents = vec![rend, deep_wounds];
-    let mut group = vec![2, -1];
+    let mut group = vec![(1, 2)];
     if rest > 0 {
         talents.push(filler);
-        group.push(rest - 1);
+        group.push((3, (rest - 1) as u8));
     }
-    TalentUiState {
-        tabs: vec![TalentTabView {
-            name: "Arms".into(),
-            icon: None,
-            background: "WarriorArms".into(),
-        }],
-        talents: vec![talents],
-        groups: vec![TalentGroupView {
-            ranks: vec![group],
-            unspent: 2,
-            ..Default::default()
-        }],
-        active_group: 0,
-        points: (2, 0),
-    }
+    (
+        TalentPages {
+            tabs: vec![TalentTabView {
+                id: 161,
+                name: "Arms".into(),
+                icon: None,
+                background: "WarriorArms".into(),
+            }],
+            talents: vec![talents],
+        },
+        group,
+    )
 }
 
 /// [`fixture`] plus a last-tier talent, so the tree scrolls: the scroll child's extent comes from
 /// the buttons in it via `UpdateScrollChildRect` (`Blizzard_TalentUI.lua:311`).
-fn tall_fixture() -> TalentUiState {
-    let mut state = fixture(10);
-    let mut deep = state.talents[0][1].clone();
+fn tall_fixture() -> (TalentPages, Vec<(u32, u8)>) {
+    let (mut pages, group) = fixture(10);
+    let mut deep = pages.talents[0][1].clone();
     deep.id = 4;
     deep.tier = 7;
     deep.prereqs = Vec::new();
     deep.ranks = ranks(401, "Mortal Strike", "Ability_BackStab", 1);
-    state.talents[0].push(deep);
-    state.groups[0].ranks[0].push(-1);
-    state
+    pages.talents[0].push(deep);
+    (pages, group)
 }
 
 fn view(name: &str, desc: &str) -> SpellTooltipView {
@@ -148,25 +199,27 @@ fn probe_player() -> UnitState {
     }
 }
 
-fn open_window(points_spent: u32) -> UiScript {
+fn open_window(points_spent: u32) -> (UiScript, Fixture) {
     let mut script = UiScript::new().expect("engine");
     script.set_screen_size(1024.0, 768.0);
     load_ui(&script);
     script.set_unit("player", Some(probe_player()));
-    script.set_talents(fixture(points_spent));
-    script.run("ToggleTalentFrame()").expect("toggle");
-    script
+    let (pages, ranks) = fixture(points_spent);
+    let mut fx = lay(pages, ranks);
+    script.with_live(&mut fx, |s| s.run("ToggleTalentFrame()").expect("toggle"));
+    (script, fx)
 }
 
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn branch_lines_draw_for_a_same_column_prereq() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut script = open_window(10);
-    // The Lua state: tier 1's down edge, the empty tier-2 cell's up and down, tier 3's top arrow.
-    script
-        .run(
-            r#"
+    let (mut script, mut fx) = open_window(10);
+    script.with_live(&mut fx, |script| {
+        // The Lua state: tier 1's down edge, the empty tier-2 cell's up and down, tier 3's top arrow.
+        script
+            .run(
+                r#"
             assert(TalentFrame:IsVisible(), "window visible")
             local a = TALENT_BRANCH_ARRAY
             assert(a[1][3].down == 1, "tier1 down, got " .. tostring(a[1][3].down))
@@ -174,83 +227,88 @@ fn branch_lines_draw_for_a_same_column_prereq() {
             assert(a[2][3].down == 1, "tier2 down, got " .. tostring(a[2][3].down))
             assert(a[3][3].topArrow == 1, "tier3 topArrow, got " .. tostring(a[3][3].topArrow))
             "#,
-        )
-        .expect("branch array");
-    // The pooled textures: at least one branch and one arrow shown.
-    script
-        .run(
-            r#"
+            )
+            .expect("branch array");
+        // The pooled textures: at least one branch and one arrow shown.
+        script
+            .run(
+                r#"
             assert(TalentFrameBranch1:IsShown(), "branch 1 shown")
             assert(TalentFrameArrow1:IsShown(), "arrow 1 shown")
             "#,
-        )
-        .expect("pool state");
-    // The extract: atlas-cropped quads (a full-sheet crop means SetTexCoord never landed).
-    script.resolve();
-    let quads = script.extract();
-    let branch = quads
-        .iter()
-        .filter_map(|q| match &q.content {
-            QuadContent::Texture {
-                path: Some(p),
-                tex_coords,
-                ..
-            } if p.contains("UI-TalentBranches") => Some(*tex_coords),
-            _ => None,
-        })
-        .next();
-    let Some(tex_coords) = branch else {
-        panic!("no UI-TalentBranches quad in the extract");
-    };
-    assert!(
-        tex_coords.is_some_and(|c| c.edges() != [0.0, 1.0, 0.0, 1.0]),
-        "branch quad must be atlas-cropped, got {tex_coords:?}"
-    );
-    assert!(
-        quads.iter().any(|q| matches!(
-            &q.content,
-            QuadContent::Texture { path: Some(p), .. } if p.contains("UI-TalentArrows")
-        )),
-        "no UI-TalentArrows quad in the extract"
-    );
+            )
+            .expect("pool state");
+        // The extract: atlas-cropped quads (a full-sheet crop means SetTexCoord never landed).
+        script.resolve();
+        let quads = script.extract();
+        let branch = quads
+            .iter()
+            .filter_map(|q| match &q.content {
+                QuadContent::Texture {
+                    path: Some(p),
+                    tex_coords,
+                    ..
+                } if p.contains("UI-TalentBranches") => Some(*tex_coords),
+                _ => None,
+            })
+            .next();
+        let Some(tex_coords) = branch else {
+            panic!("no UI-TalentBranches quad in the extract");
+        };
+        assert!(
+            tex_coords.is_some_and(|c| c.edges() != [0.0, 1.0, 0.0, 1.0]),
+            "branch quad must be atlas-cropped, got {tex_coords:?}"
+        );
+        assert!(
+            quads.iter().any(|q| matches!(
+                &q.content,
+                QuadContent::Texture { path: Some(p), .. } if p.contains("UI-TalentArrows")
+            )),
+            "no UI-TalentArrows quad in the extract"
+        );
+    });
 }
 
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn tooltip_is_complete_on_the_first_hover() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut script = open_window(10);
-    // With the talent spell views stored up front, the first OnEnter renders the full tooltip.
-    script.set_spell_tooltip(201, view("Improved Rend", "Bleed harder."));
-    script.set_spell_tooltip(301, view("Deep Wounds", "Bleed on crit."));
-    hover(&mut script, "TalentFrameTalent2");
-    script
-        .run(
-            r#"
+    let (mut script, mut fx) = open_window(10);
+    script.with_live(&mut fx, |script| {
+        // With the talent spell views stored up front, the first OnEnter renders the full tooltip.
+        script.set_spell_tooltip(201, view("Improved Rend", "Bleed harder."));
+        script.set_spell_tooltip(301, view("Deep Wounds", "Bleed on crit."));
+        hover(script, "TalentFrameTalent2");
+        script
+            .run(
+                r#"
             assert(GameTooltip:IsShown(), "tooltip shown on first hover")
             assert(GameTooltipTextLeft1:GetText() == "Deep Wounds",
                 "name line, got " .. tostring(GameTooltipTextLeft1:GetText()))
             "#,
-        )
-        .expect("first hover");
+            )
+            .expect("first hover");
+    });
 }
 
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn tooltip_miss_still_shows_the_rank_line() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut script = open_window(10);
-    // No view: the fallback still shows the talent head.
-    hover(&mut script, "TalentFrameTalent2");
-    script
-        .run(
-            r#"
+    let (mut script, mut fx) = open_window(10);
+    script.with_live(&mut fx, |script| {
+        // No view: the fallback still shows the talent head.
+        hover(script, "TalentFrameTalent2");
+        script
+            .run(
+                r#"
             assert(GameTooltip:IsShown(), "tooltip shown on a store miss")
             assert(GameTooltipTextLeft1:GetText() == "Rank 0/3",
                 "rank fallback, got " .. tostring(GameTooltipTextLeft1:GetText()))
             "#,
-        )
-        .expect("miss hover");
+            )
+            .expect("miss hover");
+    });
 }
 
 #[test]
@@ -258,7 +316,8 @@ fn tooltip_miss_still_shows_the_rank_line() {
 fn a_locked_tier_still_draws_the_branch_gray() {
     let _data = benilla_formats::wow_data_or_skip!();
     // 2 points spent, tier 3 locked: the chain still draws, gray (the texcoord tables' `-1` keys).
-    let script = open_window(2);
+    let (mut script, mut fx) = open_window(2);
+    script.with_live(&mut fx, |script| {
     script
         .run(
             r#"
@@ -270,6 +329,7 @@ fn a_locked_tier_still_draws_the_branch_gray() {
             "#,
         )
         .expect("gray branch");
+    });
 }
 
 /// An unavailable talent reaches the renderer desaturated (`Texture:SetDesaturated`, via
@@ -278,44 +338,46 @@ fn a_locked_tier_still_draws_the_branch_gray() {
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_unavailable_talent_reaches_the_renderer_desaturated() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut script = open_window(2);
-    script.resolve();
-    let icon = |quads: &[benilla_ui::script::ExtractedQuad], leaf: &str| -> (bool, [f32; 4]) {
-        quads
-            .iter()
-            .find_map(|q| match &q.content {
-                QuadContent::Texture {
-                    path: Some(p),
-                    color,
-                    desaturated,
-                    ..
-                } if p.ends_with(leaf) => Some((*desaturated, color.unwrap_or([1.0; 4]))),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("no {leaf} icon quad in the extract"))
-    };
-    let quads = script.extract();
+    let (mut script, mut fx) = open_window(2);
+    script.with_live(&mut fx, |script| {
+        script.resolve();
+        let icon = |quads: &[benilla_ui::script::ExtractedQuad], leaf: &str| -> (bool, [f32; 4]) {
+            quads
+                .iter()
+                .find_map(|q| match &q.content {
+                    QuadContent::Texture {
+                        path: Some(p),
+                        color,
+                        desaturated,
+                        ..
+                    } if p.ends_with(leaf) => Some((*desaturated, color.unwrap_or([1.0; 4]))),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("no {leaf} icon quad in the extract"))
+        };
+        let quads = script.extract();
 
-    // Deep Wounds: locked by the tier gate alone, since the player still has points to spend.
-    let (grey, tint) = icon(&quads, "Ability_BackStab");
-    assert!(
+        // Deep Wounds: locked by the tier gate alone, since the player still has points to spend.
+        let (grey, tint) = icon(&quads, "Ability_BackStab");
+        assert!(
         grey,
         "an unavailable talent's icon must carry the greyscale flag — the flag is what greys it"
     );
-    // The stock 0.65 tint still reaches the quad: the desaturate shader
-    // (`Shaders\Pixel\Desaturate.bls`) discards its RGB, but its alpha is read on both paths.
-    assert!(
-        (tint[0] - 0.65).abs() < 1e-3,
-        "the ref's 0.65 still lands on the quad (inert on RGB, live on alpha), got {tint:?}"
-    );
+        // The stock 0.65 tint still reaches the quad: the desaturate shader
+        // (`Shaders\Pixel\Desaturate.bls`) discards its RGB, but its alpha is read on both paths.
+        assert!(
+            (tint[0] - 0.65).abs() < 1e-3,
+            "the ref's 0.65 still lands on the quad (inert on RGB, live on alpha), got {tint:?}"
+        );
 
-    // The control: Improved Rend, learned to max.
-    let (grey, tint) = icon(&quads, "Ability_Gouge");
-    assert!(!grey, "a learned talent must NOT be greyed");
-    assert!(
-        (tint[0] - 1.0).abs() < 1e-3,
-        "…and draws at full colour, got {tint:?}"
-    );
+        // The control: Improved Rend, learned to max.
+        let (grey, tint) = icon(&quads, "Ability_Gouge");
+        assert!(!grey, "a learned talent must NOT be greyed");
+        assert!(
+            (tint[0] - 1.0).abs() < 1e-3,
+            "…and draws at full colour, got {tint:?}"
+        );
+    });
 }
 
 #[test]
@@ -328,7 +390,9 @@ fn a_wheel_spin_over_the_grid_scrolls_the_tree() {
     script.set_screen_size(1024.0, 768.0);
     load_ui(&script);
     script.set_unit("player", Some(probe_player()));
-    script.set_talents(tall_fixture());
+    let (pages, ranks) = tall_fixture();
+    let mut fx = lay(pages, ranks);
+    script.with_live(&mut fx, |script| {
     script.run("ToggleTalentFrame()").expect("toggle");
     // Rects must be resolved before the wheel's hit-test can land on the grid.
     script.resolve();
@@ -358,4 +422,5 @@ fn a_wheel_spin_over_the_grid_scrolls_the_tree() {
         )
         .expect("wheel up");
     assert!(script.errors().is_empty(), "{:?}", script.errors());
+    });
 }

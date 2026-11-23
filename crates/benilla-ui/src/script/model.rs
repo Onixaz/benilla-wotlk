@@ -599,28 +599,8 @@ pub(crate) struct Model {
     /// Builds [`Self::macro_item_icons`] on first use, then is spent.
     pub(crate) macro_item_icon_source: Option<MacroIconSource>,
 
-    pub(crate) talents: super::talent::TalentUiState,
     /// The achievement tables, lists and tracked set.
     pub(crate) achievement: super::achievement::AchievementModel,
-    /// The preview ranks per group, tab and talent, 0-based with -1 for none; reset to the learned
-    /// ranks by every push.
-    pub(crate) talent_preview: Vec<Vec<Vec<i32>>>,
-    /// `LearnTalent` sends queued, `(talentId, rank)`.
-    pub(crate) talent_learns: Vec<(u32, u32)>,
-    /// `LearnPreviewTalents` sends queued, one `(talentId, rank)` list each.
-    pub(crate) talent_preview_learns: Vec<Vec<(u32, u32)>>,
-    /// The pet's talent snapshot: its family's tree and at most one group.
-    pub(crate) pet_talents: super::talent::TalentUiState,
-    /// The pet group's preview ranks, as [`Self::talent_preview`].
-    pub(crate) pet_talent_preview: Vec<Vec<Vec<i32>>>,
-    /// `LearnTalent(.., true)` sends queued, `(talentId, rank)`.
-    pub(crate) pet_talent_learns: Vec<(u32, u32)>,
-    /// The inspected player's talent snapshot: its class's tabs and the inspect packet's groups.
-    pub(crate) inspect_talents: super::talent::TalentUiState,
-    /// The inspected groups' preview ranks, which the packet sets to the learned ones.
-    pub(crate) inspect_talent_preview: Vec<Vec<Vec<i32>>>,
-    /// `LearnPreviewTalents(true)` sends queued.
-    pub(crate) pet_talent_preview_learns: Vec<Vec<(u32, u32)>>,
     // ── The dialog engine's verbs ──
     /// The battleground scoreboard: pushed rows, faction filter, sort order.
     pub(crate) battlefield_board: super::battlefield_score::ScoreBoard,
@@ -1660,17 +1640,7 @@ impl Model {
             macro_icon_source: None,
             macro_item_icons: Vec::new(),
             macro_item_icon_source: None,
-            talents: super::talent::TalentUiState::default(),
             achievement: Default::default(),
-            talent_preview: Vec::new(),
-            talent_learns: Vec::new(),
-            talent_preview_learns: Vec::new(),
-            pet_talents: Default::default(),
-            pet_talent_preview: Vec::new(),
-            pet_talent_learns: Vec::new(),
-            inspect_talents: Default::default(),
-            inspect_talent_preview: Vec::new(),
-            pet_talent_preview_learns: Vec::new(),
             battlefield_board: Default::default(),
             battlefield_score_requests: 0,
             battlefield: Default::default(),

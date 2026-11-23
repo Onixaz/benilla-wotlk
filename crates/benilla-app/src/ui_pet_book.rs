@@ -140,7 +140,7 @@ mod tests {
     }
 
     #[test]
-    fn the_pet_books_gate_is_do_not_display_alone() {
+    fn the_pet_books_gate_is_do_not_display_and_not_in_spellbook() {
         let shown = |attributes: u32| SpellDisplay {
             attributes,
             ..Default::default()
@@ -156,6 +156,12 @@ mod tests {
         assert!(!shown(0x20).in_spellbook(&summons));
         // A passive shows in both.
         assert!(shown(0x40).in_pet_book() && shown(0x40).in_spellbook(&summons));
+        // `AttributesEx4 & 0x8000` keeps it out of the pet's list too (`0x542f17`).
+        let ex4 = SpellDisplay {
+            attributes_ex4: 0x8000,
+            ..Default::default()
+        };
+        assert!(!ex4.in_pet_book());
     }
 
     #[test]

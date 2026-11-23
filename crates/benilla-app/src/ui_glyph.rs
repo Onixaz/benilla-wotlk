@@ -34,11 +34,8 @@ impl Plugin for UiGlyphPlugin {
             .add_systems(
                 Update,
                 (
-                    // After the talent pages, so a watcher's handler reads the groups the
-                    // `SMSG_TALENTS_INFO` ahead of the field update named.
-                    feed_glyphs
-                        .in_set(UnitFeed)
-                        .after(crate::ui_talent::TalentFeed),
+                    // The talent groups' glyphs are read at the call (`0x5b7260`).
+                    feed_glyphs.in_set(UnitFeed),
                     crate::ui_script::raises::then_fire(drain_glyph_removes).in_set(UiDrain),
                 ),
             );
