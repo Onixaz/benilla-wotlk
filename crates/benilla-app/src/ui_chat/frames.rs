@@ -11,12 +11,9 @@ use benilla_ui::strings::{fill, Arg};
 use super::event::notice_token;
 use super::event::{event_name, ChatEvent, ChatEventKind};
 
-/// What the app keeps beside the stock chat frames: the default language and the log files.
+/// What the app keeps beside the stock chat frames: the log files and the line id.
 #[derive(Resource, Default)]
 pub(crate) struct ChatWindows {
-    /// The frame's `this.defaultLanguage`, the faction tongue `GetDefaultLanguage()` answers;
-    /// empty until the player and `Languages.dbc` are loaded.
-    pub default_language: String,
     /// The `LoggingChat` file, teed in [`route`].
     pub logs: super::logging::ChatLogFile,
     /// 3.3.5a's line id, the last one handed out as a fire's arg11.
@@ -41,22 +38,24 @@ pub(crate) fn route(
         event.script_args_with_line(windows.line_id),
     );
     if script.logging_flags().0 {
-        log_added(windows, event, kind, &|key| {
+        log_added(windows, event, kind, None, &|key| {
             script.lua().globals().get::<String>(key).ok()
         });
     }
 }
 
 /// The chat log's line for an added line, written only while the log is open as the add finds it
-/// after the event (`0x50a975`).
+/// after the event (`0x50a975`); `default_language` is the active player's default language id read
+/// at the call, `None` with no active player.
 pub(crate) fn log_added(
     windows: &mut ChatWindows,
     event: &ChatEvent,
     kind: ChatEventKind,
+    default_language: Option<u32>,
     get: &dyn Fn(&str) -> Option<String>,
 ) {
     if windows.logs.0.is_open() {
-        if let Some(line) = log_line(event, kind, &windows.default_language, get) {
+        if let Some(line) = log_line(event, kind, default_language, get) {
             windows.logs.0.record(line.as_bytes());
         }
     }
@@ -247,7 +246,7 @@ pub(crate) fn compose(
 pub(crate) fn log_line(
     event: &ChatEvent,
     kind: ChatEventKind,
-    default_language: &str,
+    default_language: Option<u32>,
     get: &dyn Fn(&str) -> Option<String>,
 ) -> Option<String> {
     use ChatEventKind as K;
@@ -298,8 +297,9 @@ pub(crate) fn log_line(
                 &get(&format!("CHAT_{ty}_GET")).unwrap_or_default(),
                 &[Arg::S(sender)],
             );
-            // The language's name when it is not the player's default (`0x50abc7`-`0x50ac06`).
-            if !event.language.is_empty() && event.language != default_language {
+            // The language's name when it is set, a player is active and it is not that player's
+            // default read now (`0x50abb7`-`0x50ac06`).
+            if event.language_id != 0 && default_language.is_some_and(|d| d != event.language_id) {
                 header.push_str(&format!("[{}] ", event.language));
             }
             let monster = matches!(

@@ -162,6 +162,8 @@ pub(crate) struct ChatEvent {
     pub text: String,
     pub sender: String,
     pub language: String,
+    /// arg3's language id, 0 for none: the log's header tests it against the player's default.
+    pub language_id: u32,
     pub channel: String,
     pub target: String,
     pub flag: String,

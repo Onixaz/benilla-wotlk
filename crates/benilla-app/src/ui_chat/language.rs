@@ -165,23 +165,24 @@ pub(crate) fn feed_language_skills(
     }
 }
 
-/// Keep `this.defaultLanguage` at the faction tongue `GetDefaultLanguage()` answers, which the
-/// `[Language]` header test in [`super::frames::compose`] reads.
-pub(super) fn feed_default_language(
-    mut windows: ResMut<super::frames::ChatWindows>,
-    langs: Option<Res<crate::ui_unit::DefaultLanguagesRes>>,
-    self_q: Query<&ObjectStore, With<SelfPlayer>>,
-) {
-    let name = self_q
-        .iter()
+/// The active player's default language id read at the call (`0x6d5e70`: the race byte of the
+/// player's descriptor, its `ChrRaces` base language, 0 with no record); `None` with no active
+/// player, which the log's header test reads at `0x50abbe`.
+pub(crate) fn default_language_id(world: &mut World) -> Option<u32> {
+    let race = world
+        .query_filtered::<&ObjectStore, With<SelfPlayer>>()
+        .iter(world)
         .next()
-        .and_then(|store| store.0.unit_race())
-        .zip(langs.as_ref())
-        .and_then(|(race, langs)| langs.0.name(u32::from(race), 0))
-        .unwrap_or_default();
-    if windows.default_language != name {
-        windows.default_language = name.to_string();
-    }
+        .map(|store| store.0.unit_race())?;
+    Some(
+        match (
+            race,
+            world.get_resource::<crate::ui_unit::DefaultLanguagesRes>(),
+        ) {
+            (Some(race), Some(langs)) => langs.0.id(u32::from(race)),
+            _ => 0,
+        },
+    )
 }
 
 /// Our skill in `language` at the call (`0x6e0640`): the last known spell declaring it, its skill line's value; 0 with none.
@@ -280,5 +281,41 @@ mod tests {
     fn a_missing_pool_renders_plainly_rather_than_blanking_chat() {
         let l = langs(&[], false);
         assert_eq!(l.garble(1, "hello there"), "hello there");
+    }
+
+    /// The log header's default language is read at the call (`0x50abc2` -> `0x6d5e70`): no
+    /// active player is `None`, a player created this frame answers its race's base language at
+    /// once, and a race with no `ChrRaces` record answers 0.
+    #[test]
+    fn the_default_language_is_read_from_the_active_player_at_the_call() {
+        let mut world = World::new();
+        world.insert_resource(crate::ui_unit::DefaultLanguagesRes(
+            benilla_formats::DefaultLanguages::from_rows(&[(1, 7, "Common"), (2, 1, "Orcish")]),
+        ));
+        assert_eq!(default_language_id(&mut world), None);
+        // `UNIT_FIELD_BYTES_0` byte 0 is the race.
+        const BYTES_0: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_0;
+        let player = world
+            .spawn((
+                SelfPlayer,
+                ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(BYTES_0, 2)])),
+            ))
+            .id();
+        assert_eq!(default_language_id(&mut world), Some(1));
+        // Another character on the same session: the new race, with no frame between.
+        world.entity_mut(player).despawn();
+        let human = world
+            .spawn((
+                SelfPlayer,
+                ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(BYTES_0, 1)])),
+            ))
+            .id();
+        assert_eq!(default_language_id(&mut world), Some(7));
+        world.entity_mut(human).despawn();
+        world.spawn((
+            SelfPlayer,
+            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(BYTES_0, 99)])),
+        ));
+        assert_eq!(default_language_id(&mut world), Some(0));
     }
 }

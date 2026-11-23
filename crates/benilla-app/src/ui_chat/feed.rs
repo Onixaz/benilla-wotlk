@@ -1166,6 +1166,7 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
                 // The effective language, not the wire's: narration types and GM mode force
                 // 0, which also drops the `[Language]` header.
                 language: language_name(language).to_string(),
+                language_id: language,
                 channel: channel_base,
                 flag: flag_of_tag(msg.chat_tag).to_string(),
                 sender_guid: msg.sender_guid,
@@ -1587,8 +1588,15 @@ fn route_in_world(
     crate::ui_script::safe_world::raise(world, super::event::event_name(kind), args);
     // The flag as the listeners left it (`[0xb759d0]`).
     if script.logging_flags().0 {
+        let default_language = super::language::default_language_id(world);
         if let Some(mut windows) = world.get_resource_mut::<ChatWindows>() {
-            super::frames::log_added(&mut windows, event, kind, &globals(script));
+            super::frames::log_added(
+                &mut windows,
+                event,
+                kind,
+                default_language,
+                &globals(script),
+            );
         }
     }
 }

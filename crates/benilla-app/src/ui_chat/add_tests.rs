@@ -208,12 +208,22 @@ fn the_log_line_is_the_add_s_own_composition() {
         text: "buy |cff1eff00|Hitem:2589:0|h[Linen Cloth]|h|r at 50% || cheap".into(),
         sender: "Ann".into(),
         language: "Orcish".into(),
+        language_id: 1,
         ..Default::default()
     };
     assert_eq!(
-        super::frames::log_line(&say, ChatEventKind::Say, "Common", &strings).unwrap(),
+        super::frames::log_line(&say, ChatEventKind::Say, Some(7), &strings).unwrap(),
         "Ann says: [Orcish] buy Linen Cloth at 50% | cheap"
     );
+    // The player's own default (Orcish for a Horde race) and no active player print no header
+    // (`0x50abb7`-`0x50abc9`).
+    for default in [Some(1), None] {
+        assert_eq!(
+            super::frames::log_line(&say, ChatEventKind::Say, default, &strings).unwrap(),
+            "Ann says: buy Linen Cloth at 50% | cheap",
+            "{default:?}"
+        );
+    }
     let channel = ChatEvent {
         kind: Some(ChatEventKind::Channel),
         text: "lfg".into(),
@@ -222,7 +232,7 @@ fn the_log_line_is_the_add_s_own_composition() {
         ..Default::default()
     };
     assert_eq!(
-        super::frames::log_line(&channel, ChatEventKind::Channel, "Common", &strings).unwrap(),
+        super::frames::log_line(&channel, ChatEventKind::Channel, Some(7), &strings).unwrap(),
         "[2. Trade] Ann: lfg"
     );
     // A monster line's own `%s` is the name's slot: not doubled, filled at the write.
@@ -233,7 +243,7 @@ fn the_log_line_is_the_add_s_own_composition() {
         ..Default::default()
     };
     assert_eq!(
-        super::frames::log_line(&monster, ChatEventKind::MonsterSay, "Common", &strings).unwrap(),
+        super::frames::log_line(&monster, ChatEventKind::MonsterSay, Some(7), &strings).unwrap(),
         "Hogger says: Hogger attacks!"
     );
     let joined = ChatEvent {
@@ -243,7 +253,7 @@ fn the_log_line_is_the_add_s_own_composition() {
         ..Default::default()
     };
     assert_eq!(
-        super::frames::log_line(&joined, ChatEventKind::ChannelNotice, "Common", &strings).unwrap(),
+        super::frames::log_line(&joined, ChatEventKind::ChannelNotice, Some(7), &strings).unwrap(),
         "Joined Channel: [1. General]"
     );
 }

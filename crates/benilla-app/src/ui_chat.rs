@@ -111,7 +111,6 @@ impl Plugin for UiChatPlugin {
                 (
                     language::load_language_words,
                     language::feed_language_skills,
-                    language::feed_default_language,
                 )
                     .before(crate::net::apply_net_updates)
                     // Ahead of every call into Lua, whose item-text verbs read the tables at the call.
