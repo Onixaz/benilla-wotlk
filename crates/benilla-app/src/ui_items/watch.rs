@@ -520,28 +520,120 @@ pub(crate) fn item_updated(world: &mut World, item: u64) {
     }
 }
 
-/// The character page's item refresh (`0x5e84c0`): a vault or bank-bag slot holding the item, or the bag holding it, fires that slot's `PLAYERBANKSLOTS_CHANGED` (`0x5e855e`).
+/// The character page's item refresh (`0x5e84c0`), on the player slot holding the item, else the one holding its bag when the bag is not our pack (`0x5e851a`-`0x5e855e`): a worn slot or equipped bag fires `UNIT_INVENTORY_CHANGED` with `"player"` (`0x5e8568`, `0x5e85b9`); a vault or bank-bag slot fires its `PLAYERBANKSLOTS_CHANGED` (`0x5e858d`); past those, an item of our ammo's entry fires `UNIT_INVENTORY_CHANGED` (`0x5e85a1`-`0x5e85b9`).
 fn character_item_updated(world: &mut World, item: u64) {
-    let slot = world
+    character_item_refresh(world, item, None);
+}
+
+/// [`character_item_updated`] with the item's entry read by the caller where its object may already be gone.
+fn character_item_refresh(world: &mut World, item: u64, entry: Option<u32>) {
+    let found = world
         .run_system_cached_with(
-            |In(item): In<u64>, objects: Objects, self_guid: Option<Res<crate::net::SelfGuid>>| {
-                let fields = objects.object(item)?;
+            |In((item, entry)): In<(u64, Option<u32>)>,
+             objects: Objects,
+             self_guid: Option<Res<crate::net::SelfGuid>>| {
                 let me = objects.player_object()?;
-                let contained = fields.item_contained()?;
+                let fields = objects.object(item);
                 let slot_of = |g: u64| (0..150u8).find(|&s| me.player_slot(s) == Some(g));
-                let ours = self_guid.and_then(|s| s.0) == Some(contained);
-                slot_of(item).or_else(|| (!ours).then(|| slot_of(contained)).flatten())
+                let mut slot = slot_of(item);
+                if slot.is_none() {
+                    let contained = fields.and_then(|f| f.item_contained());
+                    let ours = contained.is_some() && self_guid.and_then(|s| s.0) == contained;
+                    slot = contained.filter(|_| !ours).and_then(slot_of);
+                }
+                let entry = entry.or_else(|| fields?.object_entry());
+                let ammo = entry.is_some() && entry == me.player_ammo_id();
+                Some((slot, ammo))
             },
-            item,
+            (item, entry),
         )
         .ok()
         .flatten();
-    let bank = slot.filter(|s| (39..=73).contains(s));
-    if let (Some(s), Some(mut ui)) = (bank, world.get_resource_mut::<UiEvents>()) {
+    let Some((slot, ammo)) = found else {
+        return;
+    };
+    let Some(mut ui) = world.get_resource_mut::<UiEvents>() else {
+        return;
+    };
+    let player = || vec![ScriptValue::Str("player".into())];
+    if slot.is_some_and(|s| s <= 22) {
+        ui.fire("UNIT_INVENTORY_CHANGED", player());
+        return;
+    }
+    if let Some(s) = slot.filter(|s| (39..=73).contains(s)) {
         ui.fire(
             "PLAYERBANKSLOTS_CHANGED",
             vec![ScriptValue::Int(i64::from(s) - 38)],
         );
+    }
+    if ammo {
+        ui.fire("UNIT_INVENTORY_CHANGED", player());
+    }
+}
+
+/// The disable's character page refresh on an item of ours, of entry `entry` (`0x70b0fa` -> `0x5e84c0`).
+pub(crate) fn disabled(world: &mut World, item: u64, entry: u32) {
+    character_item_refresh(world, item, Some(entry));
+}
+
+/// Whether item `item` is ours, its owner the active player (`0x707752`-`0x707761`).
+fn owner_is_us(world: &mut World, item: u64) -> bool {
+    world
+        .run_system_cached_with(
+            |In(item): In<u64>, objects: Objects, self_guid: Option<Res<crate::net::SelfGuid>>| {
+                let me = self_guid.and_then(|s| s.0);
+                me.is_some() && objects.object(item).and_then(|f| f.item_owner()) == me
+            },
+            item,
+        )
+        .unwrap_or(false)
+}
+
+/// The count watch's tail on an item of ours: an `Item.dbc` row with `InventoryType` 24 (`INVTYPE_AMMO`) runs the alert recompute (`0x707837`-`0x707864`).
+pub(crate) fn stack_alerts(world: &mut World, item: u64) {
+    if !owner_is_us(world, item) {
+        return;
+    }
+    let ammo = world
+        .run_system_cached_with(
+            |In(item): In<u64>,
+             objects: Objects,
+             displays: Option<Res<crate::entities::ItemDisplays>>| {
+                let entry = objects.object(item)?.object_entry()?;
+                Some(displays?.item_dbc.get(&entry)?.inventory_type == INVTYPE_AMMO)
+            },
+            item,
+        )
+        .ok()
+        .flatten()
+        .unwrap_or(false);
+    if ammo {
+        crate::ui_char::update_inventory_alerts(world);
+    }
+}
+
+/// `INVTYPE_AMMO`, the `Item.dbc` inventory type the count watch's alert leg tests (`0x70785e`).
+const INVTYPE_AMMO: u8 = 24;
+
+/// The flags watch past its `0x10` test (`0x707a30`): an item of the active player worn in slots 0..18 runs the alert recompute (`0x707a97`-`0x707ac6`).
+pub(crate) fn flags_changed(world: &mut World, item: u64) {
+    let worn = world
+        .run_system_cached_with(
+            |In(item): In<u64>, objects: Objects, self_guid: Option<Res<crate::net::SelfGuid>>| {
+                let me = self_guid.and_then(|s| s.0)?;
+                if objects.object(item)?.item_owner() != Some(me) {
+                    return None;
+                }
+                let player = objects.player_object()?;
+                Some((0..=18u8).any(|s| player.player_slot(s) == Some(item)))
+            },
+            item,
+        )
+        .ok()
+        .flatten()
+        .unwrap_or(false);
+    if worn {
+        crate::ui_char::update_inventory_alerts(world);
     }
 }
 
@@ -625,6 +717,8 @@ pub(crate) fn enchants_changed(world: &mut World, item: u64) {
     crate::ui_action::slots::update_item(world, entry);
     item_updated(world, item);
     character_item_updated(world, item);
+    // Then the alert recompute (`0x707ff8`).
+    crate::ui_char::update_inventory_alerts(world);
 }
 
 /// The post-init's unlock on an item we own (`0x70ad20`): a single item unlocks itself (`0x70ad9e`), a stackable kind every item of it outside the bank (`0x70ad8d`); then the bar's faces and item update (`0x70add6`-`0x70adf0`).

@@ -46,7 +46,6 @@ const ON_THE_QUEUE: &[(&str, &str)] = &[
     ("ui_aura.rs", "drain_aura_cancels"),
     ("ui_battlefield.rs", "drain_battlefield"),
     ("ui_calendar.rs", "feed_calendar"),
-    ("ui_char.rs", "feed_char"),
     ("ui_chat/away.rs", "movement_clears_afk"),
     ("ui_chat/broadcast.rs", "feed_broadcasts"),
     ("ui_chat/channels.rs", "auto_join_zone_channels"),

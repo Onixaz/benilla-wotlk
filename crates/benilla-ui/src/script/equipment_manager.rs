@@ -201,9 +201,9 @@ impl ItemPlace {
     }
 }
 
-/// The equipped item in slot `slot0` (0..18).
-fn equipped(model: &super::Model, slot0: usize) -> Option<&super::InvSlotView> {
-    model.inventory_slots.get(slot0 + 1)?.as_ref()
+/// The equipped item in slot `slot0` (0..18), read at the call.
+fn equipped(model: &super::Model, slot0: usize) -> Option<super::InvSlotView> {
+    model.worn_slot(slot0 + 1)
 }
 
 /// Every held item and its place, in the reference's search order: the equipment, the backpack,

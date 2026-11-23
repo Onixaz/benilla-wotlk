@@ -291,7 +291,6 @@ mod tests {
         app.world_mut()
             .resource_mut::<PendingItemOps>()
             .lock(0x4000_0000_0000_0007);
-        let epoch = app.world().resource::<PendingItemOps>().epoch();
 
         crate::net::handlers::dispatch(
             app.world_mut(),
@@ -303,7 +302,6 @@ mod tests {
 
         let pending = app.world().resource::<PendingItemOps>();
         assert!(pending.is_empty() && !pending.is_locked(0x4000_0000_0000_0007));
-        assert_ne!(pending.epoch(), epoch);
     }
 }
 

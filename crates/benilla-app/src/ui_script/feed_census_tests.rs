@@ -21,8 +21,6 @@ const FEEDS: &[&str] = &[
     "benilla_app::tutorial::feed_tutorials",
     "benilla_app::ui_action::feed::feed_actions",
     "benilla_app::ui_calendar::feed_calendar",
-    // The `"player"` token's unit-field stat fan-out, the units' (#1289), and the inventory snapshot (#1455).
-    "benilla_app::ui_char::feed_char",
     "benilla_app::ui_chat::broadcast::feed_broadcasts",
     "benilla_app::ui_chat::channels::seed_channels",
     "benilla_app::ui_chat::feed::feed_chat",
@@ -91,6 +89,10 @@ const KEPT: &[(&str, &str)] = &[
     (
         "benilla_app::death::update_corpse_distance",
         "12340 tests the corpse distance on every world-frame update (0x4fa040 -> 0x51f5c0) and fires the corpse range events from that test (0x512c40), not from a packet",
+    ),
+    (
+        "benilla_app::ui_char::sync_char_booth",
+        "rendering, no event: 12340's model frame reads its facing on every frame render (0x960240), the facing its rotate buttons write (0x9606e0); the sheet's verbs read the player at the call and its events fire from the player's watches",
     ),
     (
         "benilla_app::ui_dressup::sync_dressup_booth",

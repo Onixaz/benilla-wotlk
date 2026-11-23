@@ -394,7 +394,7 @@ fn render_lines(
         let worn: Vec<WornPiece> = match &set_view {
             Some(_) => {
                 let ids: Vec<u32> = model
-                    .inventory_slots
+                    .worn_slots()
                     .iter()
                     .take(19)
                     .flatten()

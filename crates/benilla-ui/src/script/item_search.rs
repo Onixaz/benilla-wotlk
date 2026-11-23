@@ -149,7 +149,7 @@ fn contents(model: &Model, bag: i64, out: &mut Vec<Held>) {
 
 /// The item in doll id `id`.
 fn worn(model: &Model, id: usize, out: &mut Vec<Held>) {
-    let Some(Some(s)) = model.inventory_slots.get(id) else {
+    let Some(s) = model.worn_slot(id) else {
         return;
     };
     if s.item_id == 0 {
@@ -267,7 +267,7 @@ fn item_range_spell(lua: &Lua, item: &Value) -> mlua::Result<Option<u32>> {
 fn enchant_use_spell(model: &Model, item_id: u32) -> Option<u32> {
     let query = ItemQuery::Id(item_id);
     let item = find_item(model, &query, IN_EQUIPMENT | IGNORE_STATE)?;
-    let slot = model.inventory_slots.get(item.slot as usize)?.as_ref()?;
+    let slot = model.worn_slot(item.slot as usize)?;
     slot.enchants
         .iter()
         .map(|e| e.use_spell)
@@ -480,9 +480,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let inv_slot = n as u32 - 1 + 15;
             let mut model = crate::script::model_mut_of(lua);
             let enchanted = model
-                .inventory_slots
-                .get(inv_slot as usize + 1)
-                .and_then(Option::as_ref)
+                .worn_slot(inv_slot as usize + 1)
                 .is_some_and(|s| s.enchants.iter().any(|e| e.slot == 1 && e.id != 0));
             if enchanted {
                 model.temp_enchant_cancels.push(inv_slot);

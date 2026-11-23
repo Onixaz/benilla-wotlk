@@ -65,6 +65,11 @@ local VERBS = {
     { "offatk", function() return (select(3, UnitAttackBothHands("player"))) end },
     { "wand", function() return HasWandEquipped() end },
     { "regen", function() return math.floor(GetManaRegen()) end },
+    { "str", function() return (UnitStat("player", 1)) end },
+    { "ap", function() return (UnitAttackPower("player")) end },
+    { "link16", function() return GetInventoryItemLink("player", 16) ~= nil end },
+    { "dur16", function() local c, m = GetInventoryItemDurability(16) return c and (c .. "/" .. m) end },
+    { "ammo", function() return GetInventoryItemQuality("player", 0) ~= nil end },
     { "skillpts", function() return GetAdjustedSkillPoints() end },
     { "titlename", function() return GetTitleName(1) end },
     { "rep5", function() return (GetFactionInfo(5)) end },
@@ -10239,6 +10244,151 @@ fn weapon_and_regen_watches_fire_in_the_values_handler_with_the_fields_read_at_t
             "UNIT_RANGED_ATTACK_POWER player | regen=12",
             "SPELLS_CHANGED | regen=12",
         ]
+    );
+}
+
+/// Our unit watches (`0x614190` -> `0x60c240`) fire each moved stat field's event to every token naming us (`0x60bf10`) in field order, one per moved field, with the verbs reading the packet's figures at each: two stat words fire `UNIT_STATS` twice, then the attack power's `UNIT_ATTACK_POWER`.
+#[test]
+fn stat_watches_fire_per_moved_field_with_the_figures_read_at_the_call() {
+    use benilla_protocol::field::{
+        FIELD_UNIT_ATTACK_POWER as AP, FIELD_UNIT_BYTES_0, FIELD_UNIT_STAT0 as STAT0,
+    };
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER, (FIELD_UNIT_BYTES_0, 1 | 1 << 8)]) else {
+        return;
+    };
+    const EVENTS: &[&str] = &["UNIT_STATS", "UNIT_ATTACK_POWER", "UNIT_RESISTANCES"];
+    let seen = rig.packets(
+        vec![self_values(&[(STAT0, 40), (STAT0 + 1, 30), (AP, 120)])],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, EVENTS, &["str", "ap"]),
+        vec![
+            "UNIT_STATS player | str=40 ap=120",
+            "UNIT_STATS player | str=40 ap=120",
+            "UNIT_ATTACK_POWER player | str=40 ap=120",
+        ]
+    );
+    // A word re-sent unchanged runs no watch.
+    let same = rig.packets(vec![self_values(&[(STAT0, 40), (AP, 121)])], 2);
+    assert_eq!(
+        pin(&same, EVENTS, &["ap"]),
+        vec!["UNIT_ATTACK_POWER player | ap=121"]
+    );
+}
+
+/// An equip in both packet orders. The slot and its visible entry in one update: the visible entry watch (`0x6e1e10`) runs the alert recompute (`0x6e1ea4`) and the main hand's `UNIT_ATTACK` and book update, then our unit's inventory watch on the range's first moved word (`0x60c260`) `UNIT_INVENTORY_CHANGED`, then the slot field's `PLAYER_EQUIPMENT_CHANGED` (`0x6dee81`). With the item created behind the slot, the slot verbs read nothing until it lands, and its post-init fires `UNIT_INVENTORY_CHANGED` again (`0x70ae6b`). A durability loss runs the durability watch's recompute (`0x707c08`): `UPDATE_INVENTORY_ALERTS` on the broken status, then `UPDATE_INVENTORY_DURABILITY`. The ammo field's watch fires `UNIT_INVENTORY_CHANGED` with `"player"` (`0x5e8427`).
+#[test]
+fn inventory_watches_fire_in_the_values_handler_with_the_slots_read_at_the_call() {
+    use benilla_protocol::field::{
+        player_visible_item_entry_field as visible, FIELD_ITEM_CONTAINED, FIELD_ITEM_DURABILITY,
+        FIELD_ITEM_MAXDURABILITY, FIELD_ITEM_OWNER, FIELD_ITEM_STACK_COUNT, FIELD_OBJECT_ENTRY,
+        FIELD_PLAYER_AMMO_ID, FIELD_UNIT_BYTES_0,
+    };
+    const SWORD: u64 = 0x4000_0000_0000_0710;
+    const AXE: u64 = 0x4000_0000_0000_0711;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER, (FIELD_UNIT_BYTES_0, 1 | 1 << 8)]) else {
+        return;
+    };
+    let mut weapon = crate::items::test_template("Weapon");
+    weapon.class = 2;
+    weapon.subclass = 7;
+    weapon.inventory_type = 13;
+    let mut arrow = crate::items::test_template("Arrow");
+    arrow.class = 6;
+    arrow.inventory_type = 24;
+    rig.packets(
+        [(25, weapon.clone()), (26, weapon), (2512, arrow)]
+            .into_iter()
+            .map(|(entry, info)| SessionEvent::ItemTemplate {
+                entry,
+                info: Some(Box::new(info)),
+            })
+            .collect(),
+        2,
+    );
+    let guid_pair =
+        |field: u16, guid: u64| [(field, guid as u32), (field + 1, (guid >> 32) as u32)];
+    let create = |guid: u64, entry: u32| {
+        let mut pairs = vec![
+            (FIELD_OBJECT_ENTRY, entry),
+            (FIELD_ITEM_STACK_COUNT, 1),
+            (FIELD_ITEM_DURABILITY, 50),
+            (FIELD_ITEM_MAXDURABILITY, 50),
+        ];
+        pairs.extend(guid_pair(FIELD_ITEM_OWNER, ME));
+        pairs.extend(guid_pair(FIELD_ITEM_CONTAINED, ME));
+        SessionEvent::ItemCreate {
+            guid,
+            container: false,
+            fields: ObjectFields::from_pairs(&pairs).into_created(ObjectType::Item),
+        }
+    };
+    let wear = |guid: u64, entry: u32| {
+        let mut words = guid_pair(FIELD_PLAYER_INV_SLOT_HEAD + 30, guid).to_vec();
+        words.push((visible(15), entry));
+        self_values(&words)
+    };
+    const EVENTS: &[&str] = &[
+        "UNIT_INVENTORY_CHANGED",
+        "PLAYER_EQUIPMENT_CHANGED",
+        "UPDATE_INVENTORY_ALERTS",
+        "UPDATE_INVENTORY_DURABILITY",
+        "UNIT_ATTACK",
+        "SPELLS_CHANGED",
+    ];
+    // The item first, then the slot.
+    rig.packets(vec![create(SWORD, 25)], 2);
+    let equip = rig.packets(vec![wear(SWORD, 25)], 2);
+    assert_eq!(
+        pin(&equip, EVENTS, &["link16"]),
+        vec![
+            "UPDATE_INVENTORY_DURABILITY | link16=true",
+            "UNIT_ATTACK player | link16=true",
+            "SPELLS_CHANGED | link16=true",
+            "UNIT_INVENTORY_CHANGED player | link16=true",
+            "PLAYER_EQUIPMENT_CHANGED 16 1 | link16=true",
+        ]
+    );
+    // The durability loss on the worn item.
+    let broke = rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: SWORD,
+            fields: ObjectFields::from_pairs(&[(FIELD_ITEM_DURABILITY, 0)]),
+        }],
+        2,
+    );
+    assert_eq!(
+        pin(&broke, EVENTS, &["dur16"]),
+        vec![
+            "UPDATE_INVENTORY_ALERTS | dur16=0/50",
+            "UPDATE_INVENTORY_DURABILITY | dur16=0/50",
+        ]
+    );
+    // The slot first, then the item: nothing to read until the create lands, the broken status gone with the sword; a fresh object runs no field watch, only its post-init's event.
+    let swap = rig.packets(vec![wear(AXE, 26), create(AXE, 26)], 2);
+    assert_eq!(
+        pin(&swap, EVENTS, &["link16", "dur16"]),
+        vec![
+            "UPDATE_INVENTORY_ALERTS | link16=false dur16=nil",
+            "UPDATE_INVENTORY_DURABILITY | link16=false dur16=nil",
+            "UNIT_ATTACK player | link16=false dur16=nil",
+            "SPELLS_CHANGED | link16=false dur16=nil",
+            "UNIT_INVENTORY_CHANGED player | link16=false dur16=nil",
+            "PLAYER_EQUIPMENT_CHANGED 16 1 | link16=false dur16=nil",
+            "UNIT_INVENTORY_CHANGED player | link16=true dur16=50/50",
+        ]
+    );
+    // The ammo field's watch.
+    let ammo = rig.packets(vec![self_values(&[(FIELD_PLAYER_AMMO_ID, 2512)])], 2);
+    assert_eq!(
+        pin(&ammo, EVENTS, &["ammo"]),
+        vec!["UNIT_INVENTORY_CHANGED player | ammo=true"]
+    );
+    let unammo = rig.packets(vec![self_values(&[(FIELD_PLAYER_AMMO_ID, 0)])], 2);
+    assert_eq!(
+        pin(&unammo, EVENTS, &["ammo"]),
+        vec!["UNIT_INVENTORY_CHANGED player | ammo=false"]
     );
 }
 

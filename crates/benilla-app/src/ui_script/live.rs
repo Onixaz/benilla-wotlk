@@ -2023,6 +2023,39 @@ impl LiveState for LiveView<'_, '_> {
         ))
     }
 
+    fn inventory_slot(&self, slot: usize) -> Option<Option<benilla_ui::script::InvSlotView>> {
+        let entity = self.player_entity(self.active_player()?)?;
+        let store = self.stores.get(entity).ok()?;
+        Some(self.char_sheet.as_ref()?.inventory_slot(
+            store,
+            self.items.as_deref()?,
+            self.enchants.as_deref(),
+            self.commands.as_deref()?,
+            self.pending.as_deref()?,
+            self.classes.as_deref().map(|t| &t.0),
+            slot,
+        ))
+    }
+
+    fn bank_bag_slot(&self, i: usize) -> Option<Option<benilla_ui::script::InvSlotView>> {
+        let entity = self.player_entity(self.active_player()?)?;
+        let store = self.stores.get(entity).ok()?;
+        Some(self.char_sheet.as_ref()?.bank_bag_slot(
+            store,
+            self.items.as_deref()?,
+            self.enchants.as_deref(),
+            self.commands.as_deref()?,
+            self.pending.as_deref()?,
+            i,
+        ))
+    }
+
+    fn weapon_enchants(&self) -> Option<[Option<benilla_ui::script::WeaponEnchant>; 2]> {
+        let entity = self.player_entity(self.active_player()?)?;
+        let store = self.stores.get(entity).ok()?;
+        Some(self.char_sheet.as_ref()?.weapon_enchants(store))
+    }
+
     fn skill_slot(&self, skill_id: u32) -> Option<Option<benilla_ui::script::SkillLive>> {
         let entity = self.player_entity(self.active_player()?)?;
         let fields = &self.stores.get(entity).ok()?.0;

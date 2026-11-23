@@ -865,9 +865,10 @@ pub(crate) fn leave_world(world: &mut World) {
 /// Queue the battlefield's world entry (`0x54ca50`) for when the calling system's commands apply.
 pub(crate) fn queue_enter_world(commands: &mut Commands) {
     commands.queue(|world: &mut World| {
-        // The bar's part (`0x5281b8`), then the containers' (`0x5281c7`), ahead of the
-        // battlefield's (`0x528230`).
+        // The bar's part (`0x5281b8`), the character page's (`0x5281bd`), then the containers'
+        // (`0x5281c7`), ahead of the battlefield's (`0x528230`).
         crate::ui_action::bonus::enter_world(world);
+        crate::ui_char::enter_world(world);
         crate::ui_items::watch::enter_world(world);
         // The merchant's (`0x5281ea`), then the trade window's (`0x5281ef`).
         crate::ui_merchant::enter_world(world);
