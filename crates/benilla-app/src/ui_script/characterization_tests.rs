@@ -591,7 +591,6 @@ fn quest_template(src_item_id: u32) -> SessionEvent {
     }))
 }
 
-/// The load runs before our create, as 12340's UI init runs before its login (`0x4db8f5`, `0x4db95a`): the files' own events find no active player, so `HasFullControl`'s active-player lookup (`0x611616`) fails its test (`0x611620`) and it answers nil until the create.
 #[test]
 fn login_fires_the_load_events_in_order() {
     let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
@@ -610,8 +609,8 @@ fn login_fires_the_load_events_in_order() {
             &["control", "dead"]
         ),
         vec![
-            "ADDON_LOADED CharzObserver | control=nil dead=nil",
-            "VARIABLES_LOADED | control=nil dead=nil",
+            "ADDON_LOADED CharzObserver | control=1 dead=nil",
+            "VARIABLES_LOADED | control=1 dead=nil",
             "ADDON_LOADED Blizzard_CombatLog | control=1 dead=nil",
             "PLAYER_LOGIN | control=1 dead=nil",
             "ADDON_LOADED Blizzard_TimeManager | control=1 dead=nil",
@@ -8492,33 +8491,6 @@ fn a_loot_window_fires_from_its_handlers_with_the_rows_read_at_the_call() {
                     "lootn=0 l1= l2= l3= l3q=0 coin1=nil item2=nil"
                 ),
             ],
-        ]
-    );
-}
-
-/// 12340 loads the in-game UI (`0x4db8f5`, registering the list's handler at `0x52b87d` and loading FrameXML at `0x52baa3`) before it logs in (`0x4db95a`): the login's achievement list fires its events (`0x5b3478`, `0x5b3484`) into the loaded UI, after `VARIABLES_LOADED`.
-#[test]
-fn the_login_achievement_list_fires_into_the_loaded_ui() {
-    use benilla_protocol::messages::AllAchievementData;
-    let list = SessionEvent::AllAchievementData(AllAchievementData {
-        achievements: Vec::new(),
-        criteria: Vec::new(),
-    });
-    let Some(mut rig) = Rig::login_after(vec![list], &[OBJECT_TYPE_PLAYER]) else {
-        return;
-    };
-    let seen = rig.take();
-    let events = &[
-        "VARIABLES_LOADED",
-        "CRITERIA_UPDATE",
-        "RECEIVED_ACHIEVEMENT_LIST",
-    ];
-    assert_eq!(
-        pin(&seen, events, &["achcan"]),
-        vec![
-            "VARIABLES_LOADED | achcan=false",
-            "CRITERIA_UPDATE | achcan=true",
-            "RECEIVED_ACHIEVEMENT_LIST | achcan=true",
         ]
     );
 }
