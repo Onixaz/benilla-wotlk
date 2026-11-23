@@ -760,6 +760,7 @@ impl<'a> Tokens<'a> {
 
     /// The guids a fixture's chains end on, each once: each held unit's target, the focus and the
     /// vehicle. The game's are walked by the app.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) fn fixture_chain_ends(&self) -> Vec<u64> {
         let Src::Fixture(g) = self.src else {
             return Vec::new();

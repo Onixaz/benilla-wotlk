@@ -112,16 +112,23 @@ pub struct TalentCatalog {
 }
 
 impl TalentCatalog {
-    /// A race and class's tabs (unit bytes, 1-based) in file order, as the reference filters them.
+    /// A race and class's tabs (unit bytes, 1-based) in file order, as the player's tab build
+    /// filters them (`0x5c656a`): a race mask must hold the race and a class mask, where there is
+    /// one, the class; with no race mask the class mask alone, which must be there.
     pub fn tabs_for_class(&self, race: u8, class: u8) -> Vec<&TalentTabInfo> {
-        if !(1..=32).contains(&class) || !(1..=32).contains(&race) {
-            return Vec::new();
-        }
-        let race_bit = 1u32 << (race - 1);
-        let class_bit = 1u32 << (class - 1);
+        // The shift takes its count mod 32, as `shl` does (`0x5c6589`).
+        let bit = |id: u8| 1u32.wrapping_shl(u32::from(id).wrapping_sub(1));
+        let (race_bit, class_bit) = (bit(race), bit(class));
         self.tabs
             .iter()
-            .filter(|t| t.class_mask & class_bit != 0 && t.race_mask & race_bit != 0)
+            .filter(|t| {
+                if t.race_mask != 0 {
+                    t.race_mask & race_bit != 0
+                        && (t.class_mask == 0 || t.class_mask & class_bit != 0)
+                } else {
+                    t.class_mask & class_bit != 0
+                }
+            })
             .collect()
     }
 
@@ -145,6 +152,11 @@ impl TalentCatalog {
         self.talents_in_tab(tab_id)
             .iter()
             .find(|t| t.id == talent_id)
+    }
+
+    /// One talent of any tab by id, as the record lookup reads it.
+    pub fn talent_by_id(&self, talent_id: u32) -> Option<&Talent> {
+        self.by_tab.values().flatten().find(|t| t.id == talent_id)
     }
 
     /// `(rank's spell, rank count)` of a talent of any class, `rank` 0-based.

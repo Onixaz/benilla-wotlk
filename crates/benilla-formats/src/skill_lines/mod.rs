@@ -362,12 +362,58 @@ impl SkillLineCatalog {
         class: u8,
         known: &std::collections::BTreeSet<u32>,
     ) -> bool {
+        self.higher_rank_known_by(spell_id, race, class, |s| known.contains(&s))
+    }
+
+    /// [`Self::higher_rank_known`] asking `known` of each later rank (`0x726180`).
+    pub fn higher_rank_known_by(
+        &self,
+        spell_id: u32,
+        race: u8,
+        class: u8,
+        known: impl Fn(u32) -> bool,
+    ) -> bool {
         let mut cur = spell_id;
         for _ in 0..MAX_RANK_CHAIN {
             let Some(next) = self.next_rank(cur, race, class) else {
                 return false;
             };
-            if known.contains(&next) {
+            if known(next) {
+                return true;
+            }
+            cur = next;
+        }
+        false
+    }
+
+    /// A pet's ability row for `spell_id` (`0x71a670`): over the family's two skill lines in order
+    /// (`0x71a6b0`), the first row in file order naming that line and the spell (`0x810410`).
+    pub fn pet_ability(&self, spell_id: u32, lines: [u32; 2]) -> Option<&SlaInfo> {
+        let rows = self.abilities.get(&spell_id)?;
+        lines
+            .iter()
+            .find_map(|&line| rows.iter().find(|r| r.info.skill_id == line))
+            .map(|r| &r.info)
+    }
+
+    /// Whether the pet knows a higher rank of `spell_id` (`0x726160` on the pet): each positive
+    /// `forward_spellid` of [`Self::pet_ability`]'s row in turn, asked of `known` (`0x726180`).
+    pub fn pet_higher_rank_known(
+        &self,
+        spell_id: u32,
+        lines: [u32; 2],
+        known: impl Fn(u32) -> bool,
+    ) -> bool {
+        let mut cur = spell_id;
+        for _ in 0..MAX_RANK_CHAIN {
+            let Some(next) = self
+                .pet_ability(cur, lines)
+                .map(|a| a.forward_spell_id)
+                .filter(|&id| id as i32 > 0)
+            else {
+                return false;
+            };
+            if known(next) {
                 return true;
             }
             cur = next;

@@ -1574,27 +1574,24 @@ fn mark_as_read(model: &mut crate::script::ModelGuard<'_>, index: usize) {
     let Some(i) = index.checked_sub(1) else {
         return;
     };
-    if let Some(signals) = super::write_live(|l| l.mail_mark_read(i)).flatten() {
-        for event in signals {
-            signal_event(model, event, vec![]);
-        }
-        return;
-    }
-    #[cfg(any(test, feature = "fixtures"))]
-    {
-        let Some(r) = model
+    let Some(signals) = super::write_live(|l| l.mail_mark_read(i)).flatten() else {
+        #[cfg(any(test, feature = "fixtures"))]
+        if let Some(r) = model
             .mail
             .inbox
             .get_mut(i)
             .filter(|r| r.flags & flags::READ == 0)
-        else {
-            return;
-        };
-        r.flags |= flags::READ;
-        let id = r.message_id;
-        model
-            .mail_sent
-            .push(MailPacket::MarkRead { message_id: id });
+        {
+            r.flags |= flags::READ;
+            let id = r.message_id;
+            model
+                .mail_sent
+                .push(MailPacket::MarkRead { message_id: id });
+        }
+        return;
+    };
+    for event in signals {
+        signal_event(model, event, vec![]);
     }
 }
 

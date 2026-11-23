@@ -2476,10 +2476,6 @@ fn a_negative_gain_prints_signed() {
 fn the_free_professions_line_is_printed_once() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = chat_vm();
-    s.set_talents(benilla_ui::script::TalentUiState {
-        points: (0, 2),
-        ..Default::default()
-    });
     s.run(
         r#"
         SkillLines = {}
@@ -2492,14 +2488,26 @@ fn the_free_professions_line_is_printed_once() {
     )
     .unwrap();
     let before = lines_in_window(&s);
-    // `ui_talent`'s fire: arg1 = the talent delta, arg2 = the profession delta.
-    s.fire_event(
-        "CHARACTER_POINTS_CHANGED",
-        vec![
-            benilla_ui::script::ScriptValue::Int(0),
-            benilla_ui::script::ScriptValue::Int(1),
-        ],
-    );
+    // The points watch's fire: arg1 = the talent delta, arg2 = the profession delta; the line
+    // reads our points at the call.
+    s.set_unit_guids(&benilla_ui::script::UnitGuids {
+        player: 0x10,
+        ..Default::default()
+    });
+    let mut points = crate::ui_talent::tests::TalentTestView {
+        units: (Some(0x10), None),
+        points: Some((0, 2)),
+        ..Default::default()
+    };
+    s.with_live(&mut points, |s| {
+        s.fire_event(
+            "CHARACTER_POINTS_CHANGED",
+            vec![
+                benilla_ui::script::ScriptValue::Int(0),
+                benilla_ui::script::ScriptValue::Int(1),
+            ],
+        )
+    });
     assert!(s.errors().is_empty(), "handler errors: {:?}", s.errors());
     assert_eq!(
         lines_in_window(&s) - before,

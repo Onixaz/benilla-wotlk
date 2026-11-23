@@ -1,15 +1,17 @@
 //! The stock 3.3.5a talent window (`Blizzard_TalentUI`, `TalentFrameBase.lua`) on the production
-//! load, over a talent model the live client builds: a dwarf hunter's three trees from the
-//! install, two talent groups and a learned talent, as `SMSG_TALENTS_INFO` would name them.
+//! load, over the talent state the live client keeps, lent at each call: a dwarf hunter's three
+//! trees from the install, two talent groups and a learned talent, as `SMSG_TALENTS_INFO` names
+//! them.
 
-use std::collections::{BTreeSet, HashMap};
+use benilla_ui::script::{ScriptValue, TalentInfo, UiScript};
 
-use benilla_ui::script::{ScriptValue, UiScript};
-
-use crate::ui_talent::{build_pages, PlayerTalentGroups};
+use crate::ui_talent::tests::{body, catalogs, valid_over, TalentTestView};
+use crate::ui_talent::{pet_pages, player_pages};
 
 const DWARF: u8 = 3;
 const HUNTER: u8 = 3;
+const ME: u64 = 0x10;
+const PET: u64 = 0xF140_0000_0000_0021;
 
 /// Errors from the talent window's own code; the production load carries unrelated 3.3.5a gaps.
 fn talent_errors(errors: impl IntoIterator<Item = String>) -> Vec<String> {
@@ -19,37 +21,34 @@ fn talent_errors(errors: impl IntoIterator<Item = String>) -> Vec<String> {
         .collect()
 }
 
-/// The hunter's first tree, its first talent at rank 2 in group 1 (active, one point left), and
-/// an empty group 2.
-fn push_talents(s: &mut UiScript) -> u32 {
-    let data = benilla_formats::wow_data().expect("install");
-    let mut chain = benilla_formats::open_chain(&data).unwrap();
-    let catalog = benilla_formats::load_talent_catalog(&mut chain).unwrap();
-    let spells = benilla_formats::load_spell_catalog(&mut chain).unwrap();
-    let first_tab = catalog.tabs_for_class(DWARF, HUNTER)[0].id;
-    let first = catalog.talents_in_tab(first_tab)[0].id;
-    let mut held = PlayerTalentGroups::fresh(1);
-    held.ranks = vec![HashMap::from([(first, 1u8)]), HashMap::new()];
-    let state = build_pages(
-        &catalog,
-        &BTreeSet::new(),
-        &spells,
-        DWARF,
-        HUNTER,
-        (1, 0),
-        &held,
+/// The hunter's tabs built at the world entry, its first talent at rank 2 in group 1 (active, one
+/// point left), and an empty group 2; the talent's id.
+fn hunter_view() -> (TalentTestView, u32) {
+    let (catalog, spells) = catalogs();
+    let pages = player_pages(&catalog, &spells, DWARF, HUNTER);
+    let first = pages.talents[0][0].id;
+    let mut info = TalentInfo::default();
+    info.update_talent_data(
+        &body(1, 0, vec![(vec![(first, 1)], vec![]), (vec![], vec![])]),
+        &valid_over(&catalog, &spells),
     );
-    s.set_talents(state);
-    s.fire_event("PLAYER_TALENT_UPDATE", Vec::<ScriptValue>::new());
-    first
+    info.enter_world(|| Some(pages));
+    (
+        TalentTestView {
+            info,
+            units: (Some(ME), None),
+            ..Default::default()
+        },
+        first,
+    )
 }
 
 /// The Talents button's chain (`ToggleTalentFrame` → `TalentFrame_LoadUI` →
 /// `UIParentLoadAddOn("Blizzard_TalentUI")`) loads the stock window, which opens on the active
-/// spec with its trees, ranks and points; a click on a talent with points left queues its next
-/// rank, and the inactive spec's tab is there to select.
+/// spec with its trees, ranks and points; a click on a talent with points left sends its next
+/// rank inside the click, and the inactive spec's tab is there to select.
 #[test]
-fn the_stock_talent_window_opens_on_the_model_and_learns_a_rank() {
+fn the_stock_talent_window_opens_on_the_state_and_learns_a_rank() {
     benilla_formats::wow_data_or_skip!();
     let _l = crate::local_state::test_env::ENV_LOCK
         .lock()
@@ -57,13 +56,14 @@ fn the_stock_talent_window_opens_on_the_model_and_learns_a_rank() {
     let (mut s, _load_failures) =
         super::layer_tests::production_load_with("talents", false, "", |_| {});
     let _ = s.take_errors();
-    let first = push_talents(&mut s);
-
-    s.run("ToggleTalentFrame()").unwrap();
-    let errors = talent_errors(s.take_errors());
-    assert!(errors.is_empty(), "talent window errors: {errors:#?}");
-    s.run(
-        r#"
+    let (mut v, first) = hunter_view();
+    s.with_live(&mut v, |s| {
+        s.fire_event("PLAYER_TALENT_UPDATE", Vec::<ScriptValue>::new());
+        s.run("ToggleTalentFrame()").unwrap();
+        let errors = talent_errors(s.take_errors());
+        assert!(errors.is_empty(), "talent window errors: {errors:#?}");
+        s.run(
+            r#"
         assert(IsAddOnLoaded("Blizzard_TalentUI") == 1, "the addon loaded")
         assert(PlayerTalentFrame:IsShown(), "the window is open")
         assert(PlayerSpecTab1:IsShown() and PlayerSpecTab2:IsShown(), "both specs have a tab")
@@ -75,28 +75,30 @@ fn the_stock_talent_window_opens_on_the_model_and_learns_a_rank() {
         assert(points and points:find("1"), "one point unspent, got " .. tostring(points))
         assert(PlayerTalentFrameTab1:GetText() ~= nil, "the first tree names its tab")
         "#,
-    )
-    .unwrap();
-
-    s.run(r#"PlayerTalentFrameTalent1:Click("LeftButton")"#)
+        )
         .unwrap();
+        s.run(r#"PlayerTalentFrameTalent1:Click("LeftButton")"#)
+            .unwrap();
+    });
     assert_eq!(
-        s.take_talent_learns(),
-        vec![(first, 2)],
+        v.learns,
+        vec![(None, first, 2)],
         "the click learns the next 0-based rank"
     );
-
-    // The inactive spec: its tab selects it, the Activate button shows and spends nothing.
-    s.run("PlayerSpecTab2:Click()").unwrap();
-    s.run(
-        r#"
+    v.learns.clear();
+    s.with_live(&mut v, |s| {
+        // The inactive spec: its tab selects it, the Activate button shows and spends nothing.
+        s.run("PlayerSpecTab2:Click()").unwrap();
+        s.run(
+            r#"
         assert(PlayerTalentFrameActivateButton:IsShown(), "an inactive spec offers Activate")
         PlayerTalentFrameTalent1:Click("LeftButton")
         "#,
-    )
-    .unwrap();
+        )
+        .unwrap();
+    });
     assert!(
-        s.take_talent_learns().is_empty(),
+        v.learns.is_empty(),
         "an inactive spec's buttons learn nothing"
     );
     let errors = talent_errors(s.take_errors());
@@ -116,46 +118,48 @@ fn the_stock_talent_tree_scrolls_by_wheel_and_arrow() {
     let (mut s, _load_failures) =
         super::layer_tests::production_load_with("talents", false, "", |_| {});
     let _ = s.take_errors();
-    push_talents(&mut s);
-    s.run("ToggleTalentFrame()").unwrap();
-    s.resolve();
+    let (mut v, _) = hunter_view();
+    s.with_live(&mut v, |s| {
+        s.run("ToggleTalentFrame()").unwrap();
+        s.resolve();
 
-    const SF: &str = "PlayerTalentFrameScrollFrame";
-    const BAR: &str = "PlayerTalentFrameScrollFrameScrollBar";
-    let (range, lo, hi): (f64, f64, f64) = s
-        .eval(&format!(
-            "local lo, hi = {BAR}:GetMinMaxValues() \
-             return {SF}:GetVerticalScrollRange(), lo, hi"
-        ))
-        .unwrap();
-    assert!(
-        range > 0.0,
-        "the hunter's tree outgrows the frame, range {range}"
-    );
-    assert_eq!((lo, hi), (0.0, range), "the bar spans the measured range");
+        const SF: &str = "PlayerTalentFrameScrollFrame";
+        const BAR: &str = "PlayerTalentFrameScrollFrameScrollBar";
+        let (range, lo, hi): (f64, f64, f64) = s
+            .eval(&format!(
+                "local lo, hi = {BAR}:GetMinMaxValues() \
+                 return {SF}:GetVerticalScrollRange(), lo, hi"
+            ))
+            .unwrap();
+        assert!(
+            range > 0.0,
+            "the hunter's tree outgrows the frame, range {range}"
+        );
+        assert_eq!((lo, hi), (0.0, range), "the bar spans the measured range");
 
-    let scroll = |s: &UiScript| {
-        s.eval::<f64>(&format!("return {SF}:GetVerticalScroll()"))
-            .unwrap()
-    };
-    let (x, y) = centre(&mut s, SF);
-    s.mouse_wheel(x, y, -1.0);
-    s.resolve();
-    let wheeled = scroll(&s);
-    assert!(wheeled > 0.0, "a wheel notch down scrolls the tree");
+        let scroll = |s: &UiScript| {
+            s.eval::<f64>(&format!("return {SF}:GetVerticalScroll()"))
+                .unwrap()
+        };
+        let (x, y) = centre(s, SF);
+        s.mouse_wheel(x, y, -1.0);
+        s.resolve();
+        let wheeled = scroll(s);
+        assert!(wheeled > 0.0, "a wheel notch down scrolls the tree");
 
-    s.run(&format!("{BAR}:SetValue(0)")).unwrap();
-    s.resolve();
-    assert_eq!(scroll(&s), 0.0, "the bar scrolls back to the top");
-    click(&mut s, &format!("{BAR}ScrollDownButton"), "LeftButton");
-    s.resolve();
-    assert!(scroll(&s) > 0.0, "the down arrow scrolls the tree");
+        s.run(&format!("{BAR}:SetValue(0)")).unwrap();
+        s.resolve();
+        assert_eq!(scroll(s), 0.0, "the bar scrolls back to the top");
+        click(s, &format!("{BAR}ScrollDownButton"), "LeftButton");
+        s.resolve();
+        assert!(scroll(s) > 0.0, "the down arrow scrolls the tree");
+    });
     let errors = talent_errors(s.take_errors());
     assert!(errors.is_empty(), "talent window errors: {errors:#?}");
 }
 
 /// A pet with a talent tree (`GetNumTalentGroups(false, true)` 1) gets the pet spec tab; on it the
-/// window shows the pet's tree, and a talent click queues the pet's learn, not the player's.
+/// window shows the pet's tree, and a talent click sends the pet's learn, not the player's.
 #[test]
 fn the_pet_spec_tab_shows_the_pets_tree_and_learns_for_the_pet() {
     benilla_formats::wow_data_or_skip!();
@@ -165,27 +169,20 @@ fn the_pet_spec_tab_shows_the_pets_tree_and_learns_for_the_pet() {
     let (mut s, _load_failures) =
         super::layer_tests::production_load_with("talents", false, "", |_| {});
     let _ = s.take_errors();
-    push_talents(&mut s);
+    let (mut v, _) = hunter_view();
 
+    let (catalog, spells) = catalogs();
     let data = benilla_formats::wow_data().expect("install");
     let mut chain = benilla_formats::open_chain(&data).unwrap();
-    let catalog = benilla_formats::load_talent_catalog(&mut chain).unwrap();
-    let spells = benilla_formats::load_spell_catalog(&mut chain).unwrap();
     let families = benilla_formats::load_creature_families(&mut chain).unwrap();
     let wolf = families.get(1).unwrap();
-    let held = crate::ui_talent::PetTalentGroup {
-        unspent: 3,
-        ..Default::default()
-    };
-    let state = crate::ui_talent::build_pet_pages(
-        &catalog,
-        &spells,
-        wolf.pet_talent_type,
-        true,
-        Some(wolf.category),
-        &held,
-    );
-    let first = state.talents[0][0].id;
+    let pages = pet_pages(&catalog, &spells, &families, 1).expect("the wolf's tree");
+    let first = pages.talents[0][0].id;
+    v.info.update_pet_tabs(1, || Some(pages));
+    v.info
+        .update_pet_talent_data(3, &[], &valid_over(&catalog, &spells));
+    v.units.1 = Some(PET);
+    v.pet_category = Some(wolf.category);
     s.set_unit(
         "pet",
         Some(benilla_ui::script::UnitState {
@@ -198,22 +195,25 @@ fn the_pet_spec_tab_shows_the_pets_tree_and_learns_for_the_pet() {
             ..Default::default()
         }),
     );
-    s.set_pet_talents(state);
-    s.fire_event("PET_TALENT_UPDATE", Vec::<ScriptValue>::new());
-
-    s.run("ToggleTalentFrame()").unwrap();
-    s.run(
-        r#"
+    s.with_live(&mut v, |s| {
+        s.fire_event("PET_TALENT_UPDATE", Vec::<ScriptValue>::new());
+        s.run("ToggleTalentFrame()").unwrap();
+        s.run(
+            r#"
         assert(PlayerSpecTab3:IsShown(), "a pet with a tree has the pet spec tab")
         PlayerSpecTab3:Click()
         assert(PlayerTalentFrame.pet, "the pet spec is selected")
         assert(PlayerTalentFrameTalent1:IsShown(), "the pet's first talent has a button")
         PlayerTalentFrameTalent1:Click("LeftButton")
         "#,
-    )
-    .unwrap();
-    assert_eq!(s.take_pet_talent_learns(), vec![(first, 0)]);
-    assert!(s.take_talent_learns().is_empty(), "nothing for the player");
+        )
+        .unwrap();
+    });
+    assert_eq!(
+        v.learns,
+        vec![(Some(PET), first, 0)],
+        "the pet's learn with its guid, nothing for the player"
+    );
     let errors = talent_errors(s.take_errors());
     assert!(errors.is_empty(), "talent window errors: {errors:#?}");
 }
@@ -230,57 +230,50 @@ fn the_stock_inspect_talent_tab_shows_the_inspected_players_trees() {
     let (mut s, _load_failures) =
         super::layer_tests::production_load_with("talents", false, "", |_| {});
     let _ = s.take_errors();
-    push_talents(&mut s);
+    let (mut v, _) = hunter_view();
 
     const HUMAN: u8 = 1;
     const PALADIN: u8 = 2;
-    let data = benilla_formats::wow_data().expect("install");
-    let mut chain = benilla_formats::open_chain(&data).unwrap();
-    let catalog = benilla_formats::load_talent_catalog(&mut chain).unwrap();
-    let spells = benilla_formats::load_spell_catalog(&mut chain).unwrap();
-    let tabs = catalog.tabs_for_class(HUMAN, PALADIN);
-    let first = catalog.talents_in_tab(tabs[0].id)[0].id;
-    let mut held = PlayerTalentGroups::fresh(0);
-    held.ranks = vec![HashMap::from([(first, 1u8)])];
-    let state = build_pages(
-        &catalog,
-        &BTreeSet::new(),
-        &spells,
-        HUMAN,
-        PALADIN,
-        (0, 0),
-        &held,
+    let (catalog, spells) = catalogs();
+    let pages = player_pages(&catalog, &spells, HUMAN, PALADIN);
+    let first = pages.talents[0][0].id;
+    let first_tab = pages.tabs[0].name.clone();
+    v.info.set_inspect_target(0x77, Some(pages));
+    v.info.update_inspect_talent_data(
+        &body(0, 0, vec![(vec![(first, 1)], vec![])]),
+        &valid_over(&catalog, &spells),
     );
-    s.set_inspect_talents(state);
 
-    s.run(
-        r#"
+    s.with_live(&mut v, |s| {
+        s.run(
+            r#"
         LoadAddOn("Blizzard_InspectUI")
         InspectFrame.unit = "player"
         InspectFrame:Show()
         InspectTalentFrame:Show()
         "#,
-    )
-    .unwrap();
-    s.fire_event("INSPECT_TALENT_READY", Vec::<ScriptValue>::new());
-    let tab = s
-        .eval::<String>("return InspectTalentFrameTab1:GetText()")
+        )
         .unwrap();
-    assert_eq!(tab, tabs[0].name, "the inspected class's first tree");
-    assert_ne!(
-        tab,
-        s.eval::<String>("return (GetTalentTabInfo(1))").unwrap(),
-        "not the player's own tree"
-    );
-    s.run(
-        r#"
+        s.fire_event("INSPECT_TALENT_READY", Vec::<ScriptValue>::new());
+        let tab = s
+            .eval::<String>("return InspectTalentFrameTab1:GetText()")
+            .unwrap();
+        assert_eq!(tab, first_tab, "the inspected class's first tree");
+        assert_ne!(
+            tab,
+            s.eval::<String>("return (GetTalentTabInfo(1))").unwrap(),
+            "not the player's own tree"
+        );
+        s.run(
+            r#"
         local rank = InspectTalentFrameTalent1Rank:GetText()
         assert(rank == "2", "the inspected rank reads 2, got " .. tostring(rank))
         local spent = InspectTalentFrameSpentPointsText:GetText()
         assert(spent and spent:find("2"), "two points spent, got " .. tostring(spent))
         "#,
-    )
-    .unwrap();
+        )
+        .unwrap();
+    });
     let errors = talent_errors(s.take_errors());
     assert!(errors.is_empty(), "inspect talent errors: {errors:#?}");
 }

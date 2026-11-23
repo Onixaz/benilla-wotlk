@@ -178,16 +178,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(guid) = guid else {
                 return Ok(());
             };
-            let moved = super::live::read_live(|l| l.notify_inspect(guid)).unwrap_or(true);
+            let moved = super::live::write_live(|l| l.notify_inspect(guid)).unwrap_or(true);
             let mut model = crate::script::model_mut_of(lua);
             model.inspect_notifies.push((unit, guid));
             if moved {
                 model.inspect_honor = None;
                 model.inspect_honor_pending = false;
                 model.inspect_arena_teams = Default::default();
-                // The talent target's tab reset (`0x5c9f74`); the new class's tabs follow from the app.
-                model.inspect_talents.tabs.clear();
-                model.inspect_talents.talents.clear();
             }
             Ok(())
         })?,
@@ -199,16 +196,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ClearInspectPlayer",
         lua.create_function(|lua, ()| {
-            super::live::read_live(|l| l.clear_inspect_target());
+            super::live::write_live(|l| l.clear_inspect_target());
             let mut model = crate::script::model_mut_of(lua);
             model.inspect_clear = Some(model.inspect_notifies.len());
             model.inspect_honor = None;
             model.inspect_honor_pending = false;
             // The inspected teams go too (`0x5e78c2`).
             model.inspect_arena_teams = Default::default();
-            // The inspected talent tabs go at once (`0x5c9f70` with no player).
-            model.inspect_talents.tabs.clear();
-            model.inspect_talents.talents.clear();
             Ok(())
         })?,
     )?;
@@ -294,32 +288,6 @@ mod tests {
                     ("player".into(), ME)
                 ]
             );
-        });
-    }
-
-    /// A moved target resets the inspected talent tabs inside the call (`0x5e76f2`); the same target keeps them (`0x5e76c9`).
-    #[test]
-    fn notify_inspect_resets_the_talent_tabs_at_the_call_when_the_target_moves() {
-        let mut s = seeded();
-        let mut live_v = crate::script::live::TestView::default();
-        crate::script::live::lending(&mut live_v, || {
-            s.run(r#"NotifyInspect("party1")"#).unwrap();
-            s.set_inspect_talents(crate::script::TalentUiState {
-                tabs: vec![Default::default()],
-                talents: vec![Vec::new()],
-                ..Default::default()
-            });
-            let tabs = |s: &UiScript, call: &str| {
-                s.eval::<i64>(&format!("{call}; return GetNumTalentTabs(true)"))
-                    .unwrap()
-            };
-            assert_eq!(tabs(&s, r#"NotifyInspect("party1")"#), 1, "the same target");
-            assert_eq!(
-                tabs(&s, r#"NotifyInspect("target")"#),
-                1,
-                "the mob is refused"
-            );
-            assert_eq!(tabs(&s, r#"NotifyInspect("player")"#), 0, "a new target");
         });
     }
 

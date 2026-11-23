@@ -1,19 +1,14 @@
-//! The talent window feed: the class's pages from `Talent.dbc` and `TalentTab.dbc`, each talent
-//! group's ranks from 3.3.5a's `SMSG_TALENTS_INFO`, and the learn verbs' sends. 12340 keeps the
-//! talent state the packet carries and nothing else (`0x5c9e50`): a rank is the packet's, never a
-//! known-spell guess, and the packet fires `PLAYER_TALENT_UPDATE`, plus
-//! `ACTIVE_TALENT_GROUP_CHANGED(new, old)` when the active group moved.
+//! The client's talent state ([`TalentInfo`]) as 12340 keeps it, which the talent verbs read and
+//! write at the call through the live view: the player's tabs, built from `Talent.dbc` and
+//! `TalentTab.dbc` at the world entry (`0x5c9d50`), and the groups `SMSG_TALENTS_INFO` replaces
+//! whole (`0x5c9e50`), then raises `PLAYER_TALENT_UPDATE` and, when the active group moved,
+//! `ACTIVE_TALENT_GROUP_CHANGED(new, old)` (`0x5c9ecf`).
 //!
-//! The pet's one group is its family's tree: `TalentTab.dbc` rows whose `petTalentMask` holds the
-//! family's `petTalentType`, picked by the family `SMSG_PET_SPELLS` carries (`0x5d6ab6` into
-//! `0x5c9df0`), and the pet body's ranks, which fire `PET_TALENT_UPDATE`
-//! (`0x5c9f10`). A pet talent outside its family's category reads as no talent (`0x5c5a20`).
-//!
-//! The inspected player's set is its class's tabs, built when the inspect target is set
-//! (`0x5c9f70`), and the groups of `SMSG_INSPECT_TALENT` for that target (`0x5c9ff0`), which then
-//! fires `INSPECT_TALENT_READY` (`0x6ce0c0`).
-
-use std::collections::{BTreeSet, HashMap};
+//! The pet's tabs follow the family the pet setter names (`0x5d6aa0` into `0x5c9df0`), and its
+//! group the pet body, which raises `PET_TALENT_UPDATE` (`0x5c9f10`). The inspected player's tabs
+//! follow the inspect target (`0x5c9f70`), and its groups `SMSG_INSPECT_TALENT` for that target,
+//! whose handler raises `INSPECT_TALENT_READY` (`0x6ce0c0`). `CHARACTER_POINTS_CHANGED` is our
+//! character points' field watch (`0x5e8330`).
 
 use bevy::prelude::*;
 
@@ -21,14 +16,13 @@ use benilla_formats::TalentCatalog;
 use benilla_protocol::messages::TalentsInfo;
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use benilla_ui::script::{
-    ScriptValue, TalentGroupView, TalentPrereqView, TalentRankView, TalentTabView, TalentUiState,
-    TalentView,
+    ScriptValue, TalentInfo, TalentPacket, TalentPacketGroup, TalentPages, TalentPrereqView,
+    TalentRankView, TalentTabView, TalentView,
 };
 
-use crate::net::{ClientCommand, NetCommands, NetHandlerApp, ObjectStore, SelfPlayer};
-use crate::ui_action::{PlayerActions, Spells};
-use crate::ui_script::{gate, UiDrain};
-use crate::ui_unit::UnitFeed;
+use crate::char_select::ClientState;
+use crate::net::NetHandlerApp;
+use crate::ui_action::Spells;
 use benilla_assets::{AssetSet, LockRecover, WorldAssets};
 
 /// The talent catalog (`Talent.dbc`, `TalentTab.dbc`), absent when the client data failed to load.
@@ -37,143 +31,21 @@ pub(crate) struct Talents {
     pub(crate) catalog: std::sync::Arc<TalentCatalog>,
 }
 
-/// The player's talent groups as the last `SMSG_TALENTS_INFO` named them (`0xc21030`).
-#[derive(Resource, Clone, Debug, Default, PartialEq)]
-pub(crate) struct PlayerTalentGroups {
-    /// The packet's unspent points, the active group's.
-    pub(crate) unspent: u32,
-    /// 0-based.
-    pub(crate) active: usize,
-    /// Per group, talent id → 0-based rank.
-    pub(crate) ranks: Vec<HashMap<u32, u8>>,
-    /// Per group, the first six glyphs the packet names, the rest 0 (`0x5c9819`).
-    pub(crate) glyphs: Vec<[u32; 6]>,
-    /// The events the packet owes the VM, fired after the snapshot they describe is pushed.
-    pending_events: Vec<(&'static str, Vec<ScriptValue>)>,
-}
-
-/// The pet's talent group as the last pet `SMSG_TALENTS_INFO` named it (`0xc210d8`); emptied when
-/// the pet leaves (`0x5c9df0` with no family resets the group).
-#[derive(Resource, Clone, Debug, Default, PartialEq)]
-pub(crate) struct PetTalentGroup {
-    pub(crate) unspent: u32,
-    /// Talent id → 0-based rank.
-    pub(crate) ranks: HashMap<u32, u8>,
-    /// `PET_TALENT_UPDATE` owed to the VM, fired after the snapshot it describes.
-    pub(crate) pending_update: bool,
-}
-
-/// The inspected player's talents: the groups the inspect packet named.
+/// The client's talent state (`0xc20ff0`-`0xc21138`).
 #[derive(Resource, Default)]
-pub(crate) struct InspectTalents {
-    pub(crate) groups: PlayerTalentGroups,
-    /// `INSPECT_TALENT_READY`s owed, fired after the snapshot they describe.
-    pub(crate) ready: u32,
-}
-
-/// The talent target's `(race, class)` the inspected tabs come from (`0x5c9f70`), set inside the inspect verbs; `None` without a player object.
-#[derive(Resource, Default)]
-pub(crate) struct InspectTalentClass {
-    class: std::sync::atomic::AtomicU16,
-    /// The resets so far: each one clears the VM's tabs, so the feed re-pushes even an equal set.
-    resets: std::sync::atomic::AtomicU32,
-}
-
-impl InspectTalentClass {
-    /// The talent target moved (`0x5c9f70`): the tabs reset and follow its class, the groups stay until the packet replaces them.
-    pub(crate) fn set(&self, class: Option<(u8, u8)>) {
-        use std::sync::atomic::Ordering::Relaxed;
-        let packed = class.map_or(0, |(race, class)| u16::from(race) << 8 | u16::from(class));
-        self.class.store(packed, Relaxed);
-        self.resets.fetch_add(1, Relaxed);
-    }
-
-    pub(crate) fn get(&self) -> Option<(u8, u8)> {
-        let packed = self.class.load(std::sync::atomic::Ordering::Relaxed);
-        (packed != 0).then_some(((packed >> 8) as u8, packed as u8))
-    }
-
-    pub(crate) fn resets(&self) -> u32 {
-        self.resets.load(std::sync::atomic::Ordering::Relaxed)
-    }
-}
-
-impl InspectTalents {
-    /// `SMSG_INSPECT_TALENT` for the target: the groups replaced whole (`0x5c9ad0`), then the event.
-    pub(crate) fn apply(&mut self, info: TalentsInfo) {
-        if let TalentsInfo::Player {
-            unspent,
-            active_group,
-            groups,
-        } = info
-        {
-            self.groups.fill(unspent, active_group, &groups);
-        }
-        self.ready += 1;
-    }
-}
-
-impl PlayerTalentGroups {
-    /// A player talent body's groups, replacing the held ones (`0x5c9740`).
-    fn fill(
-        &mut self,
-        unspent: u32,
-        active_group: u8,
-        groups: &[benilla_protocol::messages::TalentGroupInfo],
-    ) {
-        self.unspent = unspent;
-        self.active = active_group.into();
-        self.ranks = groups
-            .iter()
-            .map(|g| g.talents.iter().map(|t| (t.talent_id, t.rank)).collect())
-            .collect();
-        self.glyphs = groups
-            .iter()
-            .map(|g| {
-                let mut six = [0u32; 6];
-                for (slot, &glyph) in six.iter_mut().zip(&g.glyphs) {
-                    *slot = u32::from(glyph);
-                }
-                six
-            })
-            .collect();
-    }
-
-    /// One group, nothing learned and `unspent` points: a fresh character's state.
-    pub(crate) fn fresh(unspent: u32) -> Self {
-        PlayerTalentGroups {
-            unspent,
-            active: 0,
-            ranks: vec![HashMap::new()],
-            glyphs: vec![[0; 6]],
-            pending_events: Vec::new(),
-        }
-    }
-}
-
-/// The talent pages' push, which the glyph watchers' events follow.
-#[derive(bevy::ecs::schedule::SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct TalentFeed;
+pub(crate) struct TalentState(pub(crate) TalentInfo);
 
 pub(crate) struct UiTalentPlugin;
 
 impl Plugin for UiTalentPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<PlayerTalentGroups>()
-            .init_resource::<PetTalentGroup>()
-            .init_resource::<InspectTalents>()
-            .init_resource::<InspectTalentClass>()
+        app.init_resource::<TalentState>()
             .net_handler(SessionEventKind::TalentsInfo, on_talents_info)
             .add_systems(Startup, load_talents.after(AssetSet::Open))
+            // The game shutdown's talent part (`0x5291d6`, `0x5291db`), after the UI's.
             .add_systems(
-                Update,
-                (
-                    // Feed before the input pass, so an open this frame sees a populated
-                    // window; drain after it, so a click sends the same frame.
-                    feed_talents.in_set(UnitFeed).in_set(TalentFeed),
-                    feed_inspect_talents.in_set(UnitFeed),
-                    crate::ui_script::raises::then_fire(drain_talent_learns).in_set(UiDrain),
-                ),
+                OnExit(ClientState::InWorld),
+                shutdown.after(crate::ui_script::end_ui_session),
             );
     }
 }
@@ -195,422 +67,165 @@ fn load_talents(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
     }
 }
 
-/// `SMSG_TALENTS_INFO` (`0x6cd770`): the player's groups replace the held ones whole
-/// (`0x5c9a30(0)` clears them first); a pet body resets the pet's group and fills it
-/// (`0x5c9f10`).
-fn on_talents_info(
-    In(ev): In<SessionEvent>,
-    mut held: ResMut<PlayerTalentGroups>,
-    mut pet: ResMut<PetTalentGroup>,
-) {
+/// The game shutdown (`0x5c9dc0`, `0x5c9f60`): every side's tabs and groups emptied, after the UI
+/// shutdown's world leave unbuilt them ([`leave_world`]).
+fn shutdown(mut state: ResMut<TalentState>) {
+    state.0.shutdown();
+}
+
+/// Whether a packet's rank names a rank spell with a spell record: the talent row (`0x5c934e`),
+/// a rank under 9 naming a spell (`0x5c935f`, `0x5c9364`), its spell record (`0x5c93a1`).
+fn rank_is_valid(catalog: &TalentCatalog, spells: &Spells, id: u32, rank: i32) -> bool {
+    catalog
+        .talent_by_id(id)
+        .and_then(|t| t.ranks.get(usize::try_from(rank).ok()?).copied())
+        .is_some_and(|spell| spell != 0 && spells.catalog.get(spell).is_some())
+}
+
+/// `f` over the talent state with the rank check its packet readers make; `None` without the
+/// catalogs, where no rank is valid.
+fn with_state<R>(
+    world: &mut World,
+    f: impl FnOnce(&mut TalentInfo, &dyn Fn(u32, i32) -> bool) -> R,
+) -> Option<R> {
+    let catalog = world.get_resource::<Talents>().map(|t| t.catalog.clone());
+    world.resource_scope(|world, mut state: Mut<TalentState>| {
+        let spells = world.get_resource::<Spells>();
+        let valid = |id: u32, rank: i32| match (catalog.as_deref(), spells) {
+            (Some(c), Some(s)) => rank_is_valid(c, s, id, rank),
+            _ => false,
+        };
+        Some(f(&mut state.0, &valid))
+    })
+}
+
+/// A player body as the state reads it.
+fn packet_of(
+    unspent: u32,
+    active: u8,
+    groups: Vec<benilla_protocol::messages::TalentGroupInfo>,
+) -> TalentPacket {
+    TalentPacket {
+        unspent,
+        active,
+        groups: groups
+            .into_iter()
+            .map(|g| TalentPacketGroup {
+                talents: g.talents.iter().map(|t| (t.talent_id, t.rank)).collect(),
+                glyphs: g.glyphs,
+            })
+            .collect(),
+    }
+}
+
+/// `SMSG_TALENTS_INFO` (`0x6cd770`): the pet body (`0x6cd78e`) or the player's (`0x6cd7a0`), each
+/// raising its events after its writes.
+fn on_talents_info(In(ev): In<SessionEvent>, world: &mut World) {
     let SessionEvent::TalentsInfo(info) = ev else {
         return;
     };
-    let (unspent, active_group, groups) = match info {
-        TalentsInfo::Player {
-            unspent,
-            active_group,
-            groups,
-        } => (unspent, active_group, groups),
+    if !world.contains_resource::<TalentState>() {
+        return;
+    }
+    match info {
         TalentsInfo::Pet { unspent, talents } => {
             debug!(
                 "ui_talent: pet SMSG_TALENTS_INFO {} talent(s), {unspent} unspent",
                 talents.len()
             );
-            pet.unspent = unspent;
-            pet.ranks = talents.iter().map(|t| (t.talent_id, t.rank)).collect();
-            pet.pending_update = true;
-            return;
+            let talents: Vec<(u32, u8)> = talents.iter().map(|t| (t.talent_id, t.rank)).collect();
+            with_state(world, |state, valid| {
+                state.update_pet_talent_data(unspent, &talents, valid)
+            });
+            // `PET_TALENT_UPDATE` after the group is read (`0x5c9f50`).
+            crate::ui_script::safe_world::raise(world, "PET_TALENT_UPDATE", Vec::new());
         }
-    };
-    debug!(
-        "ui_talent: SMSG_TALENTS_INFO {} group(s), active {active_group}, {unspent} unspent",
-        groups.len()
-    );
-    let (old_active, old_count) = (held.active, held.ranks.len());
-    held.fill(unspent, active_group, &groups);
-    held.pending_events
-        .push(("PLAYER_TALENT_UPDATE", Vec::new()));
-    // `ACTIVE_TALENT_GROUP_CHANGED(new, old)`, 1-based, a side with no groups reading 0
-    // (`0x5c9ebf`).
-    if old_active != held.active {
-        let new = if held.ranks.is_empty() {
-            0
-        } else {
-            held.active as i64 + 1
-        };
-        let old = if old_count == 0 {
-            0
-        } else {
-            old_active as i64 + 1
-        };
-        held.pending_events.push((
-            "ACTIVE_TALENT_GROUP_CHANGED",
-            vec![ScriptValue::Int(new), ScriptValue::Int(old)],
-        ));
-    }
-}
-
-/// The last pushed snapshots, and the points pair `CHARACTER_POINTS_CHANGED`'s deltas come from.
-#[derive(Default)]
-struct FeedMemory {
-    pushed: TalentUiState,
-    pushed_pet: TalentUiState,
-    /// `None` until the first read, which gives zero deltas.
-    points: Option<(u32, u32)>,
-}
-
-/// What the pet's tree reads: its bar (the family and guid), its object, its creature template
-/// and the family table.
-#[derive(bevy::ecs::system::SystemParam)]
-struct PetTalentInputs<'w, 's> {
-    held: ResMut<'w, PetTalentGroup>,
-    bar: Option<Res<'w, crate::ui_pet::PetBar>>,
-    pet: crate::ui_pet::PetUnit<'w, 's>,
-    names: Option<Res<'w, crate::names::NameCache>>,
-    families: Option<Res<'w, crate::ui_pet_stats::PetFamilyTables>>,
-}
-
-impl PetTalentInputs<'_, '_> {
-    fn changed(&self) -> bool {
-        self.held.is_changed()
-            || self.bar.as_ref().is_some_and(|r| r.is_changed())
-            || self.names.as_ref().is_some_and(|r| r.is_changed())
-            || self.families.as_ref().is_some_and(|r| r.is_changed())
-    }
-
-    /// The pet's `CreatureFamily.dbc` row through its template, `None` without the pet, its
-    /// template or the row: `0x5c5a20`'s refusals.
-    fn pet_family_category(&self, pet_guid: u64) -> Option<i32> {
-        let store = self.pet.store(pet_guid)?;
-        let entry = store.0.object_entry().filter(|&e| e != 0)?;
-        let family = self.names.as_ref()?.creature_record(entry)?.pet_family;
-        Some(self.families.as_ref()?.families.get(family)?.category)
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn feed_talents(
-    mut script: crate::ui_script::InTurn,
-    talents: Option<Res<Talents>>,
-    mut held: ResMut<PlayerTalentGroups>,
-    mut pet_inputs: PetTalentInputs,
-    actions: Res<PlayerActions>,
-    spells: Option<Res<Spells>>,
-    self_q: Query<&ObjectStore, With<SelfPlayer>>,
-    changed_self: Query<(), (With<SelfPlayer>, Changed<ObjectStore>)>,
-    mut memory: Local<crate::ui_script::VmMemo<FeedMemory>>,
-) {
-    let Some(mut script) = script.turn() else {
-        return;
-    };
-    let (memory, vm_reset) = memory.get_reset(&script);
-    // Reopened by every input the build reads: the groups, the known spells (a talent's
-    // `requiredSpell`), both catalogs (their landing counts as a change) and the self descriptor.
-    let self_changed = !changed_self.is_empty();
-    let groups_changed = held.is_changed();
-    let actions_changed = actions.is_changed();
-    let talents_changed = talents.as_ref().is_some_and(|r| r.is_changed());
-    let spells_changed = spells.as_ref().is_some_and(|r| r.is_changed());
-    let pet_changed = pet_inputs.changed();
-    gate::trace(
-        "feed_talents",
-        &[
-            ("vm_reset", vm_reset),
-            ("self", self_changed),
-            ("groups", groups_changed),
-            ("actions", actions_changed),
-            ("talents", talents_changed),
-            ("spells", spells_changed),
-            ("pet", pet_changed),
-        ],
-    );
-    let gate = gate::Gate::new(
-        vm_reset
-            || self_changed
-            || groups_changed
-            || actions_changed
-            || talents_changed
-            || spells_changed
-            || pet_changed,
-    );
-    if gate.skip() {
-        return;
-    }
-    let (Some(talents), Some(spells)) = (talents.as_deref(), spells.as_deref()) else {
-        return;
-    };
-    let Ok(store) = self_q.single() else {
-        return;
-    };
-    let race = store.0.unit_race().unwrap_or(0);
-    let class = store.0.unit_class().unwrap_or(0);
-    let points = (
-        store.0.player_talent_points().unwrap_or(0),
-        store.0.player_free_professions().unwrap_or(0),
-    );
-    let fresh = build_pages(
-        &talents.catalog,
-        &actions.spells,
-        &spells.catalog,
-        race,
-        class,
-        points,
-        &held,
-    );
-    if fresh != memory.pushed {
-        gate.audit("feed_talents", "the talent pages");
-        debug!(
-            "ui_talent: fed {} tab(s), {} group(s), {} unspent",
-            fresh.tabs.len(),
-            fresh.groups.len(),
-            held.unspent
-        );
-        script.set_talents(fresh.clone());
-        memory.pushed = fresh;
-    }
-    // The pet's tree, after the player's: the family `SMSG_PET_SPELLS` named picks it.
-    let (pet_guid, family) = pet_inputs
-        .bar
-        .as_deref()
-        .map_or((0, 0), |b| (b.spells.pet_guid, u32::from(b.spells.family)));
-    if family == 0 && !pet_inputs.held.ranks.is_empty() {
-        pet_inputs.held.bypass_change_detection().ranks.clear();
-    }
-    let tree = pet_inputs
-        .families
-        .as_ref()
-        .and_then(|f| f.families.get(family))
-        .map_or(-1, |f| f.pet_talent_type);
-    let fresh_pet = if family == 0 {
-        TalentUiState::default()
-    } else {
-        build_pet_pages(
-            &talents.catalog,
-            &spells.catalog,
-            tree,
-            pet_inputs.pet.store(pet_guid).is_some(),
-            pet_inputs.pet_family_category(pet_guid),
-            &pet_inputs.held,
-        )
-    };
-    if fresh_pet != memory.pushed_pet {
-        gate.audit("feed_talents", "the pet talent pages");
-        debug!(
-            "ui_talent: fed the pet {} tab(s), {} group(s), {} unspent",
-            fresh_pet.tabs.len(),
-            fresh_pet.groups.len(),
-            pet_inputs.held.unspent
-        );
-        script.set_pet_talents(fresh_pet.clone());
-        memory.pushed_pet = fresh_pet;
-    }
-    if pet_inputs.held.pending_update {
-        gate.audit("feed_talents", "PET_TALENT_UPDATE");
-        pet_inputs.held.bypass_change_detection().pending_update = false;
-        script.fire_event("PET_TALENT_UPDATE", Vec::new());
-    }
-    // The packet's events, after the snapshot they describe.
-    if !held.pending_events.is_empty() {
-        gate.audit("feed_talents", "the talent events");
-        for (event, args) in std::mem::take(&mut held.bypass_change_detection().pending_events) {
-            script.fire_event(event, args);
+        TalentsInfo::Player {
+            unspent,
+            active_group,
+            groups,
+        } => {
+            debug!(
+                "ui_talent: SMSG_TALENTS_INFO {} group(s), active {active_group}, {unspent} unspent",
+                groups.len()
+            );
+            let packet = packet_of(unspent, active_group, groups);
+            let moved = with_state(world, |state, valid| {
+                state.update_talent_data(&packet, valid)
+            })
+            .flatten();
+            // `PLAYER_TALENT_UPDATE` (`0x5c9eca`), then the active group's move (`0x5c9efb`).
+            crate::ui_script::safe_world::raise(world, "PLAYER_TALENT_UPDATE", Vec::new());
+            if let Some((new, old)) = moved {
+                crate::ui_script::safe_world::raise(
+                    world,
+                    "ACTIVE_TALENT_GROUP_CHANGED",
+                    vec![ScriptValue::Int(new), ScriptValue::Int(old)],
+                );
+            }
         }
     }
-    // The talent and profession point deltas, as the reference's event fire sends them:
-    // `ChatFrame.lua:1326` tests `arg2 > 0` unguarded, so an argless fire raises. The
-    // free-professions line is not composed here: the stock `ChatFrame_OnEvent` arm
-    // (`ChatFrame.lua:1324-1334`) prints `LEVEL_UP_SKILL_POINTS` itself on `arg2 > 0`.
-    if memory.points != Some(points) {
-        gate.audit("feed_talents", "the points memo");
-        let (talent_delta, profession_delta) = match memory.points {
-            Some((old_talent, old_professions)) => (
-                i64::from(points.0) - i64::from(old_talent),
-                i64::from(points.1) - i64::from(old_professions),
-            ),
-            None => (0, 0),
-        };
-        memory.points = Some(points);
-        script.fire_event(
-            "CHARACTER_POINTS_CHANGED",
-            vec![
-                ScriptValue::Int(talent_delta),
-                ScriptValue::Int(profession_delta),
-            ],
-        );
-    }
 }
 
-/// The inspected player's snapshot, pushed when its class, its groups or a catalog moved, then the
-/// `INSPECT_TALENT_READY`s owed; a `/reload`'s new VM gets the snapshot again.
-fn feed_inspect_talents(
-    mut script: crate::ui_script::InTurn,
-    talents: Option<Res<Talents>>,
-    spells: Option<Res<Spells>>,
-    mut inspect: ResMut<InspectTalents>,
-    target: Res<InspectTalentClass>,
-    mut memory: Local<crate::ui_script::VmMemo<(Option<TalentUiState>, u32)>>,
-) {
-    let Some(mut script) = script.turn() else {
+/// `SMSG_INSPECT_TALENT`'s talents for the inspect target (`0x6ce0da`): the inspected groups read
+/// (`0x6ce0ee`), then `INSPECT_TALENT_READY` (`0x6ce0fa`), ahead of the worn items it carries.
+pub(crate) fn inspect_talents(world: &mut World, info: TalentsInfo) {
+    let TalentsInfo::Player {
+        unspent,
+        active_group,
+        groups,
+    } = info
+    else {
         return;
     };
-    let ((pushed, last_reset), vm_reset) = memory.get_reset(&script);
-    let class = target.get();
-    let reset = std::mem::replace(last_reset, target.resets()) != *last_reset;
-    let catalogs_changed = talents.as_ref().is_some_and(|r| r.is_changed())
-        || spells.as_ref().is_some_and(|r| r.is_changed());
-    if !(vm_reset || catalogs_changed || reset || inspect.is_changed()) {
+    if !world.contains_resource::<TalentState>() {
         return;
     }
-    let (Some(talents), Some(spells)) = (talents.as_deref(), spells.as_deref()) else {
-        return;
-    };
-    let (race, class) = class.unwrap_or((0, 0));
-    let fresh = build_pages(
-        &talents.catalog,
-        &BTreeSet::new(),
-        &spells.catalog,
-        race,
-        class,
-        (0, 0),
-        &inspect.groups,
-    );
-    if reset || pushed.as_ref() != Some(&fresh) {
-        debug!(
-            "ui_talent: fed the inspected player {} tab(s), {} group(s)",
-            fresh.tabs.len(),
-            fresh.groups.len()
-        );
-        script.set_inspect_talents(fresh.clone());
-        *pushed = Some(fresh);
-    }
-    for _ in 0..std::mem::take(&mut inspect.bypass_change_detection().ready) {
-        script.fire_event("INSPECT_TALENT_READY", Vec::new());
-    }
+    let packet = packet_of(unspent, active_group, groups);
+    with_state(world, |state, valid| {
+        state.update_inspect_talent_data(&packet, valid)
+    });
+    crate::ui_script::safe_world::raise(world, "INSPECT_TALENT_READY", Vec::new());
 }
 
-/// Builds the pushed snapshot: the class's tabs in file order, each tab's talents in row order
-/// (`0x5c64d0`), and each group's ranks and unspent points. An inactive group's unspent is the
-/// total less its own spent, the total being the packet's unspent plus the active group's spent
-/// (`0x5c9ca0`).
-pub(crate) fn build_pages(
+/// The player's tabs for `(race, class)` (`0x5c64d0` with a player).
+pub(crate) fn player_pages(
     catalog: &TalentCatalog,
-    known: &BTreeSet<u32>,
-    // `Spell.dbc` alone, for names and icons, so the addon-corpus survey can build the snapshot
-    // without the other spell catalogs.
     spells: &benilla_formats::SpellCatalog,
     race: u8,
     class: u8,
-    points: (u32, u32),
-    held: &PlayerTalentGroups,
-) -> TalentUiState {
-    let (tabs, pages) = tab_pages(
-        catalog,
-        &catalog.tabs_for_class(race, class),
-        spells,
-        |t| t.required_spell == 0 || known.contains(&t.required_spell),
-        |_| true,
-    );
-    let ranks_of = |group: &HashMap<u32, u8>| ranks_in(&pages, group);
-    let spent = |ranks: &[Vec<i32>]| -> i32 { ranks.iter().flatten().map(|r| r + 1).sum() };
-    let group_ranks: Vec<Vec<Vec<i32>>> = held.ranks.iter().map(ranks_of).collect();
-    let active = held.active.min(group_ranks.len().saturating_sub(1));
-    let total = held.unspent as i32 + group_ranks.get(active).map_or(0, |r| spent(r));
-    let groups = group_ranks
-        .into_iter()
-        .enumerate()
-        .map(|(g, ranks)| {
-            let unspent = if g == active {
-                held.unspent
-            } else {
-                (total - spent(&ranks)).max(0) as u32
-            };
-            TalentGroupView {
-                ranks,
-                unspent,
-                glyphs: held.glyphs.get(g).copied().unwrap_or_default(),
-            }
-        })
-        .collect();
-    TalentUiState {
-        tabs,
-        talents: pages.into_iter().map(|(_, v)| v).collect(),
-        groups,
-        active_group: active,
-        points,
-    }
+) -> TalentPages {
+    pages_of(catalog, &catalog.tabs_for_class(race, class), spells)
 }
 
-/// The pet's snapshot: its tree's tabs (`0x5c64d0` with the family's type) and one group while
-/// any tab exists (`0x5c5df0`). Every pet talent meets its prerequisite while the pet resolves
-/// (`0x5c7a39`'s player-only leg), and is available as its category allows (`0x5c5a20`): with no
-/// pet or no family row, none is.
-pub(crate) fn build_pet_pages(
+/// The pet's tabs for creature family `family` (`0x5c64d0` with none): `None` for a family with no
+/// row or no talent type, where the build leaves the tabs as they were (`0x5c6526`).
+pub(crate) fn pet_pages(
     catalog: &TalentCatalog,
     spells: &benilla_formats::SpellCatalog,
-    tree: i32,
-    pet_resolves: bool,
-    category: Option<i32>,
-    held: &PetTalentGroup,
-) -> TalentUiState {
-    let (tabs, pages) = tab_pages(
-        catalog,
-        &catalog.tabs_for_pet(tree),
-        spells,
-        |_| pet_resolves,
-        |t| category.is_some_and(|c| t.available_to_pet_category(c)),
-    );
-    let groups = if tabs.is_empty() {
-        Vec::new()
-    } else {
-        vec![TalentGroupView {
-            ranks: ranks_in(&pages, &held.ranks),
-            unspent: held.unspent,
-            glyphs: [0; 6],
-        }]
-    };
-    TalentUiState {
-        tabs,
-        talents: pages.into_iter().map(|(_, v)| v).collect(),
-        groups,
-        active_group: 0,
-        points: (0, 0),
-    }
+    families: &benilla_formats::CreatureFamilies,
+    family: u32,
+) -> Option<TalentPages> {
+    let tree = families.get(family)?.pet_talent_type;
+    (tree >= 0).then(|| pages_of(catalog, &catalog.tabs_for_pet(tree), spells))
 }
 
-/// Each group's ranks shaped as the pages; a rank that names no rank spell is dropped, as the
-/// packet reader drops it (`0x5c9347`).
-fn ranks_in(pages: &[(u32, Vec<TalentView>)], group: &HashMap<u32, u8>) -> Vec<Vec<i32>> {
-    pages
-        .iter()
-        .map(|(_, views)| {
-            views
-                .iter()
-                .map(|v| match group.get(&v.id) {
-                    Some(&r) if usize::from(r) < v.ranks.len() => i32::from(r),
-                    _ => -1,
-                })
-                .collect()
-        })
-        .collect()
-}
-
-/// The tabs' views and each tab's talents in row order (`0x5c64d0`).
-fn tab_pages(
+/// The tabs' views and each tab's talents in row order.
+fn pages_of(
     catalog: &TalentCatalog,
     tab_rows: &[&benilla_formats::TalentTabInfo],
     spells: &benilla_formats::SpellCatalog,
-    meets: impl Fn(&benilla_formats::Talent) -> bool,
-    available: impl Fn(&benilla_formats::Talent) -> bool,
-) -> (Vec<TalentTabView>, Vec<(u32, Vec<TalentView>)>) {
-    let mut tabs = Vec::with_capacity(tab_rows.len());
-    let mut pages = Vec::with_capacity(tab_rows.len());
+) -> TalentPages {
+    let mut pages = TalentPages::default();
     for tab in tab_rows {
-        let list = catalog.talents_in_tab(tab.id);
-        let views = list
+        let views = catalog
+            .talents_in_tab(tab.id)
             .iter()
-            .map(|t| {
-                let ranks = t.ranks[..t.max_rank() as usize]
+            .map(|t| TalentView {
+                id: t.id,
+                tier: t.row + 1,
+                column: t.col + 1,
+                ranks: t.ranks[..t.max_rank() as usize]
                     .iter()
                     .map(|&spell| {
                         let d = spells.get(spell);
@@ -620,225 +235,145 @@ fn tab_pages(
                             icon: d.and_then(|d| d.icon.clone()),
                         }
                     })
-                    .collect();
-                // A prerequisite naming no row in the tab draws no arrow (two 12340 rows do).
-                let prereqs = t
+                    .collect(),
+                exceptional: t.exceptional,
+                prereqs: t
                     .prereqs
                     .iter()
-                    .filter_map(|&(id, rank)| {
-                        let index = list.iter().position(|o| o.id == id)?;
-                        Some(TalentPrereqView { index, rank })
+                    .map(|&(id, rank)| {
+                        let rec = catalog.talent_by_id(id);
+                        // The spell at the needed rank or the first later one (`0x622585`).
+                        let spell = rec
+                            .and_then(|r| r.ranks.iter().skip(rank as usize).find(|&&s| s != 0))
+                            .copied()
+                            .unwrap_or(0);
+                        TalentPrereqView {
+                            talent: id,
+                            rank,
+                            seat: rec.map(|r| (r.row + 1, r.col + 1)),
+                            spell,
+                            name: spells.get(spell).map(|d| d.name.clone()),
+                        }
                     })
-                    .collect();
-                TalentView {
-                    id: t.id,
-                    tier: t.row + 1,
-                    column: t.col + 1,
-                    ranks,
-                    exceptional: t.exceptional,
-                    prereqs,
-                    required_spell_known: meets(t),
-                    required_spell_name: (t.required_spell != 0)
-                        .then(|| spells.get(t.required_spell).map(|d| d.name.clone()))
-                        .flatten(),
-                    available: available(t),
-                }
+                    .collect(),
+                required_spell: t.required_spell,
+                required_spell_name: (t.required_spell != 0)
+                    .then(|| spells.get(t.required_spell).map(|d| d.name.clone()))
+                    .flatten(),
+                category_mask: t.category_mask,
             })
-            .collect::<Vec<_>>();
-        tabs.push(TalentTabView {
+            .collect();
+        pages.tabs.push(TalentTabView {
+            id: tab.id,
             name: tab.name.clone(),
             icon: tab.icon.clone(),
             background: tab.background.clone(),
         });
-        pages.push((tab.id, views));
+        pages.talents.push(views);
     }
-    (tabs, pages)
+    pages
 }
 
-/// Drains the learn verbs into `CMSG_LEARN_TALENT` and `CMSG_LEARN_PREVIEW_TALENTS`, and the
-/// pet's into their pet forms under the pet's guid, which must resolve (`0x5c81df`, `0x5c6ae4`);
-/// the VM chose the talent and rank (`0x5c80e0`, `0x5c6a10`), and the server answers with
-/// `SMSG_TALENTS_INFO`.
-fn drain_talent_learns(
-    mut script: crate::ui_script::InTurn,
-    commands: Res<NetCommands>,
-    bar: Option<Res<crate::ui_pet::PetBar>>,
-    pet: crate::ui_pet::PetUnit,
-) {
-    let Some(mut script) = script.turn() else {
+/// The UI world entry's talent part (`0x528235`, `0x52823a`): the player's tabs built once from
+/// our race and class, the groups laid over them, then the inspect target forgotten.
+pub(crate) fn enter_world(world: &mut World) {
+    if !world.contains_resource::<TalentState>() {
         return;
-    };
-    let pet_guid = bar
-        .as_deref()
-        .map(|b| b.spells.pet_guid)
-        .filter(|&guid| guid != 0 && pet.store(guid).is_some());
-    for (talent_id, rank) in script.take_pet_talent_learns() {
-        let Some(pet_guid) = pet_guid else { continue };
-        debug!("ui_talent: learn pet talent {talent_id} rank {rank}");
-        let _ = commands.0.send(ClientCommand::PetLearnTalent {
-            pet_guid,
-            talent_id,
-            rank,
+    }
+    let race_class = world
+        .query_filtered::<&crate::net::ObjectStore, With<crate::net::SelfPlayer>>()
+        .iter(world)
+        .next()
+        .and_then(|s| Some((s.0.unit_race()?, s.0.unit_class()?)));
+    let catalog = world.get_resource::<Talents>().map(|t| t.catalog.clone());
+    world.resource_scope(|world, mut state: Mut<TalentState>| {
+        let spells = world.get_resource::<Spells>();
+        state.0.enter_world(|| {
+            let (race, class) = race_class?;
+            Some(player_pages(
+                catalog.as_deref()?,
+                &spells?.catalog,
+                race,
+                class,
+            ))
         });
+        state.0.inspect_enter_world();
+    });
+}
+
+/// The UI world leave's talent part (`0x528d4b`, `0x528d50`).
+pub(crate) fn leave_world(world: &mut World) {
+    if let Some(mut state) = world.get_resource_mut::<TalentState>() {
+        state.0.leave_world();
+        state.0.inspect_enter_world();
     }
-    for talents in script.take_pet_talent_preview_learns() {
-        let Some(pet_guid) = pet_guid else { continue };
-        debug!("ui_talent: learn preview pet talents {talents:?}");
-        let _ = commands
-            .0
-            .send(ClientCommand::LearnPreviewTalentsPet { pet_guid, talents });
+}
+
+/// The pet setter's tab update (`0x5c9df0`) for `family`, 0 when the pet list emptied.
+pub(crate) fn update_pet_tabs(world: &mut World, family: u32) {
+    if !world.contains_resource::<TalentState>() {
+        return;
     }
-    for (talent_id, rank) in script.take_talent_learns() {
-        debug!("ui_talent: learn talent {talent_id} rank {rank}");
-        let _ = commands
-            .0
-            .send(ClientCommand::LearnTalent { talent_id, rank });
-    }
-    for talents in script.take_talent_preview_learns() {
-        debug!("ui_talent: learn preview talents {talents:?}");
-        let _ = commands
-            .0
-            .send(ClientCommand::LearnPreviewTalents { talents });
-    }
+    let catalog = world.get_resource::<Talents>().map(|t| t.catalog.clone());
+    world.resource_scope(|world, mut state: Mut<TalentState>| {
+        let spells = world.get_resource::<Spells>();
+        let families = world.get_resource::<crate::ui_pet_stats::PetFamilyTables>();
+        state.0.update_pet_tabs(family as i32, || {
+            pet_pages(
+                catalog.as_deref()?,
+                &spells?.catalog,
+                &families?.families,
+                family,
+            )
+        });
+    });
+}
+
+/// The inspect target set (`0x5c9f70`): the tabs of `guid`'s class when it is a held player
+/// (`0x5c9f8f`), else none.
+pub(crate) fn set_inspect_target(
+    state: &mut TalentInfo,
+    guid: u64,
+    class: Option<(u8, u8)>,
+    catalog: Option<&TalentCatalog>,
+    spells: Option<&Spells>,
+) {
+    let pages =
+        class.and_then(|(race, class)| Some(player_pages(catalog?, &spells?.catalog, race, class)));
+    state.set_inspect_target(guid, pages);
+}
+
+/// Our character points' watch over `PLAYER_CHARACTER_POINTS1/2`, one 8-byte handler (`0x5e8470`).
+pub(crate) fn is_character_points_watch(index: u16) -> bool {
+    use benilla_protocol::field::{FIELD_PLAYER_CHARACTER_POINTS1, FIELD_PLAYER_CHARACTER_POINTS2};
+    index == FIELD_PLAYER_CHARACTER_POINTS1 || index == FIELD_PLAYER_CHARACTER_POINTS2
+}
+
+/// `CHARACTER_POINTS_CHANGED`'s deltas (`0x5e8330`): each point's value now less its old one,
+/// signed, a field the update left standing reading its own value as old.
+pub(crate) fn character_points_deltas(edges: &[(u16, u32, u32)], now: (u32, u32)) -> (i64, i64) {
+    use benilla_protocol::field::{FIELD_PLAYER_CHARACTER_POINTS1, FIELD_PLAYER_CHARACTER_POINTS2};
+    let old = |index: u16, now: u32| {
+        edges
+            .iter()
+            .find(|&&(i, ..)| i == index)
+            .map_or(now, |&(_, old, _)| old)
+    };
+    let delta = |index, now: u32| i64::from(now as i32) - i64::from(old(index, now) as i32);
+    (
+        delta(FIELD_PLAYER_CHARACTER_POINTS1, now.0),
+        delta(FIELD_PLAYER_CHARACTER_POINTS2, now.1),
+    )
+}
+
+/// What the talent verbs reach at the call: the state, the pet list and the pet's family tables.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct TalentLive<'w> {
+    pub(crate) state: Option<ResMut<'w, TalentState>>,
+    pub(crate) pets: Option<Res<'w, crate::ui_pet::PetList>>,
+    pub(crate) names: Option<Res<'w, crate::names::NameCache>>,
+    pub(crate) families: Option<Res<'w, crate::ui_pet_stats::PetFamilyTables>>,
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use benilla_protocol::messages::{LearnedTalent, TalentGroupInfo};
-
-    fn held(unspent: u32, active: u8, groups: Vec<Vec<(u32, u8)>>) -> PlayerTalentGroups {
-        let mut app = App::new();
-        app.init_resource::<PlayerTalentGroups>()
-            .init_resource::<PetTalentGroup>();
-        let info = TalentsInfo::Player {
-            unspent,
-            active_group: active,
-            groups: groups
-                .into_iter()
-                .map(|g| TalentGroupInfo {
-                    talents: g
-                        .into_iter()
-                        .map(|(talent_id, rank)| LearnedTalent { talent_id, rank })
-                        .collect(),
-                    glyphs: Vec::new(),
-                })
-                .collect(),
-        };
-        app.world_mut()
-            .run_system_cached_with(on_talents_info, SessionEvent::TalentsInfo(info))
-            .unwrap();
-        app.world_mut()
-            .remove_resource::<PlayerTalentGroups>()
-            .unwrap()
-    }
-
-    #[test]
-    fn the_packet_replaces_the_groups_and_owes_the_events() {
-        let h = held(3, 1, vec![vec![(26, 4)], vec![]]);
-        assert_eq!((h.unspent, h.active, h.ranks.len()), (3, 1, 2));
-        assert_eq!(h.ranks[0].get(&26), Some(&4));
-        let names: Vec<&str> = h.pending_events.iter().map(|(e, _)| *e).collect();
-        assert_eq!(
-            names,
-            vec!["PLAYER_TALENT_UPDATE", "ACTIVE_TALENT_GROUP_CHANGED"]
-        );
-        assert_eq!(
-            h.pending_events[1].1,
-            vec![ScriptValue::Int(2), ScriptValue::Int(0)],
-            "new 2, old 0: there were no groups before"
-        );
-    }
-
-    /// The inspect packet replaces the inspected groups whole and owes one `INSPECT_TALENT_READY`;
-    /// a new target keeps them until its own packet lands (`0x5c9f70`, `0x5c9ff0`).
-    #[test]
-    fn the_inspect_packet_replaces_the_groups_and_owes_the_event() {
-        use benilla_protocol::messages::{LearnedTalent, TalentGroupInfo};
-        let body = |talent_id: u32, rank: u8| TalentsInfo::Player {
-            unspent: 4,
-            active_group: 1,
-            groups: vec![
-                TalentGroupInfo::default(),
-                TalentGroupInfo {
-                    talents: vec![LearnedTalent { talent_id, rank }],
-                    glyphs: vec![7],
-                },
-            ],
-        };
-        let mut inspect = InspectTalents::default();
-        inspect.apply(body(1403, 2));
-        assert_eq!((inspect.groups.unspent, inspect.groups.active), (4, 1));
-        assert_eq!(inspect.groups.ranks[1].get(&1403), Some(&2));
-        assert_eq!(inspect.groups.glyphs[1][0], 7);
-        assert_eq!(inspect.ready, 1);
-        assert_eq!(inspect.groups.ranks.len(), 2, "kept until the next packet");
-        inspect.apply(body(1500, 0));
-        assert_eq!(inspect.groups.ranks[1].get(&1403), None);
-        assert_eq!(inspect.ready, 2);
-    }
-
-    #[test]
-    fn an_inactive_groups_unspent_is_the_total_less_its_spent() {
-        let data = benilla_formats::wow_data_or_skip!();
-        let mut chain = benilla_formats::open_chain(&data).unwrap();
-        let catalog = benilla_formats::load_talent_catalog(&mut chain).unwrap();
-        let spells = benilla_formats::load_spell_catalog(&mut chain).unwrap();
-        const HUMAN: u8 = 1;
-        const MAGE: u8 = 8;
-        let first = catalog.talents_in_tab(catalog.tabs_for_class(HUMAN, MAGE)[0].id)[0].id;
-        // Active group 1 holds 2 points in the first Arcane talent, 2 unspent: 4 in all. Group 2
-        // holds 1 point, so it has 3 to spend.
-        let h = held(2, 0, vec![vec![(first, 1)], vec![(first, 0)]]);
-        let state = build_pages(&catalog, &BTreeSet::new(), &spells, HUMAN, MAGE, (2, 0), &h);
-        assert_eq!(state.tabs.len(), 3);
-        assert_eq!(state.groups.len(), 2);
-        assert_eq!(state.groups[0].ranks[0][0], 1);
-        assert_eq!((state.groups[0].unspent, state.groups[1].unspent), (2, 3));
-        assert!(state.tabs.iter().all(|t| t.icon.is_some()));
-    }
-
-    /// A wolf's tree, one group, and the family category closing the talents it may not take.
-    #[test]
-    fn a_wolf_gets_its_tree_and_its_category_closes_the_rest() {
-        let data = benilla_formats::wow_data_or_skip!();
-        let mut chain = benilla_formats::open_chain(&data).unwrap();
-        let catalog = benilla_formats::load_talent_catalog(&mut chain).unwrap();
-        let spells = benilla_formats::load_spell_catalog(&mut chain).unwrap();
-        let families = benilla_formats::load_creature_families(&mut chain).unwrap();
-        let wolf = families.get(1).unwrap();
-        let tab = catalog.tabs_for_pet(wolf.pet_talent_type)[0];
-        let first = catalog.talents_in_tab(tab.id)[0].id;
-        let held = PetTalentGroup {
-            unspent: 5,
-            ranks: HashMap::from([(first, 1)]),
-            pending_update: false,
-        };
-        let state = build_pet_pages(
-            &catalog,
-            &spells,
-            wolf.pet_talent_type,
-            true,
-            Some(wolf.category),
-            &held,
-        );
-        assert_eq!((state.tabs.len(), state.groups.len()), (1, 1));
-        assert_eq!(state.groups[0].unspent, 5);
-        assert_eq!(state.groups[0].ranks[0][0], 1);
-        let talents = &state.talents[0];
-        assert!(talents.iter().all(|t| t.required_spell_known));
-        assert!(talents.iter().any(|t| t.available));
-        assert!(
-            talents.iter().any(|t| !t.available),
-            "a tree holds talents for other categories"
-        );
-
-        // No pet object: every talent closed and no prerequisite met. No tree: no group.
-        let gone = build_pet_pages(&catalog, &spells, wolf.pet_talent_type, false, None, &held);
-        assert!(gone.talents[0]
-            .iter()
-            .all(|t| !t.available && !t.required_spell_known));
-        let none = build_pet_pages(&catalog, &spells, -1, true, Some(0), &held);
-        assert!(none.tabs.is_empty() && none.groups.is_empty());
-    }
-}
+pub(crate) mod tests;
