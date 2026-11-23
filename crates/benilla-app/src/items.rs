@@ -516,6 +516,9 @@ pub(crate) enum RecordWait {
     /// A refusal's line that named the item, linked each time (`0x8086bc`, `0x80874e` ->
     /// `0x7fea80`, `0x7feb50`): it shows again, unlogged.
     CastFailure(crate::ui_action::CastFail),
+    /// The auction house's: a list row's, a sold row's or a notice's line (`0x59cb70`, `0x59cbb0`,
+    /// `0x59cbe0`, `0x59cc10`, `0x59a400`).
+    Auction(crate::ui_auction::Callback),
 }
 
 impl RecordWaits {

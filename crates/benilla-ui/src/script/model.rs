@@ -870,29 +870,29 @@ pub(crate) struct Model {
     /// `HasNewMail()` (`0x56f350`), from `MSG_QUERY_NEXT_MAIL_TIME` and `SMSG_RECEIVED_MAIL`.
     pub(crate) has_new_mail: bool,
 
-    /// The open auction house and the auction calls. `auction_selected` is each list's selected
-    /// auction id, 0 for none (`0x59b2e0`); `auction_sort` each list's criteria, front first.
+    /// A fixture's auction house, its criteria (front first) and its query gates, where no view
+    /// lends the house; the sends its verbs made, and its multi-sell.
+    #[cfg(any(test, feature = "fixtures"))]
     pub(crate) auction: Option<auction::AuctionState>,
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) auction_sort: [Vec<(u8, bool)>; 3],
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) auction_can_query: [bool; 3],
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) auction_can_get_all: bool,
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) auction_sent: Vec<auction::AuctionPacket>,
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) auction_multisell: Option<auction::AuctionMultiSell>,
     /// The Browse tab's class tree, pushed once per login.
     pub(crate) auction_item_classes: Vec<auction::AuctionCategory>,
+    /// Each list's selected auction id, 0 for none (`0x59b2e0`).
     pub(crate) auction_selected: [u32; 3],
-    pub(crate) auction_sort: [Vec<(u8, bool)>; 3],
-    /// The query gate per list and the get-all gate, the app's throttle.
-    pub(crate) auction_can_query: [bool; 3],
-    pub(crate) auction_can_get_all: bool,
-    /// `SetAuctionsTabShowing`, which routes a bag right-click to the sell slot.
+    /// `SetAuctionsTabShowing` (`[0xc0f3f5]`), which routes a bag right-click to the sell slot.
     pub(crate) auction_tab_showing: bool,
-    /// The slots a multi-sell holds locked.
+    /// The slots a multi-sell holds locked (`0x59aaa0`).
     pub(crate) auction_locked: Vec<(i64, u32)>,
-    pub(crate) auction_query: Option<auction::AuctionQuery>,
-    pub(crate) auction_owner_query: bool,
-    pub(crate) auction_bidder_query: Option<u32>,
-    pub(crate) auction_bids: Vec<auction::AuctionBid>,
-    pub(crate) auction_cancels: Vec<u32>,
-    pub(crate) auction_start: Option<auction::AuctionStartRequest>,
-    pub(crate) auction_cancel_sell: bool,
-    pub(crate) auction_close: bool,
-    /// The sell slot's item, resolved to its guid when `StartAuction` fires.
+    /// The sell slot's item (`[0xc0f3f8]`), resolved to its guid when `StartAuction` sends.
     pub(crate) auction_sell_item: Option<cursor::CursorItem>,
 
     /// The trade partner (`0xbfa658`), set by the partner setter's open (`0x58713d`) and zeroed by
@@ -1782,22 +1782,22 @@ impl Model {
             mail_package: 0,
             #[cfg(any(test, feature = "fixtures"))]
             has_new_mail: false,
+            #[cfg(any(test, feature = "fixtures"))]
             auction: None,
+            #[cfg(any(test, feature = "fixtures"))]
+            auction_sort: auction::initial_sort_criteria(),
+            #[cfg(any(test, feature = "fixtures"))]
+            auction_can_query: [true; 3],
+            #[cfg(any(test, feature = "fixtures"))]
+            auction_can_get_all: true,
+            #[cfg(any(test, feature = "fixtures"))]
+            auction_sent: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
+            auction_multisell: None,
             auction_item_classes: Vec::new(),
             auction_selected: [0; 3],
-            auction_sort: auction::initial_sort_criteria(),
-            auction_can_query: [true; 3],
-            auction_can_get_all: true,
             auction_tab_showing: false,
             auction_locked: Vec::new(),
-            auction_query: None,
-            auction_owner_query: false,
-            auction_bidder_query: None,
-            auction_bids: Vec::new(),
-            auction_cancels: Vec::new(),
-            auction_start: None,
-            auction_cancel_sell: false,
-            auction_close: false,
             auction_sell_item: None,
             trade_partner: None,
             trade_target: Default::default(),

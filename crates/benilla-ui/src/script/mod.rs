@@ -310,8 +310,9 @@ pub use arena_team::{
     ArenaTeamSlotView,
 };
 pub use auction::{
-    AuctionBid, AuctionCategory, AuctionHighBidder, AuctionItemRow, AuctionListState, AuctionQuery,
-    AuctionStartRequest, AuctionState, AuctionSubCategory, CarryRefusal, BIDDER, LIST, OWNER,
+    auction_default_criteria, auction_sort_order, AuctionCategory, AuctionHighBidder,
+    AuctionItemRow, AuctionListState, AuctionMultiSell, AuctionPacket, AuctionQuery,
+    AuctionSellStep, AuctionState, AuctionSubCategory, CarryRefusal, BIDDER, LIST, OWNER,
     SORT_COLUMNS,
 };
 pub use aura::{AuraFacts, AuraState, UnitAuraSlots};

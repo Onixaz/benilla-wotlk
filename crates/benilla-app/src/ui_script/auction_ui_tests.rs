@@ -4,8 +4,9 @@
 use std::collections::HashMap;
 
 use benilla_ui::script::{
-    AuctionCategory, AuctionHighBidder, AuctionItemRow, AuctionListState, AuctionState,
-    ContainerSlot, ContainerState, ItemTemplateView, ScriptValue, UiScript, BIDDER, LIST, OWNER,
+    AuctionCategory, AuctionHighBidder, AuctionItemRow, AuctionListState, AuctionPacket,
+    AuctionQuery, AuctionState, ContainerSlot, ContainerState, ItemTemplateView, ScriptValue,
+    UiScript, BIDDER, LIST, OWNER,
 };
 
 const LINEN: u32 = 2589;
@@ -53,7 +54,7 @@ fn row(
         high_bidder: AuctionHighBidder::Nil,
         owner: Some(owner.to_string()),
         owner_guid: 0x55,
-        expires_at: 40_000.0,
+        time_left: 40_000.0,
         link: Some(format!("|cffffffff|Hitem:{LINEN}:0:0:0|h[{name}]|h|r")),
         ..Default::default()
     }
@@ -96,6 +97,14 @@ fn open(state: AuctionState) -> UiScript {
     s
 }
 
+/// The query the window's verbs sent since the last read, if one.
+fn query(s: &mut UiScript) -> Option<AuctionQuery> {
+    s.take_auction_sent().into_iter().find_map(|p| match p {
+        AuctionPacket::Query(q) => Some(q),
+        _ => None,
+    })
+}
+
 fn lock() -> std::sync::MutexGuard<'static, ()> {
     crate::local_state::test_env::ENV_LOCK
         .lock()
@@ -129,11 +138,14 @@ fn the_window_opens_on_the_twelve_classes_and_no_rows() {
         "#,
     )
     .unwrap();
-    assert!(s.take_auction_owner_query(), "the open asks the owner list");
-    assert_eq!(
-        s.take_auction_bidder_query(),
-        Some(0),
-        "and the bidder list"
+    let sent = s.take_auction_sent();
+    assert!(
+        sent.contains(&AuctionPacket::OwnerList),
+        "the open asks the owner list: {sent:?}"
+    );
+    assert!(
+        sent.contains(&AuctionPacket::BidderList(0)),
+        "and the bidder list: {sent:?}"
     );
 }
 
@@ -172,17 +184,17 @@ fn the_browse_list_paints_rows_and_a_header_click_asks_the_new_sort() {
         "each row shows its bid or opening price: {shown:?}"
     );
 
-    let _ = s.take_auction_query();
+    let _ = query(&mut s);
     s.run("AuctionFrame_OnClickSortColumn('list', 'level')")
         .unwrap();
-    let q = s
-        .take_auction_query()
-        .expect("the header click searches again");
+    assert!(query(&mut s).is_some(), "the header click searches again");
+    let (front, reversed): (String, bool) = s
+        .eval("local c, r = GetAuctionSort('list', 1) return c, r == 1")
+        .unwrap();
     assert_eq!(
-        q.sort.first(),
-        Some(&(0, true)),
-        "level leads, reversed: {:?}",
-        q.sort
+        (front.as_str(), reversed),
+        ("level", true),
+        "level leads, reversed"
     );
     let errors = auction_errors(s.take_errors());
     assert!(errors.is_empty(), "sort errors: {errors:#?}");
@@ -228,9 +240,9 @@ fn the_filter_tree_opens_as_the_reference() {
         cloth_slots > 0 && cloak,
         "Cloth offers slots, the cloak too: {cloth_slots}"
     );
-    let _ = s.take_auction_query();
+    let _ = query(&mut s);
     s.run("AuctionFrameBrowse_Search()").unwrap();
-    let q = s.take_auction_query().expect("searched");
+    let q = query(&mut s).expect("searched");
     assert_eq!((q.class, q.sub_class), (4, 1), "Armor, Cloth");
     let errors = auction_errors(s.take_errors());
     assert!(errors.is_empty(), "filter errors: {errors:#?}");
@@ -305,19 +317,21 @@ fn a_two_stack_sale_runs_as_a_multisell() {
         "two stacks of the 45 held validate"
     );
     s.run("AuctionsCreateAuctionButton_OnClick()").unwrap();
-    let req = s.take_auction_start().expect("StartAuction queued");
+    let sell = s
+        .take_auction_multisell()
+        .expect("StartAuction's multi-sell");
     assert_eq!(
         (
-            req.min_bid,
-            req.buyout,
-            req.run_time_minutes,
-            req.stack_size,
-            req.num_stacks
+            sell.bid,
+            sell.buyout,
+            sell.minutes,
+            sell.stack_size,
+            sell.num_stacks
         ),
         (5_000, 10_000, 720, 20, 2)
     );
-    assert!(!req.direct, "more than the sell item: a multi-sell");
-    assert_eq!(req.items, vec![(0, 1, 20), (0, 2, 20)], "gathered until 40");
+    let counts: Vec<u32> = sell.items.iter().map(|i| i.1).collect();
+    assert_eq!(counts, vec![20, 20], "gathered until 40");
 
     // The stock handler reads the global `arg1`, which `0x819ea0` sets: the form blocks and the
     // bar counts up to the stacks, then unblocks on the last one.
@@ -375,7 +389,8 @@ fn the_auctions_tab_paints_sold_rows_and_gates_the_cancel() {
     s.tick(0.0);
     s.fire_event("AUCTION_OWNED_LIST_UPDATE", Vec::<ScriptValue>::new());
     // The owner list's duration sort puts the sold row first.
-    assert_eq!(s.auction_ids(OWNER), vec![8, 7]);
+    let first: String = s.eval("return (GetAuctionItemInfo('owner', 1))").unwrap();
+    assert_eq!(first, "Wool Cloth");
     let (sold_name, live_name, bidder): (String, String, String) = s
         .eval(
             "return AuctionsButton1Name:GetText(), AuctionsButton2Name:GetText(), \
@@ -401,9 +416,14 @@ fn the_auctions_tab_paints_sold_rows_and_gates_the_cancel() {
         .unwrap());
     s.run("CancelAuction(GetSelectedAuctionItem('owner'))")
         .unwrap();
+    let cancels: Vec<AuctionPacket> = s
+        .take_auction_sent()
+        .into_iter()
+        .filter(|p| matches!(p, AuctionPacket::Cancel { .. }))
+        .collect();
     assert_eq!(
-        s.take_auction_cancels(),
-        vec![7],
+        cancels,
+        vec![AuctionPacket::Cancel { auction_id: 7 }],
         "the cancel addresses the auction id"
     );
     let errors = auction_errors(s.take_errors());
@@ -424,7 +444,10 @@ fn the_bid_gates_read_the_purse_and_the_seller() {
     ));
     s.fire_event("AUCTION_ITEM_LIST_UPDATE", Vec::<ScriptValue>::new());
     // Equal rows keep the pushed order.
-    assert_eq!(s.auction_ids(LIST), vec![1, 2]);
+    let seller: String = s
+        .eval("return (select(12, GetAuctionItemInfo('list', 1)))")
+        .unwrap();
+    assert_eq!(seller, "Seller");
     s.run("BrowseButton_OnClick(BrowseButton1)").unwrap();
     assert!(s
         .eval::<bool>("return BrowseBidButton:IsEnabled() == 1")
@@ -440,27 +463,40 @@ fn the_bid_gates_read_the_purse_and_the_seller() {
     );
     s.run("BrowseButton_OnClick(BrowseButton1) PlaceAuctionBid('list', 1, 5000)")
         .unwrap();
-    let bids = s.take_auction_bids();
+    let bids: Vec<AuctionPacket> = s
+        .take_auction_sent()
+        .into_iter()
+        .filter(|p| matches!(p, AuctionPacket::Bid { .. }))
+        .collect();
     assert_eq!(
-        (bids[0].auction_id, bids[0].amount),
-        (1, 5_000),
+        bids,
+        vec![AuctionPacket::Bid {
+            auction_id: 1,
+            amount: 5_000
+        }],
         "a buyout by id"
     );
     let errors = auction_errors(s.take_errors());
     assert!(errors.is_empty(), "bid errors: {errors:#?}");
 }
 
-/// Closing the window closes the session client-side.
+/// Closing the window closes the session client-side, its event inside the call.
 #[test]
 fn hiding_the_window_closes_the_session() {
     benilla_formats::wow_data_or_skip!();
     let _l = lock();
-    let mut s = open(session(Vec::new(), Vec::new()));
-    let _ = s.take_auction_close();
-    s.run("HideUIPanel(AuctionFrame)").unwrap();
-    assert!(
-        s.take_auction_close(),
-        "AuctionFrame's OnHide calls CloseAuctionHouse"
+    let s = open(session(Vec::new(), Vec::new()));
+    let closed: i64 = s
+        .eval(
+            "local n = 0 local f = CreateFrame('Frame') f:RegisterEvent('AUCTION_HOUSE_CLOSED') \
+             f:SetScript('OnEvent', function() n = n + 1 end) HideUIPanel(AuctionFrame) return n",
+        )
+        .unwrap();
+    assert_eq!(closed, 1, "AuctionFrame's OnHide calls CloseAuctionHouse");
+    assert_eq!(
+        s.arity("CanCancelAuction(1)").unwrap(),
+        0,
+        "the house is closed"
     );
 }
 

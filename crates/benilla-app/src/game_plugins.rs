@@ -1994,8 +1994,6 @@ pub(crate) mod schedule_tests {
          "the device list rides a `VmMemo` seed, glue VM included, which a gate would starve; a `SOUND_DEVICE_UPDATE` taken before the interface is up is the reference's own drop, as the sound device-change handler signals only once the game UI is initialised"),
         ("tutorial.rs", "drain_tutorials", Because::FilledByVm,
          "`sends` exist only after Lua acknowledged, cleared or reset a flag, and go to the wire"),
-        ("ui_auction/mod.rs", "drain_auction", Because::FilledByVm,
-         "VM verbs; the refresh flags act only under an open window and become wire re-asks"),
         ("ui_char.rs", "feed_char", Because::MemoLatched,
          "`feed.vm: VmMemo<CharFeedMemo>`; `vm_reset` fires every transition on a fresh memo"),
         ("ui_chat.rs", "end_session_chat", Because::Deliberate,

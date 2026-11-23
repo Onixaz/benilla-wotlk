@@ -825,7 +825,7 @@ fn bank_banker(world: &World) -> Option<u64> {
         .banker
 }
 
-/// The world leave's inspect (`0x528cd3`), item text (`0x528ce2`), taxi (`0x528cf6`), trainer (`0x528cfb`), merchant (`0x528d00`), trade (`0x528d05`), pet (`0x528d14`), duel (`0x528d23`), battlefield (`0x528d46`), talent (`0x528d4b`), stable (`0x528d5a`) and interaction close (`0x528dce`) parts, in its order.
+/// The world leave's inspect (`0x528cd3`), item text (`0x528ce2`), taxi (`0x528cf6`), trainer (`0x528cfb`), merchant (`0x528d00`), trade (`0x528d05`), pet (`0x528d14`), duel (`0x528d23`), battlefield (`0x528d46`), talent (`0x528d4b`), auction house (`0x528d55`), stable (`0x528d5a`) and interaction close (`0x528dce`) parts, in its order.
 pub(crate) fn leave_world(world: &mut World) {
     crate::ui_inspect::leave_world(world);
     crate::ui_item_text::leave_world(world);
@@ -843,8 +843,10 @@ pub(crate) fn leave_world(world: &mut World) {
     if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {
         ui.write(UiScript::leave_battlefield_world);
     }
-    // The talent part (`0x528d4b`, `0x528d50`), ahead of the stable's.
+    // The talent part (`0x528d4b`, `0x528d50`), ahead of the auction house's.
     crate::ui_talent::leave_world(world);
+    // The auction house's close (`0x528d55`), ahead of the stable's.
+    crate::ui_auction::leave_world(world);
     crate::ui_stable::leave_world(world);
     // The interaction close zeroes the interact target ahead of its walk (`0x528dce` -> `0x512e89`).
     let held = world
@@ -879,8 +881,10 @@ pub(crate) fn queue_enter_world(commands: &mut Commands) {
         }
         crate::ui_battlefield_score::enter_world(world);
         crate::ui_arena::enter_world(world);
-        // The talent part (`0x528235`, `0x52823a`), ahead of the stable's (`0x528244`).
+        // The talent part (`0x528235`, `0x52823a`), ahead of the auction house's.
         crate::ui_talent::enter_world(world);
+        // The auction house's part (`0x52823f`), ahead of the stable's (`0x528244`).
+        crate::ui_auction::enter_world(world);
         crate::ui_stable::enter_world(world);
         crate::ui_tabard::enter_world(world);
         crate::ui_currency::enter_world(world);
