@@ -2274,6 +2274,33 @@ fn own_player_watches(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
             }
             continue;
         }
+        // Our character points' watch, one handler over both fields (`0x5e8470`): `CHARACTER_POINTS_CHANGED` with each point's delta, read once the update stands (`0x5e8330`).
+        if crate::ui_talent::is_character_points_watch(index) {
+            let low_moved = at > 0 && crate::ui_talent::is_character_points_watch(edges[at - 1].0);
+            if !low_moved {
+                let now = sc
+                    .index
+                    .0
+                    .get(&guid)
+                    .and_then(|&e| sc.stores.get(e).ok())
+                    .map(|s| {
+                        (
+                            s.0.player_talent_points().unwrap_or(0),
+                            s.0.player_free_professions().unwrap_or(0),
+                        )
+                    })
+                    .unwrap_or((new, 0));
+                let (talent, professions) = crate::ui_talent::character_points_deltas(edges, now);
+                sc.ui.fire(
+                    "CHARACTER_POINTS_CHANGED",
+                    vec![
+                        benilla_ui::script::ScriptValue::Int(talent),
+                        benilla_ui::script::ScriptValue::Int(professions),
+                    ],
+                );
+            }
+            continue;
+        }
         // The watched faction's watch (`0x6cddd0`): `UPDATE_FACTION` with `"player"` (`0x6cdde1`).
         if index == benilla_protocol::field::FIELD_PLAYER_WATCHED_FACTION_INDEX {
             sc.ui.fire(
@@ -2526,6 +2553,7 @@ fn merge_fields(
                     || e.unit_field(benilla_protocol::field::FIELD_PLAYER_GUILD_TIMESTAMP)
                     || e.unit_field(benilla_protocol::field::FIELD_PLAYER_WATCHED_FACTION_INDEX)
                     || crate::ui_title::known_titles_watch(e.index).is_some()
+                    || crate::ui_talent::is_character_points_watch(e.index)
                     || is_currency_watch(e.index)
                     || is_slot_watch(e.index)
                     || e.unit_field(benilla_protocol::field::FIELD_PLAYER_FIELD_COINAGE)

@@ -28,6 +28,8 @@ const FAMILY_MIN_SCALE_FIELD: usize = 1;
 const FAMILY_MIN_SCALE_LEVEL_FIELD: usize = 2;
 const FAMILY_MAX_SCALE_FIELD: usize = 3;
 const FAMILY_MAX_SCALE_LEVEL_FIELD: usize = 4;
+/// `skillLine[2]` (record `+0x14`, `+0x18`), the lines the pet's ability lookup walks (`0x71a6ab`).
+const FAMILY_SKILL_LINE_FIELDS: [usize; 2] = [5, 6];
 const FAMILY_FOOD_MASK_FIELD: usize = 0x1c / 4;
 /// `petTalentType`, `-1` for none (record `+0x20`, `0x5c64d0`).
 const FAMILY_PET_TALENT_TYPE_FIELD: usize = 8;
@@ -56,6 +58,8 @@ pub struct CreatureFamily {
     pub pet_talent_type: i32,
     /// The category a talent's `category_mask` admits, `-1` for none.
     pub category: i32,
+    /// The two skill lines the pet's ability lookup walks, in order (`0x71a6ab`).
+    pub skill_lines: [u32; 2],
     /// The size ramp: the model scale at `min_scale_level` and at `max_scale_level`.
     pub min_scale: f32,
     pub min_scale_level: u32,
@@ -224,6 +228,7 @@ pub fn load_creature_families(chain: &mut Chain) -> Result<CreatureFamilies> {
                 pet_food_mask: u32_at(r, FAMILY_FOOD_MASK_FIELD).unwrap_or(0),
                 pet_talent_type: u32_at(r, FAMILY_PET_TALENT_TYPE_FIELD).map_or(-1, |v| v as i32),
                 category: u32_at(r, FAMILY_CATEGORY_FIELD).map_or(-1, |v| v as i32),
+                skill_lines: FAMILY_SKILL_LINE_FIELDS.map(|f| u32_at(r, f).unwrap_or(0)),
                 min_scale: f32_at(r, FAMILY_MIN_SCALE_FIELD).unwrap_or(1.0),
                 min_scale_level: u32_at(r, FAMILY_MIN_SCALE_LEVEL_FIELD).unwrap_or(0),
                 max_scale: f32_at(r, FAMILY_MAX_SCALE_FIELD).unwrap_or(1.0),
@@ -462,6 +467,7 @@ mod tests {
             pet_food_mask: 0,
             pet_talent_type: -1,
             category: -1,
+            skill_lines: [0, 0],
             min_scale,
             min_scale_level: min_level,
             max_scale,

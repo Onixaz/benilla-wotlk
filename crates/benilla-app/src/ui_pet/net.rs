@@ -165,12 +165,19 @@ pub(crate) fn set_pet_tail(
         bar.attacking = false;
         if !head {
             ui.world(zero_pet_combo);
-        } else if let Some(held) = held {
-            // The combat test (`0x5d6a80`), then a hunter's pet closes the pet UI (`0x5d6a94`).
-            bar.attacking = held.in_combat;
-            if held.can_gain_xp {
-                ui.fire("PET_UI_CLOSE", Vec::new());
+            // The pet's talent tabs emptied (`0x5d6ab6`).
+            ui.world(|world| crate::ui_talent::update_pet_tabs(world, 0));
+        } else {
+            if let Some(held) = held {
+                // The combat test (`0x5d6a80`), then a hunter's pet closes the pet UI (`0x5d6a94`).
+                bar.attacking = held.in_combat;
+                if held.can_gain_xp {
+                    ui.fire("PET_UI_CLOSE", Vec::new());
+                }
             }
+            // The pet's talent tabs for the family the setter was handed (`0x5d6aa0`).
+            let family = u32::from(bar.spells.family);
+            ui.world(move |world| crate::ui_talent::update_pet_tabs(world, family));
         }
         // `UNIT_PET` with the token pushed ahead (`0x5d6aca`).
         ui.world(super::unit::push_pet_token);
@@ -961,16 +968,25 @@ mod tests {
         let mut ui = crate::ui_script::live::UiEvents::default();
         let changed = pet_spells(a_bar(0x2A), None, &mut bar, &mut list);
         set_pet_tail(changed, &mut bar, &mut possess, None, true, &mut ui);
+        // The pet's talent tabs follow its family between the combat tests and `UNIT_PET` (`0x5d6aa0`).
         assert_eq!(
             ui.names(),
-            ["<world>", "UNIT_PET", "<world>", "RAISED_AS_GHOUL"]
+            [
+                "<world>",
+                "<world>",
+                "UNIT_PET",
+                "<world>",
+                "RAISED_AS_GHOUL"
+            ]
         );
         let mut ui = crate::ui_script::live::UiEvents::default();
         let changed = pet_spells(PetSpells::default(), None, &mut bar, &mut list);
         set_pet_tail(changed, &mut bar, &mut possess, None, true, &mut ui);
+        // The combo zero, then the talent tabs' reset (`0x5d6ab6`).
         assert_eq!(
             ui.names(),
             [
+                "<world>",
                 "<world>",
                 "<world>",
                 "UNIT_PET",
@@ -982,7 +998,7 @@ mod tests {
         let mut ui = crate::ui_script::live::UiEvents::default();
         let changed = pet_spells(a_bar(0x2B), None, &mut bar, &mut list);
         set_pet_tail(changed, &mut bar, &mut possess, None, false, &mut ui);
-        assert_eq!(ui.names(), ["<world>", "UNIT_PET", "<world>"]);
+        assert_eq!(ui.names(), ["<world>", "<world>", "UNIT_PET", "<world>"]);
     }
 
     /// `0x806c30`: the refund, the pet's line (`0x806d60`), the pet's cast end (`0x80584a`), then the finish's release of the record after their listeners (`0x805854` -> `0x8055a2`).

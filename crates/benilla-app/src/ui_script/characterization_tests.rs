@@ -190,6 +190,20 @@ local VERBS = {
     { "refund01", function() return (select(2, GetContainerItemPurchaseInfo(0, 1))) end },
     { "binderdist", function() return CheckBinderDist() end },
     { "talentdist", function() return CheckTalentMasterDist() end },
+    { "ttabs", function() return GetNumTalentTabs() end },
+    { "tgroups", function() return GetNumTalentGroups() end },
+    { "tactive", function() return GetActiveTalentGroup() end },
+    { "tunspent", function() return GetUnspentTalentPoints() end },
+    { "tunspent2", function() return GetUnspentTalentPoints(false, false, 2) end },
+    { "trank11", function() return (select(5, GetTalentInfo(1, 1))) end },
+    { "tspent1", function() return (select(3, GetTalentTabInfo(1))) end },
+    { "tpreview", function() return GetGroupPreviewTalentPointsSpent() end },
+    { "cp", function() local a, b = UnitCharacterPoints("player") return a .. "/" .. b end },
+    { "petgroups", function() return GetNumTalentGroups(false, true) end },
+    { "petunspent", function() return GetUnspentTalentPoints(false, true) end },
+    { "itabs", function() return GetNumTalentTabs(true) end },
+    { "iunspent", function() return GetUnspentTalentPoints(true) end },
+    { "irank11", function() return (select(5, GetTalentInfo(1, 1, true))) end },
     { "boot", function() return GetInstanceBootTimeRemaining() end },
     { "spirittime", function() return GetAreaSpiritHealerTime() end },
     { "gbtabs", function() return GetNumGuildBankTabs() end },
@@ -3173,8 +3187,8 @@ fn the_inspect_honor_reply_signals_from_its_handler() {
         return;
     };
     rig.app
-        .world()
-        .resource::<crate::ui_inspect::InspectGuid>()
+        .world_mut()
+        .resource_mut::<crate::ui_inspect::InspectGuid>()
         .set(0x56);
     let reply = |guid| {
         SessionEvent::InspectHonorStats(benilla_protocol::messages::InspectHonorStats {
@@ -3252,8 +3266,8 @@ fn the_inspect_arena_team_reply_signals_from_its_handler() {
         return;
     };
     rig.app
-        .world()
-        .resource::<crate::ui_inspect::InspectGuid>()
+        .world_mut()
+        .resource_mut::<crate::ui_inspect::InspectGuid>()
         .set(0x56);
     let team = |guid| {
         SessionEvent::InspectArenaTeam(benilla_protocol::messages::InspectArenaTeam {
@@ -10233,4 +10247,351 @@ fn set_current_title_sends_inside_the_call() {
         "both sent before the chunk returned"
     );
     assert_eq!(cur, 0, "the field waits for the server");
+}
+
+/// Our character's first talent tab's first talent, as the install's tabs order them for `race`
+/// and `class` (`0x5c64d0`).
+fn first_talent(race: u8, class: u8) -> u32 {
+    let data = benilla_formats::wow_data().expect("install");
+    let mut chain = benilla_formats::open_chain(&data).unwrap();
+    let catalog = benilla_formats::load_talent_catalog(&mut chain).unwrap();
+    catalog.talents_in_tab(catalog.tabs_for_class(race, class)[0].id)[0].id
+}
+
+/// A player talent body: `unspent`, the active group, and per group its `(talentId, rank)`s.
+fn talents_info(unspent: u32, active: u8, groups: &[&[(u32, u8)]]) -> SessionEvent {
+    use benilla_protocol::messages::{LearnedTalent, TalentGroupInfo, TalentsInfo};
+    SessionEvent::TalentsInfo(TalentsInfo::Player {
+        unspent,
+        active_group: active,
+        groups: groups
+            .iter()
+            .map(|g| TalentGroupInfo {
+                talents: g
+                    .iter()
+                    .map(|&(talent_id, rank)| LearnedTalent { talent_id, rank })
+                    .collect(),
+                glyphs: Vec::new(),
+            })
+            .collect(),
+    })
+}
+
+/// A human mage (`UNIT_FIELD_BYTES_0` race 1, class 8) with three talent points.
+const MAGE: [(u16, u32); 3] = [
+    OBJECT_TYPE_PLAYER,
+    (benilla_protocol::field::FIELD_UNIT_BYTES_0, 1 | 8 << 8),
+    (benilla_protocol::field::FIELD_PLAYER_CHARACTER_POINTS1, 3),
+];
+
+const TALENT_VERBS: &[&str] = &[
+    "ttabs",
+    "tgroups",
+    "tactive",
+    "tunspent",
+    "tunspent2",
+    "trank11",
+    "tspent1",
+    "cp",
+];
+
+/// `SMSG_TALENTS_INFO` (`0x6cd770` -> `0x5c9e50`) replaces the groups whole and raises
+/// `PLAYER_TALENT_UPDATE` from the handler (`0x5c9eca`), then `ACTIVE_TALENT_GROUP_CHANGED(new, old)`
+/// only when the active group moved (`0x5c9efb`), each reading the groups the packet named at its
+/// step: the tabs the world entry built (`0x528235` -> `0x5c9d50`), the inactive group's unspent the
+/// total less its own spent (`0x5c9ca0`).
+#[test]
+fn talent_packets_raise_their_events_with_the_groups_read_at_the_step() {
+    let Some(mut rig) = Rig::login(&MAGE) else {
+        return;
+    };
+    let first = first_talent(1, 8);
+    let lines = |seen: &[Seen]| {
+        pin(
+            seen,
+            &["PLAYER_TALENT_UPDATE", "ACTIVE_TALENT_GROUP_CHANGED"],
+            TALENT_VERBS,
+        )
+    };
+    assert_eq!(
+        rig.live_now().line(TALENT_VERBS),
+        "NOW | ttabs=3 tgroups=0 tactive=1 tunspent=0 tunspent2=0 trank11=0 tspent1=0 cp=3/0",
+        "the world entry built the tabs; no group before the packet"
+    );
+    let two = rig.packets(vec![talents_info(3, 0, &[&[(first, 1)], &[]])], 2);
+    assert_eq!(
+        lines(&two),
+        vec!["PLAYER_TALENT_UPDATE | ttabs=3 tgroups=2 tactive=1 tunspent=3 tunspent2=5 trank11=2 tspent1=2 cp=3/0"],
+        "the active group stays 0: no group-change event"
+    );
+    // The switch to group 2, then two packets in one frame: each handler's events read its own
+    // packet, not the frame's last.
+    let switch = rig.packets(vec![talents_info(5, 1, &[&[(first, 1)], &[]])], 2);
+    assert_eq!(
+        lines(&switch),
+        vec![
+            "PLAYER_TALENT_UPDATE | ttabs=3 tgroups=2 tactive=2 tunspent=5 tunspent2=5 trank11=0 tspent1=0 cp=3/0",
+            "ACTIVE_TALENT_GROUP_CHANGED 2 1 | ttabs=3 tgroups=2 tactive=2 tunspent=5 tunspent2=5 trank11=0 tspent1=0 cp=3/0",
+        ]
+    );
+    let both = rig.packets(
+        vec![
+            talents_info(3, 0, &[&[(first, 1)], &[]]),
+            talents_info(2, 0, &[&[(first, 1)], &[]]),
+        ],
+        2,
+    );
+    assert_eq!(
+        lines(&both),
+        vec![
+            "PLAYER_TALENT_UPDATE | ttabs=3 tgroups=2 tactive=1 tunspent=3 tunspent2=5 trank11=2 tspent1=2 cp=3/0",
+            "ACTIVE_TALENT_GROUP_CHANGED 1 2 | ttabs=3 tgroups=2 tactive=1 tunspent=3 tunspent2=5 trank11=2 tspent1=2 cp=3/0",
+            "PLAYER_TALENT_UPDATE | ttabs=3 tgroups=2 tactive=1 tunspent=2 tunspent2=4 trank11=2 tspent1=2 cp=3/0",
+        ]
+    );
+    // No group at all: the new side reads 0 (`0x5c9ecf`).
+    let none = rig.packets(vec![talents_info(0, 1, &[])], 2);
+    assert_eq!(
+        pin(&none, &["ACTIVE_TALENT_GROUP_CHANGED"], &["tgroups"]),
+        vec!["ACTIVE_TALENT_GROUP_CHANGED 0 1 | tgroups=0"]
+    );
+}
+
+/// `CHARACTER_POINTS_CHANGED` is our character points' field watch (`0x5e8470` registers one
+/// 8-byte handler, `0x5e8330` raises it): the points now less the old ones, signed, read at the
+/// values handler's step; the talent packet's events read the field as its own step finds it. Both
+/// orders in one frame.
+#[test]
+fn the_points_watch_and_the_talent_packet_read_each_others_state_at_their_step() {
+    use benilla_protocol::field::{FIELD_PLAYER_CHARACTER_POINTS1, FIELD_PLAYER_CHARACTER_POINTS2};
+    let Some(mut rig) = Rig::login(&MAGE) else {
+        return;
+    };
+    let first = first_talent(1, 8);
+    rig.packets(vec![talents_info(3, 0, &[&[]])], 2);
+    let events = &["CHARACTER_POINTS_CHANGED", "PLAYER_TALENT_UPDATE"];
+    let verbs = &["cp", "tunspent", "trank11"];
+    let points_first = rig.packets(
+        vec![
+            self_values(&[(FIELD_PLAYER_CHARACTER_POINTS1, 2)]),
+            talents_info(2, 0, &[&[(first, 0)]]),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&points_first, events, verbs),
+        vec![
+            "CHARACTER_POINTS_CHANGED -1 0 | cp=2/0 tunspent=3 trank11=0",
+            "PLAYER_TALENT_UPDATE | cp=2/0 tunspent=2 trank11=1",
+        ]
+    );
+    let packet_first = rig.packets(
+        vec![
+            talents_info(1, 0, &[&[(first, 1)]]),
+            self_values(&[
+                (FIELD_PLAYER_CHARACTER_POINTS1, 1),
+                (FIELD_PLAYER_CHARACTER_POINTS2, 2),
+            ]),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&packet_first, events, verbs),
+        vec![
+            "PLAYER_TALENT_UPDATE | cp=2/0 tunspent=1 trank11=2",
+            "CHARACTER_POINTS_CHANGED -1 2 | cp=1/2 tunspent=1 trank11=2",
+        ],
+        "one watch over both fields: one event"
+    );
+    let same = rig.packets(vec![self_values(&[(FIELD_PLAYER_CHARACTER_POINTS1, 1)])], 2);
+    assert!(
+        pin(&same, events, verbs).is_empty(),
+        "an unmoved field raises nothing"
+    );
+}
+
+/// `LearnTalent` (`0x5c80e0`) sends `CMSG_LEARN_TALENT` with the next 0-based rank inside the call
+/// (`0x5c8288`), and the preview verbs move the preview and raise `PREVIEW_TALENT_POINTS_CHANGED`
+/// inside theirs (`0x5c9590`), which `LearnPreviewTalents` sends (`0x5c6a10`); the rank moves only
+/// when the server's packet lands, which resets the preview (`0x5c9310`).
+#[test]
+fn the_learn_verbs_send_inside_the_call() {
+    let Some(mut rig) = Rig::login(&MAGE) else {
+        return;
+    };
+    let first = first_talent(1, 8);
+    rig.packets(vec![talents_info(3, 0, &[&[(first, 0)]])], 2);
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let sends = |rx: &crossbeam_channel::Receiver<crate::net::ClientCommand>| {
+        rx.try_iter()
+            .filter_map(|c| match c {
+                crate::net::ClientCommand::LearnTalent { talent_id, rank } => {
+                    Some(format!("learn {talent_id}:{rank}"))
+                }
+                crate::net::ClientCommand::LearnPreviewTalents { talents } => {
+                    Some(format!("preview {talents:?}"))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let rank = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval::<i64>("LearnTalent(1, 1) return (select(5, GetTalentInfo(1, 1)))")
+    })
+    .expect("a VM")
+    .unwrap();
+    assert_eq!(sends(&rx), vec![format!("learn {first}:1")]);
+    assert_eq!(rank, 1, "the rank waits for the server");
+    rig.take();
+    let preview = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval::<i64>(
+            "AddPreviewTalentPoints(1, 1, 1) LearnPreviewTalents() \
+             return GetGroupPreviewTalentPointsSpent()",
+        )
+    })
+    .expect("a VM")
+    .unwrap();
+    assert_eq!(preview, 1);
+    assert_eq!(sends(&rx), vec![format!("preview [({first}, 1)]")]);
+    rig.run(1);
+    let seen = rig.take();
+    assert_eq!(
+        pin(&seen, &["PREVIEW_TALENT_POINTS_CHANGED"], &["tpreview"]),
+        vec!["PREVIEW_TALENT_POINTS_CHANGED 1 1 1 1 | tpreview=1"]
+    );
+    let landed = rig.packets(vec![talents_info(2, 0, &[&[(first, 1)]])], 2);
+    assert_eq!(
+        pin(&landed, &["PLAYER_TALENT_UPDATE"], &["trank11", "tpreview"]),
+        vec!["PLAYER_TALENT_UPDATE | trank11=2 tpreview=0"]
+    );
+}
+
+/// The pet setter lays the family's tree (`0x5d6aa0` -> `0x5c9df0`), and the pet body
+/// (`0x6cd78e` -> `0x5c9f10`) raises `PET_TALENT_UPDATE` with its group read (`0x5c9f50`); the pet's
+/// leave empties both (`0x5d6ab6`).
+#[test]
+fn the_pet_talent_packet_raises_pet_talent_update_over_the_familys_tree() {
+    use benilla_protocol::field::FIELD_UNIT_BYTES_0;
+    use benilla_protocol::messages::{LearnedTalent, TalentsInfo};
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER, (FIELD_UNIT_BYTES_0, 1 | 3 << 8)]) else {
+        return;
+    };
+    let verbs = &["petgroups", "petunspent"];
+    let pet_body = |unspent| {
+        SessionEvent::TalentsInfo(TalentsInfo::Pet {
+            unspent,
+            talents: vec![LearnedTalent {
+                talent_id: 0,
+                rank: 0,
+            }],
+        })
+    };
+    let early = rig.packets(vec![pet_body(4)], 2);
+    assert_eq!(
+        pin(&early, &["PET_TALENT_UPDATE"], verbs),
+        vec!["PET_TALENT_UPDATE | petgroups=0 petunspent=0"],
+        "no family: no tree, no group"
+    );
+    rig.packets(
+        vec![
+            hunter_pet(1_000_000, 4200),
+            self_values(&[
+                (FIELD_UNIT_SUMMON, PET as u32),
+                (FIELD_UNIT_SUMMON + 1, (PET >> 32) as u32),
+            ]),
+            SessionEvent::PetSpells(Box::new(benilla_protocol::messages::PetSpells {
+                pet_guid: PET,
+                family: 1,
+                ..Default::default()
+            })),
+        ],
+        3,
+    );
+    let seen = rig.packets(vec![pet_body(5)], 2);
+    assert_eq!(
+        pin(&seen, &["PET_TALENT_UPDATE"], verbs),
+        vec!["PET_TALENT_UPDATE | petgroups=1 petunspent=5"]
+    );
+    let gone = rig.packets(vec![SessionEvent::PetSpells(Box::default())], 2);
+    assert_eq!(
+        pin(&gone, &["UNIT_PET"], verbs),
+        vec!["UNIT_PET player | petgroups=0 petunspent=0"],
+        "the setter empties the tree ahead of UNIT_PET"
+    );
+}
+
+/// The inspect target set (`0x5e76f2` -> `0x5c9f70`) builds the inspected class's tabs for a held
+/// player, and `SMSG_INSPECT_TALENT` for that target alone (`0x6ce0da`) reads its groups
+/// (`0x6ce0ee`) and raises `INSPECT_TALENT_READY` (`0x6ce0fa`); a packet for another guid raises
+/// nothing and keeps the groups.
+#[test]
+fn the_inspect_talent_packet_raises_inspect_talent_ready_for_the_target_alone() {
+    use benilla_protocol::field::FIELD_UNIT_BYTES_0;
+    use benilla_protocol::messages::{LearnedTalent, TalentGroupInfo, TalentsInfo};
+    use benilla_ui::script::LiveState;
+    const OTHER: u64 = 0x21;
+    let Some(mut rig) = Rig::login(&MAGE) else {
+        return;
+    };
+    // A human paladin in view.
+    rig.packets(
+        vec![SessionEvent::ObjectCreate {
+            guid: OTHER,
+            kind: EntityKind::Player,
+            display_id: None,
+            position: [-8950.0, -132.0, 83.5],
+            orientation: 0.0,
+            scale: 1.0,
+            speeds: None,
+            mover: None,
+            transport_progress: None,
+            transport: None,
+            spline: None,
+            vehicle: None,
+            attack_target: None,
+            spawned: false,
+            fields: ObjectFields::from_pairs(&[
+                OBJECT_TYPE_PLAYER,
+                (FIELD_UNIT_HEALTH, 100),
+                (FIELD_UNIT_MAXHEALTH, 100),
+                (FIELD_UNIT_LEVEL, 80),
+                (FIELD_UNIT_BYTES_0, 1 | 2 << 8),
+            ])
+            .into_created(ObjectType::Player),
+        }],
+        2,
+    );
+    let paladin = first_talent(1, 2);
+    let moved = super::live::with_world_view(rig.app.world_mut(), |l| l.notify_inspect(OTHER));
+    assert!(moved);
+    assert_eq!(
+        rig.live_now().line(&["itabs", "iunspent"]),
+        "NOW | itabs=3 iunspent=0"
+    );
+    let body = |guid, rank| SessionEvent::InspectTalents {
+        guid,
+        talents: TalentsInfo::Player {
+            unspent: 7,
+            active_group: 0,
+            groups: vec![TalentGroupInfo {
+                talents: vec![LearnedTalent {
+                    talent_id: paladin,
+                    rank,
+                }],
+                glyphs: Vec::new(),
+            }],
+        },
+    };
+    let verbs = &["itabs", "iunspent", "irank11", "ttabs"];
+    let seen = rig.packets(vec![body(OTHER, 1), body(0x99, 4)], 2);
+    assert_eq!(
+        pin(&seen, &["INSPECT_TALENT_READY"], verbs),
+        vec!["INSPECT_TALENT_READY | itabs=3 iunspent=7 irank11=2 ttabs=3"]
+    );
+    assert_eq!(
+        rig.live_now().line(&["irank11"]),
+        "NOW | irank11=2",
+        "another guid's packet keeps the groups"
+    );
 }

@@ -263,7 +263,7 @@ impl PetAnswersExt for UiScript {
 }
 
 /// The view over this thread's set answers.
-pub(super) struct View;
+pub(crate) struct View;
 
 impl LiveState for View {
     fn unit_flags(&self, _: u64) -> Option<u32> {

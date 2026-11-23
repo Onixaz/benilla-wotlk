@@ -587,10 +587,11 @@ impl SpellDisplay {
         self.attributes & (ATTR_DO_NOT_DISPLAY | SPELL_ATTR_IS_TRADESKILL) == 0
     }
 
-    /// The pet book's add gate tests only `Attributes & 0x80`, as the sign of its low byte; it has
-    /// none of [`Self::in_spellbook`]'s other two legs.
+    /// The pet book's add gate (`0x542ee0`): `Attributes & 0x80` (`0x542f0e`) and `AttributesEx4 &
+    /// 0x8000` (`0x542f17`); no tradeskill or companion leg.
     pub fn in_pet_book(&self) -> bool {
         self.attributes & ATTR_DO_NOT_DISPLAY == 0
+            && self.attributes_ex4 & ATTR_EX4_NOT_IN_SPELLBOOK == 0
     }
 
     /// `Effect[0] == SPELL_EFFECT_ATTACK` (78): the client's trigger for showing the main-hand

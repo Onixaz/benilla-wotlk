@@ -408,13 +408,13 @@ pub trait LiveState {
     /// `RequestBattlefieldPositions` (`0x54cf60`): cleared without an active slot, else sent at most every 5000 ms.
     fn request_battlefield_positions(&self) {}
 
-    /// `NotifyInspect`'s `CMSG_INSPECT` and target (`0x5228c3`, `0x52291a`); whether the target moved (`0x5e76c1`).
-    fn notify_inspect(&self, _guid: u64) -> bool {
+    /// `NotifyInspect`'s `CMSG_INSPECT` and target (`0x5228c3`, `0x52291a`); a moved target resets the inspected talent tabs to its class (`0x5e76f2`); whether it moved (`0x5e76c1`).
+    fn notify_inspect(&mut self, _guid: u64) -> bool {
         true
     }
 
-    /// `ClearInspectPlayer`'s target clear (`0x5e78ae`).
-    fn clear_inspect_target(&self) {}
+    /// `ClearInspectPlayer`'s target clear (`0x5e78ae`); a held one resets the inspected talent tabs (`0x5e78d5`).
+    fn clear_inspect_target(&mut self) {}
 
     /// Companion list `ty`'s spells in order (`0xbe8df4`), as the known-spell adds file them.
     fn companion_spells(&self, _ty: super::CompanionType) -> Vec<u32> {
@@ -593,6 +593,13 @@ pub trait LiveState {
     /// Whether the player knows `spell_id` or a higher rank of it (`0x7260e0`, `0x726160`).
     fn spell_known_or_higher(&self, spell_id: u32) -> bool {
         self.spell_known(spell_id)
+    }
+
+    /// Whether the pet knows `spell_id` or a higher rank of it, the talent tooltip's pet side
+    /// (`0x5c60c0`): our player and the pet list's head held (`0x5c60f4`, `0x5c6120`), then the
+    /// pet's list (`0x7260e0` into `0x53b900`) or its family's rank chain (`0x726160`).
+    fn pet_spell_known_or_higher(&self, _spell_id: u32) -> bool {
+        false
     }
 
     /// A player book spell's texture at the call (`0x53dc20`): the weapon faces for the melee
@@ -1055,6 +1062,37 @@ pub trait LiveState {
 
     /// `CMSG_SET_TITLE` with `mask`, sent in the call (`0x522efb`).
     fn send_set_title(&mut self, _mask: i32) {}
+
+    /// The client's talent state at the call; `None` where no view lends it.
+    fn talent_info(&self) -> Option<&super::TalentInfo> {
+        None
+    }
+
+    /// The client's talent state at the call, for a verb that writes it; `None` where no view lends it.
+    fn talent_info_mut(&mut self) -> Option<&mut super::TalentInfo> {
+        None
+    }
+
+    /// The unit a talent verb acts for (`0x5c81df`): the pet's first guid held as a unit, else the active player held; `None` without it.
+    fn talent_unit(&self, _pet: bool) -> Option<u64> {
+        None
+    }
+
+    /// The pet's family category through its creature record (`0x5c5a28`), `None` without the pet held or the family's row.
+    fn pet_family_category(&self) -> Option<i32> {
+        None
+    }
+
+    /// `CMSG_LEARN_TALENT`, or with the pet's guid `CMSG_PET_LEARN_TALENT`, sent in the call (`0x5c8288`).
+    fn send_learn_talent(&mut self, _pet: Option<u64>, _talent: u32, _rank: u32) {}
+
+    /// `CMSG_LEARN_PREVIEW_TALENTS`, or with the pet's guid its pet form, sent in the call (`0x5c6a10`).
+    fn send_learn_preview_talents(&mut self, _pet: Option<u64>, _talents: Vec<(u32, u32)>) {}
+
+    /// The active player's `PLAYER_CHARACTER_POINTS1/2` at the call; `None` with no active player held.
+    fn character_points(&self) -> Option<(u32, u32)> {
+        None
+    }
 
     /// The trade's network cells at the call: the partner's offered coins (`0xca0b78`) and each window's enchant spell (`0xca0ff0`); `None` where no view lends them.
     fn trade_cells(&self) -> Option<super::TradeCells> {
@@ -1862,6 +1900,15 @@ pub(crate) struct TestView {
     pub char_titles: Vec<super::TitleRow>,
     pub player_titles: Option<super::PlayerTitles>,
     pub title_sends: Vec<i32>,
+    /// The talent state, the talent unit per side `(player, pet)`, the pet's family category, our character points, and the learn sends in order.
+    pub talent_info: Option<super::TalentInfo>,
+    pub talent_units: (Option<u64>, Option<u64>),
+    pub pet_category: Option<i32>,
+    /// The pet's known spells, its higher ranks included.
+    pub pet_known: Vec<u32>,
+    pub character_points: Option<(u32, u32)>,
+    pub talent_learns: Vec<(Option<u64>, u32, u32)>,
+    pub talent_preview_learns: Vec<super::PreviewLearn>,
 }
 
 /// The gossip globals a test view lends.
@@ -1977,6 +2024,44 @@ impl LiveState for TestView {
 
     fn send_set_title(&mut self, mask: i32) {
         self.title_sends.push(mask);
+    }
+
+    fn talent_info(&self) -> Option<&super::TalentInfo> {
+        self.talent_info.as_ref()
+    }
+
+    fn talent_info_mut(&mut self) -> Option<&mut super::TalentInfo> {
+        self.talent_info.as_mut()
+    }
+
+    fn talent_unit(&self, pet: bool) -> Option<u64> {
+        if pet {
+            self.talent_units.1
+        } else {
+            self.talent_units.0
+        }
+    }
+
+    fn pet_family_category(&self) -> Option<i32> {
+        self.pet_category
+    }
+
+    fn pet_spell_known_or_higher(&self, spell_id: u32) -> bool {
+        self.talent_units.0.is_some()
+            && self.talent_units.1.is_some()
+            && self.pet_known.contains(&spell_id)
+    }
+
+    fn send_learn_talent(&mut self, pet: Option<u64>, talent: u32, rank: u32) {
+        self.talent_learns.push((pet, talent, rank));
+    }
+
+    fn send_learn_preview_talents(&mut self, pet: Option<u64>, talents: Vec<(u32, u32)>) {
+        self.talent_preview_learns.push((pet, talents));
+    }
+
+    fn character_points(&self) -> Option<(u32, u32)> {
+        self.character_points
     }
 
     fn unit_cast(&self, guid: u64, channel: bool) -> Option<super::UnitCast> {
@@ -2456,11 +2541,11 @@ impl LiveState for TestView {
             .and_then(|s| s.record.clone())
     }
 
-    fn notify_inspect(&self, guid: u64) -> bool {
+    fn notify_inspect(&mut self, guid: u64) -> bool {
         self.inspect_target.replace(guid) != guid
     }
 
-    fn clear_inspect_target(&self) {
+    fn clear_inspect_target(&mut self) {
         self.inspect_target.set(0);
     }
 

@@ -200,6 +200,7 @@ fn the_world_entry_clear_keeps_the_words() {
     assert!(world.resource::<super::PetList>().0.is_empty());
     assert_eq!(
         world.resource::<crate::ui_script::live::UiEvents>().names(),
-        ["<world>", "<world>", "UNIT_PET", "<world>"]
+        // The empty arm's talent tab reset after the combo zero (`0x5d6ab6`).
+        ["<world>", "<world>", "<world>", "UNIT_PET", "<world>"]
     );
 }
