@@ -42,10 +42,10 @@ impl Plugin for UiTalentPlugin {
         app.init_resource::<TalentState>()
             .net_handler(SessionEventKind::TalentsInfo, on_talents_info)
             .add_systems(Startup, load_talents.after(AssetSet::Open))
-            // The game shutdown's talent part (`0x5291d6`, `0x5291db`), after the UI's.
+            // The logout's world leave and game shutdown talent parts, after the UI's.
             .add_systems(
                 OnExit(ClientState::InWorld),
-                shutdown.after(crate::ui_script::end_ui_session),
+                log_out.after(crate::ui_script::end_ui_session),
             );
     }
 }
@@ -67,8 +67,12 @@ fn load_talents(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
     }
 }
 
-/// The game shutdown (`0x5c9dc0`, `0x5c9f60`): every side's tabs and groups emptied.
-fn shutdown(mut state: ResMut<TalentState>) {
+/// The logout: the active player's destruction leaves the world (`0x6e50da`), whose talent part
+/// unbuilds the tabs and forgets the inspect target (`0x528d4b`, `0x528d50`), so the next entry
+/// rebuilds them; then the game shutdown empties every side (`0x5291d6`, `0x5291db`).
+fn log_out(mut state: ResMut<TalentState>) {
+    state.0.leave_world();
+    state.0.inspect_enter_world();
     state.0.shutdown();
 }
 

@@ -203,3 +203,28 @@ fn the_character_points_deltas_are_now_less_old() {
     ];
     assert_eq!(character_points_deltas(&edges, (0, 2)), (-4, 2));
 }
+
+/// A logout then a login rebuilds the player's tabs: the logout's world leave unbuilds them
+/// (`0x6e50da` -> `0x528d4b`) ahead of the game shutdown (`0x5291d6`), so the entry builds again
+/// (`0x528235` -> `0x5c9d50`).
+#[test]
+fn a_login_after_a_logout_rebuilds_the_tabs() {
+    use bevy::ecs::system::RunSystemOnce;
+    let one_tab = || TalentPages {
+        tabs: vec![TalentTabView {
+            id: 41,
+            ..Default::default()
+        }],
+        talents: vec![vec![]],
+    };
+    let mut world = World::new();
+    let mut info = TalentInfo::default();
+    info.enter_world(|| Some(one_tab()));
+    info.set_inspect_target(7, Some(one_tab()));
+    world.insert_resource(TalentState(info));
+    world.run_system_once(log_out).unwrap();
+    let state = &mut world.resource_mut::<TalentState>().0;
+    assert_eq!(*state, TalentInfo::default(), "nothing outlives the logout");
+    state.enter_world(|| Some(one_tab()));
+    assert_eq!(state.pages(TalentSide::Player).tabs.len(), 1);
+}
