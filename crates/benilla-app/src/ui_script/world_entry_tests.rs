@@ -223,9 +223,8 @@ fn the_addon_identity_follows_the_character() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
-/// A quit after a logout runs [`super::shutdown_ui_state`] again, against a boot VM, and writes
-/// nothing: `ui_saved::save`, `save_enable_state` and `save_addon_variables` each refuse an empty
-/// source. The reference guards the case explicitly (its `ds:` test).
+/// A quit after a logout runs no UI shutdown and writes nothing: the game's destroy skips it with no
+/// game up (`0x406516`-`0x40651c`).
 #[test]
 fn quitting_from_the_character_screen_does_not_blank_the_session_it_wrote() {
     let _l = ENV_LOCK
@@ -246,19 +245,77 @@ fn quitting_from_the_character_screen_does_not_blank_the_session_it_wrote() {
         "…and wrote the character it belonged to: {after_logout}"
     );
 
-    // Quit: `shutdown_on_exit`'s body, against the boot VM the logout left.
-    let identity = world.resource::<super::AddOnIdentity>().0.clone();
-    let mut script = world
-        .remove_non_send_resource::<benilla_ui::script::UiScript>()
-        .expect("a boot VM is live at the character screen");
-    // `false`: at the character screen there is no active player.
-    super::shutdown_ui_state(&mut script, identity.as_ref(), false);
+    // Quit from the character screen, against the VM the logout left.
+    world.insert_resource(State::new(crate::char_select::ClientState::CharSelect));
+    world.init_resource::<super::LeavingWorldArmed>();
+    world.init_resource::<Messages<super::WorldLeaveSweepMessage>>();
+    world.init_resource::<Messages<AppExit>>();
+    world
+        .non_send_resource::<benilla_ui::script::UiScript>()
+        .run(
+            "SeenLogout = 0 local f = CreateFrame('Frame') f:RegisterEvent('PLAYER_LOGOUT') \
+             f:SetScript('OnEvent', function() SeenLogout = SeenLogout + 1 end)",
+        )
+        .expect("the probe frame registers");
+    world.write_message(AppExit::Success);
+    super::shutdown_on_exit(&mut world);
+    assert_eq!(
+        world
+            .non_send_resource::<benilla_ui::script::UiScript>()
+            .eval::<i64>("return SeenLogout")
+            .unwrap(),
+        0,
+        "no game UI up: no PLAYER_LOGOUT"
+    );
 
     assert_eq!(
         std::fs::read_to_string(&saved).ok().as_deref(),
         Some(after_logout.as_str()),
         "the quit pass wrote nothing — the session's file is byte-identical"
     );
+
+    drop(world);
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// The tracked achievements save only in the in-game UI's shutdown (`0x528f00` -> `0x529071`): a
+/// quit from the character screen leaves the VM's `trackedAchievements` alone, a quit in the world
+/// writes the held list.
+#[test]
+fn only_a_quit_from_the_world_saves_the_tracked_achievements() {
+    use crate::char_select::ClientState;
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (tmp, _c, _h) = hermetic_probe("tracked");
+    let mut world = World::new();
+    world.init_resource::<super::AddOnIdentity>();
+    world.init_resource::<super::LeavingWorldArmed>();
+    world.init_resource::<Messages<super::WorldLeaveSweepMessage>>();
+    world.init_resource::<Messages<AppExit>>();
+    let mut book = crate::ui_achievement::PlayerAchievements::default();
+    book.0.add_tracked(6);
+    world.insert_resource(book);
+    let script = benilla_ui::script::UiScript::new().expect("a VM");
+    script.register_cvars([("trackedAchievements", "kept")]);
+    world.insert_non_send_resource(script);
+    let saved = benilla_ui::script::encode_tracked(&[6]);
+    for (state, want) in [
+        (ClientState::CharSelect, "kept"),
+        (ClientState::InWorld, saved.as_str()),
+    ] {
+        world.insert_resource(State::new(state));
+        world.write_message(AppExit::Success);
+        super::shutdown_on_exit(&mut world);
+        assert_eq!(
+            world
+                .non_send_resource::<benilla_ui::script::UiScript>()
+                .cvar("trackedAchievements")
+                .as_deref(),
+            Some(want),
+            "{state:?}"
+        );
+    }
 
     drop(world);
     let _ = std::fs::remove_dir_all(&tmp);
@@ -344,9 +401,9 @@ fn the_realm_cvars_are_read_only_to_lua_only_in_the_world() {
 }
 
 /// The reference's one guard in the shutdown tail: it tests the active player's GUID pair and with
-/// none jumps past only the `PLAYER_LEAVING_WORLD` fire; in-world roots fire both.
+/// none jumps past only the `PLAYER_LEAVING_WORLD` fire (`0x528fb7`); a root with the player fires both.
 #[test]
-fn a_quit_from_the_character_screen_fires_logout_without_leaving_world() {
+fn a_shutdown_with_no_player_fires_logout_without_leaving_world() {
     let _l = ENV_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -379,7 +436,7 @@ fn a_quit_from_the_character_screen_fires_logout_without_leaving_world() {
     assert_eq!(
         script.eval::<i64>("return SeenLeaving").unwrap(),
         0,
-        "the glue-screen quit fired PLAYER_LEAVING_WORLD — the reference's skips it"
+        "a shutdown with no player fired PLAYER_LEAVING_WORLD — the reference's skips it"
     );
     assert_eq!(
         script.eval::<i64>("return SeenLogout").unwrap(),

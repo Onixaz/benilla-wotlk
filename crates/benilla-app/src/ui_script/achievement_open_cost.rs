@@ -3,9 +3,9 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use benilla_ui::script::{
-    AchievementBook, AchievementDb, AchievementUpdate, CriteriaWire, WowDate,
-};
+use benilla_ui::script::{AchievementDb, AchievementUpdate, CriteriaWire, WowDate};
+
+use crate::ui_achievement::book_view::BookView;
 
 #[test]
 #[ignore = "measurement"]
@@ -45,13 +45,15 @@ fn achievement_first_open_cost() {
     );
     let db: Arc<AchievementDb> = Arc::new(crate::ui_achievement::db_of(catalog));
     let (mut s, _f) = super::layer_tests::production_load_with("achcost", false, "", |_| {});
-    s.set_achievement_db(db);
-    s.set_achievement_book(AchievementBook::default());
-    s.apply_achievement(AchievementUpdate::List {
-        achievements: earned,
-        criteria,
-        now: 0,
-    });
+    let mut view = BookView::new(db);
+    view.apply(
+        &mut s,
+        AchievementUpdate::List {
+            achievements: earned,
+            criteria,
+            now: 0,
+        },
+    );
     s.resolve();
     let _ = s.extract();
     let _ = s.take_errors();
@@ -117,7 +119,8 @@ fn achievement_first_open_cost() {
     };
     let m0 = meters(&s);
     let mut at = Instant::now();
-    s.run("LoadAddOn('Blizzard_AchievementUI')").unwrap();
+    view.lend(&mut s, |s| s.run("LoadAddOn('Blizzard_AchievementUI')"))
+        .unwrap();
     lap("LoadAddOn", &mut at);
     let m1 = meters(&s);
     eprintln!(
@@ -140,13 +143,14 @@ fn achievement_first_open_cost() {
         .unwrap();
     eprintln!("load methods:\n{load_report}");
     at = Instant::now();
-    s.run("ToggleAchievementFrame()").unwrap();
+    view.lend(&mut s, |s| s.run("ToggleAchievementFrame()"))
+        .unwrap();
     lap("first toggle", &mut at);
     s.resolve();
     lap("resolve", &mut at);
     let _ = s.extract();
     lap("extract", &mut at);
-    s.tick(0.016);
+    view.lend(&mut s, |s| s.tick(0.016));
     lap("tick", &mut at);
     let report: String = s
         .eval(
@@ -159,9 +163,11 @@ fn achievement_first_open_cost() {
         )
         .unwrap();
     eprintln!("{report}");
-    s.run("PROF = {} ToggleAchievementFrame()").unwrap();
+    view.lend(&mut s, |s| s.run("PROF = {} ToggleAchievementFrame()"))
+        .unwrap();
     lap("close", &mut at);
-    s.run("ToggleAchievementFrame()").unwrap();
+    view.lend(&mut s, |s| s.run("ToggleAchievementFrame()"))
+        .unwrap();
     lap("second toggle", &mut at);
     eprintln!("errors: {:?}", s.take_errors().len());
 }

@@ -399,9 +399,10 @@ pub use video_pairs::VIDEO_PAIR_CVARS;
 pub use worldmap_arrow::ARROW_MODEL;
 
 pub use achievement::{
-    achievement_hyperlink, decode_tracked, encode_tracked, AchievementBook, AchievementCategoryRow,
-    AchievementCriteriaRow, AchievementDb, AchievementRow, AchievementUpdate, CriteriaWire,
-    WowDate,
+    achievement_hyperlink, decode_tracked, encode_tracked, handle_achievement_packet,
+    upgrade_tracked, AchievementBook, AchievementCategoryRow, AchievementCriteriaRow,
+    AchievementDb, AchievementEvent, AchievementHost, AchievementRow, AchievementUpdate,
+    CriteriaWire, WowDate,
 };
 pub use calendar::{
     date_time_text, CalendarCatalogView, CalendarCommandResultView, CalendarEventRowView,

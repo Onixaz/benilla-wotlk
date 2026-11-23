@@ -996,6 +996,40 @@ pub trait LiveState {
         None
     }
 
+    /// The achievement tables the game start indexes (`0x5b6df0`), `None` before they load.
+    fn achievement_db(&self) -> Option<std::sync::Arc<super::AchievementDb>> {
+        None
+    }
+
+    /// The client's achievement lists at the call (`0xacfd98`-`0xacfde0`, `[0xc1f454]`, `[0xc1f458]`).
+    fn achievement_book(&self) -> Option<&super::AchievementBook> {
+        None
+    }
+
+    /// The achievement lists, for a binding that writes them in its call (the tracked list, the compared guid).
+    fn achievement_book_mut(&mut self) -> Option<&mut super::AchievementBook> {
+        None
+    }
+
+    /// A held player's PvP faction index (`0x6d6e90`), `None` for a guid that is no held player
+    /// (the lookup with the player type mask, `0x5b3d0a`, `0x5b3bf0`).
+    fn player_pvp_faction(&self, _guid: u64) -> Option<i32> {
+        None
+    }
+
+    /// A player's name-cache record read with no callback, which asks nothing (`0x5b58b0`'s owner name).
+    fn cached_player_name(&self, _guid: u64) -> Option<String> {
+        None
+    }
+
+    /// A player's name-cache record read with a callback: the name, or `None` with the query sent (`0x627220`).
+    fn player_name_or_ask(&mut self, _guid: u64) -> Option<String> {
+        None
+    }
+
+    /// `CMSG_QUERY_INSPECT_ACHIEVEMENTS` for `guid`, sent in the call (`0x5b1ab0`).
+    fn query_inspect_achievements(&mut self, _guid: u64) {}
+
     /// The trade's network cells at the call: the partner's offered coins (`0xca0b78`) and each window's enchant spell (`0xca0ff0`); `None` where no view lends them.
     fn trade_cells(&self) -> Option<super::TradeCells> {
         None
@@ -1688,6 +1722,15 @@ pub(crate) struct TestView {
     pub trainer_zeroes: u32,
     /// The chat lines the display added inside its calls, with their wire chat type.
     pub chat_lines: Vec<(u8, String)>,
+    /// The achievement tables and lists, the cached player names, the name queries and the
+    /// comparison queries sent, in order.
+    pub achievement_db: Option<std::sync::Arc<super::AchievementDb>>,
+    pub achievements: super::AchievementBook,
+    pub player_names: std::collections::HashMap<u64, String>,
+    pub name_asks: Vec<u64>,
+    pub inspect_achievement_queries: Vec<u64>,
+    /// Each held player's PvP faction index; a guid absent here is no held player.
+    pub player_factions: std::collections::HashMap<u64, i32>,
 }
 
 /// The gossip globals a test view lends.
@@ -1747,6 +1790,38 @@ impl LiveState for TestView {
     fn carry_refusal(&self, item_id: u32, count: u32) -> Option<super::CarryRefusal> {
         self.carry_asks.borrow_mut().push((item_id, count));
         self.carry.clone()
+    }
+
+    fn achievement_db(&self) -> Option<std::sync::Arc<super::AchievementDb>> {
+        self.achievement_db.clone()
+    }
+
+    fn achievement_book(&self) -> Option<&super::AchievementBook> {
+        Some(&self.achievements)
+    }
+
+    fn achievement_book_mut(&mut self) -> Option<&mut super::AchievementBook> {
+        Some(&mut self.achievements)
+    }
+
+    fn player_pvp_faction(&self, guid: u64) -> Option<i32> {
+        self.player_factions.get(&guid).copied()
+    }
+
+    fn cached_player_name(&self, guid: u64) -> Option<String> {
+        self.player_names.get(&guid).cloned()
+    }
+
+    fn player_name_or_ask(&mut self, guid: u64) -> Option<String> {
+        let name = self.player_names.get(&guid).cloned();
+        if name.is_none() {
+            self.name_asks.push(guid);
+        }
+        name
+    }
+
+    fn query_inspect_achievements(&mut self, guid: u64) {
+        self.inspect_achievement_queries.push(guid);
     }
 
     fn unit_cast(&self, guid: u64, channel: bool) -> Option<super::UnitCast> {
