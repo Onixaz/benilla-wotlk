@@ -1061,21 +1061,6 @@ pub trait LiveState {
         None
     }
 
-    /// The active player's slot at live id `slot` (0 ammo, 1..=23 worn and bags) read off its slot field at the call (`0x5e7cd0`); `Some(None)` for an empty slot, `None` with no active player held.
-    fn player_inventory_slot(&self, _slot: usize) -> Option<Option<super::InvSlotView>> {
-        None
-    }
-
-    /// The active player's bank bag slot `i` (live ids 68..=74) at the call (`0x5e7cd0`); `Some(None)` for an empty slot, `None` with no active player held.
-    fn player_bank_bag_slot(&self, _i: usize) -> Option<Option<super::InvSlotView>> {
-        None
-    }
-
-    /// The temporary enchantment on the main hand (0) or off hand (1) at the call (`0x5eaca0`); `Some(None)` for none, `None` with no active player held.
-    fn weapon_enchant(&self, _hand: usize) -> Option<Option<super::WeaponEnchant>> {
-        None
-    }
-
     /// The active player's skill slot for line `skill_id` at the call, as `GetSkillLineInfo` reads it (`0x5cdfe7`); `Some(None)` for a line the player lacks, `None` with no active player held.
     fn skill_slot(&self, _skill_id: u32) -> Option<Option<super::SkillLive>> {
         None
