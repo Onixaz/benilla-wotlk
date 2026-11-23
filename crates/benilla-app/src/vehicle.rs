@@ -164,23 +164,6 @@ impl Plugin for VehiclePlugin {
                 SessionEventKind::CancelExpectedRideVehicleAura,
                 on_cancel_expected_ride,
             )
-            // The aim preview's held cast ends with its go or its refusal.
-            .net_handler(
-                SessionEventKind::SpellGo,
-                targeting::on_trajectory_cast_answer,
-            )
-            .net_handler(
-                SessionEventKind::SpellFailed,
-                targeting::on_trajectory_cast_answer,
-            )
-            .net_handler(
-                SessionEventKind::PetCastFailed,
-                targeting::on_trajectory_cast_answer,
-            )
-            .net_handler(
-                SessionEventKind::CastResult,
-                targeting::on_trajectory_cast_answer,
-            )
             .add_systems(Startup, load_vehicle_tables.after(AssetSet::Open))
             .add_systems(
                 Update,
@@ -248,6 +231,8 @@ impl Plugin for VehiclePlugin {
                     .after(benilla_world::particles::buffer::begin_effect_frame)
                     .run_if(targeting::preview_shown),
             );
+        // The aim preview's held cast ends with its go or its refusal.
+        targeting::register(app);
     }
 }
 

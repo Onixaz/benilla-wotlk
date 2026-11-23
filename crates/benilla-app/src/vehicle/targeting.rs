@@ -569,12 +569,33 @@ enum Answer {
     Refused,
 }
 
+/// Register the held cast's answers, called from [`super::VehiclePlugin`]: its go and its three
+/// refusals.
+pub(super) fn register(app: &mut App) {
+    use crate::net::NetHandlerApp;
+    use benilla_protocol::SessionEventKind as K;
+    app.net_handler(K::SpellGo, on_trajectory_cast_answer)
+        .net_handler(K::SpellFailed, on_trajectory_cast_answer)
+        .net_handler(K::PetCastFailed, on_trajectory_cast_answer)
+        .net_handler(K::CastResult, on_trajectory_cast_answer);
+}
+
 /// The held trajectory cast waits for its release from its go, and ends with a refusal.
-pub(super) fn on_trajectory_cast_answer(
+fn on_trajectory_cast_answer(
     In(ev): In<SessionEvent>,
     time: Res<Time>,
     mut state: ResMut<TrajectoryTargeting>,
 ) {
+    // The kinds it is registered for: a cast's go and its three refusals.
+    if !matches!(
+        ev,
+        SessionEvent::SpellGo { .. }
+            | SessionEvent::SpellFailed { .. }
+            | SessionEvent::PetCastFailed { .. }
+            | SessionEvent::CastResult { .. }
+    ) {
+        return;
+    }
     match state.answer(&ev) {
         Answer::Went => {
             if let Some(h) = state.held_cast.as_mut() {
