@@ -232,6 +232,10 @@ fn feed_zone_events(
     if fresh_vm {
         *ids = ZoneIds::default();
     }
+    // The zone update runs on the active player's timer and skips with no active player (`0x6d7c0b`).
+    if self_store.is_empty() {
+        return;
+    }
     let Some(leaf) = world.area() else { return };
     let Some(leaf_row) = areas.0.get(leaf) else {
         // An unknown id keeps the last state, as the resolver does for areaId 0.
