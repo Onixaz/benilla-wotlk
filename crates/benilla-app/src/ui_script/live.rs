@@ -233,6 +233,37 @@ impl LiveView<'_, '_> {
             .then_some(entity)
     }
 
+    /// [`LiveState::pet_spell_known_or_higher`]'s read, `None` where a part is missing.
+    fn pet_spell_known(&self, spell_id: u32) -> Option<bool> {
+        self.talent_unit(false)?;
+        let pet = self.unit(self.talent_unit(true)?)?;
+        let words = &self.pet_bar.as_deref()?.spells.spells;
+        let catalog = &self.spells.as_deref()?.catalog;
+        let known = |s: u32| {
+            words.iter().any(|w| w.action() == s) && catalog.get(s).is_some_and(|d| d.in_pet_book())
+        };
+        if known(spell_id) {
+            return Some(true);
+        }
+        let lines = &self.skill_lines.as_deref()?.catalog;
+        let record = pet
+            .object_entry()
+            .filter(|&e| e != 0)
+            .and_then(|e| self.talent.names.as_ref()?.creature_record(e));
+        Some(match record {
+            Some(r) => self
+                .talent
+                .families
+                .as_ref()?
+                .families
+                .get(r.pet_family)
+                .is_some_and(|f| lines.pet_higher_rank_known(spell_id, f.skill_lines, known)),
+            None => {
+                lines.higher_rank_known_by(spell_id, pet.unit_race()?, pet.unit_class()?, known)
+            }
+        })
+    }
+
     /// The talent target set (`0x5c9f70`) to `guid`, its class's tabs when it is a held player.
     fn set_talent_target(&mut self, guid: u64) {
         let class = (guid != 0).then(|| self.player_class(guid)).flatten();
@@ -2038,6 +2069,14 @@ impl LiveState for LiveView<'_, '_> {
             let me = self.active_player()?;
             self.player_entity(me).map(|_| me)
         }
+    }
+
+    /// The talent tooltip's pet side (`0x5c60c0`): our player and the pet held, then the pet's
+    /// list, the words past the add gate (`0x53b900`, `0x542ee0`), or a later rank on its
+    /// family's skill lines (`0x726160`, `0x71a6b0`); a pet with no creature record walks its
+    /// race and class (`0x71a6d2`).
+    fn pet_spell_known_or_higher(&self, spell_id: u32) -> bool {
+        self.pet_spell_known(spell_id).unwrap_or(false)
     }
 
     fn pet_family_category(&self) -> Option<i32> {

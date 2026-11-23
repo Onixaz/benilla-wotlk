@@ -362,3 +362,64 @@ fn set_talent_in_preview_offers_the_moves_that_would_pass() {
     });
     assert!(s.take_errors().is_empty());
 }
+
+/// A pet talent's required spell is asked of the pet at the call (`0x5c60c0`, `0x5c6128`,
+/// `0x5c6134`): the requirement line shows while the pet lacks it, and goes once it knows it.
+#[test]
+fn set_talent_asks_the_pet_for_a_pet_talents_required_spell() {
+    const PET: u64 = 0xF140_0000_0000_0021;
+    let mut s = script();
+    seed_talent_strings(&mut s);
+    s.run(r#"ITEM_REQ_SKILL = "Requires %s""#).unwrap();
+    s.set_spell_tooltip(
+        200,
+        SpellTooltipView {
+            name: "Cobra Reflexes".into(),
+            description: "Faster attacks.".into(),
+            ..Default::default()
+        },
+    );
+    let pages = TalentPages {
+        tabs: vec![TalentTabView {
+            id: 409,
+            name: "Ferocity".into(),
+            icon: None,
+            background: "HunterPetFerocity".into(),
+        }],
+        talents: vec![vec![TalentView {
+            id: 20,
+            tier: 1,
+            column: 1,
+            ranks: ranks(200, "Cobra Reflexes", 2),
+            required_spell: 777,
+            required_spell_name: Some("Dash".into()),
+            ..Default::default()
+        }]],
+    };
+    let mut v = state_over(one_tab_pages());
+    let info = v.talent_info.as_mut().unwrap();
+    info.update_pet_tabs(1, || Some(pages));
+    info.update_pet_talent_data(1, &[], &|_, _| true);
+    v.talent_units = (Some(ME), Some(PET));
+    v.pet_category = Some(0);
+    let shows_req = |s: &mut UiScript, v: &mut live::TestView| -> bool {
+        live::lending(v, || {
+            s.eval::<bool>(
+                r#"
+            local a = CreateFrame("Button"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
+            local tt = TTP or CreateFrame("GameTooltip", "TTP")
+            tt:SetOwner(a, "ANCHOR_RIGHT")
+            tt:SetTalent(1, 1, false, true, 1)
+            for i = 1, tt:NumLines() do
+                if getglobal("TTPTextLeft" .. i):GetText() == "Requires Dash" then return true end
+            end
+            return false
+        "#,
+            )
+            .unwrap()
+        })
+    };
+    assert!(shows_req(&mut s, &mut v), "the pet lacks Dash");
+    v.pet_known = vec![777];
+    assert!(!shows_req(&mut s, &mut v), "the pet knows Dash");
+}

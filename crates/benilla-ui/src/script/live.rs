@@ -595,6 +595,13 @@ pub trait LiveState {
         self.spell_known(spell_id)
     }
 
+    /// Whether the pet knows `spell_id` or a higher rank of it, the talent tooltip's pet side
+    /// (`0x5c60c0`): our player and the pet list's head held (`0x5c60f4`, `0x5c6120`), then the
+    /// pet's list (`0x7260e0` into `0x53b900`) or its family's rank chain (`0x726160`).
+    fn pet_spell_known_or_higher(&self, _spell_id: u32) -> bool {
+        false
+    }
+
     /// A player book spell's texture at the call (`0x53dc20`): the weapon faces for the melee
     /// auto-attack and a ranged shot (`0x5a84d0`, `0x5a85e0`), else the record's icon.
     fn book_spell_texture(&self, spell_id: u32) -> Option<String> {
@@ -1897,6 +1904,8 @@ pub(crate) struct TestView {
     pub talent_info: Option<super::TalentInfo>,
     pub talent_units: (Option<u64>, Option<u64>),
     pub pet_category: Option<i32>,
+    /// The pet's known spells, its higher ranks included.
+    pub pet_known: Vec<u32>,
     pub character_points: Option<(u32, u32)>,
     pub talent_learns: Vec<(Option<u64>, u32, u32)>,
     pub talent_preview_learns: Vec<super::PreviewLearn>,
@@ -2035,6 +2044,12 @@ impl LiveState for TestView {
 
     fn pet_family_category(&self) -> Option<i32> {
         self.pet_category
+    }
+
+    fn pet_spell_known_or_higher(&self, spell_id: u32) -> bool {
+        self.talent_units.0.is_some()
+            && self.talent_units.1.is_some()
+            && self.pet_known.contains(&spell_id)
     }
 
     fn send_learn_talent(&mut self, pet: Option<u64>, talent: u32, rank: u32) {

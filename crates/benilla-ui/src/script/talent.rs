@@ -345,11 +345,16 @@ fn tooltip_lines(lua: &Lua, args: &MultiValue) -> Option<(u32, TalentLines)> {
                 }),
             );
         }
-        // An inspected player knows every required spell (`0x5c60c0`).
-        if !inspect
-            && t.required_spell != 0
-            && !(!pet && live.spell_known_or_higher(t.required_spell))
-        {
+        // The required spell (`0x622759` into `0x5c60c0`): an inspected player knows it; else our
+        // player or the pet, asked at the call (`0x5c6128`, `0x5c6134`).
+        let knows = |spell| {
+            if pet {
+                live.pet_spell_known_or_higher(spell)
+            } else {
+                live.spell_known_or_higher(spell)
+            }
+        };
+        if !inspect && t.required_spell != 0 && !knows(t.required_spell) {
             if let Some(name) = &t.required_spell_name {
                 reqs.extend(
                     get("ITEM_REQ_SKILL")

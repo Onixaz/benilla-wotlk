@@ -487,3 +487,28 @@ fn a_negative_forward_ends_the_rank_walk() {
     let cat = SkillLineCatalog::from_abilities([(10, row)]);
     assert!(!cat.higher_rank_known(10, 1, 1, &std::collections::BTreeSet::from([u32::MAX])));
 }
+
+/// The pet's rank walk reads the row on the family's lines alone (`0x71a6b0` into `0x810410`) and
+/// asks the pet of each later rank (`0x726180`).
+#[test]
+fn a_pets_higher_rank_walks_its_familys_lines() {
+    let row = |line, next| SlaInfo {
+        skill_id: line,
+        req_skill_value: 0,
+        forward_spell_id: next,
+        trivial_low: 0,
+        trivial_high: 0,
+    };
+    let cat = SkillLineCatalog::from_abilities([(100, row(270, 101)), (101, row(270, 102))]);
+    assert!(cat.pet_ability(100, [0, 270]).is_some(), "the second line");
+    assert!(
+        cat.pet_ability(100, [5, 6]).is_none(),
+        "not on the family's lines"
+    );
+    assert!(cat.pet_higher_rank_known(100, [270, 0], |s| s == 102));
+    assert!(
+        !cat.pet_higher_rank_known(100, [270, 0], |s| s == 100),
+        "the spell itself is not a higher rank"
+    );
+    assert!(!cat.pet_higher_rank_known(100, [5, 6], |s| s == 102));
+}
