@@ -158,6 +158,8 @@ pub(crate) struct LiveView<'w, 's> {
     loot: Option<crate::ui_loot::LootLive<'w, 's>>,
     /// The group loot rolls and what their verbs read.
     loot_rolls: Option<crate::ui_loot_roll::LootRollsLive<'w>>,
+    /// The inbox, the arrival state and what a row resolves against.
+    mail: Option<crate::ui_mail::MailLive<'w, 's>>,
     /// The taxi map's globals and what its fares and activates read.
     taxi: Option<crate::ui_taxi::TaxiLive<'w, 's>>,
     /// The trainer window and what its gates, descriptions and buys read.
@@ -1922,6 +1924,81 @@ impl LiveState for LiveView<'_, '_> {
 
     fn master_loot_candidate(&mut self, index: u32) -> Option<Option<String>> {
         Some(self.loot.as_mut()?.master_candidate(index))
+    }
+
+    fn mail_inbox_counts(&self) -> Option<(usize, u32)> {
+        Some(self.mail.as_ref()?.counts())
+    }
+
+    fn mail_row(
+        &mut self,
+        index: usize,
+        read: benilla_ui::script::MailRead,
+        text: &dyn Fn(&str) -> Option<String>,
+        military: bool,
+    ) -> Option<Option<benilla_ui::script::MailInboxRow>> {
+        let waits = self.record_waits.as_deref_mut();
+        Some(self.mail.as_mut()?.row(index, read, text, military, waits))
+    }
+
+    fn mail_mark_read(&mut self, index: usize) -> Option<Vec<&'static str>> {
+        Some(self.mail.as_mut()?.mark_read(index))
+    }
+
+    fn mail_mark_delete_pending(&mut self, index: usize) -> Option<()> {
+        self.mail.as_mut()?.mark_delete_pending(index);
+        Some(())
+    }
+
+    fn mail_send(&mut self, packet: benilla_ui::script::MailPacket) -> Option<()> {
+        self.mail.as_mut()?.send(packet);
+        Some(())
+    }
+
+    fn mail_complain(&mut self, message_id: u32) -> Option<benilla_ui::script::MailComplaint> {
+        Some(self.mail.as_mut()?.complain(message_id))
+    }
+
+    fn mail_close(&mut self) -> Option<Option<bool>> {
+        let mail = self.mail.as_mut()?;
+        let Some(mailbox) = mail.mailbox() else {
+            return Some(None);
+        };
+        // The clear on the mailbox (`0x571a5e`); its window leg runs in the verb.
+        let held = self
+            .tabard
+            .target_mut()
+            .is_some_and(|t| t.clear_in_call(mailbox));
+        mail.end_session();
+        Some(Some(held))
+    }
+
+    fn mail_close_query(&mut self) {
+        if let Some(mail) = self.mail.as_mut() {
+            mail.close_query();
+        }
+    }
+
+    fn mail_has_new(&self) -> Option<bool> {
+        Some(self.mail.as_ref()?.has_new())
+    }
+
+    fn mail_latest_senders(
+        &mut self,
+        text: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<Vec<Option<String>>> {
+        Some(self.mail.as_mut()?.latest_senders(text))
+    }
+
+    fn mail_stationeries(
+        &mut self,
+        rebuild: bool,
+    ) -> Option<Vec<benilla_ui::script::StationeryView>> {
+        Some(self.mail.as_mut()?.stationeries(rebuild))
+    }
+
+    fn mail_packages(&self) -> Option<Vec<benilla_ui::script::PackageView>> {
+        Some(self.mail.as_ref()?.packages())
     }
 
     fn trade_cells(&self) -> Option<benilla_ui::script::TradeCells> {

@@ -1580,7 +1580,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let index = usize::try_from(crate::script::binding_abi::ftol(index)).unwrap_or(0);
             let attachment = {
                 let model = crate::script::model_mut_of(lua);
-                crate::script::mail::inbox_attachment(&model, index, slot)
+                crate::script::mail::inbox_attachment(lua, &model, index, slot)
             };
             let Some(a) = attachment.filter(|a| a.item_id != 0) else {
                 return Ok(Value::Nil);

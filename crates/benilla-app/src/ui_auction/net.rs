@@ -12,6 +12,7 @@ use bevy::prelude::*;
 
 use super::{AuctionEntry, AuctionMessage, AuctionOpen, Patch};
 use crate::net::NetHandlerApp;
+use crate::ui_action::signals::{QueuedSignals, SignalSink};
 use crate::ui_mail::MailArrival;
 
 /// One handler per `SMSG_AUCTION_*` kind, plus the session-end listener.
@@ -63,6 +64,7 @@ fn on_command_result(
     In(ev): In<SessionEvent>,
     mut auction: ResMut<AuctionOpen>,
     mut mail: MailArrival,
+    mut signals: QueuedSignals,
 ) {
     if let SessionEvent::AuctionCommandResult {
         auction_id,
@@ -73,8 +75,11 @@ fn on_command_result(
     {
         auction_command_result(auction_id, action, error, &tail, &mut auction);
         // A cancel's item comes back by mail at once (`0x59ffb0`'s removed arm).
-        if error == auction_error::OK && action == auction_action::REMOVED {
-            mail.arrive(0.0, "SMSG_AUCTION_COMMAND_RESULT cancel");
+        if error == auction_error::OK
+            && action == auction_action::REMOVED
+            && mail.arrive(0.0, "SMSG_AUCTION_COMMAND_RESULT cancel")
+        {
+            signals.signal("UPDATE_PENDING_MAIL");
         }
     }
 }
@@ -115,11 +120,14 @@ fn on_bidder_notification(
     In(ev): In<SessionEvent>,
     mut auction: ResMut<AuctionOpen>,
     mut mail: MailArrival,
+    mut signals: QueuedSignals,
 ) {
     if let SessionEvent::AuctionBidderNotification(n) = ev {
         auction_bidder_notification(&n, &mut auction);
         // Won or outbid, the item or the refund is mailed at once (`0x5a0480`).
-        mail.arrive(0.0, "SMSG_AUCTION_BIDDER_NOTIFICATION");
+        if mail.arrive(0.0, "SMSG_AUCTION_BIDDER_NOTIFICATION") {
+            signals.signal("UPDATE_PENDING_MAIL");
+        }
     }
 }
 
@@ -127,16 +135,19 @@ fn on_owner_notification(
     In(ev): In<SessionEvent>,
     mut auction: ResMut<AuctionOpen>,
     mut mail: MailArrival,
+    mut signals: QueuedSignals,
 ) {
     if let SessionEvent::AuctionOwnerNotification(n) = ev {
         auction_owner_notification(&n, &mut auction);
         // A close mails the sale's money after its delay, or an expiry's item at once; a bid
         // mails nothing (`0x5a0790`).
-        if n.bidder_guid == 0 {
-            mail.arrive(
+        if n.bidder_guid == 0
+            && mail.arrive(
                 if n.bid != 0 { n.mail_delay } else { 0.0 },
                 "SMSG_AUCTION_OWNER_NOTIFICATION",
-            );
+            )
+        {
+            signals.signal("UPDATE_PENDING_MAIL");
         }
     }
 }
