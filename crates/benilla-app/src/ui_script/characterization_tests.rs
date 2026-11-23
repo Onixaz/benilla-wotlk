@@ -10392,6 +10392,134 @@ fn inventory_watches_fire_in_the_values_handler_with_the_slots_read_at_the_call(
     );
 }
 
+/// The visible entry watch updates the bar for the old entry then the new (`0x6e1ed2` on the watch's old value, `0x6e1ee2` on the live field), each signalling the slots holding it (`0x5aa5c0`); the enchant watch runs the bar's update (`0x707fc6`) and the character page's `UNIT_INVENTORY_CHANGED` (`0x707ff3`) ahead of the alert recompute (`0x707ff8`).
+#[test]
+fn the_entry_and_enchant_watches_update_the_bar_ahead_of_their_slot_events() {
+    use benilla_protocol::field::{
+        player_visible_item_entry_field as visible, FIELD_ITEM_CONTAINED, FIELD_ITEM_DURABILITY,
+        FIELD_ITEM_ENCHANTMENT_1_1, FIELD_ITEM_MAXDURABILITY, FIELD_ITEM_OWNER,
+        FIELD_ITEM_STACK_COUNT, FIELD_OBJECT_ENTRY, FIELD_UNIT_BYTES_0,
+    };
+    use benilla_protocol::messages::{ActionButton, ACTION_BUTTONS_SET, ACTION_KIND_ITEM};
+    const SWORD: u64 = 0x4000_0000_0000_0720;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER, (FIELD_UNIT_BYTES_0, 1 | 1 << 8)]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let mut weapon = crate::items::test_template("Weapon");
+    weapon.class = 2;
+    weapon.subclass = 7;
+    weapon.inventory_type = 13;
+    rig.packets(
+        [25, 26]
+            .into_iter()
+            .map(|entry| SessionEvent::ItemTemplate {
+                entry,
+                info: Some(Box::new(weapon.clone())),
+            })
+            .collect(),
+        2,
+    );
+    // The new entry on slot 1, the old on slot 2, so the order is not the slot walk's.
+    let item = |slot: u8, action: u32| ActionButton {
+        slot,
+        action,
+        kind: ACTION_KIND_ITEM,
+    };
+    rig.packets(
+        vec![SessionEvent::ActionButtons {
+            state: ACTION_BUTTONS_SET,
+            buttons: vec![item(0, 26), item(1, 25)],
+        }],
+        2,
+    );
+    let guid_pair =
+        |field: u16, guid: u64| [(field, guid as u32), (field + 1, (guid >> 32) as u32)];
+    let mut pairs = vec![
+        (FIELD_OBJECT_ENTRY, 25),
+        (FIELD_ITEM_STACK_COUNT, 1),
+        (FIELD_ITEM_DURABILITY, 50),
+        (FIELD_ITEM_MAXDURABILITY, 50),
+    ];
+    pairs.extend(guid_pair(FIELD_ITEM_OWNER, ME));
+    pairs.extend(guid_pair(FIELD_ITEM_CONTAINED, ME));
+    let mut words = guid_pair(FIELD_PLAYER_INV_SLOT_HEAD + 30, SWORD).to_vec();
+    words.push((visible(15), 25));
+    rig.packets(
+        vec![
+            SessionEvent::ItemCreate {
+                guid: SWORD,
+                container: false,
+                fields: ObjectFields::from_pairs(&pairs).into_created(ObjectType::Item),
+            },
+            self_values(&words),
+        ],
+        2,
+    );
+    const EVENTS: &[&str] = &[
+        "ACTIONBAR_SLOT_CHANGED",
+        "UNIT_INVENTORY_CHANGED",
+        "UPDATE_INVENTORY_ALERTS",
+        "UPDATE_INVENTORY_DURABILITY",
+    ];
+    // The visible entry 25 -> 26: slot 2 (the old entry) signals, then slot 1 (the new).
+    let swap = rig.packets(vec![self_values(&[(visible(15), 26)])], 2);
+    assert_eq!(
+        pin(&swap, EVENTS, &[]),
+        vec![
+            "UPDATE_INVENTORY_DURABILITY",
+            "ACTIONBAR_SLOT_CHANGED 2",
+            "ACTIONBAR_SLOT_CHANGED 1",
+            "UNIT_INVENTORY_CHANGED player",
+        ]
+    );
+    // An enchant on the worn sword: the bar's update and the page's slot event, then the recompute.
+    let enchant = rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: SWORD,
+            fields: ObjectFields::from_pairs(&[(FIELD_ITEM_ENCHANTMENT_1_1, 1)]),
+        }],
+        2,
+    );
+    assert_eq!(
+        pin(&enchant, EVENTS, &[]),
+        vec![
+            "ACTIONBAR_SLOT_CHANGED 2",
+            "UNIT_INVENTORY_CHANGED player",
+            "UPDATE_INVENTORY_DURABILITY",
+        ]
+    );
+}
+
+/// The world entry runs the bar's part (`0x5281b8` -> `0x5ac0e0`) ahead of the character page's alert recompute (`0x5281bd` -> `0x5eaf30` -> `0x5e90d0`), then the skill rebuild (`0x528226`).
+#[test]
+fn the_world_entry_runs_the_bar_ahead_of_the_inventory_alerts() {
+    use benilla_protocol::field::FIELD_UNIT_BYTES_2;
+    // Created in Battle Stance: no field watch runs, so the entry's bonus update finds the bar's offset moved.
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER, (FIELD_UNIT_BYTES_2, 17 << 24)]) else {
+        return;
+    };
+    let seen = rig.take();
+    assert_eq!(
+        pin(
+            &seen,
+            &[
+                "UPDATE_BONUS_ACTIONBAR",
+                "UPDATE_INVENTORY_ALERTS",
+                "UPDATE_INVENTORY_DURABILITY",
+                "SKILL_LINES_CHANGED",
+            ],
+            &[]
+        ),
+        vec![
+            "UPDATE_BONUS_ACTIONBAR",
+            "UPDATE_INVENTORY_DURABILITY",
+            "SKILL_LINES_CHANGED",
+        ]
+    );
+}
+
 /// `AbandonSkill` sends `CMSG_UNLEARN_SKILL` inside the call (`0x5ce368`); the line stays until the skill fields move.
 #[test]
 fn abandon_skill_sends_inside_the_call() {

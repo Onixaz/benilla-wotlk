@@ -130,9 +130,9 @@ fn sync_char_booth(script: Option<NonSend<UiScript>>, mut booth: ResMut<PaperDol
     }
 }
 
-/// The character page's world entry (`0x5281bd` -> `0x5eaf30`): the alert recompute over the slots read now, with its events (`0x5eaf5e` -> `0x5e90d0`).
+/// The character page's world entry (`0x5281bd` -> `0x5eaf30`): the alert recompute with its events (`0x5eaf5e` -> `0x5e90d0`), in turn after the bar's entry (`0x5281b8`).
 pub(crate) fn enter_world(world: &mut World) {
-    update_inventory_alerts(world);
+    crate::ui_script::live::in_turn(world, update_inventory_alerts);
 }
 
 /// The alert recompute (`0x5e90d0`) over the slots read at the step, `UPDATE_INVENTORY_ALERTS` on a changed status then `UPDATE_INVENTORY_DURABILITY`.

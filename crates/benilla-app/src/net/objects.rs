@@ -2098,7 +2098,7 @@ fn visible_item_field(index: u16) -> Option<(u8, bool)> {
     (r < 38).then_some(((r / 2) as u8, r % 2 == 0))
 }
 
-/// Our visible entry watch on `slot` (`0x6e1e10`), the entry moved by magnitude or sign (`0x6e1e56`-`0x6e1e7e`): the alert recompute (`0x6e1ea4`), then ours alone, the bar's usable update and its item updates for the new then the old entry (`0x6e1ec2`-`0x6e1ee2`); the main hand's `UNIT_ATTACK` then its book update (`0x6e1f2c`, `0x6e1f37`), the off hand's `UNIT_ATTACK` (`0x6e1f21`), the ranged slot's `UNIT_RANGED_ATTACK_POWER` then its book update (`0x6e1f08`, `0x6e1f13`). The trade-skill refresh ahead of the alerts (`0x6e1e9c`) is the trade-skill module's.
+/// Our visible entry watch on `slot` (`0x6e1e10`), the entry moved by magnitude or sign (`0x6e1e56`-`0x6e1e7e`): the alert recompute (`0x6e1ea4`), then ours alone, the bar's usable update and its item updates for the old then the new entry (`0x6e1ec2`, `0x6e1ed2`, `0x6e1ee2`); the main hand's `UNIT_ATTACK` then its book update (`0x6e1f2c`, `0x6e1f37`), the off hand's `UNIT_ATTACK` (`0x6e1f21`), the ranged slot's `UNIT_RANGED_ATTACK_POWER` then its book update (`0x6e1f08`, `0x6e1f13`). The trade-skill refresh ahead of the alerts (`0x6e1e9c`) is the trade-skill module's.
 fn visible_entry_watch(sc: &mut Scene, slot: u8, old: u32, new: u32) {
     let (old, new) = (old as i32, new as i32);
     if old.unsigned_abs() == new.unsigned_abs() && (old > 0) == (new > 0) {
@@ -2108,7 +2108,7 @@ fn visible_entry_watch(sc: &mut Scene, slot: u8, old: u32, new: u32) {
     sc.ui.world(crate::ui_action::usable_cache::step(
         crate::ui_action::usable_cache::Pass::Bar,
     ));
-    for entry in [new.unsigned_abs(), old.unsigned_abs()] {
+    for entry in [old.unsigned_abs(), new.unsigned_abs()] {
         sc.ui
             .world(move |world| crate::ui_action::slots::update_item(world, entry));
     }

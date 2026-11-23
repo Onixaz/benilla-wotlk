@@ -717,8 +717,8 @@ pub(crate) fn enchants_changed(world: &mut World, item: u64) {
     crate::ui_action::slots::update_item(world, entry);
     item_updated(world, item);
     character_item_updated(world, item);
-    // Then the alert recompute (`0x707ff8`).
-    crate::ui_char::update_inventory_alerts(world);
+    // Then the alert recompute (`0x707ff8`), in turn after the legs above.
+    crate::ui_script::live::in_turn(world, crate::ui_char::update_inventory_alerts);
 }
 
 /// The post-init's unlock on an item we own (`0x70ad20`): a single item unlocks itself (`0x70ad9e`), a stackable kind every item of it outside the bank (`0x70ad8d`); then the bar's faces and item update (`0x70add6`-`0x70adf0`).
