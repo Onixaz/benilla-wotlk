@@ -1436,13 +1436,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     let model = lua
                         .app_data_ref::<crate::script::ModelCell>()
                         .expect("model app_data");
-                    let list = super::auction::list_index_of(&kind);
-                    model
-                        .auction
-                        .as_ref()
-                        .zip(list)
-                        .and_then(|(a, l)| a.lists[l].rows.get(row))
-                        .map(|r| r.item_id)
+                    super::auction::row_for_tooltip(&model, &kind, row + 1).map(|r| r.item_id)
                 }) else {
                     return Ok(Value::Nil);
                 };
@@ -1617,14 +1611,8 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let h = frame_handle_of(lua, &this)?;
             let (item_id, link, name) = {
                 let model = crate::script::model_mut_of(lua);
-                let Some(auction) = &model.auction else {
-                    return Ok(());
-                };
-                let Some(list) = super::auction::list_index_of(&kind) else {
-                    return Ok(());
-                };
-                match auction.lists[list].rows.get(index.saturating_sub(1)) {
-                    Some(r) => (r.item_id, r.link.clone(), r.name.clone()),
+                match super::auction::row_for_tooltip(&model, &kind, index) {
+                    Some(r) => (r.item_id, r.link, r.name),
                     None => (0, None, None),
                 }
             };

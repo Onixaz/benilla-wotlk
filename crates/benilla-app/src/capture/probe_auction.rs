@@ -926,12 +926,12 @@ fn auction_step(
             }
             if !sent {
                 crate::ui_script::run_or_warn(script, "AuctionFrameTab_OnClick(AuctionFrameTab3)");
-                // The Lua indexes the VM's sorted rows.
-                let indices: Vec<usize> = script
-                    .auction_ids(OWNER)
+                // The Lua indexes the house's rows in their sorted order.
+                let indices: Vec<usize> = auction.lists[OWNER]
+                    .entries
                     .iter()
                     .enumerate()
-                    .filter(|(_, id)| probe.listed.contains(id))
+                    .filter(|(_, e)| probe.listed.contains(&e.wire.auction_id))
                     .map(|(i, _)| i + 1)
                     .collect();
                 for i in indices.iter().rev() {
