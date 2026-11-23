@@ -218,13 +218,10 @@ impl FactionList {
         self.headers.iter().position(|h| h.faction_id == id)
     }
 
-    /// The faction of the row a 1-based index names, 0 past the list: the reference reads
-    /// `index - 1 <= count`, one slot further, which holds no row here.
-    fn faction_at(&self, index: usize) -> i64 {
-        index
-            .checked_sub(1)
-            .and_then(|i| self.rows.get(i))
-            .map_or(0, |r| r.faction_id)
+    /// The faction of a 0-based row, 0 past the list: the reference reads `row <= count`, one
+    /// slot further, which holds no row here.
+    fn faction_at(&self, row: usize) -> i64 {
+        self.rows.get(row).map_or(0, |r| r.faction_id)
     }
 
     fn shown_rows(&self) -> &[Row] {
@@ -670,6 +667,14 @@ fn set_inactive(
     true
 }
 
+/// A verb's 1-based index as its 0-based row: `is-number` or the verb's `Usage:` error, the
+/// truncation, then `index - 1` read unsigned, so 0 or a negative index lands past the list
+/// (`0x5d11a2`-`0x5d11ae`).
+fn row_arg(lua: &Lua, index: Value, usage: &'static str) -> mlua::Result<usize> {
+    let index = binding_abi::number_arg(lua, index, usage)?;
+    Ok(index.wrapping_sub(1) as u32 as usize)
+}
+
 fn update_faction(lua: &Lua) {
     super::event::fire_global(lua, "UPDATE_FACTION", &[]);
 }
@@ -686,8 +691,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // GetFactionInfo(index) → the helper on that row's faction, 0 past the list (`0x5d1150`).
     g.set(
         "GetFactionInfo",
-        lua.create_function(|lua, index: usize| {
-            with_reputation(|list, t| faction_info(lua, list, t, list.faction_at(index)))
+        lua.create_function(|lua, index: Value| {
+            let row = row_arg(lua, index, "Usage: GetFactionInfo(index)")?;
+            with_reputation(|list, t| faction_info(lua, list, t, list.faction_at(row)))
         })?,
     )?;
 
@@ -717,29 +723,38 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // SetSelectedFaction(index): that row's faction, a header's included, or none (`0x5d07b0`).
     g.set(
         "SetSelectedFaction",
-        lua.create_function(|_, index: usize| {
-            with_reputation(|list, _| list.selected = list.faction_at(index));
+        lua.create_function(|lua, index: Value| {
+            let row = row_arg(lua, index, "Usage: SetSelectedFaction(index)")?;
+            with_reputation(|list, _| list.selected = list.faction_at(row));
             Ok(())
         })?,
     )?;
 
     // Fold verbs (`0x5d1f70`, `0x5d2000`, `0x5d1fc0`, `0x5d1fe0`); the sort raises UPDATE_FACTION.
-    for (name, fold, all) in [
-        ("CollapseFactionHeader", true, false),
-        ("ExpandFactionHeader", false, false),
-        ("CollapseAllFactionHeaders", true, true),
-        ("ExpandAllFactionHeaders", false, true),
+    // The two by index raise their `Usage:` for a non-number (`0x5d1f8c`, `0x5d201c`).
+    for (name, fold, usage) in [
+        (
+            "CollapseFactionHeader",
+            true,
+            Some("Usage: CollapseFactionHeader(index)"),
+        ),
+        (
+            "ExpandFactionHeader",
+            false,
+            Some("Usage: ExpandFactionHeader(index)"),
+        ),
+        ("CollapseAllFactionHeaders", true, None),
+        ("ExpandAllFactionHeaders", false, None),
     ] {
         g.set(
             name,
-            lua.create_function(move |lua, index: Option<usize>| {
+            lua.create_function(move |lua, index: Value| {
+                let row = match usage {
+                    Some(usage) => Some(row_arg(lua, index, usage)?),
+                    None => None,
+                };
                 let sorted = with_reputation(|list, t| {
-                    let row = if all {
-                        list.rows.len()
-                    } else {
-                        index.unwrap_or(0).wrapping_sub(1)
-                    };
-                    list.collapse(t, row, fold)
+                    list.collapse(t, row.unwrap_or(list.rows.len()), fold)
                 });
                 if sorted {
                     update_faction(lua);
@@ -752,9 +767,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // FactionToggleAtWar(index) (`0x5d1390`): flips that row's faction's stored war flag.
     g.set(
         "FactionToggleAtWar",
-        lua.create_function(|lua, index: usize| {
+        lua.create_function(|lua, index: Value| {
+            let row = row_arg(lua, index, "Usage: FactionToggleAtWar(index)")?;
             let refused = with_reputation(|list, t| {
-                let faction = list.faction_at(index);
+                let faction = list.faction_at(row);
                 if faction == 0 {
                     return None;
                 }
@@ -771,22 +787,30 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // IsFactionInactive(index) → that row's flag `0x20` (`0x5d0740`).
     g.set(
         "IsFactionInactive",
-        lua.create_function(|_, index: usize| {
+        lua.create_function(|lua, index: Value| {
+            let row = row_arg(lua, index, "Usage: IsFactionInactive(index)")?;
             let inactive = with_reputation(|list, t| {
-                t.faction(list.faction_at(index))
-                    .is_some_and(|e| e.inactive)
+                t.faction(list.faction_at(row)).is_some_and(|e| e.inactive)
             });
             Ok(binding_abi::flag(inactive))
         })?,
     )?;
 
     // SetFactionInactive / SetFactionActive(index) (`0x5d1e50`, `0x5d1ee0`).
-    for (name, inactive) in [("SetFactionInactive", true), ("SetFactionActive", false)] {
+    for (name, inactive, usage) in [
+        (
+            "SetFactionInactive",
+            true,
+            "Usage: SetFactionInactive(index)",
+        ),
+        ("SetFactionActive", false, "Usage: SetFactionActive(index)"),
+    ] {
         g.set(
             name,
-            lua.create_function(move |lua, index: usize| {
+            lua.create_function(move |lua, index: Value| {
+                let row = row_arg(lua, index, usage)?;
                 let sorted = with_reputation(|list, t| {
-                    let faction = list.faction_at(index);
+                    let faction = list.faction_at(row);
                     faction != 0 && set_inactive(list, t, faction, inactive)
                 });
                 if sorted {
@@ -829,10 +853,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // field differs, inside the call (`0x5d0ba0`, `0x5d0bfb`).
     g.set(
         "SetWatchedFactionIndex",
-        lua.create_function(|_, index: usize| {
+        lua.create_function(|lua, index: Value| {
+            let row = row_arg(lua, index, "Usage: SetWatchedFactionIndex(index)")?;
             with_reputation(|list, t| {
                 let slot = t
-                    .faction(list.faction_at(index))
+                    .faction(list.faction_at(row))
                     .map_or(-1, |e| e.rep_list_id as i32);
                 if t.watched().is_some_and(|w| w != slot) {
                     t.send(ReputationSend::Watch(slot));
@@ -1379,5 +1404,68 @@ mod tests {
         .unwrap();
         assert_eq!(s.eval::<i64>("return N").unwrap(), 1);
         assert_eq!(s.eval::<i64>("return GetNumFactions()").unwrap(), 0);
+    }
+
+    /// Each index verb raises its own `Usage:` for a non-number (`0x5d0756`, `0x5d07c6`,
+    /// `0x5d1169`, `0x5d13a9`, `0x5d1436`, `0x5d1e69`, `0x5d1ef9`, `0x5d1f86`, `0x5d2016`) and
+    /// takes a numeric string; 0 or a negative index wraps past the list: faction 0 read, nothing
+    /// sent, and a header fold opens or folds every header (`0x5d1d2c`).
+    #[test]
+    fn the_index_verbs_refuse_a_non_number_and_read_a_negative_past_the_list() {
+        let mut p = Pane::new(rows());
+        for verb in [
+            "IsFactionInactive",
+            "SetSelectedFaction",
+            "GetFactionInfo",
+            "FactionToggleAtWar",
+            "SetWatchedFactionIndex",
+            "SetFactionInactive",
+            "SetFactionActive",
+            "CollapseFactionHeader",
+            "ExpandFactionHeader",
+        ] {
+            for arg in ["", "nil", "'x'", "{}"] {
+                let err =
+                    p.s.with_live(&mut p.v, |s| s.run(&format!("{verb}({arg})")))
+                        .expect_err(verb)
+                        .to_string();
+                assert!(
+                    err.contains(&format!("Usage: {verb}(index)")),
+                    "{verb}({arg}): {err}"
+                );
+            }
+        }
+        assert_eq!(p.eval::<String>("return (GetFactionInfo('1'))"), "Classic");
+        let shown: i64 = p.eval("return GetNumFactions()");
+        for index in ["0", "-1", "-5.5"] {
+            assert_eq!(
+                p.eval::<String>(&format!("return (GetFactionInfo({index}))")),
+                "Other",
+                "past the list, faction 0"
+            );
+            p.run(&format!(
+                "SetWatchedFactionIndex({index}) FactionToggleAtWar({index}) \
+                 SetFactionInactive({index}) SetSelectedFaction({index})"
+            ));
+            assert!(p.sends().is_empty(), "{index}");
+            // The selection is faction 0, the "Other" header's row (`0x5d07f4`, `0x5d01d3`).
+            let other: i64 = p.eval(
+                "for i = 1, GetNumFactions() do \
+                   if GetFactionInfo(i) == 'Other' then return i end end return 0",
+            );
+            assert_eq!(p.eval::<i64>("return GetSelectedFaction()"), other);
+        }
+        p.run("CollapseFactionHeader(-1)");
+        let folded: i64 = p.eval("return GetNumFactions()");
+        p.run("ExpandFactionHeader(0)");
+        let opened: i64 = p.eval("return GetNumFactions()");
+        assert!(
+            folded < shown && opened == shown,
+            "{folded} {shown} {opened}"
+        );
+        p.run("CollapseAllFactionHeaders()");
+        assert_eq!(folded, p.eval::<i64>("return GetNumFactions()"));
+        p.run("ExpandAllFactionHeaders()");
+        assert_eq!(opened, p.eval::<i64>("return GetNumFactions()"));
     }
 }
