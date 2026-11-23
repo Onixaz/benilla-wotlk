@@ -50,7 +50,7 @@ pub struct TalentPrereqView {
     pub talent: u32,
     pub rank: u32,
     /// The named record's 1-based tier and column, `None` when the id names no record (the slot
-    /// is skipped, `0x5c7f6c`).
+    /// is skipped, `0x5c7feb`; a zero id is skipped at `0x5c7fd6`).
     pub seat: Option<(u32, u32)>,
     /// The named talent's first rank's spell name, the tooltip's requirement line.
     pub name: String,
