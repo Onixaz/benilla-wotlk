@@ -302,7 +302,10 @@ pub(super) fn send_trajectory_casts(
         Local<ShotMemory>,
         Res<Time<Real>>,
         MessageReader<crate::creature_anim::AnimSoundEvent>,
-        Option<MessageWriter<crate::creature_anim::EmoteAnim>>,
+        (
+            Option<MessageWriter<crate::creature_anim::CastEvent>>,
+            Option<ResMut<crate::creature_anim::PlaySeq>>,
+        ),
         Option<ResMut<LocalTrajectoryGos>>,
     ),
 ) {
@@ -437,17 +440,16 @@ pub(super) fn send_trajectory_casts(
                     continue;
                 }
                 targeting.sent(cast.caster, cast.count, cast.spell_id, true);
-                // The press plays the cast's animation; its release sends the cast.
-                if let (Some(out), Some(anim)) = (
-                    anims.as_mut(),
-                    kit.and_then(|k| k.anim_id).filter(|&a| a > 0),
-                ) {
-                    out.write(crate::creature_anim::EmoteAnim {
+                // The press plays the cast's visuals, its kit's animation and sound among them
+                // (`0x809f80`), through the GO's own kit play; its release sends the cast.
+                let (events, seq) = &mut anims;
+                if let Some(events) = events.as_mut() {
+                    events.write(crate::creature_anim::CastEvent {
                         entity,
-                        anim_id: anim,
-                        seq: 0,
-                        via_player: false,
-                        play: Default::default(),
+                        spell_id: cast.spell_id,
+                        kind: crate::creature_anim::CastEventKind::Go { ends_cast: false },
+                        cast_count: cast.count,
+                        seq: seq.as_mut().map_or(0, |s| s.next()),
                     });
                 }
                 debug!(
