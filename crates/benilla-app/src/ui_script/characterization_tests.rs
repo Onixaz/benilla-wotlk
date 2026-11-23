@@ -61,6 +61,10 @@ local VERBS = {
     { "skill2", function() return (select(4, GetSkillLineInfo(2))) end },
     { "rating6", function() return GetCombatRating(6) end },
     { "spdmg", function() return GetSpellBonusDamage(2) end },
+    { "mainatk", function() return (UnitAttackBothHands("player")) end },
+    { "offatk", function() return (select(3, UnitAttackBothHands("player"))) end },
+    { "wand", function() return HasWandEquipped() end },
+    { "regen", function() return math.floor(GetManaRegen()) end },
     { "skillpts", function() return GetAdjustedSkillPoints() end },
     { "titlename", function() return GetTitleName(1) end },
     { "rep5", function() return (GetFactionInfo(5)) end },
@@ -10159,6 +10163,170 @@ fn skill_value_watch_reads_the_permanent_bonus() {
     let down = rig.packets(vec![self_values(&[(SKILL + 1, pair(85, 400))])], 2);
     assert!(pin(&down, EVENTS, &[]).is_empty(), "{down:?}");
     assert_eq!(rig.live_now().line(&["skill2"]), "NOW | skill2=100");
+}
+
+/// Each visible weapon's entry watch (`0x6e1e10`) in field order, after the unit block's power regen watch (`0x6e57f0` -> `0x6cddd0`): the main hand fires `UNIT_ATTACK` then `SPELLS_CHANGED` (`0x6e1f2c`, `0x6e1f37`), the off hand `UNIT_ATTACK` alone (`0x6e1f21`), the ranged slot `UNIT_RANGED_ATTACK_POWER` then `SPELLS_CHANGED` (`0x6e1f08`, `0x6e1f13`); the regen range fires `PLAYER_DAMAGE_DONE_MODS` once however many words move. Each verb reads the fields at the call, so a sheet packet behind in the same frame is not yet seen and one ahead is.
+#[test]
+fn weapon_and_regen_watches_fire_in_the_values_handler_with_the_fields_read_at_the_call() {
+    use benilla_protocol::field::{
+        player_visible_item_entry_field as visible, FIELD_ITEM_CONTAINED, FIELD_ITEM_OWNER,
+        FIELD_ITEM_STACK_COUNT, FIELD_OBJECT_ENTRY, FIELD_PLAYER_SKILL_INFO_1_1 as SKILL,
+        FIELD_UNIT_BYTES_0, FIELD_UNIT_POWER_REGEN_FLAT_MODIFIER as REGEN,
+    };
+    const SWORD: u64 = 0x4000_0000_0000_0700;
+    const DAGGER: u64 = 0x4000_0000_0000_0701;
+    const WAND: u64 = 0x4000_0000_0000_0702;
+    // Item class 2 (weapon), subclasses sword 7, dagger 15, wand 19.
+    const WEAPONS: [(u64, u32, u32); 3] = [(SWORD, 25, 7), (DAGGER, 2092, 15), (WAND, 5240, 19)];
+    let pair = |lo: u32, hi: u32| lo | hi << 16;
+    // A human warrior on mana with Swords (43) at 100 and Daggers (173) at 50, of 400.
+    let Some(mut rig) = Rig::login(&[
+        OBJECT_TYPE_PLAYER,
+        (FIELD_UNIT_BYTES_0, 1 | 1 << 8),
+        (SKILL, 43),
+        (SKILL + 1, pair(100, 400)),
+        (SKILL + 3, 173),
+        (SKILL + 4, pair(50, 400)),
+    ]) else {
+        return;
+    };
+    rig.packets(
+        WEAPONS
+            .iter()
+            .map(|&(_, entry, subclass)| {
+                let mut info = crate::items::test_template("Weapon");
+                info.class = 2;
+                info.subclass = subclass;
+                SessionEvent::ItemTemplate {
+                    entry,
+                    info: Some(Box::new(info)),
+                }
+            })
+            .collect(),
+        2,
+    );
+    let guid_pair =
+        |field: u16, guid: u64| [(field, guid as u32), (field + 1, (guid >> 32) as u32)];
+    rig.packets(
+        WEAPONS
+            .iter()
+            .map(|&(guid, entry, _)| {
+                let mut pairs = vec![(FIELD_OBJECT_ENTRY, entry), (FIELD_ITEM_STACK_COUNT, 1)];
+                pairs.extend(guid_pair(FIELD_ITEM_OWNER, ME));
+                pairs.extend(guid_pair(FIELD_ITEM_CONTAINED, ME));
+                SessionEvent::ItemCreate {
+                    guid,
+                    container: false,
+                    fields: ObjectFields::from_pairs(&pairs).into_created(ObjectType::Item),
+                }
+            })
+            .collect(),
+        2,
+    );
+    // A weapon into (or out of) its slot: the slot's guid and its visible entry, as the server sends them.
+    let wear = |slot: u8, weapon: Option<(u64, u32)>| {
+        let (guid, entry) = weapon.unwrap_or((0, 0));
+        let mut words = guid_pair(FIELD_PLAYER_INV_SLOT_HEAD + 2 * u16::from(slot), guid).to_vec();
+        words.push((visible(slot), entry));
+        self_values(&words)
+    };
+    let skill = |value: u32| self_values(&[(SKILL + 1, pair(value, 400))]);
+    let regen = |value: f32| self_values(&[(REGEN, value.to_bits())]);
+    const EVENTS: &[&str] = &[
+        "UNIT_ATTACK",
+        "UNIT_RANGED_ATTACK_POWER",
+        "SPELLS_CHANGED",
+        "SKILL_LINES_CHANGED",
+        "PLAYER_DAMAGE_DONE_MODS",
+    ];
+    const VERBS: &[&str] = &["mainatk", "offatk", "wand", "regen"];
+    assert_eq!(
+        rig.live_now().line(VERBS),
+        "NOW | mainatk=0 offatk=0 wand=nil regen=0",
+        "empty hands read Unarmed, which the line list does not hold"
+    );
+    // The main hand ahead of a Swords value in one frame: its watch reads the old value.
+    let main_first = rig.packets(vec![wear(15, Some((SWORD, 25))), skill(101)], 2);
+    assert_eq!(
+        pin(&main_first, EVENTS, VERBS),
+        vec![
+            "UNIT_ATTACK player | mainatk=100 offatk=0 wand=nil regen=0",
+            "SPELLS_CHANGED | mainatk=100 offatk=0 wand=nil regen=0",
+            "UNIT_ATTACK player | mainatk=101 offatk=0 wand=nil regen=0",
+            "UNIT_RANGED_ATTACK_POWER player | mainatk=101 offatk=0 wand=nil regen=0",
+            "SKILL_LINES_CHANGED | mainatk=101 offatk=0 wand=nil regen=0",
+        ]
+    );
+    // A Swords value ahead of the main hand's removal: the value's events read the sword, the watch the bare hand.
+    let main_behind = rig.packets(vec![skill(102), wear(15, None)], 2);
+    assert_eq!(
+        pin(&main_behind, EVENTS, &["mainatk"]),
+        vec![
+            "UNIT_ATTACK player | mainatk=102",
+            "UNIT_RANGED_ATTACK_POWER player | mainatk=102",
+            "SKILL_LINES_CHANGED | mainatk=102",
+            "UNIT_ATTACK player | mainatk=0",
+            "SPELLS_CHANGED | mainatk=0",
+        ]
+    );
+    // The off hand: `UNIT_ATTACK` alone, no book update, ahead of and behind a regen packet.
+    let off_first = rig.packets(vec![wear(16, Some((DAGGER, 2092))), regen(4.0)], 2);
+    assert_eq!(
+        pin(&off_first, EVENTS, VERBS),
+        vec![
+            "UNIT_ATTACK player | mainatk=0 offatk=50 wand=nil regen=0",
+            "PLAYER_DAMAGE_DONE_MODS player | mainatk=0 offatk=50 wand=nil regen=4",
+        ]
+    );
+    let off_behind = rig.packets(vec![regen(6.0), wear(16, None)], 2);
+    assert_eq!(
+        pin(&off_behind, EVENTS, &["offatk", "regen"]),
+        vec![
+            "PLAYER_DAMAGE_DONE_MODS player | offatk=50 regen=6",
+            "UNIT_ATTACK player | offatk=0 regen=6",
+        ]
+    );
+    // The ranged slot ahead of and behind a regen packet.
+    let ranged_first = rig.packets(vec![wear(17, Some((WAND, 5240))), regen(8.0)], 2);
+    assert_eq!(
+        pin(&ranged_first, EVENTS, &["wand", "regen"]),
+        vec![
+            "UNIT_RANGED_ATTACK_POWER player | wand=1 regen=6",
+            "SPELLS_CHANGED | wand=1 regen=6",
+            "PLAYER_DAMAGE_DONE_MODS player | wand=1 regen=8",
+        ]
+    );
+    let ranged_behind = rig.packets(vec![regen(10.0), wear(17, None)], 2);
+    assert_eq!(
+        pin(&ranged_behind, EVENTS, &["wand", "regen"]),
+        vec![
+            "PLAYER_DAMAGE_DONE_MODS player | wand=1 regen=10",
+            "UNIT_RANGED_ATTACK_POWER player | wand=nil regen=10",
+            "SPELLS_CHANGED | wand=nil regen=10",
+        ]
+    );
+    // One packet: the regen range first in field order, once for two words, then each weapon slot in slot order.
+    let all = rig.packets(
+        vec![self_values(&[
+            (REGEN, 12.0f32.to_bits()),
+            (REGEN + 7, 1.0f32.to_bits()),
+            (visible(15), 25),
+            (visible(16), 2092),
+            (visible(17), 5240),
+        ])],
+        2,
+    );
+    assert_eq!(
+        pin(&all, EVENTS, &["regen"]),
+        vec![
+            "PLAYER_DAMAGE_DONE_MODS player | regen=12",
+            "UNIT_ATTACK player | regen=12",
+            "SPELLS_CHANGED | regen=12",
+            "UNIT_ATTACK player | regen=12",
+            "UNIT_RANGED_ATTACK_POWER player | regen=12",
+            "SPELLS_CHANGED | regen=12",
+        ]
+    );
 }
 
 /// `AbandonSkill` sends `CMSG_UNLEARN_SKILL` inside the call (`0x5ce368`); the line stays until the skill fields move.
