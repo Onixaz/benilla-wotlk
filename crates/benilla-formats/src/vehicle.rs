@@ -55,6 +55,33 @@ pub struct VehicleRec {
     /// `VehicleUIIndicator` id, which `PLAYER_GAINS_VEHICLE_DATA` and the enter events carry.
     pub ui_indicator_id: u32,
     pub power_display_ids: [u32; 3],
+    /// The trajectory aim preview's columns (20-32 and 35), read under `flags & 0xF800000`.
+    pub targeting: MissileTargeting,
+}
+
+/// A `Vehicle.dbc` row's trajectory aim preview (`0x6fda20`, `0x6fdfb0`, `0x6fe9b0`): how long
+/// each aim keeps it up, the arc strip and the impact's decal and models.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MissileTargeting {
+    /// Seconds the preview lingers after a turn, a pitch and a mouse aim (columns 20-22).
+    pub turn_lingering: f32,
+    pub pitch_lingering: f32,
+    pub mouse_lingering: f32,
+    /// The arc's opacity at the impact, as a fraction of its launch end's.
+    pub end_opacity: f32,
+    /// Texture repeats a second the arc scrolls, and per flight step.
+    pub arc_speed: f32,
+    pub arc_repeat: f32,
+    /// The arc strip's full width, yards.
+    pub arc_width: f32,
+    /// Each impact model's radius, yards.
+    pub impact_radius: [f32; 2],
+    /// Archive paths; `None` draws nothing for that piece.
+    pub arc_texture: Option<String>,
+    pub impact_texture: Option<String>,
+    pub impact_models: [Option<String>; 2],
+    /// The impact decal's half-extent, yards (column 35).
+    pub impact_tex_radius: f32,
 }
 
 /// One `VehicleSeat.dbc` row, the columns the client reads.
@@ -336,7 +363,22 @@ fn u32s<const N: usize>(r: &benilla_dbc::Record, from: usize) -> Option<[u32; N]
     Some(out)
 }
 
-fn vehicle_row(r: &benilla_dbc::Record) -> Option<VehicleRec> {
+fn vehicle_row(rs: &benilla_dbc::RecordSet, r: &benilla_dbc::Record) -> Option<VehicleRec> {
+    let [radius0, radius1] = f32s(r, 27)?;
+    let targeting = MissileTargeting {
+        turn_lingering: f32_at(r, 20)?,
+        pitch_lingering: f32_at(r, 21)?,
+        mouse_lingering: f32_at(r, 22)?,
+        end_opacity: f32_at(r, 23)?,
+        arc_speed: f32_at(r, 24)?,
+        arc_repeat: f32_at(r, 25)?,
+        arc_width: f32_at(r, 26)?,
+        impact_radius: [radius0, radius1],
+        arc_texture: str_at(rs, r, 29),
+        impact_texture: str_at(rs, r, 30),
+        impact_models: [str_at(rs, r, 31), str_at(rs, r, 32)],
+        impact_tex_radius: f32_at(r, 35)?,
+    };
     Some(VehicleRec {
         id: u32_at(r, 0)?,
         flags: u32_at(r, 1)?,
@@ -355,6 +397,7 @@ fn vehicle_row(r: &benilla_dbc::Record) -> Option<VehicleRec> {
         ui_locomotion_type: u32_at(r, 34)?,
         ui_indicator_id: u32_at(r, 36)?,
         power_display_ids: u32s(r, 37)?,
+        targeting,
     })
 }
 
@@ -414,10 +457,11 @@ pub fn load_vehicles(chain: &mut Chain) -> Result<VehicleCatalog> {
             .with_context(|| format!("reading {path}"))?;
         parse(&bytes, schema, what)
     };
-    let vehicles = read(VEHICLE, vehicle_schema(), "Vehicle")?
+    let vehicle_rs = read(VEHICLE, vehicle_schema(), "Vehicle")?;
+    let vehicles = vehicle_rs
         .records()
         .iter()
-        .filter_map(vehicle_row)
+        .filter_map(|r| vehicle_row(&vehicle_rs, r))
         .map(|v| (v.id, v))
         .collect();
     let seats = read(VEHICLE_SEAT, vehicle_seat_schema(), "VehicleSeat")?

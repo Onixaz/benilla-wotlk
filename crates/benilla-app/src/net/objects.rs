@@ -1139,6 +1139,7 @@ fn object_create(
         fields.gameobject_type_id(),
         fields.gameobject_dynamic_flags(),
     );
+    crate::entities::destructible::tag(&mut entity, kind, fields.gameobject_type_id());
     if let Some(s) = speeds {
         entity.insert(UnitSpeeds(s));
     }
@@ -1648,7 +1649,7 @@ fn gameobject_info(
     go_templates: &mut GameObjectTemplates,
 ) {
     debug!("net: gameobject template {entry} type {type_id} display {display_id} {name:?}");
-    go_templates.insert(entry, type_id, name, data);
+    go_templates.insert(entry, type_id, display_id, name, data);
 }
 
 /// A pet stat field's unit signal.

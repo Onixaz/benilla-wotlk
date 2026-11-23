@@ -60,6 +60,8 @@ pub(crate) use mount::MountDropped;
 /// The corpse object, drawn as the dressed body or, once it turns to bones, a skeleton prop.
 pub(crate) mod corpse;
 
+/// Destructible buildings: the damage-state model and its doodad sets.
+pub(crate) mod destructible;
 mod live_display;
 pub(crate) use live_display::DisplaySwapped;
 use live_display::{refresh_live_display, tick_scale_ease};
@@ -743,8 +745,23 @@ impl Plugin for EntitiesPlugin {
                 build_dressup_preview,
                 attach_entity_visuals,
                 // A WMO GameObject's doodad props, spawned as each M2 lands.
-                resolve_wmo_gameobject_props,
-                spawn_wmo_gameobject_props,
+                (
+                    resolve_wmo_gameobject_props,
+                    wmo_props::resolve_building_impacts
+                        .run_if(any_with_component::<destructible::BuildingImpact>),
+                )
+                    .chain(),
+                // A destructible building's state sets step through their sequences.
+                (
+                    spawn_wmo_gameobject_props,
+                    destructible::drive_building_doodads
+                        .run_if(any_with_component::<destructible::BuildingDoodad>),
+                    destructible::tend_building_swaps.run_if(
+                        any_with_component::<destructible::BuildingSwap>
+                            .or(any_with_component::<destructible::BuildingGhostOf>),
+                    ),
+                )
+                    .chain(),
                 attach_held_items,
                 // Spell-kit effect models and held-item glows, after the item roots exist.
                 // A GameObject's art kit models, on its built body.
@@ -773,6 +790,9 @@ impl Plugin for EntitiesPlugin {
                 // A display swap rebuilds, a scale change eases over the reference's 2 s, and a
                 // unit denied a palette rig rebuilds once the table has room.
                 (
+                    // A building's state change, before the swap reads its new display.
+                    destructible::track_building_states
+                        .run_if(any_with_component::<destructible::DestructibleBuilding>),
                     refresh_live_display,
                     tick_scale_ease,
                     live_display::heal_rig_starved,
@@ -906,6 +926,14 @@ pub(crate) fn setup_entities(
             commands.insert_resource(art_kit::ArtKits::new(table));
         }
         Err(e) => warn!("gameobject art kits unavailable, no GameObject wears its kit: {e:#}"),
+    }
+    match benilla_formats::load_destructible_models(&mut chain) {
+        Ok(table) => {
+            info!("destructible model data: {} rows", table.len());
+            commands.insert_resource(destructible::Destructibles(table));
+        }
+        // Without it a destructible building shows `GAMEOBJECT_DISPLAYID` and is never a mouseover.
+        Err(e) => warn!("destructible model data unavailable, buildings keep one model: {e:#}"),
     }
     match benilla_formats::load_lock_catalog(&mut chain) {
         Ok(catalog) => {

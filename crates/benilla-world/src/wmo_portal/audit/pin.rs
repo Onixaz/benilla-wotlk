@@ -270,7 +270,7 @@ fn wmo_group_census() {
         // The group's portal edges in WoW world space, to name the portal at a `.go xyz` spot.
         let start = g.ref_start as usize;
         let end = (start + g.ref_count as usize).min(subject.model.portal_refs.len());
-        for r in &subject.model.portal_refs[start..end] {
+        for r in subject.model.portal_refs.get(start..end).unwrap_or(&[]) {
             let Some(info) = subject.model.portal_infos.get(r.portal as usize) else {
                 continue;
             };
@@ -425,7 +425,10 @@ fn wmo_pin_probe() {
         let g = &model.group_nav[gi];
         let start = g.ref_start as usize;
         let end = (start + g.ref_count as usize).min(model.portal_refs.len());
-        let edges: Vec<String> = model.portal_refs[start..end]
+        let edges: Vec<String> = model
+            .portal_refs
+            .get(start..end)
+            .unwrap_or(&[])
             .iter()
             .map(|r| format!("p{}->g{}(side {:+})", r.portal, r.group, r.side))
             .collect();
@@ -455,7 +458,7 @@ fn wmo_pin_probe() {
         }
         let start = g.ref_start as usize;
         let end = (start + g.ref_count as usize).min(model.portal_refs.len());
-        for r in &model.portal_refs[start..end] {
+        for r in model.portal_refs.get(start..end).unwrap_or(&[]) {
             let Some(info) = model.portal_infos.get(r.portal as usize) else {
                 continue;
             };

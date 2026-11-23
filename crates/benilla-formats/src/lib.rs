@@ -71,8 +71,8 @@ pub use summon_properties::{
     load_summon_properties, SummonPropertiesCatalog, SUMMON_CONTROL_POSSESSED,
 };
 pub use vehicle::{
-    load_vehicles, IndicatorSeat, OverrideSpellsRec, VehicleCatalog, VehicleRec, VehicleSeatRec,
-    VehicleUiIndicator, OVERRIDE_SPELLS, VEHICLE_SEATS,
+    load_vehicles, IndicatorSeat, MissileTargeting, OverrideSpellsRec, VehicleCatalog, VehicleRec,
+    VehicleSeatRec, VehicleUiIndicator, OVERRIDE_SPELLS, VEHICLE_SEATS,
 };
 mod glyphs;
 pub use glyphs::{load_glyph_catalog, GlyphCatalog, GlyphProperty, GlyphSlot};
@@ -130,6 +130,10 @@ pub use languages::{
 mod creature_families;
 pub use creature_families::{
     load_creature_families, load_pet_food_names, CreatureFamilies, CreatureFamily, PetFoodNames,
+};
+mod destructible_model_data;
+pub use destructible_model_data::{
+    load_destructible_models, DestructibleModel, DestructibleModels, DESTRUCTIBLE_STATES,
 };
 mod gameobject_art_kit;
 pub use gameobject_art_kit::{

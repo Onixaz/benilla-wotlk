@@ -236,6 +236,11 @@ pub(super) fn track_passengers(
         };
         let to = next.map_or(0, |p| p.state);
         let seat_side = next.or(held_c).expect("one side is seated");
+        debug!(
+            "vehicle: passenger {guid:#x} state {from} -> {to} on {:#x} seat {} at {now:.3} s \
+             (server move {cue})",
+            seat_side.vehicle, seat_side.seat
+        );
         match next {
             Some(p) => {
                 commands.entity(e).insert(p);
@@ -388,6 +393,11 @@ pub(super) fn advance_transits(
             _ => continue,
         };
         let seat_side = *p;
+        debug!(
+            "vehicle: passenger {:#x} state {from} -> {to} on {:#x} seat {} at {now:.3} s \
+             (timed, due {end:.3} s)",
+            guid.0, p.vehicle, p.seat
+        );
         // Written through commands, so the passenger's readers see the step whole next frame.
         match to {
             0 => {

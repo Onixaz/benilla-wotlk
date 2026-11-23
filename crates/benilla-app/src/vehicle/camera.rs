@@ -83,7 +83,12 @@ pub(super) fn feed_vehicle_camera(
         ),
         With<SelfPlayer>,
     >,
-    units: Query<(&Transform, Option<&CameraPivot>, Option<&NetEntity>)>,
+    units: Query<(
+        &Transform,
+        Option<&CameraPivot>,
+        Option<&NetEntity>,
+        Option<&crate::entities::CollisionHeight>,
+    )>,
     vehicles: Query<&Vehicle>,
     index: Res<GuidIndex>,
     tables: Res<VehicleTables>,
@@ -128,17 +133,22 @@ pub(super) fn feed_vehicle_camera(
         if !follow && offset.is_none() {
             return None;
         }
-        let (entity, tf, pivot, net) = if follow {
-            let (tf, pivot, net) = units.get(vehicle).ok()?;
-            (vehicle, tf, pivot, net)
+        let (entity, tf, pivot, net, ceiling) = if follow {
+            let (tf, pivot, net, height) = units.get(vehicle).ok()?;
+            // The vehicle is a camera target under its unit ceiling (`0x718080`).
+            let ceiling = crate::player::pivot_ceiling(height.map(|h| h.0), false);
+            (vehicle, tf, pivot, net, ceiling)
         } else {
-            (own, own_tf, own_pivot, own_net)
+            (own, own_tf, own_pivot, own_net, f32::INFINITY)
         };
         let feet = tf.translation + tf.rotation * offset.unwrap_or(Vec3::ZERO);
         Some(RemoteView {
             entity,
             feet,
-            pivot_height: head_height(pivot, net.map_or(1.0, |n| n.scale)),
+            pivot_height: crate::player::clamp_pivot(
+                head_height(pivot, net.map_or(1.0, |n| n.scale)),
+                ceiling,
+            ),
             facing: tf.rotation.to_euler(EulerRot::YXZ).0,
         })
     });

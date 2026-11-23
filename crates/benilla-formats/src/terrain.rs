@@ -552,12 +552,28 @@ pub fn adt_to_tile_mesh(
         })
         .collect();
 
-    // MODF takes the same transform; its scale is unused in 1.12.
-    let wmos = root
-        .wmo_placements
+    let wmos = static_wmos(&root.wmos, &root.wmo_placements);
+
+    Ok(TileMesh {
+        chunks,
+        doodads,
+        wmos,
+    })
+}
+
+/// MODF flag `0x1`: a destructible building's placement, drawn by its GameObject instead.
+const MODF_DESTROYABLE: u16 = 0x1;
+
+/// The tile's static WMOs, MODF positions converted as MDDF's. A destroyable placement is never
+/// built as a map object (`0x7c6150`): its destructible GameObject draws the building in every
+/// damage state, and a static copy would stand intact over the broken models.
+fn static_wmos(names: &[String], placements: &[benilla_adt::WmoPlacement]) -> Vec<WmoInstance> {
+    const MAP_CENTER: f32 = 32.0 * TILE_SIZE;
+    placements
         .iter()
+        .filter(|w| w.flags & MODF_DESTROYABLE == 0)
         .filter_map(|w| {
-            let model = root.wmos.get(w.name_id as usize)?.clone();
+            let model = names.get(w.name_id as usize)?.clone();
             Some(WmoInstance {
                 model,
                 position: [
@@ -571,13 +587,7 @@ pub fn adt_to_tile_mesh(
                 name_set: w.name_set,
             })
         })
-        .collect();
-
-    Ok(TileMesh {
-        chunks,
-        doodads,
-        wmos,
-    })
+        .collect()
 }
 
 /// Read a map's WDT from the chain and parse it (vanilla/Classic layout).
@@ -760,6 +770,40 @@ fn shadow_texels(shadowed: impl Fn(usize, usize) -> bool, fix: bool) -> Vec<u8> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A destroyable MODF placement (flag `0x1`, the Isle of Conquest gates and the Wintergrasp
+    /// walls) builds no static WMO; every other placement does, at the MDDF transform.
+    #[test]
+    fn a_destroyable_placement_builds_no_static_wmo() {
+        let place = |name_id, flags, unique_id| benilla_adt::WmoPlacement {
+            name_id,
+            unique_id,
+            position: [100.0, 50.0, 200.0],
+            rotation: [0.0, 90.0, 0.0],
+            flags,
+            doodad_set: 0,
+            name_set: 0,
+        };
+        let names = vec!["gate.wmo".to_string(), "keep.wmo".to_string()];
+        let wmos = static_wmos(
+            &names,
+            &[
+                place(0, 0x1, 7),
+                place(1, 0x0, 8),
+                place(1, 0x8, 9),
+                place(5, 0, 10),
+            ],
+        );
+        let ids: Vec<u32> = wmos.iter().map(|w| w.unique_id).collect();
+        assert_eq!(
+            ids,
+            [8, 9],
+            "the destroyable gate and the unnamed placement build nothing"
+        );
+        let centre = 32.0 * TILE_SIZE;
+        assert_eq!(wmos[0].model, "keep.wmo");
+        assert_eq!(wmos[0].position, [centre - 200.0, centre - 100.0, 50.0]);
+    }
 
     /// An unfixed chunk's shadow repeats texel 62 into row and column 63; a `0x8000` chunk keeps
     /// its own 63.

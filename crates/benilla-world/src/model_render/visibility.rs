@@ -215,15 +215,17 @@ pub(super) fn apply_model_visibility(
         }
         if let Some(f) = fade {
             if let Some(mut mat) = mat {
-                let base = if fade_alpha < 1.0 {
-                    &f.blend
-                } else {
-                    &f.cutout
-                };
+                // The reference sorts a batch into the transparent pass on its full alpha
+                // (`A = fade × colourAlpha × weight`, `0x821a20`), not on the distance fade alone,
+                // where an opaque batch draws alpha-blended by the pass's blend table (`0x81fe90`):
+                // a steady doodad whose batch alpha sits below 1 (`BF2_OilSlick_02`'s constant 0.2)
+                // blends at rest.
+                let blended = is_partial_alpha(fade_alpha * mat_factor);
+                let base = if blended { &f.blend } else { &f.cutout };
                 // A feathering doodad beyond the water plane takes its pick's far twin
                 // (`sky_order::FAR_SIDE_BIAS`); an opaque draw settles by depth. A twin not
                 // built yet keeps the base until next frame.
-                let want = if far_side && fade_alpha < 1.0 {
+                let want = if far_side && blended {
                     far_twins.far_of(base).unwrap_or(base)
                 } else {
                     base
@@ -273,6 +275,12 @@ pub(super) fn apply_model_visibility(
             }
         }
     }
+}
+
+/// Whether a batch alpha puts the batch in the transparent pass: the reference's test
+/// (`0x821a20`) is `alpha < 0.99999`, so a fixed-point track sampled a hair under 1 stays opaque.
+fn is_partial_alpha(alpha: f32) -> bool {
+    alpha < 0.99999
 }
 
 /// `WOW_VIS_TRACE=<label-substring>` prints the verdicts of every model part whose `WorldObject`
@@ -479,6 +487,81 @@ mod tests {
             GlobalTransform::from_translation(Vec3::new(0.0, 0.0, -10.0));
         app.update();
         assert_eq!(vis(&app, part), Visibility::Inherited, "stepped in range");
+    }
+
+    /// A steady doodad batch whose alpha sits below 1 (`BF2_OilSlick_02`, a constant 0.2) draws
+    /// its blend twin at rest, as the reference's transparent pass takes it; at full alpha it
+    /// keeps the authored material.
+    #[test]
+    fn a_partial_alpha_batch_blends_at_rest() {
+        let mut app = App::new();
+        app.init_resource::<DebugState>()
+            .init_resource::<ViewDistance>()
+            .init_resource::<crate::view::ProjectedTextures>()
+            .init_resource::<crate::wmo_portal::ExteriorWindows>()
+            .init_resource::<crate::wmo_portal::CameraInteriorClaim>()
+            .init_resource::<super::super::FarSideTwins>()
+            .add_systems(Update, apply_model_visibility);
+        // No camera: the distance fade stays at 1, so only the batch alpha is in play.
+        let cutout: Handle<WowModelMaterial> =
+            bevy::asset::uuid_handle!("c0000000-0000-4000-8000-0000000000a1");
+        let blend: Handle<WowModelMaterial> =
+            bevy::asset::uuid_handle!("b0000000-0000-4000-8000-0000000000a2");
+        let constant = |v: f32| {
+            benilla_formats::AlphaAnim::new(vec![benilla_formats::AlphaSeq {
+                color: Some(benilla_formats::ScalarAnim {
+                    period: 0.0,
+                    step: false,
+                    wrap: true,
+                    gseq: false,
+                    keys: vec![(0.0, v)],
+                }),
+                weight: None,
+            }])
+            .map(std::sync::Arc::new)
+            .unwrap()
+        };
+        let part = app
+            .world_mut()
+            .spawn((
+                ModelPart {
+                    kind: ModelKind::Doodad,
+                    blend: ModelBlend::Opaque,
+                },
+                GlobalTransform::IDENTITY,
+                Visibility::Inherited,
+                MeshTag(0),
+                MeshMaterial3d(cutout.clone()),
+                crate::doodad_anim::MatAnim::new(constant(0.2), 0.0, true),
+                crate::model_fade::DoodadFade {
+                    size: 1.0,
+                    local_center: Vec3::ZERO,
+                    sphere: None,
+                    cutout: cutout.clone(),
+                    blend: blend.clone(),
+                },
+            ))
+            .id();
+        let material = |app: &App| {
+            app.world()
+                .entity(part)
+                .get::<MeshMaterial3d<WowModelMaterial>>()
+                .unwrap()
+                .0
+                .clone()
+        };
+        app.update();
+        assert_eq!(material(&app), blend, "alpha 0.2 draws transparent");
+        app.world_mut()
+            .get_mut::<crate::doodad_anim::MatAnim>(part)
+            .unwrap()
+            .current = 1.0;
+        app.update();
+        assert_eq!(
+            material(&app),
+            cutout,
+            "full alpha keeps the authored material"
+        );
     }
 
     /// The reference's WMO liquid drain gates on the "Map objects" bit (`ModelKind::Wmo`), not the

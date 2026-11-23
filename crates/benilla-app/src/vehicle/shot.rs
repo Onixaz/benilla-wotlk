@@ -4,7 +4,8 @@
 //! as SOURCE, the landing as DEST, the pitch and the speed, then the mover's stop report
 //! (`0x80b406`-`0x80b46c`).
 //!
-//! Not built: the aim preview with its arc and impact models (`0x6fda20`); an instant cast with a
+//! The aim preview with its arc and impact models (`0x6fda20`) is [`super::targeting`]'s, flying
+//! this same flight at the rows' middles. Not built: an instant cast with a
 //! cast animation, which the reference sends at the animation's release (`0x809f80`, `0x80de60`),
 //! and a cast with a cast time, whose final aim follows as `CMSG_UPDATE_MISSILE_TRAJECTORY`
 //! (`0x6fd6b0`): both are aimed and sent at the press here; the spell visual's launch offset
@@ -70,8 +71,19 @@ pub(crate) struct Aimed {
 /// point and its fraction) landing. A launch behind a wall lands on itself.
 pub(crate) fn fly(
     from: &AimFrom,
+    random: impl FnMut() -> f32,
+    hit: impl FnMut(Vec3, Vec3) -> Option<(Vec3, f32)>,
+) -> Aimed {
+    fly_traced(from, random, hit, |_| {})
+}
+
+/// [`fly`], handing `point` each step's end short of the landing and then the landing, the
+/// preview's point list (`0x6fcd60` with `points`): a walled launch hands the launch alone.
+pub(crate) fn fly_traced(
+    from: &AimFrom,
     mut random: impl FnMut() -> f32,
     mut hit: impl FnMut(Vec3, Vec3) -> Option<(Vec3, f32)>,
+    mut point: impl FnMut(Vec3),
 ) -> Aimed {
     let m = from.missile;
     let mut spread = |[lo, hi]: [f32; 2]| lo + (hi - lo) * random();
@@ -95,15 +107,33 @@ pub(crate) fn fly(
             spread([-0.1, 0.1]),
             spread([-0.01, 0.01]),
         );
-    let aimed = move |impact, time| Aimed {
+    let (impact, time) = land(from, m, pitch, speed, yaw, launch, &mut hit, &mut point);
+    // The landing closes the list on every exit.
+    point(impact);
+    Aimed {
         launch,
         impact,
         pitch,
         speed,
         time,
-    };
+    }
+}
+
+/// The flight from `launch`: the landing and its seconds, handing `point` each step's end short of
+/// it.
+#[allow(clippy::too_many_arguments)] // the flight's resolved launch, one call site
+fn land(
+    from: &AimFrom,
+    m: &SpellMissileRec,
+    pitch: f32,
+    speed: f32,
+    yaw: f32,
+    launch: Vec3,
+    hit: &mut impl FnMut(Vec3, Vec3) -> Option<(Vec3, f32)>,
+    point: &mut impl FnMut(Vec3),
+) -> (Vec3, f32) {
     if hit(from.body, launch).is_some() {
-        return aimed(launch, 0.0);
+        return (launch, 0.0);
     }
     let gravity = m.gravity * STEP * STEP;
     let reach = speed * STEP;
@@ -121,15 +151,59 @@ pub(crate) fn fly(
     let mut at = launch;
     loop {
         let to = at + velocity;
-        if let Some((point, t)) = hit(at, to) {
-            return aimed(point, ((max - left) as f32 + t) * STEP);
+        if let Some((landing, t)) = hit(at, to) {
+            return (landing, ((max - left) as f32 + t) * STEP);
         }
         left -= 1;
         if left <= 0 {
-            return aimed(to, max as f32 * STEP);
+            return (to, max as f32 * STEP);
         }
+        point(to);
         velocity.z -= gravity;
         at = to;
+    }
+}
+
+/// The aim a mover flies from: `launch` its Bevy-space fire point, the wall test lifted from its
+/// base by half its collision height.
+pub(super) fn aim_from<'a>(
+    missile: &'a SpellMissileRec,
+    vehicle: Option<&'a VehicleRec>,
+    aim: &super::aim::VehicleAim,
+    player: &crate::player::Player,
+    launch: Vec3,
+    height: Option<&crate::entities::CollisionHeight>,
+) -> AimFrom<'a> {
+    let lift = height.map_or(crate::player::DEFAULT_COLLISION_HEIGHT, |h| h.0) * 0.5;
+    AimFrom {
+        missile,
+        vehicle,
+        pitch: aim.pitch,
+        power: aim.power,
+        launch: to_wow(launch),
+        facing: player.facing(),
+        body: to_wow(player.pos + Vec3::Y * lift),
+    }
+}
+
+/// A Bevy point in WoW coordinates.
+pub(super) fn to_wow(v: Vec3) -> Vec3 {
+    Vec3::from(benilla_assets::coords::bevy_to_wow(v))
+}
+
+/// The flight's world test in WoW coordinates: where a segment first meets a body, and its
+/// fraction.
+pub(super) fn world_hit<'a>(
+    world: &'a benilla_world::collision::WorldCollision<'_, '_>,
+) -> impl FnMut(Vec3, Vec3) -> Option<(Vec3, f32)> + 'a {
+    move |a, b| {
+        let (a, b) = (
+            benilla_assets::coords::wow_to_bevy(a.to_array()),
+            benilla_assets::coords::wow_to_bevy(b.to_array()),
+        );
+        let (dir, len) = Dir3::new_and_length(b - a).ok()?;
+        let d = world.ray_body(a, dir, len)?.distance;
+        Some((to_wow(a + dir * d), d / len))
     }
 }
 
@@ -145,6 +219,8 @@ pub(super) fn send_trajectory_casts(
             Option<&super::Vehicle>,
             Option<&super::aim::MoveFlags2>,
             Option<&crate::entities::CollisionHeight>,
+            Option<&crate::net::ObjectStore>,
+            Option<&crate::creature_anim::Casting>,
         ),
         With<crate::net::ActiveMover>,
     >,
@@ -156,6 +232,10 @@ pub(super) fn send_trajectory_casts(
     units: crate::entities::AttachPosQuery,
     joints: Query<&GlobalTransform>,
     world: benilla_world::collision::WorldCollision,
+    (mut targeting, mods): (
+        ResMut<super::targeting::TrajectoryTargeting>,
+        Option<Res<crate::spell::SpellModifiers>>,
+    ),
 ) {
     if casts.0.is_empty() {
         return;
@@ -165,7 +245,7 @@ pub(super) fn send_trajectory_casts(
         return;
     };
     for cast in casts {
-        let Ok((entity, guid, vehicle, flags2, height)) = mover.single() else {
+        let Ok((entity, guid, vehicle, flags2, height, store, casting)) = mover.single() else {
             debug!("vehicle: trajectory cast {} with no mover", cast.spell_id);
             continue;
         };
@@ -177,37 +257,47 @@ pub(super) fn send_trajectory_casts(
             );
             continue;
         }
-        let Some(missile) = spells
+        let Some((def, missile)) = spells
             .as_deref()
             .and_then(|s| s.catalog.get(cast.spell_id))
             .zip(visuals.as_deref())
-            .and_then(|(d, v)| v.0.missile(d.missile))
+            .and_then(|(d, v)| Some((d, v.0.missile(d.missile)?)))
         else {
             continue;
         };
+        // The aim preview draws the spell sent (`0x6fbf90`), and its cast leg holds a cast the
+        // reference would hold for its animation (`0x809f80`).
+        let instant = spells.as_deref().is_some_and(|s| {
+            let level = store.and_then(|s| s.0.unit_level()).unwrap_or(0);
+            let cast_ms = match mods.as_deref() {
+                Some(m) => s.cast_time_unclamped_ms(def, level, m),
+                None => s.cast_time_unclamped_ms(def, level, &Default::default()),
+            };
+            cast_ms <= 0
+        });
+        let held = instant
+            && visuals.as_deref().is_some_and(|v| {
+                let stages =
+                    v.0.stages(crate::creature_anim::spell_visual::spell_visual_id(def));
+                super::targeting::held_until_release(
+                    casting.is_some(),
+                    stages,
+                    stages.and_then(|st| v.0.kit(st.cast)),
+                )
+            });
+        targeting.sent(cast.caster, cast.count, cast.spell_id, held);
         let Some(launch) = crate::entities::aim_launch_pos(entity, &units, &joints) else {
             continue;
         };
-        let lift = height.map_or(crate::player::DEFAULT_COLLISION_HEIGHT, |h| h.0) * 0.5;
-        let wow = |v: Vec3| Vec3::from(benilla_assets::coords::bevy_to_wow(v));
-        let from = AimFrom {
+        let from = aim_from(
             missile,
-            vehicle: vehicle.and_then(|v| tables.vehicle(v.id)),
-            pitch: aim.pitch,
-            power: aim.power,
-            launch: wow(launch),
-            facing: player.facing(),
-            body: wow(player.pos + Vec3::Y * lift),
-        };
-        let shot = fly(&from, rand::random::<f32>, |a, b| {
-            let (a, b) = (
-                benilla_assets::coords::wow_to_bevy(a.to_array()),
-                benilla_assets::coords::wow_to_bevy(b.to_array()),
-            );
-            let (dir, len) = Dir3::new_and_length(b - a).ok()?;
-            let d = world.ray_body(a, dir, len)?.distance;
-            Some((wow(a + dir * d), d / len))
-        });
+            vehicle.and_then(|v| tables.vehicle(v.id)),
+            &aim,
+            &player,
+            launch,
+            height,
+        );
+        let shot = fly(&from, rand::random::<f32>, world_hit(&world));
         debug!(
             "vehicle: trajectory cast {} pitch {:.3} speed {:.2} lands in {:.2} s at {:?}",
             cast.spell_id, shot.pitch, shot.speed, shot.time, shot.impact
