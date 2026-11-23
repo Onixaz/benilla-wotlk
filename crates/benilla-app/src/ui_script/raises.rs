@@ -187,8 +187,11 @@ pub(crate) fn then_fire<M>(
 }
 
 /// Whether raises wait on the handler queue: the raise step's trigger.
-pub(crate) fn waiting(queue: Option<Res<UiEvents>>) -> bool {
-    queue.is_some_and(|q| !q.is_empty())
+pub(crate) fn waiting(
+    queue: Option<Res<UiEvents>>,
+    chat: Option<Res<crate::ui_chat::ChatLog>>,
+) -> bool {
+    queue.is_some_and(|q| !q.is_empty()) || chat.is_some_and(|c| c.has_handed())
 }
 
 /// The UI phases a raise step follows: an [`InTurn`] system outside them chains its own step.

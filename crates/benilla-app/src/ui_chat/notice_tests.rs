@@ -1,20 +1,20 @@
-//! The guid-tail channel notices through [`super::feed::feed_chat`] to the stock chat frame: the
+//! The guid-tail channel notices through [`super::feed::add`] to the stock chat frame: the
 //! reference hands every notice's channel name to its composer, which numbers it off the joined
 //! channels and fills arg7-arg9 from that record. Without that stamp the stock filter
 //! (`ChatFrame.lua:1373-1392`) prints nothing.
 
-use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::*;
 
 use benilla_protocol::messages::{channel_notice as n, ChannelNoticeTail};
 use benilla_ui::script::UiScript;
 
 use super::tests::{chat_vm, lines_in_window, SPY};
+use super::ChatSink as _;
 
 const ANN: u64 = 0x11;
 const BOB: u64 = 0x12;
 
-/// A world holding everything [`super::feed::feed_chat`] reads, the stock chat stack in its VM,
+/// A world holding everything [`super::feed::add`] reads, the stock chat stack in its VM,
 /// `ChatFrame1` carrying `Mychan`, and our slots `World`, `Trade - City` and `Mychan` (3).
 struct Feed {
     world: World,
@@ -85,7 +85,7 @@ impl Feed {
 
     /// One frame of the drain.
     fn drain(&mut self) {
-        self.world.run_system_once(super::feed::feed_chat).unwrap();
+        super::feed::drain_for_test(&mut self.world);
     }
 
     fn script(&self) -> &UiScript {

@@ -27,8 +27,11 @@ pub struct RefundView {
 }
 
 /// The played clock now (`0x6cf440`): the last total the server said plus the seconds since; 0 before
-/// the first answer.
+/// the first answer. Read at the call; with no view answering, the total pushed into the model.
 pub(super) fn played_now(model: &Model) -> i64 {
+    if let Some(now) = super::read_live(|l| l.played_now()).flatten() {
+        return now;
+    }
     model.played_time.map_or(0, |(total, at)| {
         i64::from(total) + (model.now - at).max(0.0) as i64
     })

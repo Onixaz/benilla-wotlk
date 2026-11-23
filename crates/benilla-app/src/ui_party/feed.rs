@@ -2,6 +2,7 @@
 //! into the VM, fire the party events on their edges, and turn the Lua [`PartyRequest`] intents
 //! into `CMSG_*` sends. The state and its lines live in the parent module.
 
+use crate::ui_chat::ChatSink as _;
 use benilla_protocol::messages::{
     member_status, GroupLootInfo, GroupMemberEntry, PartyMemberStatsInfo, GROUP_MEMBER_ASSISTANT,
     GROUP_MEMBER_MAIN_ASSIST, GROUP_MEMBER_MAIN_TANK,

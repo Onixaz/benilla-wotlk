@@ -1,6 +1,7 @@
 //! The loot window's packet handlers: the [`LootState`] window and the [`LootLatch`], each moved and
 //! signalled at its step, the fishing verdicts, and the item push behind "You receive …".
 
+use crate::ui_chat::ChatSink as _;
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
 
@@ -156,7 +157,7 @@ fn on_slot_changed(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
 fn on_money_notify(
     In(ev): In<SessionEvent>,
     script: Option<NonSend<benilla_ui::script::UiScript>>,
-    mut chat: ResMut<crate::ui_chat::ChatLog>,
+    mut chat: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     if let SessionEvent::LootMoneyNotify { amount, solo } = ev {
         let get = |key: &str| {

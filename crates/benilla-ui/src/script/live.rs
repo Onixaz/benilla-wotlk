@@ -976,6 +976,15 @@ pub trait LiveState {
         None
     }
 
+    /// The played clock at the call (`0x6cf440`): the last answer's total plus the seconds since;
+    /// `None` where no view lends it.
+    fn played_now(&self) -> Option<i64> {
+        None
+    }
+
+    /// `CMSG_PLAYED_TIME` asking for a shown answer, sent in the call (`0x5158c1`).
+    fn send_played_time(&mut self) {}
+
     /// The refund record on held item `item` (`item+0x3d4`, filled by `0x6d1650`); `Some(None)` for none.
     fn refund_record(&self, _item: u64) -> Option<Option<super::RefundView>> {
         None

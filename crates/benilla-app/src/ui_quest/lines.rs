@@ -1,6 +1,7 @@
 //! The quest chat lines the reference raises from its packet and field handlers: the accept line
 //! from the quest-slot watch ([`accept_line`]), and the turn-in's lines ([`turn_in`], `0x6d0e10`), run by the complete handler with its template cached or by the template's answer.
 
+use crate::ui_chat::ChatSink as _;
 use benilla_protocol::messages::QuestComplete;
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;

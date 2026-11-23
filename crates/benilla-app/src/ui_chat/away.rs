@@ -5,6 +5,7 @@
 //! prints nothing. The four lines are `CHAT_MSG_SYSTEM` (type `0xA`); the `CHAT_MSG_AFK`/`DND`
 //! events are other players' auto-replies.
 
+use crate::ui_chat::ChatSink as _;
 use bevy::prelude::*;
 
 use super::event::{ChatEvent, ChatEventKind};

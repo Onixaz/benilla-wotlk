@@ -1,6 +1,7 @@
 //! [`feed_actions`] drains the sound half of the lines the VM's verbs showed in their call and the
 //! chat lines an app caller showed through the VM in hand.
 
+use crate::ui_chat::ChatSink as _;
 use bevy::prelude::*;
 
 use super::{show_messages, MessageSink, Shown};

@@ -4,6 +4,7 @@
 //! asleep gate, the stow, the posture, then `CMSG_TEXT_EMOTE`. Own sends are never echoed locally;
 //! the server echoes them.
 
+use crate::ui_chat::ChatSink as _;
 use bevy::prelude::*;
 
 mod parse;
@@ -920,12 +921,8 @@ fn chat_arm(
         ParsedChat::Console { line } => {
             chat_out.console.queue(move |world: &mut World| {
                 let lines = crate::console::execute(world, &line);
-                let mut log = world.resource_mut::<super::feed::ChatLog>();
                 for text in lines {
-                    log.push_event(super::event::ChatEvent::text_only(
-                        super::event::ChatEventKind::System,
-                        text,
-                    ));
+                    system_line(world, text);
                 }
             });
         }
@@ -1049,12 +1046,10 @@ fn take_chat_lines(
 
 /// A system line printed to the chat log.
 fn system_line(world: &mut World, text: String) {
-    world
-        .resource_mut::<super::feed::ChatLog>()
-        .push_event(super::event::ChatEvent::text_only(
-            super::event::ChatEventKind::System,
-            text,
-        ));
+    super::feed::add(
+        world,
+        super::event::ChatEvent::text_only(super::event::ChatEventKind::System, text).into(),
+    );
 }
 
 /// Run `body` in the VM with the `World` lent; its error, if any.

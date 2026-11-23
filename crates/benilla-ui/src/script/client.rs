@@ -250,12 +250,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         )?;
     }
 
-    // `RequestTimePlayed()` queues a `CMSG_PLAYED_TIME` and returns nothing; the answer is the
-    // `TIME_PLAYED_MSG(total, level)` the app fires when `SMSG_PLAYED_TIME` lands.
+    // `RequestTimePlayed()` (`0x515880`) sends `CMSG_PLAYED_TIME` in the call (`0x5158c1`) and
+    // returns nothing; the answer's handler signals `TIME_PLAYED_MSG(total, level)`. With no view
+    // lent, as an engine-free test runs, the ask is counted in the model.
     g.set(
         "RequestTimePlayed",
         lua.create_function(|lua, ()| {
-            crate::script::model_mut_of(lua).played_time_asks += 1;
+            if crate::script::write_live(|l| l.send_played_time()).is_none() {
+                crate::script::model_mut_of(lua).played_time_asks += 1;
+            }
             Ok(())
         })?,
     )?;

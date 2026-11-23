@@ -7,7 +7,9 @@ use bevy::prelude::*;
 
 use benilla_ui::strings::{fill, Arg};
 
-use super::event::{event_name, notice_token, ChatEvent, ChatEventKind};
+#[cfg(test)]
+use super::event::notice_token;
+use super::event::{event_name, ChatEvent, ChatEventKind};
 
 /// What the app keeps beside the stock chat frames: the default language and the log files.
 #[derive(Resource, Default)]
@@ -49,8 +51,10 @@ fn record(
         return None;
     };
     windows.line_id = windows.line_id.wrapping_add(1);
-    if let Some(line) = compose(event, kind, &windows.default_language, windows.line_id, get) {
-        windows.logs.0.record(line.as_bytes());
+    if windows.logs.0.is_open() {
+        if let Some(line) = log_line(event, kind, &windows.default_language, get) {
+            windows.logs.0.record(line.as_bytes());
+        }
     }
     Some((
         event_name(kind),
@@ -74,41 +78,17 @@ pub(crate) fn add_chat_line(
     )
 }
 
-/// A chat line an app handler or step adds in its turn (`0x509dd0`): recorded on `chat_type` (`0x50a8a5`) and its event fired with the `World` lent (`0x4fdbc0` at `0x4fdd5c`); with no chat windows the chat feed's queue takes it.
+/// A chat line an app handler or step adds in its turn (`0x509dd0`): recorded on `chat_type` (`0x50a8a5`) and its event raised with the `World` lent (`0x4fdbc0` at `0x4fdd5c`), queued while the UI is outside the world.
 pub(crate) fn add_chat_line_now(world: &mut World, chat_type: u8, text: String) {
-    add_text_line_now(world, ChatEvent::text_only(kind_of_type(chat_type), text));
+    super::feed::add(
+        world,
+        ChatEvent::text_only(kind_of_type(chat_type), text).into(),
+    );
 }
 
-/// A bare-text line of any kind added at its step, as [`add_chat_line_now`] adds a system line.
-fn add_text_line_now(world: &mut World, event: ChatEvent) {
-    let fired = match world.get_resource_mut::<ChatWindows>() {
-        Some(mut windows) => record(&mut windows, &event, &|_| None),
-        None => {
-            if let Some(mut log) = world.get_resource_mut::<super::ChatLog>() {
-                log.push_event(event);
-            }
-            return;
-        }
-    };
-    if let Some((event, args)) = fired {
-        crate::ui_script::live::with_live_world(world, |script| script.fire_event(event, args));
-    }
-}
-
-/// A combat-family line an app handler adds at its step, the faction lines' (`0x50b8c0`, `0x50ba10` -> `0x509dd0`): composed off the VM's strings, then added as [`add_chat_line_now`] adds one; with no VM the chat feed's queue takes it.
+/// A combat-family line an app handler adds at its step, the faction lines' (`0x50b8c0`, `0x50ba10` -> `0x509dd0`): composed off the VM's strings, then added as [`add_chat_line_now`] adds one.
 pub(crate) fn add_combat_line_now(world: &mut World, line: super::combat::PendingCombat) {
-    let composed = world
-        .get_non_send_resource::<benilla_ui::script::UiScript>()
-        .map(|script| super::combat::compose_line(script, line.family, line.me, &line.fills));
-    match composed {
-        Some(Some(text)) => add_text_line_now(world, ChatEvent::text_only(line.kind, text)),
-        Some(None) => {}
-        None => {
-            if let Some(mut log) = world.get_resource_mut::<super::ChatLog>() {
-                log.push_combat(line);
-            }
-        }
-    }
+    super::feed::add(world, super::feed::ChatLine::Combat(Box::new(line)));
 }
 
 /// A line's chat type as the event kind: 26 a skill line, 27 a loot line, any other a system line.
@@ -120,6 +100,7 @@ pub(crate) fn kind_of_type(chat_type: u8) -> ChatEventKind {
     }
 }
 
+#[cfg(test)]
 /// `ChatFrame_MessageEventHandler`'s composition (`ChatFrame.lua:2753-2937`) for the line that
 /// carries `line_id` as arg11; `None` where it prints nothing (MODE_CHANGE, a GM's whisper). Its
 /// frame-state reads stay out: the channel and whisper filters, `{icon}` tags, the timestamp and
@@ -263,6 +244,134 @@ pub(crate) fn compose(
     })
 }
 
+/// The chat log's line for one added line, composed C-side after its event while logging is on
+/// (`0x50a975`): the channel list's prefix (`0x50a9fc`), a notice's `CHAT_<TOKEN>_NOTICE` filled
+/// with the numbered channel, the sender and the target (`0x50aa65`), the IGNORED, FILTERED and
+/// RESTRICTED texts (`0x50a998`, `0x50a9c1`, `0x50a9e9`), else the speech line (`0x50ab09`): a
+/// `[channel] ` prefix cut at its zone, `CHAT_<TYPE>_GET` filled with the sender, the language
+/// header, then the text with its links collapsed to their bracketed name and `%` doubled outside
+/// the monster types, the whole written as a format with the sender (`0x50ad3f`).
+pub(crate) fn log_line(
+    event: &ChatEvent,
+    kind: ChatEventKind,
+    default_language: &str,
+    get: &dyn Fn(&str) -> Option<String>,
+) -> Option<String> {
+    use ChatEventKind as K;
+    let sender = event.sender.as_str();
+    let channel = event.channel.as_str();
+    Some(match kind {
+        K::ChannelList => {
+            let prefix = if channel.is_empty() {
+                String::new()
+            } else {
+                let base = if event.channel_base.is_empty() {
+                    channel
+                } else {
+                    event.channel_base.as_str()
+                };
+                fill(
+                    &get("CHAT_CHANNEL_LIST_GET").unwrap_or_default(),
+                    &[Arg::D(i64::from(event.zone_channel_id)), Arg::S(base)],
+                )
+            };
+            format!("{prefix}{}", event.text)
+        }
+        K::ChannelNotice | K::ChannelNoticeUser => {
+            let token = match event.notice_byte() {
+                Some(byte) => super::event::notice_token(byte, event.slot_state, event.suspended)?,
+                None => event.text.as_str(),
+            };
+            fill(
+                &get(&format!("CHAT_{token}_NOTICE"))?,
+                &[Arg::S(channel), Arg::S(sender), Arg::S(&event.target)],
+            )
+        }
+        K::Ignored => fill(&get("CHAT_IGNORED")?, &[Arg::S(sender)]),
+        K::Filtered => fill(&get("CHAT_FILTERED")?, &[Arg::S(sender)]),
+        K::Restricted => fill(&get("CHAT_RESTRICTED")?, &[]),
+        _ => {
+            // `"[%s] "`, its first `" - "` replaced by `"] "` and the rest cut (`0x50ab19`-`0x50ab52`).
+            let prefix = if channel.is_empty() {
+                String::new()
+            } else {
+                match channel.find(" - ") {
+                    Some(i) => format!("[{}] ", &channel[..i]),
+                    None => format!("[{channel}] "),
+                }
+            };
+            let ty = chat_type(kind);
+            let mut header = fill(
+                &get(&format!("CHAT_{ty}_GET")).unwrap_or_default(),
+                &[Arg::S(sender)],
+            );
+            // The language's name when it is not the player's default (`0x50abc7`-`0x50ac06`).
+            if !event.language.is_empty() && event.language != default_language {
+                header.push_str(&format!("[{}] ", event.language));
+            }
+            let monster = matches!(
+                kind,
+                K::MonsterSay
+                    | K::MonsterParty
+                    | K::MonsterYell
+                    | K::MonsterWhisper
+                    | K::MonsterEmote
+                    | K::RaidBossEmote
+                    | K::RaidBossWhisper
+            );
+            let line = format!(
+                "{prefix}{header}{}",
+                log_text(&benilla_ui::language::process(&event.text), !monster)
+            );
+            fill(&line, &[Arg::S(sender)])
+        }
+    })
+}
+
+/// The log's copy of a line's text (`0x50ac60`-`0x50ad28`): `||` is one `|`, any other escape skips
+/// to the next `[` and keeps what lies up to its `]`, dropping a `|h` then a `|r` after it, and a
+/// `%` doubles when `escape`.
+fn log_text(text: &str, escape: bool) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(c) = rest.chars().next() {
+        if c == '|' {
+            if rest[1..].starts_with('|') {
+                out.push('|');
+                rest = &rest[2..];
+                continue;
+            }
+            let Some(open) = rest.find('[') else {
+                break;
+            };
+            rest = &rest[open..];
+            loop {
+                let Some(c) = rest.chars().next() else {
+                    return out;
+                };
+                rest = &rest[c.len_utf8()..];
+                match c {
+                    '[' => {}
+                    ']' => {
+                        rest = rest.strip_prefix("|h").unwrap_or(rest);
+                        rest = rest.strip_prefix("|r").unwrap_or(rest);
+                        break;
+                    }
+                    c => out.push(c),
+                }
+            }
+            continue;
+        }
+        if c == '%' && escape {
+            out.push('%');
+        }
+        out.push(c);
+        rest = &rest[c.len_utf8()..];
+    }
+    out
+}
+
+#[cfg(test)]
 /// The pflag of a GM or DEV line (`ChatFrame.lua:2859`, `:2862`).
 const BLIZZARD_ICON: &str = "|TInterface\\ChatFrame\\UI-ChatIcon-Blizz.blp:0:2:0:-3|t ";
 
@@ -273,6 +382,7 @@ fn chat_type(kind: ChatEventKind) -> &'static str {
         .unwrap_or_default()
 }
 
+#[cfg(test)]
 /// `Chat_GetChatCategory` over `CHAT_CATEGORY_LIST` (`ChatFrame.lua:268-288`).
 fn chat_category(ty: &str) -> &str {
     match ty {
@@ -288,6 +398,7 @@ fn chat_category(ty: &str) -> &str {
     }
 }
 
+#[cfg(test)]
 /// `gsub(arg4, "%s%-%s.*", "")`: "2. Trade - City" → "2. Trade". Only speech lines strip it
 /// (`ChatFrame.lua:2923`); the notice and list arms print arg4 whole, as in
 /// "Joined Channel: [1. General - Elwynn Forest]".
@@ -298,6 +409,7 @@ fn strip_zone(channel: &str) -> &str {
     }
 }
 
+#[cfg(test)]
 /// A channel notice: the notice byte's token ([`notice_token`]) names `CHAT_<TOKEN>_NOTICE_BN` or
 /// else `CHAT_<TOKEN>_NOTICE` (`ChatFrame.lua:2778-2802`), filled with arg8 and arg4, then for
 /// CHANNEL_NOTICE_USER arg2 and any arg5; INVITE takes arg4 and arg2 alone. `None` for MODE_CHANGE

@@ -13,6 +13,7 @@ use bevy::prelude::*;
 use crate::combat_text::CombatTextSpawn;
 use crate::net::{GuidIndex, NetHandlerApp, ObjectStore, SelfGuid, ServerSoundMessage};
 use crate::ui_chat::ChatLog;
+use crate::ui_chat::ChatSink as _;
 use crate::ui_unit::CombatTextEvent;
 
 pub(crate) mod chat;
@@ -360,7 +361,7 @@ struct Progress<'w, 's> {
     self_guid: Res<'w, SelfGuid>,
     stores: Query<'w, 's, &'static ObjectStore>,
     text: MessageWriter<'w, CombatTextSpawn>,
-    chat: ResMut<'w, ChatLog>,
+    chat: ResMut<'w, crate::ui_script::live::UiEvents>,
     center: MessageWriter<'w, CombatTextEvent>,
 }
 

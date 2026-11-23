@@ -1,5 +1,6 @@
 use super::event::{default_color, ChatEvent, ChatEventKind as K};
 use super::input::{emote_gate, emote_send_eligible, emote_target, EmoteGate, ParsedChat};
+use super::ChatSink as _;
 
 thread_local! {
     /// The shipped `GlobalStrings.lua`, run in a VM once per test thread; built lazily, so a

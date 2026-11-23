@@ -2,6 +2,7 @@
 //! generic queues `super::feed_actions` still drains a frame late (#1354). Cast failures resolve in
 //! [`super::cast_fail`] and show through `super::cast_refusal`.
 
+use crate::ui_chat::ChatSink as _;
 use benilla_ui::messages::MessageRecord;
 use benilla_ui::script::{ScriptValue, UiScript};
 use bevy::prelude::*;

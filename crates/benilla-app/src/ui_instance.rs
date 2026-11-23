@@ -8,6 +8,7 @@
 //! ([`InstanceState::saw_own_dungeon`]), because AzerothCore never sends
 //! `SMSG_UPDATE_INSTANCE_OWNERSHIP`, so the server alone would never offer the reset.
 
+use crate::ui_chat::ChatSink as _;
 #[cfg(test)]
 use benilla_ui::script::UiScript;
 use std::time::{Duration, Instant};

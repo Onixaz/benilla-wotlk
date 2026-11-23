@@ -1,13 +1,14 @@
 //! The progression lines the combat-log module also handles: the XP number and line, the
 //! exploration toast and jingle, and the level-up block.
 
+use crate::ui_chat::ChatSink as _;
 use bevy::prelude::*;
 
 use benilla_protocol::messages::{ExplorationXp, LevelUpInfo, XpGain};
 
 use crate::combat_text::CombatTextSpawn;
 use crate::net::{GuidIndex, ObjectStore, SelfGuid};
-use crate::ui_chat::{ChatLog, XpLine, REST_STATE_KEYS};
+use crate::ui_chat::{XpLine, REST_STATE_KEYS};
 use crate::ui_unit::RestStates;
 
 /// `SMSG_LOG_XPGAIN`: `"XP: %d"` over self, category 4, the one emitter that skips Gate A, for kill
@@ -18,7 +19,7 @@ pub(super) fn xp_gain(
     me: Option<Entity>,
     line: XpLine,
     text: &mut MessageWriter<CombatTextSpawn>,
-    chat_log: &mut ChatLog,
+    chat_log: &mut crate::ui_script::live::UiEvents,
 ) {
     if let (Some(me), false) = (me, matches!(line, XpLine::Loss { .. })) {
         text.write(CombatTextSpawn {
@@ -97,7 +98,7 @@ pub(super) fn exploration_xp(
     self_guid: &SelfGuid,
     stores: &Query<&ObjectStore>,
     sound_out: &mut MessageWriter<crate::net::ServerSoundMessage>,
-    chat_log: &mut ChatLog,
+    chat_log: &mut crate::ui_script::live::UiEvents,
 ) {
     let Some(name) = area_table.and_then(|t| t.0.name(x.area_id)) else {
         warn!(
@@ -147,7 +148,7 @@ fn exploration_line_xp(xp: u32, player_flags: Option<u32>) -> u32 {
 /// rides the `UNIT_FIELD_LEVEL` change watcher, not this packet.
 pub(super) fn level_up(
     l: LevelUpInfo,
-    chat_log: &mut ChatLog,
+    chat_log: &mut crate::ui_chat::ChatLog,
     tutorials: Option<&mut MessageWriter<crate::tutorial::TutorialEvent>>,
 ) {
     if let Some(t) = tutorials {

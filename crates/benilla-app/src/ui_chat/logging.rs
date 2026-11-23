@@ -20,6 +20,11 @@ impl LogFile {
         Self { name, file: None }
     }
 
+    /// Whether the file is open: the add composes its line only then (`0x50a975`).
+    pub(crate) fn is_open(&self) -> bool {
+        self.file.is_some()
+    }
+
     /// Append a line's bytes as they are, when the file is open.
     pub(crate) fn record(&mut self, line: &[u8]) {
         if let Some(file) = self.file.as_mut() {

@@ -4,6 +4,7 @@
 //! moves and dance-cache answers are read and dropped: nothing built reads them, as `PlayDance` is
 //! not.
 
+use crate::ui_chat::ChatSink as _;
 #[cfg(test)]
 use benilla_ui::script::UiScript;
 use std::time::{Duration, Instant};

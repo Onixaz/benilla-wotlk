@@ -34,6 +34,8 @@ pub(crate) struct LiveView<'w, 's> {
     quest_tooltip: crate::ui_quest_log::tooltip::QuestTooltipLive<'w, 's>,
     quest_rows: crate::ui_quest_log::rows::QuestRowLive<'w, 's>,
     net: Option<Res<'w, crate::net::NetCommands>>,
+    /// The played clock's seed (`0x6cf470`), the refund and trade windows' base.
+    played: Option<Res<'w, crate::net::PlayedClock>>,
     bank_prices: Option<Res<'w, crate::ui_bank::BankPrices>>,
     /// The achievement tables and lists, and the name cache the criteria and links read.
     achievements: crate::ui_achievement::AchievementLive<'w>,
@@ -1898,6 +1900,18 @@ impl LiveState for LiveView<'_, '_> {
         }
     }
 
+    fn played_now(&self) -> Option<i64> {
+        Some(self.played.as_deref()?.now())
+    }
+
+    fn send_played_time(&mut self) {
+        if let Some(net) = self.net.as_deref() {
+            let _ = net
+                .0
+                .send(crate::net::ClientCommand::PlayedTime { show: true });
+        }
+    }
+
     fn refund_record(&self, item: u64) -> Option<Option<benilla_ui::script::RefundView>> {
         let records = self.lent.refunds.as_deref()?;
         let held = self.index.as_ref()?.0.contains_key(&item);
@@ -2812,18 +2826,19 @@ pub(crate) fn fire_handler_events(world: &mut World) {
         return;
     };
     if queued.0.is_empty() {
+        crate::ui_chat::add_handed(world);
         return;
     }
     let mut events = std::collections::VecDeque::from(std::mem::take(&mut queued.0));
-    let mut lines = Vec::new();
     let mut batch = Vec::new();
     while let Some(event) = events.pop_front() {
         match event {
-            step @ (UiEvent::World(_) | UiEvent::CastEdge(_)) => {
-                fire_batch(world, &mut batch, &mut lines);
+            step @ (UiEvent::World(_) | UiEvent::CastEdge(_) | UiEvent::SystemLine(..)) => {
+                fire_batch(world, &mut batch);
                 match step {
                     UiEvent::World(step) => step(world),
                     UiEvent::CastEdge(edge) => crate::ui_cast::apply_edge(world, edge),
+                    UiEvent::SystemLine(key, args) => system_line(world, key, &args),
                     _ => unreachable!(),
                 }
                 // What the step queued fires in its turn, ahead of the rest.
@@ -2836,11 +2851,34 @@ pub(crate) fn fire_handler_events(world: &mut World) {
             other => batch.push(other),
         }
     }
-    fire_batch(world, &mut batch, &mut lines);
+    fire_batch(world, &mut batch);
+    crate::ui_chat::add_handed(world);
 }
 
-/// Fire `batch` into the VM, in order, with the `World` lent, collecting the system lines.
-fn fire_batch(world: &mut World, batch: &mut Vec<UiEvent>, lines: &mut Vec<String>) {
+/// A handler's system line added at its step (`0x5498f6`, `0x5cfb20` -> `0x509dd0`): its template
+/// read off the VM and filled, then recorded and its `CHAT_MSG_SYSTEM` raised before the handler's
+/// next step; a missing or empty template adds nothing.
+fn system_line(world: &mut World, key: &'static str, args: &[LineArg]) {
+    use benilla_ui::strings::Arg;
+    let args: Vec<Arg> = args
+        .iter()
+        .map(|a| match a {
+            LineArg::S(s) => Arg::S(s),
+            LineArg::D(d) => Arg::D(*d),
+        })
+        .collect();
+    let text = world
+        .get_non_send_resource::<UiScript>()
+        .and_then(|script| crate::ui_chat::combat::global_string(script, key))
+        .map(|t| benilla_ui::strings::fill(&t, &args))
+        .filter(|t| !t.is_empty());
+    if let Some(text) = text {
+        crate::ui_chat::add_chat_line_now(world, 0, text);
+    }
+}
+
+/// Fire `batch` into the VM, in order, with the `World` lent.
+fn fire_batch(world: &mut World, batch: &mut Vec<UiEvent>) {
     if batch.is_empty() {
         return;
     }
@@ -2851,30 +2889,11 @@ fn fire_batch(world: &mut World, batch: &mut Vec<UiEvent>, lines: &mut Vec<Strin
                 UiEvent::Fire(event, args) => script.fire_event(event, args),
                 UiEvent::ClearCursor => script.clear_cursor_payload(),
                 UiEvent::Write(write) => write(script),
-                UiEvent::SystemLine(key, args) => {
-                    use benilla_ui::strings::Arg;
-                    let args: Vec<Arg> = args
-                        .iter()
-                        .map(|a| match a {
-                            LineArg::S(s) => Arg::S(s),
-                            LineArg::D(d) => Arg::D(*d),
-                        })
-                        .collect();
-                    let text = crate::ui_chat::combat::global_string(script, key)
-                        .map(|t| benilla_ui::strings::fill(&t, &args));
-                    lines.extend(text.filter(|t| !t.is_empty()));
-                }
                 // Split out by the caller.
-                UiEvent::World(_) | UiEvent::CastEdge(_) => {}
+                UiEvent::World(_) | UiEvent::CastEdge(_) | UiEvent::SystemLine(..) => {}
             }
         }
     });
-    // The chat log takes the batch's lines before the next step runs, so a nested step's lines follow them, as the chat feed's other system lines go.
-    if let Some(mut chat) = world.get_resource_mut::<crate::ui_chat::ChatLog>() {
-        for line in lines.drain(..) {
-            crate::ui_chat::away::push_system(&mut chat, line);
-        }
-    }
 }
 
 /// The unique signals queued this frame: each `(guid, event)` once, however often it is queued (`0x6143f0`), fired in queue order once per frame after the packets (`0x52b247` -> `0x614760`), a unit's to every token naming it then (`0x60bf10`). Main-thread state the handlers fill and a verb's call queues into ([`Lent`]).

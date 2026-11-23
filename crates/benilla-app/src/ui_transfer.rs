@@ -3,6 +3,7 @@
 //! filled with the map's name and shown as `CHAT_MSG_SYSTEM`), and the steps of a dynamic-difficulty
 //! change (`SMSG_CHANGEPLAYER_DIFFICULTY_RESULT`, `0x52c460`).
 
+use crate::ui_chat::ChatSink as _;
 use bevy::prelude::*;
 
 use benilla_assets::{AssetSet, LockRecover, WorldAssets};

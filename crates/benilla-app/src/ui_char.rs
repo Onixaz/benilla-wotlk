@@ -4,6 +4,7 @@
 //! the half any unit shares: a creature has no player fields, so those read absent and keep their
 //! defaults.
 
+use crate::ui_chat::ChatSink as _;
 use std::collections::HashMap;
 
 use bevy::prelude::*;

@@ -511,6 +511,10 @@ fn on_item(In(ev): In<SessionEvent>, mut sc: Scene) {
             for wait in sc.record_waits.take(entry) {
                 record_callback(&mut sc, entry, landed, wait);
             }
+            // A combat chat line waiting on the item's name.
+            sc.commands.queue(|world: &mut World| {
+                crate::ui_script::live::in_turn(world, crate::ui_chat::name_landed);
+            });
         }
         // The reference's item-time handler has two arms that share the item lookup
         // (`TYPEMASK_ITEM`) and differ on a miss.
