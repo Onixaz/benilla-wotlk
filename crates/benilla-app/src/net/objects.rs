@@ -589,6 +589,12 @@ fn record_callback(sc: &mut Scene, entry: u32, landed: bool, wait: crate::items:
         RecordWait::Loot(generation) => sc
             .ui
             .world(move |world| crate::ui_loot::record_callback(world, entry, generation)),
+        RecordWait::GroupRollStart(roll_id) => sc
+            .ui
+            .world(move |world| crate::ui_loot_roll::start_callback(world, roll_id, entry, landed)),
+        RecordWait::GroupRollLine(line_id) => sc
+            .ui
+            .world(move |world| crate::ui_loot_roll::line_record_callback(world, line_id, landed)),
         RecordWait::ItemPush => sc
             .ui
             .world(move |world| crate::ui_loot::push_callback(world, entry, landed)),

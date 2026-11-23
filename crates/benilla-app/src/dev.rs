@@ -297,6 +297,10 @@ impl Plugin for DevProbesPlugin {
             if std::env::var("WOW_PROBE_INTERACT").is_ok() {
                 app.add_plugins(crate::capture::ProbeInteractPlugin);
             }
+            // `WOW_PROBE_LOOT=1`: loots each lootable corpse within reach, once.
+            if std::env::var("WOW_PROBE_LOOT").is_ok() {
+                app.add_plugins(crate::capture::ProbeLootPlugin);
+            }
             // `WOW_PROBE=taxi`: flies Stormwind to Sentinel Hill on the real wire.
             if std::env::var("WOW_PROBE").as_deref() == Ok("taxi") {
                 app.add_plugins(crate::capture::ProbeTaxiPlugin);

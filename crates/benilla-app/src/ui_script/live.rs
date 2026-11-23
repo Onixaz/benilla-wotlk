@@ -158,6 +158,8 @@ pub(crate) struct LiveView<'w, 's> {
     merchant: Option<crate::ui_merchant::MerchantLive<'w, 's>>,
     /// The loot window and what its rows, names and source read.
     loot: Option<crate::ui_loot::LootLive<'w, 's>>,
+    /// The group loot rolls and what their verbs read.
+    loot_rolls: Option<crate::ui_loot_roll::LootRollsLive<'w>>,
     /// The taxi map's globals and what its fares and activates read.
     taxi: Option<crate::ui_taxi::TaxiLive<'w, 's>>,
     /// The trainer window and what its gates, descriptions and buys read.
@@ -1906,6 +1908,10 @@ impl LiveState for LiveView<'_, '_> {
 
     fn loot_window(&self) -> Option<Option<benilla_ui::script::LootState>> {
         Some(self.loot.as_ref()?.window())
+    }
+
+    fn loot_roll(&self, roll_id: i64) -> Option<Option<benilla_ui::script::LootRollEntry>> {
+        Some(self.loot_rolls.as_ref()?.entry(roll_id))
     }
 
     fn loot_source(&self) -> Option<u64> {
