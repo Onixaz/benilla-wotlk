@@ -35,6 +35,9 @@ const EQUIP_ARMS: u32 = 0x37;
 /// The equip-slot bits the Equippable Items test walks (`0x523bcf`).
 const EQUIP_SLOT_BITS: u32 = (1 << 23) - 1;
 
+/// The loot line's chat type (`0x523b4f`).
+const CHAT_TYPE_LOOT: u8 = 27;
+
 /// The pushing player as the push reads it: their level and class.
 struct Pusher {
     level: u32,
@@ -217,15 +220,13 @@ fn global_text(world: &World, key: &str) -> String {
         .unwrap_or_default()
 }
 
-/// `key`'s format filled with `args`, a loot chat line (`0x509dd0`, type 27).
+/// `key`'s format filled with `args`, added as a loot chat line in the push's turn, its
+/// `CHAT_MSG_LOOT` fired before the steps after it (`0x523b52`, `0x523d5b` -> `0x509dd0`, type 27).
 fn loot_line(world: &mut World, key: &str, args: &[Arg]) {
     let text = benilla_ui::strings::fill(&global_text(world, key), args);
-    if let Some(mut chat) = world.get_resource_mut::<crate::ui_chat::ChatLog>() {
-        chat.push_event(crate::ui_chat::ChatEvent::text_only(
-            crate::ui_chat::ChatEventKind::Loot,
-            text,
-        ));
-    }
+    crate::ui_script::live::in_turn(world, move |world| {
+        crate::ui_chat::add_chat_line_now(world, CHAT_TYPE_LOOT, text);
+    });
 }
 
 /// The push's record callback (`0x512b60`): a found record runs the first push waiting on it again,
@@ -361,15 +362,17 @@ mod tests {
         }
     }
 
-    /// The events the push queued, taken.
+    /// The events and steps the push queued, taken; the steps run.
     fn fired(world: &mut World) -> Vec<String> {
-        let mut ui = world.resource_mut::<UiEvents>();
-        let lines = ui.lines();
-        ui.set_aside();
+        let lines = world.resource::<UiEvents>().lines();
+        UiEvents::run_steps(world);
+        world.resource_mut::<UiEvents>().set_aside();
         lines
     }
 
-    fn lines(world: &World) -> Vec<String> {
+    /// The chat lines added, the queued steps run first.
+    fn lines(world: &mut World) -> Vec<String> {
+        UiEvents::run_steps(world);
         world.resource::<crate::ui_chat::ChatLog>().pending_lines()
     }
 
@@ -384,13 +387,14 @@ mod tests {
         let (mut world, _rx) = bench();
         template(&mut world, LINEN, "Linen Cloth", |_| {});
         item_push(&mut world, push(ME));
-        // Backpack (published 8) for every push of ours (`0x523b5c`).
+        // The line's step, then Backpack (published 8) for every push of ours (`0x523b5c`), then
+        // the sound's step.
         assert_eq!(
             fired(&mut world),
-            ["ITEM_PUSH 0 ", "TUTORIAL_TRIGGER 8", "<world>"]
+            ["ITEM_PUSH 0 ", "<world>", "TUTORIAL_TRIGGER 8", "<world>"]
         );
         assert_eq!(
-            lines(&world),
+            lines(&mut world),
             [format!("You receive loot: {}.", linen_link("ffffffff"))]
         );
     }
@@ -420,9 +424,9 @@ mod tests {
                     ..push(ME)
                 },
             );
-            assert_eq!(lines(&world).last(), Some(&want));
+            assert_eq!(lines(&mut world).last(), Some(&want));
         }
-        let shown = lines(&world).len();
+        let shown = lines(&mut world).len();
         fired(&mut world);
         item_push(
             &mut world,
@@ -431,7 +435,7 @@ mod tests {
                 ..push(ME)
             },
         );
-        assert_eq!(lines(&world).len(), shown, "no line");
+        assert_eq!(lines(&mut world).len(), shown, "no line");
         assert_eq!(fired(&mut world)[0], "ITEM_PUSH 0 ");
     }
 
@@ -557,7 +561,7 @@ mod tests {
             (false, false, false, 1, None),
         ];
         for (from_npc, created, show_in_chat, count, want) in cases {
-            let before = lines(&world).len();
+            let before = lines(&mut world).len();
             item_push(
                 &mut world,
                 ItemPushResult {
@@ -568,7 +572,7 @@ mod tests {
                     ..push(THEM)
                 },
             );
-            let after = lines(&world);
+            let after = lines(&mut world);
             assert_eq!(after.get(before).cloned(), want);
             assert_eq!(after.len(), before + usize::from(want.is_some()));
             assert!(fired(&mut world).is_empty());
@@ -587,7 +591,7 @@ mod tests {
         template(&mut world, LINEN, "Linen Cloth", |_| {});
         item_push(&mut world, push(THEM));
         assert_eq!(
-            lines(&world),
+            lines(&mut world),
             [format!(
                 "Unknown receives loot: {}.",
                 linen_link("ffffffff")
@@ -604,7 +608,7 @@ mod tests {
                 ..push(ME)
             },
         );
-        assert_eq!(lines(&world).len(), 1, "no object, no line");
+        assert_eq!(lines(&mut world).len(), 1, "no object, no line");
         assert!(fired(&mut world).is_empty());
     }
 
@@ -623,7 +627,7 @@ mod tests {
                 .try_iter()
                 .any(|c| matches!(c, ClientCommand::ItemQuery { entry, .. } if entry == LINEN)));
             assert!(fired(&mut world).is_empty());
-            assert!(lines(&world).is_empty());
+            assert!(lines(&mut world).is_empty());
             assert_eq!(
                 world.non_send_resource::<RecordWaits>().waiting(),
                 [(LINEN, RecordWait::ItemPush)]
@@ -631,7 +635,7 @@ mod tests {
             template(&mut world, LINEN, "Linen Cloth", |_| {});
             push_callback(&mut world, LINEN, true);
             assert_eq!(world.resource::<LootState>().pending_receive_count(), 0);
-            let late = (fired(&mut world), lines(&world));
+            let late = (fired(&mut world), lines(&mut world));
 
             let (mut early, _rx) = bench();
             early
@@ -639,7 +643,7 @@ mod tests {
                 .insert_player(THEM, "Thrall".into(), None);
             template(&mut early, LINEN, "Linen Cloth", |_| {});
             item_push(&mut early, push(who));
-            assert_eq!(late, (fired(&mut early), lines(&early)), "{who:#x}");
+            assert_eq!(late, (fired(&mut early), lines(&mut early)), "{who:#x}");
             assert_eq!(late.1.len(), 1);
 
             // A record the server cannot describe drops the push.
@@ -654,7 +658,7 @@ mod tests {
             push_callback(&mut world, 77_777, false);
             assert_eq!(world.resource::<LootState>().pending_receive_count(), 0);
             assert!(fired(&mut world).is_empty());
-            assert_eq!(lines(&world).len(), 1, "nothing more shown");
+            assert_eq!(lines(&mut world).len(), 1, "nothing more shown");
         }
     }
 

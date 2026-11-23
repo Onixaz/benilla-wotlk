@@ -8826,9 +8826,9 @@ fn item_pushes_run_at_their_step_and_from_their_records_callback() {
         .iter()
         .map(|seen| pin(seen, EVENTS, &[]))
         .collect();
-    // The lines keep wire order; their `CHAT_MSG_LOOT` fires from the chat log after the
-    // handler's events, not inside the push before its tutorials (#1283). The landed push's
-    // Backpack tutorial has fired once already (`0x530840`).
+    // Each line's `CHAT_MSG_LOOT` fires inside its push, after `ITEM_PUSH` and before the
+    // tutorials (`0x523b52`, `0x523b5c`); the landed push's Backpack tutorial has fired once
+    // already (`0x530840`).
     let icon = "ITEM_PUSH 0 Interface\\Icons\\INV_Misc_QuestionMark";
     let link =
         |entry: u32, name: &str| format!("|cffffffff|Hitem:{entry}:0:0:0:0:0:0:0:80|h[{name}]|h|r");
@@ -8838,10 +8838,10 @@ fn item_pushes_run_at_their_step_and_from_their_records_callback() {
         got,
         vec![
             vec![
-                icon.to_string(),
-                "TUTORIAL_TRIGGER 8".to_string(),
                 format!("CHAT_MSG_LOOT Charzother receives loot: {cloth}x2.      0 0  0 1  0"),
+                icon.to_string(),
                 format!("CHAT_MSG_LOOT You receive loot: {cloth}.      0 0  0 2  0"),
+                "TUTORIAL_TRIGGER 8".to_string(),
             ],
             Vec::new(),
             vec![

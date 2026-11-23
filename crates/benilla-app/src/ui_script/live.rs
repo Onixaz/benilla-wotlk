@@ -2428,6 +2428,24 @@ impl UiEvents {
             .collect()
     }
 
+    /// Run the queued `World` steps in order, each replaced in place by what it queued; the rest
+    /// stays queued.
+    #[cfg(test)]
+    pub(crate) fn run_steps(world: &mut World) {
+        let queued = world.resource_mut::<UiEvents>().set_aside();
+        let mut kept = Vec::new();
+        for event in queued.0 {
+            match event {
+                UiEvent::World(step) => {
+                    step(world);
+                    kept.extend(world.resource_mut::<UiEvents>().set_aside().0);
+                }
+                other => kept.push(other),
+            }
+        }
+        world.resource_mut::<UiEvents>().put_back(UiEvents(kept));
+    }
+
     /// The queued events as `NAME arg ...`, any other entry as `<world>`, in order.
     #[cfg(test)]
     pub(crate) fn lines(&self) -> Vec<String> {
