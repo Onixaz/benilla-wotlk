@@ -625,14 +625,6 @@ pub(crate) struct Model {
     pub(crate) shapeshift_forms: Vec<super::shapeshift::StoredShapeshiftForm>,
     #[cfg(any(test, feature = "fixtures"))]
     pub(crate) shapeshift_form_byte: u8,
-    /// `GlyphProperties.dbc` and `GlyphSlot.dbc`.
-    pub(crate) glyph_catalog: super::glyph::GlyphCatalogView,
-    /// The player's glyph fields.
-    pub(crate) glyph_sockets: super::glyph::GlyphSockets,
-    /// The targeting cast's glyph reading, `None` while nothing targets.
-    pub(crate) glyph_targeting: Option<super::glyph::GlyphTargeting>,
-    /// `RemoveGlyphFromSocket` sends, 0-based sockets, for the app to send.
-    pub(crate) glyph_removes: Vec<u32>,
     /// The socketing window's engine.
     pub(crate) socket_info: super::socket::SocketInfo,
     /// `AcceptSockets` sends, the item and a gem guid per socket, for the app.
@@ -1651,10 +1643,6 @@ impl Model {
             shapeshift_forms: Vec::new(),
             #[cfg(any(test, feature = "fixtures"))]
             shapeshift_form_byte: 0,
-            glyph_catalog: Default::default(),
-            glyph_sockets: Default::default(),
-            glyph_targeting: None,
-            glyph_removes: Vec::new(),
             socket_info: Default::default(),
             socket_sends: Vec::new(),
             refund_records: HashMap::new(),

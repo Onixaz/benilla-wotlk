@@ -202,15 +202,37 @@ pub(crate) fn rebuild_skills(world: &mut World) {
     }
 }
 
-/// Line `skill_id`'s slot as `GetSkillLineInfo` reads it at the call (`0x5cdfe7`-`0x5ce00a`): the ranks, the bonuses, the abandon flag off the step (`0x5ce147`) and the tier it opens (`0x5ce16d`); `None` for a line the player lacks.
+/// The slot the skill readers index for line `skill_id` (`0x6dc1c0`): a miss turns into index -1 (`0x6dc218`-`0x6dc222`), whose reads land on the words before the array: id|step on `PLAYER_FIELD_KNOWN_CURRENCIES`' second word, value|max on `PLAYER_XP`, temp|perm on `PLAYER_NEXT_LEVEL_XP`.
+pub(crate) fn found_skill_slot(
+    fields: &benilla_protocol::ObjectFields,
+    skill_id: u32,
+) -> benilla_protocol::messages::PlayerSkillSlot {
+    (0..PLAYER_SKILL_SLOTS)
+        .filter_map(|i| fields.player_skill(i))
+        .find(|s| u32::from(s.skill_id) == skill_id)
+        .unwrap_or_else(|| {
+            let halves = |w: u32| (w as u16, (w >> 16) as u16);
+            let (id, step) = halves((fields.player_known_currencies() >> 32) as u32);
+            let (value, max) = halves(fields.player_xp().unwrap_or(0));
+            let (temp, perm) = halves(fields.player_next_level_xp().unwrap_or(0));
+            benilla_protocol::messages::PlayerSkillSlot {
+                skill_id: id,
+                step,
+                value,
+                max,
+                temp_bonus: temp as i16,
+                perm_bonus: perm as i16,
+            }
+        })
+}
+
+/// Line `skill_id`'s slot as `GetSkillLineInfo` reads it at the call (`0x5cdfe7`-`0x5ce00a`): the ranks, the bonuses, the abandon flag off the step (`0x5ce147`) and the tier it opens (`0x5ce16d`); a line the player lacks reads slot -1 unchecked ([`found_skill_slot`]).
 pub(crate) fn skill_slot(
     fields: &benilla_protocol::ObjectFields,
     catalog: Option<&benilla_formats::SkillLineCatalog>,
     skill_id: u32,
-) -> Option<SkillLive> {
-    let slot = (0..PLAYER_SKILL_SLOTS)
-        .filter_map(|i| fields.player_skill(i))
-        .find(|s| u32::from(s.skill_id) == skill_id)?;
+) -> SkillLive {
+    let slot = found_skill_slot(fields, skill_id);
     let (race, class) = (
         fields.unit_race().unwrap_or(0),
         fields.unit_class().unwrap_or(0),
@@ -223,14 +245,14 @@ pub(crate) fn skill_slot(
             0
         }
     });
-    Some(SkillLive {
+    SkillLive {
         value: u32::from(slot.value),
         max: u32::from(slot.max),
         temp_bonus: i32::from(slot.temp_bonus),
         perm_bonus: i32::from(slot.perm_bonus),
         abandonable: slot.step != 0 && rc.is_some_and(|(_, rc)| rc.unlearnable()),
         tier_cost,
-    })
+    }
 }
 
 /// The three skill stat events (`0x6cef40`): `UNIT_ATTACK`, `UNIT_DEFENSE` and `UNIT_RANGED_ATTACK_POWER` with `"player"`.
@@ -240,21 +262,12 @@ pub(crate) fn fire_skill_stat_events(ui: &mut crate::ui_script::live::UiEvents) 
     }
 }
 
-/// A line's `(rank, max)` as the trade-link builder reads them (`0x5db120`-`0x5db134`): the slot search (`0x6dc1c0`) runs to index 128 for a line the player lacks (`0x6dc213`), whose reads land on `PLAYER_CHARACTER_POINTS2` and `PLAYER_TRACK_CREATURES`; the value (`0x51a250`) and the max (`0x594710`) each add the permanent bonus when positive.
+/// A line's `(rank, max)` as the trade-link builder reads them (`0x5db120`-`0x5db134`), a missing line's slot -1 passed on unchecked ([`found_skill_slot`]): the value (`0x51a250`) and the max (`0x594710`) each add the permanent bonus when positive.
 pub(crate) fn link_ranks(fields: &benilla_protocol::ObjectFields, skill_id: u32) -> (u32, u32) {
-    let (value, max, perm) = (0..PLAYER_SKILL_SLOTS)
-        .filter_map(|i| fields.player_skill(i))
-        .find(|s| u32::from(s.skill_id) == skill_id)
-        .map_or_else(
-            || {
-                let points = fields.player_free_professions().unwrap_or(0);
-                let track = fields.player_track_creatures();
-                (points as u16, (points >> 16) as u16, (track >> 16) as u16)
-            },
-            |s| (s.value, s.max, s.perm_bonus as u16),
-        );
+    let slot = found_skill_slot(fields, skill_id);
+    let perm = slot.perm_bonus as u16;
     let read = |half: u16| u32::from(half) + if half > 0 { u32::from(perm) } else { 0 };
-    (read(value), read(max))
+    (read(slot.value), read(slot.max))
 }
 
 /// The skill value reader (`0x51a250`): the value half (`0x51a286`), plus the permanent-bonus half read unsigned when the value is positive (`0x51a291`-`0x51a299`).
@@ -1103,9 +1116,13 @@ mod tests {
     use benilla_protocol::messages::ObjectFields;
     use bevy::ecs::system::RunSystemOnce;
 
-    /// The trade link's ranks (`0x5db120`-`0x5db134`): each half adds the permanent bonus when positive, and a line the player lacks reads slot 128, the fields after the array.
+    /// The trade link's ranks (`0x5db120`-`0x5db134`): each half adds the permanent bonus when positive, and a line the player lacks reads slot -1 (`0x6dc222`), the words before the array.
     #[test]
-    fn the_trade_link_reads_the_slot_at_the_call_and_runs_off_the_end_for_a_missing_line() {
+    fn the_trade_link_reads_the_slot_at_the_call_and_slot_minus_one_for_a_missing_line() {
+        use benilla_protocol::field::{
+            FIELD_PLAYER_CHARACTER_POINTS2, FIELD_PLAYER_KNOWN_CURRENCIES,
+            FIELD_PLAYER_NEXT_LEVEL_XP, FIELD_PLAYER_XP,
+        };
         const F_SKILL: u16 = benilla_protocol::field::FIELD_PLAYER_SKILL_INFO_1_1;
         let pair = |lo: u16, hi: u16| u32::from(lo) | (u32::from(hi) << 16);
         // Slot 0: Tailoring (197) 150/225, +5 permanent; slot 1: Mining (186) 0/75, +7 permanent.
@@ -1116,20 +1133,51 @@ mod tests {
             (F_SKILL + 3, pair(186, 0)),
             (F_SKILL + 4, pair(0, 75)),
             (F_SKILL + 5, pair(0, 7)),
-            // Slot 128's value|max and temp|perm: PLAYER_CHARACTER_POINTS2 and PLAYER_TRACK_CREATURES.
-            (F_SKILL + 3 * 128 + 1, 2),
+            // Slot 128's words, which the miss never reads.
+            (FIELD_PLAYER_CHARACTER_POINTS2, 2),
+            // Slot -1: value|max on PLAYER_XP.
+            (FIELD_PLAYER_XP, pair(1234, 3)),
         ];
         let fields = ObjectFields::from_pairs(&pairs);
         assert_eq!(link_ranks(&fields, 197), (155, 230));
         assert_eq!(link_ranks(&fields, 186), (0, 82));
-        assert_eq!(link_ranks(&fields, 171), (2, 0));
-        // A tracked type at bit 16 or above is the run-off's permanent bonus.
-        pairs.push((F_SKILL + 3 * 128 + 2, pair(0, 3)));
+        assert_eq!(link_ranks(&fields, 171), (1234, 3));
+        // PLAYER_NEXT_LEVEL_XP's high half is slot -1's permanent bonus.
+        pairs.push((FIELD_PLAYER_NEXT_LEVEL_XP, pair(0, 4)));
         let fields = ObjectFields::from_pairs(&pairs);
-        assert_eq!(link_ranks(&fields, 171), (5, 0));
+        assert_eq!(link_ranks(&fields, 171), (1238, 7));
+        assert_eq!(F_SKILL - 3 + 1, FIELD_PLAYER_XP);
+        assert_eq!(F_SKILL - 3 + 2, FIELD_PLAYER_NEXT_LEVEL_XP);
+        assert_eq!(F_SKILL - 3, FIELD_PLAYER_KNOWN_CURRENCIES + 1);
+    }
+
+    /// `GetSkillLineInfo`'s slot (`0x5cdfe7`) for a line the player lacks: slot -1 unchecked (`0x6dc222`), the step off `PLAYER_FIELD_KNOWN_CURRENCIES`' high half (`0x594794`), the bonuses off `PLAYER_NEXT_LEVEL_XP`.
+    #[test]
+    fn a_missing_line_reads_slot_minus_one_at_the_call() {
+        use benilla_protocol::field::{
+            FIELD_PLAYER_KNOWN_CURRENCIES, FIELD_PLAYER_NEXT_LEVEL_XP, FIELD_PLAYER_XP,
+        };
+        let pair = |lo: u16, hi: u16| u32::from(lo) | (u32::from(hi) << 16);
+        let fields = ObjectFields::from_pairs(&[
+            (FIELD_PLAYER_KNOWN_CURRENCIES + 1, pair(0, 1)),
+            (FIELD_PLAYER_XP, pair(500, 9)),
+            (FIELD_PLAYER_NEXT_LEVEL_XP, pair(0xfffe, 6)),
+        ]);
+        let slot = found_skill_slot(&fields, 171);
         assert_eq!(
-            F_SKILL + 3 * 128 + 1,
-            benilla_protocol::field::FIELD_PLAYER_CHARACTER_POINTS2
+            (
+                slot.step,
+                slot.value,
+                slot.max,
+                slot.temp_bonus,
+                slot.perm_bonus
+            ),
+            (1, 500, 9, -2, 6)
+        );
+        let live = skill_slot(&fields, None, 171);
+        assert_eq!(
+            (live.value, live.max, live.temp_bonus, live.perm_bonus),
+            (500, 9, -2, 6)
         );
     }
 

@@ -1083,8 +1083,8 @@ pub trait LiveState {
         None
     }
 
-    /// The active player's skill slot for line `skill_id` at the call, as `GetSkillLineInfo` reads it (`0x5cdfe7`); `Some(None)` for a line the player lacks, `None` with no active player held.
-    fn skill_slot(&self, _skill_id: u32) -> Option<Option<super::SkillLive>> {
+    /// The active player's skill slot for line `skill_id` at the call, as `GetSkillLineInfo` reads it (`0x5cdfe7`), slot -1 for a line the player lacks (`0x6dc222`); `None` with no active player held.
+    fn skill_slot(&self, _skill_id: u32) -> Option<super::SkillLive> {
         None
     }
 
@@ -1144,6 +1144,29 @@ pub trait LiveState {
     fn character_points(&self) -> Option<(u32, u32)> {
         None
     }
+
+    /// The `GlyphProperties.dbc` row `id` with its spell's name, read at the call; `None` without the row.
+    fn glyph(&self, _id: u32) -> Option<super::GlyphView> {
+        None
+    }
+
+    /// The `GlyphSlot.dbc` row `id`, read at the call; `None` without the row.
+    fn glyph_slot(&self, _id: u32) -> Option<super::GlyphSlotView> {
+        None
+    }
+
+    /// The active player's glyph fields at the call (`+0x1230`, `+0x1248`, `+0x1260`); `None` with no active player held.
+    fn glyph_sockets(&self) -> Option<super::GlyphSockets> {
+        None
+    }
+
+    /// The targeting cast's glyph effects at the call (`0x7fd640` and its `Spell.dbc` row); `None` without a targeting cast or its row.
+    fn glyph_targeting(&self) -> Option<super::GlyphTargeting> {
+        None
+    }
+
+    /// `CMSG_REMOVE_GLYPH` with the 0-based `socket`, sent in the call (`0x5b76ea`).
+    fn send_remove_glyph(&mut self, _socket: u32) {}
 
     /// The trade's network cells at the call: the partner's offered coins (`0xca0b78`) and each window's enchant spell (`0xca0ff0`); `None` where no view lends them.
     fn trade_cells(&self) -> Option<super::TradeCells> {
@@ -2020,6 +2043,8 @@ pub(crate) struct TestView {
     /// Our sheet figures, our skill slots by line, and the skill sends made, in order.
     pub combat_stats: Option<super::UnitCombatStats>,
     pub skills: Option<std::collections::HashMap<u32, super::SkillLive>>,
+    /// What a line missing from `skills` reads: slot -1 (`0x6dc222`).
+    pub skill_slot_minus_one: super::SkillLive,
     pub unlearn_sends: Vec<u32>,
     pub skill_sends: Vec<super::SkillRequest>,
     /// The talent state, the talent unit per side `(player, pet)`, the pet's family category, our character points, and the learn sends in order.
@@ -2031,6 +2056,11 @@ pub(crate) struct TestView {
     pub character_points: Option<(u32, u32)>,
     pub talent_learns: Vec<(Option<u64>, u32, u32)>,
     pub talent_preview_learns: Vec<super::PreviewLearn>,
+    /// The glyph tables, our glyph fields (`None` without the active player), the targeting cast's glyphs, and the `CMSG_REMOVE_GLYPH` sockets sent, in order.
+    pub glyph_catalog: super::GlyphCatalogView,
+    pub glyph_sockets: Option<super::GlyphSockets>,
+    pub glyph_targeting: Option<super::GlyphTargeting>,
+    pub glyph_removes: Vec<u32>,
 }
 
 /// The gossip globals a test view lends.
@@ -2152,8 +2182,14 @@ impl LiveState for TestView {
         self.combat_stats.clone()
     }
 
-    fn skill_slot(&self, skill_id: u32) -> Option<Option<super::SkillLive>> {
-        Some(self.skills.as_ref()?.get(&skill_id).copied())
+    fn skill_slot(&self, skill_id: u32) -> Option<super::SkillLive> {
+        let skills = self.skills.as_ref()?;
+        Some(
+            skills
+                .get(&skill_id)
+                .copied()
+                .unwrap_or(self.skill_slot_minus_one),
+        )
     }
 
     fn send_unlearn_skill(&mut self, skill_id: u32) {
@@ -2200,6 +2236,26 @@ impl LiveState for TestView {
 
     fn character_points(&self) -> Option<(u32, u32)> {
         self.character_points
+    }
+
+    fn glyph(&self, id: u32) -> Option<super::GlyphView> {
+        self.glyph_catalog.glyph(id).cloned()
+    }
+
+    fn glyph_slot(&self, id: u32) -> Option<super::GlyphSlotView> {
+        self.glyph_catalog.slot(id).copied()
+    }
+
+    fn glyph_sockets(&self) -> Option<super::GlyphSockets> {
+        self.glyph_sockets
+    }
+
+    fn glyph_targeting(&self) -> Option<super::GlyphTargeting> {
+        self.glyph_targeting
+    }
+
+    fn send_remove_glyph(&mut self, socket: u32) {
+        self.glyph_removes.push(socket);
     }
 
     fn unit_cast(&self, guid: u64, channel: bool) -> Option<super::UnitCast> {

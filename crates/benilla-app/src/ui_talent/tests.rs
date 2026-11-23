@@ -13,6 +13,11 @@ pub(crate) struct TalentTestView {
     pub(crate) points: Option<(u32, u32)>,
     pub(crate) learns: Vec<(Option<u64>, u32, u32)>,
     pub(crate) preview_learns: Vec<benilla_ui::script::PreviewLearn>,
+    /// The glyph tables, our glyph fields, the targeting cast's glyphs and the removes sent.
+    pub(crate) glyph_catalog: benilla_ui::script::GlyphCatalogView,
+    pub(crate) glyph_sockets: Option<benilla_ui::script::GlyphSockets>,
+    pub(crate) glyph_targeting: Option<benilla_ui::script::GlyphTargeting>,
+    pub(crate) glyph_removes: Vec<u32>,
 }
 
 impl LiveState for TalentTestView {
@@ -66,6 +71,26 @@ impl LiveState for TalentTestView {
 
     fn send_learn_preview_talents(&mut self, pet: Option<u64>, talents: Vec<(u32, u32)>) {
         self.preview_learns.push((pet, talents));
+    }
+
+    fn glyph(&self, id: u32) -> Option<benilla_ui::script::GlyphView> {
+        self.glyph_catalog.glyph(id).cloned()
+    }
+
+    fn glyph_slot(&self, id: u32) -> Option<benilla_ui::script::GlyphSlotView> {
+        self.glyph_catalog.slot(id).copied()
+    }
+
+    fn glyph_sockets(&self) -> Option<benilla_ui::script::GlyphSockets> {
+        self.glyph_sockets
+    }
+
+    fn glyph_targeting(&self) -> Option<benilla_ui::script::GlyphTargeting> {
+        self.glyph_targeting
+    }
+
+    fn send_remove_glyph(&mut self, socket: u32) {
+        self.glyph_removes.push(socket);
     }
 
     /// The spell targeting the test sets on this thread, as the fixed view answers it.
