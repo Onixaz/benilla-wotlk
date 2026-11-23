@@ -337,6 +337,19 @@ impl Loader<'_> {
         }
     }
 
+    /// `<Cooldown>` (`0x5eb0c0`, after the frame's XML load): `reverse` and `drawEdge`, each set
+    /// only when non-empty. Stock `TargetFrame.xml` turns both on for every aura sweep.
+    pub(super) fn apply_cooldown(&mut self, el: &Element, wrapper: &Table, dbg: &str) {
+        if !el.tag.eq_ignore_ascii_case("Cooldown") {
+            return;
+        }
+        for (attr, method) in [("reverse", "SetReverse"), ("drawEdge", "SetDrawEdge")] {
+            if let Some(on) = el.attr_bool_opt(attr) {
+                self.call(wrapper, method, on, dbg);
+            }
+        }
+    }
+
     /// `<Minimap>`: the two model files for the ctor's nine `Model` children, each the stock model
     /// when the attribute is absent, as the reference reads a default string.
     pub(super) fn apply_minimap(&mut self, el: &Element, wrapper: &Table, dbg: &str) {
