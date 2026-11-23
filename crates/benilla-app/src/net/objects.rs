@@ -484,7 +484,7 @@ fn on_item(In(ev): In<SessionEvent>, mut sc: Scene) {
                 item_post_init(&mut sc, guid, post_init);
                 return;
             }
-            item_create(
+            let merged = item_create(
                 guid,
                 container,
                 fields,
@@ -494,6 +494,10 @@ fn on_item(In(ev): In<SessionEvent>, mut sc: Scene) {
                 &mut sc.field_changes,
                 &mut sc.items,
             );
+            // A held item's create skips its movement block (`0x4d6c4d`) and runs the field handlers on its fields (`0x4d64be` -> `0x4d5550`): the item and bag watches in field order.
+            if let Some(merged) = merged {
+                own_flags_watch(&mut sc, guid, merged);
+            }
             if fresh {
                 item_post_init(&mut sc, guid, post_init);
             }
@@ -1169,7 +1173,7 @@ fn object_create(
 }
 
 /// A descriptor-only item or container create: an indexed entity with a store and no pose or
-/// model; a re-create merges like a values delta.
+/// model; a re-create merges like a values delta and returns the merge for its watches.
 fn item_create(
     guid: u64,
     container: bool,
@@ -1179,24 +1183,28 @@ fn item_create(
     stores: &mut Query<&mut ObjectStore>,
     edges: &mut MessageWriter<FieldChanged>,
     items: &mut Items,
-) {
+) -> Option<Merged> {
     debug!("net: item create {guid:#x} (container: {container})");
     if let Some(&e) = index.0.get(&guid) {
-        merge_fields(commands, stores, edges, e, guid, fields, false, None);
-    } else {
-        let e = crate::items::spawn_item(commands, index, guid, fields, container);
-        // Replay the enchant times queued while it was not held, as of now.
-        let queued = items.take_enchant_times(guid);
-        if !queued.is_empty() {
-            let mut countdowns = crate::items::Countdowns::default();
-            for (slot, seconds) in queued {
-                if !countdowns.set_enchant(slot, seconds) {
-                    debug!("enchant timer: queued slot {slot} for {guid:#x} is past the seventh — refused");
-                }
-            }
-            commands.entity(e).insert(countdowns);
-        }
+        return Some(merge_fields(
+            commands, stores, edges, e, guid, fields, false, None,
+        ));
     }
+    let e = crate::items::spawn_item(commands, index, guid, fields, container);
+    // Replay the enchant times queued while it was not held, as of now.
+    let queued = items.take_enchant_times(guid);
+    if !queued.is_empty() {
+        let mut countdowns = crate::items::Countdowns::default();
+        for (slot, seconds) in queued {
+            if !countdowns.set_enchant(slot, seconds) {
+                debug!(
+                    "enchant timer: queued slot {slot} for {guid:#x} is past the seventh — refused"
+                );
+            }
+        }
+        commands.entity(e).insert(countdowns);
+    }
+    None
 }
 
 /// A relayed `MSG_MOVE_*`. The reference schedules a remote's apply: the mover's replay chain gives

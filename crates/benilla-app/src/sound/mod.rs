@@ -57,7 +57,7 @@ pub(crate) use greeting::NpcGreetingRequest;
 pub(crate) use kit::SoundKits;
 pub(crate) use message::MessageSounds;
 pub(crate) use mixer::Mixer;
-pub(crate) use ui::{AutoEquipSound, LootPickupSound};
+pub(crate) use ui::{play_item_sound, AutoEquipSound, LootPickupSound};
 pub(crate) use zone::AreaSounds;
 pub(crate) use zone::ExplorationSounds;
 

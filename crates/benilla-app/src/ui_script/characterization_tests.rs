@@ -170,6 +170,7 @@ local VERBS = {
     { "lock01", function() return (select(3, GetContainerItemInfo(0, 1))) end },
     { "lock02", function() return (select(3, GetContainerItemInfo(0, 2))) end },
     { "lock05", function() return (select(3, GetContainerItemInfo(0, 5))) end },
+    { "cnt11", function() return (select(2, GetContainerItemInfo(1, 1))) end },
     { "lock11", function() return (select(3, GetContainerItemInfo(1, 1))) end },
     { "lock12", function() return (select(3, GetContainerItemInfo(1, 2))) end },
     { "slots1", function() return GetContainerNumSlots(1) end },
@@ -210,6 +211,8 @@ local VERBS = {
     { "roll1", function() return (select(2, GetLootRollItemInfo(1))) end },
     { "roll2", function() return (select(2, GetLootRollItemInfo(2))) end },
     { "rleft1", function() return GetLootRollTimeLeft(1) > 0 end },
+    { "need0", function() return (select(9, GetLootRollItemInfo(0))) end },
+    { "need1", function() return (select(9, GetLootRollItemInfo(1))) end },
     { "l1", function() return (select(2, GetLootSlotInfo(1))) end },
     { "l2", function() return (select(2, GetLootSlotInfo(2))) end },
     { "l3", function() return (select(2, GetLootSlotInfo(3))) end },
@@ -6272,6 +6275,74 @@ fn the_bag_watches_fire_from_the_update_in_field_order() {
     );
 }
 
+/// A create for a held item skips its movement block (`0x4d6c4d`) and runs the field handlers on its fields (`0x4d64be` -> `0x4d5550`): a larger stack runs the count watch (`0x707720`), whose container leg fires the bag's `BAG_UPDATE` (`0x707805` -> `0x5d7070`), read at its event; an unchanged count runs no watch.
+#[test]
+fn a_held_items_re_create_runs_its_count_watch() {
+    use benilla_protocol::field::{
+        FIELD_CONTAINER_NUM_SLOTS, FIELD_CONTAINER_SLOT_1, FIELD_ITEM_CONTAINED, FIELD_ITEM_OWNER,
+        FIELD_ITEM_STACK_COUNT, FIELD_OBJECT_ENTRY, FIELD_PLAYER_INV_SLOT_HEAD,
+    };
+    const ARROWS: u64 = 0x4000_0000_0000_0410;
+    const POUCH: u64 = 0x4000_0000_0000_0411;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let arrows = |count: u32| SessionEvent::ItemCreate {
+        guid: ARROWS,
+        container: false,
+        fields: ObjectFields::from_pairs(&[
+            (FIELD_OBJECT_ENTRY, 2512),
+            (FIELD_ITEM_OWNER, ME as u32),
+            (FIELD_ITEM_OWNER + 1, (ME >> 32) as u32),
+            (FIELD_ITEM_CONTAINED, POUCH as u32),
+            (FIELD_ITEM_CONTAINED + 1, (POUCH >> 32) as u32),
+            (FIELD_ITEM_STACK_COUNT, count),
+        ])
+        .into_created(ObjectType::Item),
+    };
+    let bag_slot = FIELD_PLAYER_INV_SLOT_HEAD + 2 * 19;
+    rig.packets(
+        vec![
+            arrows(1),
+            SessionEvent::ItemCreate {
+                guid: POUCH,
+                container: true,
+                fields: ObjectFields::from_pairs(&[
+                    (FIELD_OBJECT_ENTRY, 828),
+                    (FIELD_ITEM_OWNER, ME as u32),
+                    (FIELD_ITEM_OWNER + 1, (ME >> 32) as u32),
+                    (FIELD_ITEM_CONTAINED, ME as u32),
+                    (FIELD_ITEM_CONTAINED + 1, (ME >> 32) as u32),
+                    (FIELD_ITEM_STACK_COUNT, 1),
+                    (FIELD_CONTAINER_NUM_SLOTS, 6),
+                    (FIELD_CONTAINER_SLOT_1, ARROWS as u32),
+                    (FIELD_CONTAINER_SLOT_1 + 1, (ARROWS >> 32) as u32),
+                ])
+                .into_created(ObjectType::Container),
+            },
+            self_values(&[
+                (bag_slot, POUCH as u32),
+                (bag_slot + 1, (POUCH >> 32) as u32),
+            ]),
+        ],
+        2,
+    );
+    let events = &["BAG_UPDATE"];
+    let verbs = &["cnt11"];
+    let seen = rig.packets(vec![arrows(2)], 2);
+    assert_eq!(
+        pin(&seen, events, verbs),
+        ["BAG_UPDATE 1 | cnt11=2"],
+        "the count watch's container leg, read at its event"
+    );
+    let seen = rig.packets(vec![arrows(2)], 2);
+    assert_eq!(
+        pin(&seen, events, verbs),
+        Vec::<String>::new(),
+        "an unchanged count runs no watch"
+    );
+}
+
 /// An item set's tooltip block reads its row and the members' names at the call (`0x62ba3e`): an unanswered name is asked and the tooltip waits on it, and the name's answer renders the tooltip again from the handler (`0x62ba29`).
 #[test]
 fn an_item_sets_block_reads_its_row_and_names_at_the_call() {
@@ -8444,7 +8515,8 @@ fn a_loot_window_fires_from_its_handlers_with_the_rows_read_at_the_call() {
         .map(|seen| pin(seen, EVENTS, VERBS))
         .collect();
     let at = |e: &str, rest: &str| format!("{e} | {rest}");
-    let full = "lootn=3 l1=2 Silver 50 Copper l2=Charz Gem";
+    // The coin row's text joins its denominations by a newline (`0x588430` -> `0x7e7d80`).
+    let full = "lootn=3 l1=2 Silver\n50 Copper l2=Charz Gem";
     assert_eq!(
         got,
         vec![
@@ -8466,7 +8538,7 @@ fn a_loot_window_fires_from_its_handlers_with_the_rows_read_at_the_call() {
             ],
             vec![at(
                 "LOOT_SLOT_CLEARED 2",
-                "lootn=3 l1=2 Silver 50 Copper l2= l3=Charz New l3q=1 coin1=1 item2=nil"
+                "lootn=3 l1=2 Silver\n50 Copper l2= l3=Charz New l3q=1 coin1=1 item2=nil"
             )],
             vec![at(
                 "LOOT_SLOT_CLEARED 1",
@@ -8483,6 +8555,173 @@ fn a_loot_window_fires_from_its_handlers_with_the_rows_read_at_the_call() {
                 ),
             ],
         ]
+    );
+}
+
+/// The loot verbs act and raise inside their call (`0x589520` -> `0x589140`, `0x589590` ->
+/// `0x589300`, `0x5888b0` -> `0x523640`), so the code after each in the same chunk reads what it
+/// did, and its events have fired before it returned:
+/// - the coin take clears the coins before its `LOOT_SLOT_CLEARED 1` (`0x589195`, `0x58919f`);
+/// - a bind-on-pickup take signals `LOOT_BIND_CONFIRM` and sends nothing; the accept after it in the
+///   same chunk sends the row;
+/// - `CloseLoot()` has fired `LOOT_CLOSED` (`0x523784`), emptied the window and dropped the dead
+///   corpse's selection (`0x5237ae`) by its return, so a new window on it stays open;
+/// - a coin-only window's take closes it after the clear's signal (`0x58919f`, `0x5891b8`);
+/// - the stash is written after `LOOT_BIND_CONFIRM` (`0x5892c4`, `0x5892d1`), so a listener's own
+///   `ConfirmLootSlot` meets no pending row and sends nothing.
+#[test]
+fn the_loot_verbs_act_and_raise_inside_their_call() {
+    use benilla_protocol::messages::LootItem;
+    const CORPSE: u64 = 0x0000_0000_0000_0889;
+    const GEM: u32 = 0x8_2001;
+    const BOP: u32 = 0x8_2002;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let bop = benilla_protocol::ItemInfo {
+        quality: 4,
+        bonding: 1,
+        ..crate::items::test_template("Charz Bound")
+    };
+    rig.packets(
+        vec![
+            player_create_with(CORPSE, &[(FIELD_UNIT_HEALTH, 0)]),
+            SessionEvent::ItemTemplate {
+                entry: GEM,
+                info: Some(Box::new(crate::items::test_template("Charz Gem"))),
+            },
+            SessionEvent::ItemTemplate {
+                entry: BOP,
+                info: Some(Box::new(bop)),
+            },
+        ],
+        2,
+    );
+    let row = |slot: u8, item_id: u32| LootItem {
+        slot,
+        item_id,
+        count: 1,
+        display_info_id: 1,
+        random_property_id: 0,
+        random_suffix: 0,
+        slot_type: 0,
+    };
+    let open = |rig: &mut Rig, gold: u32, items: Vec<LootItem>| {
+        rig.app
+            .world_mut()
+            .resource_mut::<crate::ui_loot::LootLatch>()
+            .0 = Some(CORPSE);
+        let seen = rig.packets(
+            vec![SessionEvent::LootResponse {
+                guid: CORPSE,
+                loot_type: 1,
+                gold,
+                items,
+            }],
+            3,
+        );
+        rx.try_iter().for_each(drop);
+        seen
+    };
+    // One chunk with the `World` lent, a mark between its calls; what the observer saw, in order.
+    let run = |rig: &mut Rig, body: &str| -> Vec<Seen> {
+        let chunk = format!(
+            "local function mark(m) CHARZ_LOG[#CHARZ_LOG + 1] = 'MARK\\t' .. m .. '\\t' .. CHARZ_ANSWERS() end \
+             CHARZ_LOG = {{}} {body} local t = CHARZ_LOG CHARZ_LOG = {{}} return t"
+        );
+        let lines =
+            super::live::with_live_world(rig.app.world_mut(), |s| s.eval::<Vec<String>>(&chunk))
+                .expect("a VM")
+                .expect("the chunk runs");
+        lines.iter().map(|l| Seen::parse(l)).collect()
+    };
+    const EVENTS: &[&str] = &[
+        "MARK",
+        "LOOT_OPENED",
+        "LOOT_SLOT_CLEARED",
+        "LOOT_CLOSED",
+        "LOOT_BIND_CONFIRM",
+    ];
+    const VERBS: &[&str] = &["lootn", "l1", "l2", "l3", "coin1"];
+
+    let _ = open(&mut rig, 250, vec![row(0, GEM), row(1, BOP)]);
+    let seen = run(
+        &mut rig,
+        "mark('a') LootSlot(1) mark('b') LootSlot(3) mark('c') ConfirmLootSlot(3) mark('d') \
+         CloseLoot() mark('e')",
+    );
+    let full = "l2=Charz Gem l3=Charz Bound";
+    assert_eq!(
+        pin(&seen, EVENTS, VERBS),
+        vec![
+            // The coin text's newline joins (`0x588430` -> `0x7e7d80`).
+            format!("MARK a | lootn=3 l1=2 Silver\n50 Copper {full} coin1=1"),
+            format!("LOOT_SLOT_CLEARED 1 | lootn=3 l1= {full} coin1=nil"),
+            format!("MARK b | lootn=3 l1= {full} coin1=nil"),
+            format!("LOOT_BIND_CONFIRM 3 | lootn=3 l1= {full} coin1=nil"),
+            format!("MARK c | lootn=3 l1= {full} coin1=nil"),
+            format!("MARK d | lootn=3 l1= {full} coin1=nil"),
+            "LOOT_CLOSED | lootn=0 l1= l2= l3= coin1=nil".to_string(),
+            "MARK e | lootn=0 l1= l2= l3= coin1=nil".to_string(),
+        ]
+    );
+    let sent: Vec<_> = rx.try_iter().collect();
+    assert!(
+        matches!(
+            sent[..],
+            [
+                crate::net::ClientCommand::LootMoney,
+                crate::net::ClientCommand::AutostoreLootItem { slot: 1 },
+                crate::net::ClientCommand::LootRelease { guid: CORPSE },
+                // The dead corpse deselected inside the close (`0x5237ae`).
+                crate::net::ClientCommand::SetSelection { guid: 0 },
+            ]
+        ),
+        "{sent:?}"
+    );
+
+    // A coin-only window: the take's signal, then the emptied window's close, both in the call.
+    let opened = open(&mut rig, 120, vec![]);
+    assert_eq!(
+        fired(&opened, &["LOOT_OPENED", "LOOT_CLOSED"]),
+        ["LOOT_OPENED"],
+        "the corpse's earlier close left nothing to close the new window"
+    );
+    let seen = run(&mut rig, "LootSlot(1) mark('a')");
+    assert_eq!(
+        pin(&seen, EVENTS, &["lootn", "l1"]),
+        vec![
+            "LOOT_SLOT_CLEARED 1 | lootn=1 l1=",
+            "LOOT_CLOSED | lootn=0 l1=",
+            "MARK a | lootn=0 l1=",
+        ]
+    );
+
+    // A listener's own accept meets the stash as it stood before the signal: nothing goes out.
+    let _ = open(&mut rig, 0, vec![row(1, BOP)]);
+    let seen = run(
+        &mut rig,
+        "local f = CreateFrame('Frame') f:RegisterEvent('LOOT_BIND_CONFIRM') \
+         f:SetScript('OnEvent', function(_, _, slot) ConfirmLootSlot(slot) f:UnregisterAllEvents() end) \
+         LootSlot(1) mark('a')",
+    );
+    assert_eq!(
+        fired(&seen, &["LOOT_BIND_CONFIRM", "MARK"]),
+        ["LOOT_BIND_CONFIRM", "MARK"]
+    );
+    let sent: Vec<_> = rx.try_iter().collect();
+    assert!(sent.is_empty(), "{sent:?}");
+    // The stash stands once the call returns: the popup's later accept sends the row.
+    run(&mut rig, "ConfirmLootSlot(1)");
+    let sent: Vec<_> = rx.try_iter().collect();
+    assert!(
+        matches!(
+            sent[..],
+            [crate::net::ClientCommand::AutostoreLootItem { slot: 1 }]
+        ),
+        "{sent:?}"
     );
 }
 
@@ -8811,6 +9050,239 @@ fn group_loot_rolls_fire_from_their_handlers_with_the_rolls_read_at_the_call() {
             vec![
                 "CANCEL_LOOT_ROLL 1 | roll0=nil roll1=nil roll2=nil rleft1=false".to_string(),
                 "CHAT_MSG_LOOT Everyone passed on: |cffffffff|Hitem:593922:0:0:0:0:0:0:0:80|h[Charz Late]|h|r      0 0  0 3  0 | roll0=nil roll1=nil roll2=nil rleft1=false".to_string(),
+            ],
+        ]
+    );
+}
+
+/// The roll votes act inside their call (`0x588d60`, `0x588dd0` -> `0x6fbc70`), and a roll's Need
+/// reason reads the carried-count check (`0x6fa7db`):
+/// - with Need off the vote mask, a held `MaxCount` 1 item's roll reads Need reason 2, a plain
+///   one's 1;
+/// - `RollOnLoot` on a plain roll sends `CMSG_LOOT_ROLL` and has fired `CANCEL_LOOT_ROLL`, then the
+///   waiting fifth roll's `START_LOOT_ROLL` (`0x6fbdc2`, `0x6fbdd5`), by its return;
+/// - Need on a bind-on-pickup roll fires `CONFIRM_LOOT_ROLL (id, 1)` inside the call and sends
+///   nothing (`0x6fbd22`); `ConfirmLootRoll` then sends and cancels inside its own;
+/// - a finished roll takes no second vote (`0x6fbcab`).
+#[test]
+fn the_roll_votes_act_inside_their_call_and_need_reads_the_carried_count() {
+    use benilla_protocol::field::{
+        FIELD_ITEM_STACK_COUNT, FIELD_OBJECT_ENTRY, FIELD_PLAYER_PACK_SLOT_1,
+    };
+    use benilla_protocol::messages::LootStartRoll;
+    const CORPSE: u64 = 0x0000_0000_0000_0A99;
+    const RING: u32 = 0x9_2001;
+    const GEM: u32 = 0x9_2002;
+    const BOP: u32 = 0x9_2003;
+    const HELD: u64 = 0x4000_0000_0000_0A01;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let template = |entry: u32, info: benilla_protocol::ItemInfo| SessionEvent::ItemTemplate {
+        entry,
+        info: Some(Box::new(info)),
+    };
+    let pack = FIELD_PLAYER_PACK_SLOT_1;
+    rig.packets(
+        vec![
+            template(
+                RING,
+                benilla_protocol::ItemInfo {
+                    max_count: 1,
+                    ..crate::items::test_template("Charz Ring")
+                },
+            ),
+            template(GEM, crate::items::test_template("Charz Gem")),
+            template(
+                BOP,
+                benilla_protocol::ItemInfo {
+                    quality: 4,
+                    bonding: 1,
+                    ..crate::items::test_template("Charz Bound")
+                },
+            ),
+            SessionEvent::ItemCreate {
+                guid: HELD,
+                container: false,
+                fields: ObjectFields::from_pairs(&[
+                    (FIELD_OBJECT_ENTRY, RING),
+                    (FIELD_ITEM_STACK_COUNT, 1),
+                ])
+                .into_created(ObjectType::Item),
+            },
+            self_values(&[(pack, HELD as u32), (pack + 1, (HELD >> 32) as u32)]),
+        ],
+        2,
+    );
+    let start = |item_slot: u32, item_id: u32, vote_mask: u8| {
+        SessionEvent::LootStartRoll(LootStartRoll {
+            looted_target: CORPSE,
+            map_id: 0,
+            item_slot,
+            item_id,
+            random_suffix: 0,
+            random_property_id: 0,
+            count: 1,
+            countdown_ms: 60_000,
+            vote_mask,
+        })
+    };
+    let opened = rig.packets(
+        vec![
+            // Need refused by the server: its reason explains the button (`0x6fa7e8`).
+            start(0, RING, 0x0D),
+            start(1, GEM, 0x0D),
+            start(2, BOP, 0x0F),
+            start(3, GEM, 0x0F),
+            start(4, GEM, 0x0F),
+        ],
+        3,
+    );
+    assert_eq!(
+        pin(&opened, &["START_LOOT_ROLL"], &["need0", "need1"]),
+        vec![
+            "START_LOOT_ROLL 0 60000 | need0=2 need1=nil",
+            "START_LOOT_ROLL 1 60000 | need0=2 need1=1",
+            "START_LOOT_ROLL 2 60000 | need0=2 need1=1",
+            "START_LOOT_ROLL 3 60000 | need0=2 need1=1",
+        ],
+        "four frames up, the fifth waits"
+    );
+    rx.try_iter().for_each(drop);
+    let run = |rig: &mut Rig, body: &str| -> Vec<Seen> {
+        let chunk = format!(
+            "local function mark(m) CHARZ_LOG[#CHARZ_LOG + 1] = 'MARK\\t' .. m .. '\\t' .. CHARZ_ANSWERS() end \
+             CHARZ_LOG = {{}} {body} local t = CHARZ_LOG CHARZ_LOG = {{}} return t"
+        );
+        let lines =
+            super::live::with_live_world(rig.app.world_mut(), |s| s.eval::<Vec<String>>(&chunk))
+                .expect("a VM")
+                .expect("the chunk runs");
+        lines.iter().map(|l| Seen::parse(l)).collect()
+    };
+    const EVENTS: &[&str] = &[
+        "MARK",
+        "START_LOOT_ROLL",
+        "CANCEL_LOOT_ROLL",
+        "CONFIRM_LOOT_ROLL",
+    ];
+    let seen = run(
+        &mut rig,
+        "mark('a') RollOnLoot(1, 2) mark('b') RollOnLoot(1, 1) mark('c') RollOnLoot(2, 1) \
+         mark('d') ConfirmLootRoll(2, 1) mark('e')",
+    );
+    assert_eq!(
+        pin(&seen, EVENTS, &[]),
+        vec![
+            "MARK a",
+            "CANCEL_LOOT_ROLL 1",
+            "START_LOOT_ROLL 4 60000",
+            "MARK b",
+            "MARK c",
+            "CONFIRM_LOOT_ROLL 2 1",
+            "MARK d",
+            "CANCEL_LOOT_ROLL 2",
+            "MARK e",
+        ]
+    );
+    let sent: Vec<_> = rx.try_iter().collect();
+    assert!(
+        matches!(
+            sent[..],
+            [
+                crate::net::ClientCommand::LootRoll {
+                    looted_target: CORPSE,
+                    item_slot: 1,
+                    roll_type: 2,
+                },
+                crate::net::ClientCommand::LootRoll {
+                    looted_target: CORPSE,
+                    item_slot: 2,
+                    roll_type: 1,
+                },
+            ]
+        ),
+        "{sent:?}"
+    );
+}
+
+/// `SMSG_ITEM_PUSH_RESULT` at its handler's step (`0x523900`), in wire order: our push fires
+/// `ITEM_PUSH` then its tutorials (`0x523a60`, `0x523b5c`), and its loot line shows; another
+/// player's push shows their line alone (`0x523d5b`). A push whose record is not cached shows
+/// nothing until the record lands, and then runs whole from its callback (`0x52398d` -> `0x512b60`).
+#[test]
+fn item_pushes_run_at_their_step_and_from_their_records_callback() {
+    use benilla_protocol::messages::ItemPushResult;
+    const OTHER: u64 = 0x0000_0000_0000_0A0A;
+    const CLOTH: u32 = 0x8_3001;
+    const LATE: u32 = 0x8_3002;
+    let Some(mut rig) = Rig::login_after(
+        vec![SessionEvent::TutorialFlags(vec![0; 32])],
+        &[OBJECT_TYPE_PLAYER],
+    ) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let template = |entry: u32, name: &str| SessionEvent::ItemTemplate {
+        entry,
+        info: Some(Box::new(crate::items::test_template(name))),
+    };
+    rig.packets(
+        vec![
+            player_create(OTHER),
+            name_answer(OTHER, "Charzother"),
+            template(CLOTH, "Charz Cloth"),
+        ],
+        2,
+    );
+    let push = |player_guid: u64, item_entry: u32, count: u32| {
+        SessionEvent::ItemPushResult(ItemPushResult {
+            player_guid,
+            from_npc: false,
+            created: false,
+            show_in_chat: true,
+            bag_slot: 0xFF,
+            item_slot: 23,
+            item_entry,
+            suffix_factor: 0,
+            random_property_id: 0,
+            count,
+            total_count: count,
+        })
+    };
+    const EVENTS: &[&str] = &["ITEM_PUSH", "TUTORIAL_TRIGGER", "CHAT_MSG_LOOT"];
+    let cached = rig.packets(vec![push(OTHER, CLOTH, 2), push(ME, CLOTH, 1)], 3);
+    let waiting = rig.packets(vec![push(ME, LATE, 3), push(OTHER, LATE, 1)], 3);
+    let landed = rig.packets(vec![template(LATE, "Charz Late")], 3);
+    let got: Vec<Vec<String>> = [cached, waiting, landed]
+        .iter()
+        .map(|seen| pin(seen, EVENTS, &[]))
+        .collect();
+    // Each line's `CHAT_MSG_LOOT` fires inside its push, after `ITEM_PUSH` and before the
+    // tutorials (`0x523b52`, `0x523b5c`); the landed push's Backpack tutorial has fired once
+    // already (`0x530840`).
+    let icon = "ITEM_PUSH 0 Interface\\Icons\\INV_Misc_QuestionMark";
+    let link =
+        |entry: u32, name: &str| format!("|cffffffff|Hitem:{entry}:0:0:0:0:0:0:0:80|h[{name}]|h|r");
+    let cloth = link(CLOTH, "Charz Cloth");
+    let late = link(LATE, "Charz Late");
+    assert_eq!(
+        got,
+        vec![
+            vec![
+                format!("CHAT_MSG_LOOT Charzother receives loot: {cloth}x2.      0 0  0 1  0"),
+                icon.to_string(),
+                format!("CHAT_MSG_LOOT You receive loot: {cloth}.      0 0  0 2  0"),
+                "TUTORIAL_TRIGGER 8".to_string(),
+            ],
+            Vec::new(),
+            vec![
+                icon.to_string(),
+                format!("CHAT_MSG_LOOT You receive loot: {late}x3.      0 0  0 3  0"),
+                format!("CHAT_MSG_LOOT Charzother receives loot: {late}.      0 0  0 4  0"),
             ],
         ]
     );

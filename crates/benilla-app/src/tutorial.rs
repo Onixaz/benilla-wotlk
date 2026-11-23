@@ -38,6 +38,10 @@ pub(crate) mod id {
     pub(crate) const TARGETING: u32 = 0x03;
     pub(crate) const LOOTING: u32 = 0x06;
     pub(crate) const BACKPACK: u32 = 0x07;
+    pub(crate) const USING_ITEMS: u32 = 0x08;
+    pub(crate) const BAGS: u32 = 0x09;
+    pub(crate) const FOOD: u32 = 0x0a;
+    pub(crate) const DRINK: u32 = 0x0b;
     pub(crate) const GROUPING: u32 = 0x11;
     pub(crate) const VENDORS: u32 = 0x13;
     pub(crate) const QUEST_LOG: u32 = 0x14;
@@ -175,8 +179,6 @@ pub(crate) struct Tutorials {
     /// Published ids (`id + 1`) whose event and cue are owed this frame.
     fired: Vec<u32>,
     sends: Vec<TutorialSend>,
-    /// Item pushes for us since the last feed: `(entry, bag, slot)`.
-    pushes: Vec<(u32, u8, u32)>,
     /// `showTutorials` off: a trigger flags its tutorial seen, with no popup (`0x530871`).
     muted: bool,
     /// The completed list (`0xbd19f0`), `id + 1` each in completion order, sixty at most.
@@ -293,12 +295,6 @@ impl Tutorials {
         }
     }
 
-    /// `SMSG_ITEM_PUSH_RESULT` for one of ours: the item-received handler's five sites, resolved
-    /// on the next feed with the item's template.
-    pub(crate) fn item_received(&mut self, entry: u32, bag: u8, slot: u32) {
-        self.pushes.push((entry, bag, slot));
-    }
-
     /// The acknowledged bank's bit (`0x5222b0`); false before the packet lands.
     pub(crate) fn is_flagged(&self, id: u32) -> bool {
         self.acknowledged
@@ -327,23 +323,12 @@ const PLAYER_FLAGS_GHOST: u32 = 0x10;
 const PLAYER_FLAGS_RESTING: u32 = 0x20;
 const UNIT_FLAG_PVP_ATTACKABLE: u32 = 0x1000;
 
-/// The hearthstone's item entry (`0x1b24`).
-const HEARTHSTONE: u32 = 6948;
-const INVTYPE_RANGED: u32 = 15;
-const CLASS_HUNTER: u8 = 3;
-/// The keyring bag and its slot band (the item-push handler: bag `0xff`, `slot - 0x56 <= 0x1f`,
-/// `0x523bf9`).
-const KEYRING_BAG: u8 = 0xff;
-const KEYRING_SLOTS: std::ops::RangeInclusive<u32> = 0x56..=0x75;
-
 /// Before the script tick: the sites' asks, the descriptor edges, the timers, the cue and the
 /// event, and the acknowledged bank's push to whichever VM is live.
 fn feed_tutorials(
     mut script: crate::ui_script::InTurn,
     mut tutorials: ResMut<Tutorials>,
     mut asks: MessageReader<TutorialEvent>,
-    self_q: Query<&ObjectStore, With<SelfPlayer>>,
-    items: Res<crate::items::Items>,
     mut sounds: ResMut<crate::sound::MessageSounds>,
     mut told: Local<crate::ui_script::VmMemo<Option<Vec<u8>>>>,
     mut told_completed: Local<crate::ui_script::VmMemo<Vec<u32>>>,
@@ -353,29 +338,6 @@ fn feed_tutorials(
         match *ask {
             TutorialEvent::Trigger { id, delay_ms } => tutorials.trigger(id, delay_ms, now),
             TutorialEvent::Acknowledge { id } => tutorials.acknowledge(id),
-        }
-    }
-
-    // The item-received sites: Backpack always; Equippable Items for any non-zero inventory type
-    // (the reference's 23-bit mask is not decoded); Hearthstones by entry; Ranged Weapons for a
-    // ranged type on a non-hunter; Keyrings by the slot band.
-    let pushes = std::mem::take(&mut tutorials.pushes);
-    let class = self_q.single().ok().and_then(|s| s.0.unit_class());
-    for (entry, bag, slot) in pushes {
-        tutorials.trigger(id::BACKPACK, 0, now);
-        if let Some(info) = items.template_cached(entry) {
-            if info.inventory_type != 0 {
-                tutorials.trigger(id::EQUIPPABLE_ITEMS, 0, now);
-            }
-            if info.inventory_type == INVTYPE_RANGED && class != Some(CLASS_HUNTER) {
-                tutorials.trigger(id::RANGED_WEAPONS, 0, now);
-            }
-        }
-        if entry == HEARTHSTONE {
-            tutorials.trigger(id::HEARTHSTONES, 0, now);
-        }
-        if bag == KEYRING_BAG && KEYRING_SLOTS.contains(&slot) {
-            tutorials.trigger(id::KEYRINGS, 0, now);
         }
     }
 

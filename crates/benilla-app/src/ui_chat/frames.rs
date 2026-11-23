@@ -90,10 +90,11 @@ pub(crate) fn add_chat_line_now(world: &mut World, chat_type: u8, text: String) 
     }
 }
 
-/// The catalog's chat type as the event kind: 26 a skill line, any other a system line.
+/// A line's chat type as the event kind: 26 a skill line, 27 a loot line, any other a system line.
 pub(crate) fn kind_of_type(chat_type: u8) -> ChatEventKind {
     match chat_type {
         26 => ChatEventKind::Skill,
+        27 => ChatEventKind::Loot,
         _ => ChatEventKind::System,
     }
 }

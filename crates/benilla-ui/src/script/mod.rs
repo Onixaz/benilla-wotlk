@@ -310,7 +310,8 @@ pub use arena_team::{
 };
 pub use auction::{
     AuctionBid, AuctionCategory, AuctionHighBidder, AuctionItemRow, AuctionListState, AuctionQuery,
-    AuctionStartRequest, AuctionState, AuctionSubCategory, BIDDER, LIST, OWNER, SORT_COLUMNS,
+    AuctionStartRequest, AuctionState, AuctionSubCategory, CarryRefusal, BIDDER, LIST, OWNER,
+    SORT_COLUMNS,
 };
 pub use aura::{AuraFacts, AuraState, UnitAuraSlots};
 pub(crate) use backdrop::set_edge_blend as backdrop_set_edge_blend;
@@ -328,7 +329,7 @@ pub use battlefield_score::{
 pub use bind_confirm::PendingEquipAnswer;
 pub use calls::{
     apply_queued, set_answer, set_apply, AnswerHost, ApplyCall, CastAt, GuildBankVerdict,
-    HostAnswer, HostAsk, NearestMode, ScriptCall, VerbPress,
+    HostAnswer, HostAsk, LootVerb, NearestMode, ScriptCall, VerbPress,
 };
 pub use camera_view::{CameraViewRequest, CAMERA_VIEW_COUNT};
 pub use channel::{ChannelCommand, ZoneChannelRow};
