@@ -56,6 +56,7 @@ local VERBS = {
     { "titlecur", function() return GetCurrentTitle() end },
     { "known1", function() return IsTitleKnown(1) end },
     { "known70", function() return IsTitleKnown(70) end },
+    { "known40", function() return IsTitleKnown(40) end },
     { "titlename", function() return GetTitleName(1) end },
     { "rep5", function() return (GetFactionInfo(5)) end },
     { "control", function() return HasFullControl() end },
@@ -9503,6 +9504,15 @@ fn known_titles_watches_fire_per_field_with_the_fields_read_at_the_call() {
     assert_eq!(
         rig.live_now().line(VERBS),
         "NOW | titlecur=1 known1=1 known70=1"
+    );
+    // The high half of the first u64 alone: its watch fires once, the new bit read at the call.
+    let high = rig.packets(
+        vec![self_values(&[(FIELD_PLAYER_KNOWN_TITLES + 1, 1 | 1 << 8)])],
+        2,
+    );
+    assert_eq!(
+        pin(&high, &["KNOWN_TITLES_UPDATE"], &["known40"]),
+        vec!["KNOWN_TITLES_UPDATE player | known40=1"]
     );
 }
 

@@ -205,6 +205,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if live_player_titles().is_none() {
                 return Ok(());
             }
+            // Not built yet (#1450): tainted code outside a hardware event gets the blocked feedback and no send (`0x522e96`).
             let now = super::clock::now(lua);
             let admitted = super::model_mut_of(lua).title_throttle.admit(now);
             if !admitted {
