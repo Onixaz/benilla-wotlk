@@ -420,8 +420,8 @@ fn on_level_up(
     }
 }
 
-/// An honor award: the line (name-resolved, so it queues) and the `HONOR_GAINED` number. A
-/// dishonorable kill carries negative honor, passed signed.
+/// An honor award: the line (its victim's name read in the call) and the `HONOR_GAINED` number.
+/// A dishonorable kill carries negative honor, passed signed.
 fn on_pvp_credit(In(ev): In<SessionEvent>, mut p: Progress) {
     if let SessionEvent::PvpCredit(credit) = ev {
         p.chat.push_pvp_credit(

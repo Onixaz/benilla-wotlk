@@ -122,6 +122,75 @@ fn a_name_answered_empty_drops_its_waiting_line() {
         .is_empty());
 }
 
+/// The UI's world exit queues the add again (`0x528cc9` -> `0x4fb190`): a line during a loading
+/// screen waits for the entry, and a held line whose name lands meanwhile is marked queued
+/// (`0x503e78`), so the entry adds both in hold order (`0x50dfc3`).
+#[test]
+fn the_world_exit_queues_lines_until_the_next_entry() {
+    let (mut world, _sent) = world();
+    enter_world(&mut world);
+    add(&mut world, addon_line());
+    world.init_resource::<crate::ui_script::LeavingWorldArmed>();
+    world.init_resource::<Messages<crate::ui_script::WorldLeaveSweepMessage>>();
+    world
+        .resource_mut::<crate::ui_script::LeavingWorldArmed>()
+        .arm();
+    assert!(crate::ui_script::run_leave_world_sweep(&mut world));
+    add(&mut world, system_line("loading"));
+    world
+        .resource_mut::<crate::names::NameCache>()
+        .insert_player(ANN, "Ann".into(), None);
+    name_landed(&mut world);
+    assert!(
+        seen(&world).is_empty(),
+        "nothing is added on the loading screen"
+    );
+    enter_world(&mut world);
+    assert_eq!(
+        seen(&world),
+        ["CHAT_MSG_ADDON:oRA:Ann", "CHAT_MSG_SYSTEM:loading:"]
+    );
+}
+
+/// The XP line reads its victim's name in the call (`0x50b20a` -> `0x72a000`): a name not cached
+/// is asked and reads `UNKNOWNOBJECT`, and the line is added at once, never held.
+#[test]
+fn an_xp_line_with_an_uncached_victim_is_added_in_the_call() {
+    let (mut world, sent) = world();
+    world
+        .non_send_resource::<UiScript>()
+        .run(
+            r#"
+            COMBATLOG_XPGAIN_FIRSTPERSON = "%s dies, you gain %d experience."
+            UNKNOWNOBJECT = "Unknown"
+            local f = CreateFrame("Frame")
+            f:RegisterEvent("CHAT_MSG_COMBAT_XP_GAIN")
+            f:SetScript("OnEvent", function(_, e, a1) Seen[#Seen + 1] = e .. ":" .. a1 end)
+        "#,
+        )
+        .unwrap();
+    enter_world(&mut world);
+    add(
+        &mut world,
+        ChatLine::XpGain {
+            line: super::XpLine::Plain {
+                victim: ANN,
+                total: 35,
+                group_rate: 1.0,
+            },
+        },
+    );
+    assert_eq!(
+        seen(&world),
+        ["CHAT_MSG_COMBAT_XP_GAIN:Unknown dies, you gain 35 experience."]
+    );
+    assert!(matches!(
+        sent.try_recv(),
+        Ok(crate::net::ClientCommand::NameQuery { guid: ANN })
+    ));
+    assert_eq!(world.resource::<super::ChatLog>().pending_len(), 0);
+}
+
 /// The log's composition (`0x50ab09`): the channel prefix cut at its zone, the sender filled into
 /// `CHAT_<TYPE>_GET`, the language header off the default, links collapsed to their names and `%`
 /// doubled, then the whole formatted with the sender.

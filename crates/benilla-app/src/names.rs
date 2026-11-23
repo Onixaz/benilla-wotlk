@@ -546,11 +546,7 @@ pub(crate) mod net {
         }
     }
 
-    fn on_creature_name(
-        In(ev): In<SessionEvent>,
-        mut names: ResMut<NameCache>,
-        mut ui: ResMut<crate::ui_script::live::UiEvents>,
-    ) {
+    fn on_creature_name(In(ev): In<SessionEvent>, mut names: ResMut<NameCache>) {
         if let SessionEvent::CreatureName {
             entry,
             name,
@@ -581,8 +577,6 @@ pub(crate) mod net {
                 (display_id, modifiers, movement_id),
                 &mut names,
             );
-            // A combat line waiting on a creature's name.
-            ui.world(crate::ui_chat::name_landed);
         }
     }
 

@@ -72,10 +72,10 @@ pub(crate) enum ChatLine {
         roll: u32,
         guid: u64,
     },
-    /// An XP line, waiting on its victim's name when it names one.
+    /// An XP line, its victim's name read in the call (`0x50b20a`).
     XpGain { line: XpLine },
-    /// An honor award waiting on the victim's name; `rank` (0 none) becomes a title at the add,
-    /// from the victim's side in the same name-query record.
+    /// An honor award, its victim's name read in the call (`0x50b7c0`); `rank` (0 none) becomes a
+    /// title at the add, from the victim's faction template.
     HonorGain { victim: u64, honor: i32, rank: u8 },
     /// A text emote waiting on its performer's name: the reference's pending-text-emote node,
     /// queued when the emote handler finds no cached name and added when the name arrives.
@@ -87,7 +87,8 @@ pub(crate) enum ChatLine {
     },
     /// An area discovery (`SMSG_EXPLORATION_EXPERIENCE`).
     Discovery { area: String, xp: u32 },
-    /// One combat-log line, classified at the packet, waiting on its two endpoint names.
+    /// One combat-log line, classified at the packet: its unit names read in the call, waiting
+    /// only on an item's record.
     Combat(Box<super::combat::PendingCombat>),
     /// A ready event (client-composed lines; name-carrying notices).
     Event(ChatEvent),
@@ -107,6 +108,30 @@ impl From<ChatEvent> for ChatLine {
 }
 
 impl ChatLine {
+    /// A line whose text its caller composes before the add, so a queue holds it as text: the
+    /// XP, honor and combat lines and the discovery (`0x50b1d0`, `0x50b6d0`, `0x50bd90`).
+    fn composed_by_caller(&self) -> bool {
+        matches!(
+            self,
+            ChatLine::XpGain { .. }
+                | ChatLine::HonorGain { .. }
+                | ChatLine::Combat(_)
+                | ChatLine::Discovery { .. }
+        )
+    }
+
+    /// Every name the line waits on is cached (`0x503e19`-`0x503e25`).
+    fn names_ready(&self, names: &NameCache, self_guid: Option<u64>) -> bool {
+        let own = match self {
+            ChatLine::TextEmote { .. } => self_guid.unwrap_or(0),
+            _ => 0,
+        };
+        self.player_guids()
+            .into_iter()
+            .chain([own])
+            .all(|g| g == 0 || names.peek(g).is_some())
+    }
+
     /// A guid this line names whose answer came back empty (`0x503e5c`): the line is dropped.
     fn names_missing(&self, names: &NameCache) -> bool {
         self.player_guids()
@@ -131,8 +156,6 @@ impl ChatLine {
             ],
             ChatLine::Notice { a_guid, b_guid, .. } => [*a_guid, *b_guid],
             ChatLine::Addon { guid, .. } | ChatLine::Roll { guid, .. } => [*guid, 0],
-            ChatLine::XpGain { line } => [line.victim(), 0],
-            ChatLine::HonorGain { victim, .. } => [*victim, 0],
             ChatLine::TextEmote { performer, .. } => [*performer, 0],
             ChatLine::Mode { guid, .. } => [*guid, 0],
             _ => [0, 0],
@@ -198,6 +221,12 @@ impl Default for ChatLog {
 }
 
 impl ChatLog {
+    /// The UI's world exit (`0x528cc9` -> `0x4fb190`): the add queues every line until the next
+    /// entry.
+    pub(crate) fn leave_world(&mut self) {
+        self.queue_chat = true;
+    }
+
     /// Drop every held line on disconnect.
     pub(crate) fn clear_session(&mut self) {
         self.pending.clear();
@@ -292,7 +321,7 @@ pub(crate) trait ChatSink {
         });
     }
 
-    /// Add an XP line (`SMSG_LOG_XPGAIN`); a named one waits on the victim's name.
+    /// Add an XP line (`SMSG_LOG_XPGAIN`).
     fn push_xp_gain(&mut self, line: XpLine) {
         self.push_line(ChatLine::XpGain { line });
     }
@@ -489,7 +518,7 @@ pub(crate) enum XpLine {
 }
 
 impl XpLine {
-    /// The guid whose name the line waits on; 0 for none.
+    /// The victim the line names; 0 for none.
     fn victim(&self) -> u64 {
         match self {
             XpLine::Plain { victim, .. } | XpLine::Rested { victim, .. } => *victim,
@@ -934,6 +963,8 @@ pub(super) struct AddParams<'w, 's> {
     items: Res<'w, crate::items::Items>,
     /// The spam and profanity filters, which run in the reference's display function.
     text_filter: crate::text_filter::ChatTextFilter<'w>,
+    /// The honor title's side, off the victim's faction template (`0x50b755`).
+    factions: Option<Res<'w, crate::target::ring::Factions>>,
 }
 
 /// What building a line left: the line back while a name it needs is not cached (`0x509f92` ->
@@ -970,6 +1001,20 @@ fn addon_args(
     vec![Str(prefix), Str(message), Str(distribution), Str(sender)]
 }
 
+/// A unit's name as the combat and XP lines read it in the call: the cached name, asked on a miss,
+/// and `UNKNOWNOBJECT` meanwhile (`0x72a000`, `0x74d750` -> `0x74d8ef`).
+fn unit_name(
+    script: &UiScript,
+    guid: u64,
+    store: Option<&ObjectStore>,
+    names: &NameCache,
+    commands: &NetCommands,
+) -> String {
+    super::combat::object_name(guid, store, names, commands)
+        .or_else(|| super::combat::global_string(script, "UNKNOWNOBJECT"))
+        .unwrap_or_default()
+}
+
 /// Build one line through the add (`0x509dd0`): its names resolved, asked when missing, its text
 /// composed; the VM is read and its autocomplete written, nothing raised.
 #[allow(clippy::too_many_lines)] // one add, every line type's arm
@@ -989,6 +1034,7 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
         langs,
         items,
         mut text_filter,
+        factions,
     } = p;
     let mut steps = Vec::new();
     match item {
@@ -1287,15 +1333,12 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
             }
         }
         ChatLine::XpGain { line } => {
+            // The victim's name read in the call (`0x50b20a`, `0x50b23e`): never held.
             let victim = line.victim();
-            let name = if victim == 0 {
-                None
-            } else {
-                let Some(resolved) = names.resolve(victim, &commands).map(str::to_string) else {
-                    return Built::Held(ChatLine::XpGain { line });
-                };
-                Some(resolved)
-            };
+            let name = (victim != 0).then(|| {
+                let store = guids.0.get(&victim).and_then(|e| stores.get(*e).ok());
+                unit_name(&script, victim, store, &names, &commands)
+            });
             let line = xp_gain_line(&line, name.as_deref(), &globals(&script));
             if let Some(text) = line {
                 steps.push(Step::Route(ChatEvent::text_only(
@@ -1309,26 +1352,21 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
             honor,
             rank,
         } => {
-            // `victim == 0` is the award form: no name, no rank title.
-            let name = if victim == 0 {
-                None
-            } else {
-                let Some(resolved) = names.resolve(victim, &commands).map(str::to_string) else {
-                    return Built::Held(ChatLine::HonorGain {
-                        victim,
-                        honor,
-                        rank,
-                    });
-                };
-                Some(resolved)
-            };
-            // The title's side is the victim's and its gender ours (the title lookup genders
-            // against the local player). No name record means side 0: a creature, where only a
-            // racial leader is ranked (19, "Leader" either side, `HonorMgr.cpp:1075-1076`).
-            let team = names
-                .player_traits(victim)
-                .and_then(|(race, _, _)| crate::ui_unit::race_faction_group(race))
-                .map_or(0, |group| u8::from(group == "Alliance"));
+            // `victim == 0` is the award form: no name, no rank title. A victim not in view prints
+            // nothing (`0x50b709`); its name is read in the call (`0x50b7c0`), never held.
+            let store = (victim != 0)
+                .then(|| guids.0.get(&victim).and_then(|e| stores.get(*e).ok()))
+                .flatten();
+            if victim != 0 && store.is_none() {
+                return Built::Steps(steps);
+            }
+            let name =
+                store.map(|store| unit_name(&script, victim, Some(store), &names, &commands));
+            // The title's side is the victim's faction template group: Horde (`0x4`) side 0, else
+            // Alliance (`0x2`) side 1 (`0x50b755`-`0x50b784`); its gender ours (the title lookup
+            // genders against the local player).
+            let team = crate::target::ring::faction_group_mask(factions.as_deref(), store)
+                .map_or(0, |mask| u8::from(mask & 0x4 == 0 && mask & 0x2 != 0));
             let female = self_guid
                 .0
                 .and_then(|g| names.player_traits(g))
@@ -1391,18 +1429,12 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
             steps.push(Step::Route(event));
         }
         ChatLine::Combat(mut line) => {
-            // The subject's name, asked once; guid 0 needs none.
+            // The unit names are read in the call (`0x50be09`, `0x50bce3`, `0x50de48`), never held;
+            // guid 0 needs none.
             let mut wait = false;
             if line.subject != 0 {
-                match super::combat::object_name(
-                    line.subject,
-                    guids.0.get(&line.subject).and_then(|e| stores.get(*e).ok()),
-                    &names,
-                    &commands,
-                ) {
-                    Some(name) => line.fills.subject = name,
-                    None => wait = true,
-                }
+                let store = guids.0.get(&line.subject).and_then(|e| stores.get(*e).ok());
+                line.fills.subject = unit_name(&script, line.subject, store, &names, &commands);
             }
             // An item the server answered unknown does not wait: the line composes with what
             // the arm left in `named` (the reference falls back to `"UKNOWNOBJECT"`).
@@ -1416,17 +1448,11 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
                     }
                 }
                 super::combat::Named::Unit(guid) => {
-                    match super::combat::object_name(
-                        guid,
-                        guids.0.get(&guid).and_then(|e| stores.get(*e).ok()),
-                        &names,
-                        &commands,
-                    ) {
-                        Some(name) => line.fills.named = name,
-                        None => wait = true,
-                    }
+                    let store = guids.0.get(&guid).and_then(|e| stores.get(*e).ok());
+                    line.fills.named = unit_name(&script, guid, store, &names, &commands);
                 }
             }
+            // Only the item waits, on its record's callback (`0x50bdb1` asks with `0x4fb970`).
             if wait {
                 return Built::Held(ChatLine::Combat(line));
             }
@@ -1590,11 +1616,49 @@ pub(crate) fn add_now(world: &mut World, line: ChatLine) {
     let queue_chat = log.queue_chat;
     ask_names(world, &line);
     if queue_chat {
-        world.resource_mut::<ChatLog>().pending.push((line, true));
+        if line.composed_by_caller() {
+            queue_composed(world, line);
+        } else {
+            world.resource_mut::<ChatLog>().pending.push((line, true));
+        }
         return;
     }
     if let Some(held) = add_one(world, line) {
         world.resource_mut::<ChatLog>().pending.push((held, false));
+    }
+}
+
+/// Queue a line its caller composes ahead of the add while the UI is outside the world: its text
+/// built now, with the names as they read now, and queued as text (`0x509f92`); a step that is no
+/// chat line (the discovery toast) runs at once. One still waiting on an item record stays held.
+fn queue_composed(world: &mut World, line: ChatLine) {
+    let Some(mut script) = world
+        .get_non_send_resource::<UiScript>()
+        .map(UiScript::share)
+    else {
+        world.resource_mut::<ChatLog>().pending.push((line, true));
+        return;
+    };
+    let built = match world.run_system_cached_with(build, (line, script.share())) {
+        Ok(built) => built,
+        Err(e) => {
+            warn!("chat: the add did not run: {e}");
+            return;
+        }
+    };
+    match built {
+        Built::Held(line) => world.resource_mut::<ChatLog>().pending.push((line, false)),
+        Built::Steps(steps) => {
+            for step in steps {
+                match step {
+                    Step::Route(event) => world
+                        .resource_mut::<ChatLog>()
+                        .pending
+                        .push((ChatLine::Event(event), true)),
+                    other => run_step(world, &mut script, other),
+                }
+            }
+        }
     }
 }
 
@@ -1642,23 +1706,35 @@ pub(crate) fn name_landed(world: &mut World) {
     let Some(mut log) = world.get_resource_mut::<ChatLog>() else {
         return;
     };
-    if log.queue_chat || log.pending.iter().all(|(_, queued)| *queued) {
+    if log.pending.iter().all(|(_, queued)| *queued) {
         return;
     }
+    let queue_chat = log.queue_chat;
     let held = std::mem::take(&mut log.pending);
     let mut kept = Vec::new();
+    let self_guid = world.get_resource::<SelfGuid>().and_then(|g| g.0);
     for (line, queued) in held {
         if queued {
             kept.push((line, true));
             continue;
         }
-        let missing = world
+        let (missing, ready) = world
             .get_resource::<NameCache>()
-            .is_some_and(|names| line.names_missing(names));
+            .map_or((false, false), |names| {
+                (
+                    line.names_missing(names),
+                    line.names_ready(names, self_guid),
+                )
+            });
         if missing {
             if matches!(line, ChatLine::Notice { notice, .. } if notice == channel_notice::INVITE) {
                 world.resource_mut::<ChatLog>().invite_waiting = false;
             }
+            continue;
+        }
+        // Outside the world a ready line is marked queued for the entry's walk (`0x503e78`).
+        if queue_chat {
+            kept.push((line, ready));
             continue;
         }
         if let Some(back) = add_one(world, line) {
