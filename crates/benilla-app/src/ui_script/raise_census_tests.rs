@@ -43,8 +43,6 @@ const ON_THE_QUEUE: &[(&str, &str)] = &[
     ("ui_action/errors.rs", "show_line_now"),
     ("ui_action/feed.rs", "feed_actions"),
     ("ui_arena_team.rs", "drain_arena_teams"),
-    ("ui_auction/mod.rs", "drain_auction"),
-    ("ui_auction/mod.rs", "feed_auction"),
     ("ui_aura.rs", "drain_aura_cancels"),
     ("ui_battlefield.rs", "drain_battlefield"),
     ("ui_calendar.rs", "feed_calendar"),

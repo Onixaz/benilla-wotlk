@@ -236,6 +236,11 @@ local VERBS = {
     { "m1read", function() return (select(9, GetInboxHeaderInfo(1))) end },
     { "m2subj", function() return (select(4, GetInboxHeaderInfo(2))) end },
     { "hasnew", function() return HasNewMail() end },
+    { "aucn", function() local n, t = GetNumAuctionItems("list") return n .. "/" .. t end },
+    { "auc1", function() return (GetAuctionItemInfo("list", 1)) end },
+    { "auc1bid", function() return (select(10, GetAuctionItemInfo("list", 1))) end },
+    { "aucown", function() local n, t = GetNumAuctionItems("owner") return n .. "/" .. t end },
+    { "canq", function() return CanSendAuctionQuery() end },
     { "npcname", function() return UnitName("npc") end },
     { "buybackn", function() return GetNumBuybackItems() end },
     { "repaircost", function() return GetRepairAllCost() end },
@@ -9902,6 +9907,217 @@ fn a_mailbox_fires_from_its_handlers_with_the_inbox_read_at_the_call() {
                     "MAIL_CLOSED",
                     "mailn=2/2 m1from=Charzsend m1money=0 m1read=1 m2subj=Outbid on Charz Late hasnew=nil"
                 ),
+            ],
+        ]
+    );
+}
+
+/// An auction house from the hello to its close, each event with the list verbs' answers at it and
+/// each send at the call or frame that made it:
+/// - the hello sets the auctioneer and fires `AUCTION_HOUSE_SHOW` (`0x59f142`); the stock window's
+///   open asks the bidder list, then the owner list and the pending sales, inside that event;
+/// - a browse page with a row's item record in flight signals nothing (`0x59e432`); the record's
+///   callback sorts and signals (`0x59cb70`), the cached row first;
+/// - the owner list waits for its pending sales too (`0x59e83e`), which signal it (`0x59ecb6`);
+/// - `PlaceAuctionBid` sends inside its call (`0x59dcca`); its result shows its line
+///   (`0x5a009f`), asks the bidder list (`0x5a00b9`), patches and signals the browse row
+///   (`0x5a0195`) and plays the emote (`0x5a01d5`). The line itself shows after the signal,
+///   through the chat feed;
+/// - a bid on our own auction patches and signals the owner list (`0x5a08d4`);
+/// - `CloseAuctionHouse` fires `AUCTION_HOUSE_CLOSED` (`0x59f16a`); the stock listener's hide runs
+///   `CloseAuctionHouse` inside it, whose second event and, from the auctioneer's interact-target
+///   clear (`0x59f189` -> `0x51304a`), third come with the house still open; the observer sees the
+///   first last, the house emptied (`0x59f198`), all inside the call.
+#[test]
+fn an_auction_house_fires_from_its_handlers_with_the_lists_read_at_the_call() {
+    use benilla_protocol::field::FIELD_PLAYER_FIELD_COINAGE;
+    use benilla_protocol::messages::{
+        auction_action, auction_error, AuctionCommandTail, AuctionListEntry, AuctionListPage,
+        AuctionOwnerNotification,
+    };
+    const AUCTIONEER: u64 = 0xF130_0000_0000_0888;
+    const SELLER: u64 = 0x0000_0000_0000_0777;
+    const GEM: u32 = 0xA_3001;
+    const LATE: u32 = 0xA_3002;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let template = |entry: u32, name: &str| SessionEvent::ItemTemplate {
+        entry,
+        info: Some(Box::new(crate::items::test_template(name))),
+    };
+    let sends = |rx: &crossbeam_channel::Receiver<crate::net::ClientCommand>| {
+        rx.try_iter()
+            .map(|c| format!("{c:?}"))
+            .filter(|c| c.starts_with("Auction") || c.starts_with("Emote"))
+            .collect::<Vec<_>>()
+    };
+    rig.packets(
+        vec![
+            template(GEM, "Charz Gem"),
+            self_values(&[(FIELD_PLAYER_FIELD_COINAGE, 1_000_000)]),
+        ],
+        2,
+    );
+    const EVENTS: &[&str] = &[
+        "AUCTION_HOUSE_SHOW",
+        "AUCTION_HOUSE_CLOSED",
+        "AUCTION_ITEM_LIST_UPDATE",
+        "AUCTION_OWNED_LIST_UPDATE",
+        "AUCTION_BIDDER_LIST_UPDATE",
+        "NEW_AUCTION_UPDATE",
+        "CHAT_MSG_SYSTEM",
+        "UI_ERROR_MESSAGE",
+        "UI_INFO_MESSAGE",
+    ];
+    const VERBS: &[&str] = &["aucn", "auc1", "auc1bid", "aucown", "canq"];
+    let row = |auction_id: u32, item_entry: u32, owner_guid: u64| AuctionListEntry {
+        auction_id,
+        item_entry,
+        count: 1,
+        start_bid: 100,
+        owner_guid,
+        time_left_ms: 3_600_000,
+        ..Default::default()
+    };
+    let page = |auctions: Vec<AuctionListEntry>| AuctionListPage {
+        total_count: auctions.len() as u32,
+        auctions,
+        query_delay_ms: Some(0),
+    };
+    let call = |rig: &mut Rig, chunk: &str| {
+        super::live::with_live_world(rig.app.world_mut(), |s| s.run(chunk))
+            .expect("a VM")
+            .expect("the chunk runs");
+    };
+    let open = rig.packets(
+        vec![SessionEvent::AuctionHello {
+            auctioneer: AUCTIONEER,
+            house_id: 1,
+            enabled: true,
+        }],
+        3,
+    );
+    let open_sends = sends(&rx);
+    let list = rig.packets(
+        vec![SessionEvent::AuctionListResult(page(vec![
+            row(1, LATE, SELLER),
+            row(2, GEM, SELLER),
+        ]))],
+        3,
+    );
+    let late = rig.packets(vec![template(LATE, "Charz Late")], 3);
+    let owned = rig.packets(
+        vec![SessionEvent::AuctionOwnerListResult(page(vec![row(
+            5, GEM, ME,
+        )]))],
+        3,
+    );
+    let sales = rig.packets(
+        vec![SessionEvent::AuctionPendingSales { sales: Vec::new() }],
+        3,
+    );
+    let _ = sends(&rx);
+    call(&mut rig, "PlaceAuctionBid('list', 1, 150)");
+    let bid_in_call = sends(&rx);
+    rig.run(3);
+    let bid_later = sends(&rx);
+    rig.take();
+    let placed = rig.packets(
+        vec![SessionEvent::AuctionCommandResult {
+            auction_id: 2,
+            action: auction_action::BID_PLACED,
+            error: auction_error::OK,
+            tail: AuctionCommandTail::BidPlaced { new_min_outbid: 10 },
+        }],
+        3,
+    );
+    let placed_sends = sends(&rx);
+    let outbid = rig.packets(
+        vec![SessionEvent::AuctionOwnerNotification(
+            AuctionOwnerNotification {
+                auction_id: 5,
+                bid: 300,
+                out_bid: 15,
+                bidder_guid: 0x999,
+                item_entry: GEM,
+                random_property_id: 0,
+                mail_delay: 0.0,
+            },
+        )],
+        3,
+    );
+    rig.take();
+    // The events the observer logged before the call returned.
+    let closed_in_call: Vec<String> = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval::<Vec<String>>(
+            "local before = #(CHARZ_LOG or {}) CloseAuctionHouse() local t = {} \
+             for i = before + 1, #(CHARZ_LOG or {}) do \
+               local e = CHARZ_LOG[i]:match('^([^\t]*)') \
+               if e:find('AUCTION', 1, true) then t[#t + 1] = e end end \
+             return t",
+        )
+    })
+    .expect("a VM")
+    .expect("the close runs");
+    rig.run(3);
+    let closed = rig.take();
+    let got: Vec<Vec<String>> = [open, list, late, owned, sales, placed, outbid, closed]
+        .iter()
+        .map(|seen| pin(seen, EVENTS, VERBS))
+        .collect();
+    let at = |event: &str, verbs: &str| format!("{event} | {verbs}");
+    let none = "aucn=0/0 auc1=nil auc1bid=0 aucown=0/0 canq=1";
+    let browse = "aucn=2/2 auc1=Charz Gem auc1bid=0 aucown=0/0 canq=1";
+    let owned = "aucn=2/2 auc1=Charz Gem auc1bid=0 aucown=1/1 canq=1";
+    let bid = "aucn=2/2 auc1=Charz Gem auc1bid=150 aucown=1/1 canq=1";
+    assert_eq!(
+        got,
+        vec![
+            vec![at("AUCTION_HOUSE_SHOW", none)],
+            Vec::new(),
+            vec![at("AUCTION_ITEM_LIST_UPDATE", browse)],
+            Vec::new(),
+            vec![at("AUCTION_OWNED_LIST_UPDATE", owned)],
+            vec![
+                at("AUCTION_ITEM_LIST_UPDATE", bid),
+                at("CHAT_MSG_SYSTEM Bid accepted.      0 0  0 1  0", bid),
+            ],
+            vec![at("AUCTION_OWNED_LIST_UPDATE", bid)],
+            vec![
+                at("AUCTION_HOUSE_CLOSED", bid),
+                at("AUCTION_HOUSE_CLOSED", bid),
+                at("AUCTION_HOUSE_CLOSED", none),
+            ],
+        ]
+    );
+    assert_eq!(
+        closed_in_call,
+        vec!["AUCTION_HOUSE_CLOSED"; 3],
+        "the close's events fire inside its call"
+    );
+    let to = AUCTIONEER;
+    assert_eq!(
+        vec![open_sends, bid_in_call, bid_later, placed_sends],
+        vec![
+            vec![
+                format!(
+                    "AuctionListBidderItems {{ auctioneer: {to}, list_from: 0, auction_ids: [] }}"
+                ),
+                format!("AuctionListOwnerItems {{ auctioneer: {to}, list_from: 0 }}"),
+                format!("AuctionListPendingSales {{ auctioneer: {to} }}"),
+            ],
+            vec![format!(
+                "AuctionPlaceBid {{ auctioneer: {to}, auction_id: 2, price: 150 }}"
+            )],
+            Vec::new(),
+            vec![
+                format!(
+                    "AuctionListBidderItems {{ auctioneer: {to}, list_from: 0, auction_ids: [] }}"
+                ),
+                "Emote { emote_id: 3 }".to_string(),
             ],
         ]
     );
