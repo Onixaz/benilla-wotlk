@@ -211,6 +211,25 @@ pub struct AuctionStartRequest {
     pub direct: bool,
 }
 
+/// Why the carried-count check (`0x754dd0`) refuses: past the record's `MaxCount`, shown as
+/// message `0x14`, or past its limit category's quantity, shown as `0x272` with the row's quantity
+/// and name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CarryRefusal {
+    MaxCount,
+    Category { quantity: u32, name: String },
+}
+
+impl CarryRefusal {
+    /// The message key the check shows (`0x754e2a`, `0x754ea7`).
+    pub fn key(&self) -> &'static str {
+        match self {
+            Self::MaxCount => "ERR_ITEM_MAX_COUNT",
+            Self::Category { .. } => "ERR_ITEM_MAX_LIMIT_CATEGORY_COUNT_EXCEEDED_IS",
+        }
+    }
+}
+
 /// A drained `PlaceAuctionBid`, checked against the row as `0x59da40` checks it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AuctionBid {
@@ -1210,7 +1229,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // PlaceAuctionBid(type, index, bid) (`0x59da40`): clamped to the buyout, then refused locally
-    // under the opening price, at or under the current bid, short of the step, or past the purse.
+    // under the opening price, at or under the current bid, short of the step, past the purse, or past
+    // the carried count.
     g.set(
         "PlaceAuctionBid",
         lua.create_function(|lua, args: MultiValue| {
@@ -1261,6 +1281,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if crate::script::live::money(&model) < u64::from(cost) {
                 drop(model);
                 crate::script::ui_errors::show_now(lua, "ERR_NOT_ENOUGH_MONEY");
+                return Ok(());
+            }
+            // The carried-count check with its message on the row's item and count (`0x59dc7c`).
+            if let Some(refusal) =
+                crate::script::read_live(|l| l.carry_refusal(r.item_id, r.count)).flatten()
+            {
+                drop(model);
+                crate::script::ui_errors::show_carry_refusal(lua, &refusal);
                 return Ok(());
             }
             model.auction_bids.push(AuctionBid {
@@ -1907,6 +1935,75 @@ mod tests {
         s.model_mut().money = 10;
         s.run(r#"PlaceAuctionBid("list", 1, 1100)"#).unwrap();
         assert_eq!(s.take_shown(), vec!["ERR_NOT_ENOUGH_MONEY"]);
+    }
+
+    /// `0x59dc7c`: past the purse test, the carried-count check on the row's item and count refuses
+    /// with its line and sends nothing; a passing check bids.
+    #[test]
+    fn a_bid_past_the_carried_count_is_refused_before_it_sends() {
+        let mut s = UiScript::new().unwrap();
+        let mut state = page(&[5]);
+        state.lists[LIST].rows[0].count = 3;
+        s.set_auction(Some(state));
+        s.model_mut().money = 10_000;
+        s.lua()
+            .globals()
+            .set(
+                "ERR_ITEM_MAX_LIMIT_CATEGORY_COUNT_EXCEEDED_IS",
+                "You can only carry %d %s",
+            )
+            .unwrap();
+        s.run(
+            "Log = {} local f = CreateFrame('Frame') f:RegisterEvent('UI_ERROR_MESSAGE')              f:SetScript('OnEvent', function(_, _, t) Log[#Log + 1] = t end)",
+        )
+        .unwrap();
+        let mut view = crate::script::live::TestView {
+            carry: Some(CarryRefusal::MaxCount),
+            ..Default::default()
+        };
+        crate::script::live::lending(&mut view, || {
+            s.run(r#"PlaceAuctionBid("list", 1, 600)"#).unwrap();
+        });
+        assert_eq!(s.take_shown(), vec!["ERR_ITEM_MAX_COUNT"]);
+        assert!(
+            s.take_auction_bids().is_empty(),
+            "a refused bid sends nothing"
+        );
+        view.carry = Some(CarryRefusal::Category {
+            quantity: 2,
+            name: "Healthstone".into(),
+        });
+        crate::script::live::lending(&mut view, || {
+            s.run(r#"PlaceAuctionBid("list", 1, 600)"#).unwrap();
+        });
+        assert_eq!(
+            s.eval::<Vec<String>>("return Log").unwrap().last().unwrap(),
+            "You can only carry 2 Healthstone"
+        );
+        assert!(s.take_auction_bids().is_empty());
+        // The purse refuses first: the count is not asked (`0x59dc2d` before `0x59dc7c`).
+        s.model_mut().money = 10;
+        crate::script::live::lending(&mut view, || {
+            s.run(r#"PlaceAuctionBid("list", 1, 600)"#).unwrap();
+        });
+        assert_eq!(s.take_shown(), vec!["ERR_NOT_ENOUGH_MONEY"]);
+        assert_eq!(
+            view.carry_asks.take(),
+            vec![(1005, 3), (1005, 3)],
+            "asked on the row's item and count"
+        );
+        s.model_mut().money = 10_000;
+        view.carry = None;
+        crate::script::live::lending(&mut view, || {
+            s.run(r#"PlaceAuctionBid("list", 1, 600)"#).unwrap();
+        });
+        assert_eq!(
+            s.take_auction_bids(),
+            vec![AuctionBid {
+                auction_id: 5,
+                amount: 600
+            }]
+        );
     }
 
     #[test]

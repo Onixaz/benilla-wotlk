@@ -835,22 +835,12 @@ pub(crate) struct Model {
     /// A fixture's open loot, read where no view is lent.
     #[cfg(any(test, feature = "fixtures"))]
     pub(crate) loot: Option<super::loot::LootState>,
-    /// The `LootSlot` takes and whether `CloseLoot` ran, with its `noUI` flag.
-    pub(crate) loot_picks: Vec<u32>,
-    /// `ConfirmLootSlot(slot)` rows, 1-based, for its pending-slot gate (`0x589300`).
-    pub(crate) loot_confirms: Vec<u32>,
-    pub(crate) loot_close: Option<bool>,
-    /// `GiveMasterLoot(slot, candidateIndex)`, both 1-based display positions the app translates.
-    pub(crate) loot_master_gives: Vec<(u32, u32)>,
 
-    /// The open group-loot rolls, and the `RollOnLoot` `(roll_id, roll_type)` votes.
+    /// The open group-loot rolls, read where no view is lent.
     #[cfg(any(test, feature = "fixtures"))]
     pub(crate) loot_rolls: super::loot_roll::LootRollsState,
     /// The combat log's entries, cursor and filters.
     pub(crate) combat_log: combat_log::CombatLogStore,
-    pub(crate) loot_roll_votes: Vec<(u32, u8)>,
-    /// Need or Greed on a bind-on-pickup roll: a `CONFIRM_LOOT_ROLL` popup ask, not a vote.
-    pub(crate) loot_roll_confirms: Vec<(u32, u8)>,
     /// `AcceptLevelGrant` (true) and `DeclineLevelGrant` (false) calls.
     pub(crate) level_grant_answers: Vec<bool>,
     /// The grant, summon and PvP AFK verbs' sends and refusals, in call order.
@@ -1797,15 +1787,9 @@ impl Model {
             loot: None,
             pending_equip_answers: Vec::new(),
             bind_on_use_confirms: 0,
-            loot_picks: Vec::new(),
-            loot_confirms: Vec::new(),
-            loot_close: None,
-            loot_master_gives: Vec::new(),
             #[cfg(any(test, feature = "fixtures"))]
             loot_rolls: super::loot_roll::LootRollsState::default(),
             combat_log: combat_log::CombatLogStore::default(),
-            loot_roll_votes: Vec::new(),
-            loot_roll_confirms: Vec::new(),
             level_grant_answers: Vec::new(),
             unit_requests: Vec::new(),
             name_records: Default::default(),

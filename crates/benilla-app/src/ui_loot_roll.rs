@@ -28,7 +28,6 @@ use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, ObjectStore, SelfGuid, SelfPlayer};
 use crate::ui_action::signals::SignalSink;
 use crate::ui_chat::{ChatEvent, ChatEventKind, ChatLog};
-use crate::ui_script::UiDrain;
 
 /// The frames up at once (`0x6fb180`, `0x6fb2c0`: `[0xca0694] < 4`).
 const MAX_SHOWN_ROLLS: u32 = 4;
@@ -143,18 +142,20 @@ impl LootRolls {
         }
     }
 
-    /// The roll's record is in: its reasons judged (`0x6fa7a0`) and its frame shown or queued.
+    /// The roll's record is in: its reasons judged (`0x6fa7a0`), the carried-count check run quiet
+    /// on its item and stack (`0x6fa7db`), and its frame shown or queued.
     fn ready(
         &mut self,
         roll_id: u32,
         record: &benilla_protocol::messages::ItemInfo,
-        held: u32,
+        carry: &crate::ui_loot::CarryCheck,
         sink: &mut dyn SignalSink,
     ) {
         let Some(r) = self.roll_mut(roll_id) else {
             return;
         };
-        r.reasons = reasons(r.vote_mask, r.count, record, held);
+        let over = carry(r.item_id, record, r.count).is_some();
+        r.reasons = reasons(r.vote_mask, record, over);
         self.show_or_pend(roll_id, sink);
     }
 
@@ -241,16 +242,24 @@ impl LootRolls {
     }
 }
 
-/// How many of `entry` we hold, for the unique-count reason (`0x6fa7db`).
-fn held_count(me: Option<&ObjectStore>, objects: &crate::net::Objects, entry: u32) -> u32 {
-    me.map_or(0, |s| {
-        crate::ui_items::count_of(
-            &s.0,
-            objects,
-            entry,
-            crate::ui_items::InventoryScope::QUEST_ITEMS,
-        )
-    })
+/// The carried-count check over our bags (`0x754dd0`), for Need's reason 2 (`0x6fa7db`); with no
+/// player object it refuses nothing.
+fn carry_check(
+    me: Option<&ObjectStore>,
+    objects: &crate::net::Objects,
+    items: &Items,
+    limits: Option<&crate::ui_trade::ItemLimitCategories>,
+    (item_id, record, count): (u32, &benilla_protocol::messages::ItemInfo, u32),
+) -> Option<benilla_ui::script::CarryRefusal> {
+    crate::ui_items::carry_refusal(
+        &me?.0,
+        objects,
+        items,
+        limits.map(|l| &l.0),
+        item_id,
+        record,
+        count,
+    )
 }
 
 /// The clock the roll's end and its time left read (`0x588d21`).
@@ -290,6 +299,7 @@ mod net {
         time: Option<Res<'w, Time<bevy::time::Real>>>,
         me: Query<'w, 's, &'static ObjectStore, With<SelfPlayer>>,
         objects: crate::net::Objects<'w, 's>,
+        limits: Option<Res<'w, crate::ui_trade::ItemLimitCategories>>,
     }
 
     /// `SMSG_LOOT_START_ROLL` (`0x6fb2c0`): a roll for another map is dropped (`0x6fb2db`); else it
@@ -333,8 +343,17 @@ mod net {
         });
         match reads.items.ask_template(p.item_id, 0, &reads.net) {
             Some(record) => {
-                let held = super::held_count(reads.me.single().ok(), &reads.objects, p.item_id);
-                rolls.ready(roll_id, record, held, &mut *ui);
+                let me = reads.me.single().ok();
+                let carry = |i, r: &_, c| {
+                    super::carry_check(
+                        me,
+                        &reads.objects,
+                        &reads.items,
+                        reads.limits.as_deref(),
+                        (i, r, c),
+                    )
+                };
+                rolls.ready(roll_id, record, &carry, &mut *ui);
             }
             None => reads
                 .waits
@@ -445,11 +464,7 @@ pub(crate) struct UiLootRollPlugin;
 impl Plugin for UiLootRollPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
-        app.init_resource::<LootRolls>().add_systems(
-            Update,
-            // After the input pass, so a vote sends the same frame.
-            crate::ui_script::raises::then_fire(drain_loot_rolls).in_set(UiDrain),
-        );
+        app.init_resource::<LootRolls>();
     }
 }
 
@@ -544,18 +559,12 @@ fn format_line(
 }
 
 /// `0x6fa7a0`: why Need, Greed and Disenchant are refused, 0 when the vote mask allows them. Need
-/// is 2 when the drop would pass the unique count (worn, carried and banked), else 5 for a
-/// greed-only item, else 1; Greed is 2; Disenchant is 4 for a disenchantable item, else 3. Not
-/// applied: the item limit category leg of the count check, whose field is not decoded.
-fn reasons(
-    vote_mask: u8,
-    count: u32,
-    template: &benilla_protocol::messages::ItemInfo,
-    held: u32,
-) -> [u8; 3] {
+/// is 2 when the carried-count check refuses the drop (`over`), else 5 for a greed-only item, else
+/// 1; Greed is 2; Disenchant is 4 for a disenchantable item, else 3.
+fn reasons(vote_mask: u8, template: &benilla_protocol::messages::ItemInfo, over: bool) -> [u8; 3] {
     let need = if vote_mask & 0x2 != 0 {
         0
-    } else if template.max_count != 0 && held.saturating_add(count) > template.max_count {
+    } else if over {
         2
     } else if template.flags2 & ITEM_FLAG2_NEED_ROLL_DISABLED != 0 {
         5
@@ -583,14 +592,17 @@ pub(crate) fn start_callback(world: &mut World, roll_id: u32, entry: u32, landed
          items: Res<Items>,
          me: Query<&ObjectStore, With<SelfPlayer>>,
          objects: crate::net::Objects,
+         limits: Option<Res<crate::ui_trade::ItemLimitCategories>>,
          mut ui: ResMut<crate::ui_script::live::UiEvents>| {
             let record = items.template_cached(entry).filter(|_| landed);
             let Some(record) = record else {
                 rolls.rolls.retain(|r| r.roll_id != roll_id);
                 return;
             };
-            let held = held_count(me.single().ok(), &objects, entry);
-            rolls.ready(roll_id, record, held, &mut *ui);
+            let me = me.single().ok();
+            let carry =
+                |i, r: &_, c| carry_check(me, &objects, &items, limits.as_deref(), (i, r, c));
+            rolls.ready(roll_id, record, &carry, &mut *ui);
         },
         (roll_id, entry, landed),
     );
@@ -804,45 +816,35 @@ impl LootRollsLive<'_> {
     }
 }
 
-/// Drain the Lua votes: each confirm raises its popup, `CONFIRM_DISENCHANT_ROLL (id, 3)` for
-/// Disenchant, else `CONFIRM_LOOT_ROLL (id, rollType)`; each vote is one `CMSG_LOOT_ROLL`, which
-/// closes our frame and finishes the roll (`0x6fbc70`).
-fn drain_loot_rolls(
-    mut script: crate::ui_script::InTurn,
-    mut rolls: ResMut<LootRolls>,
-    commands: Res<NetCommands>,
-) {
-    let Some(mut script) = script.turn() else {
+/// A vote past its confirm and its mask, inside its call (`0x6fbc70`): `CMSG_LOOT_ROLL` with the
+/// roll's wire identity (`0x6fbdab`), then `CANCEL_LOOT_ROLL`, the frame freed and the roll
+/// finished (`0x6fbdc2`-`0x6fbdd1`), and a waiting roll shown (`0x6fbdd5`), raised as the call
+/// returns.
+pub(crate) fn vote_in_call(world: &mut World, roll_id: u32, roll_type: u8) {
+    use crate::ui_script::live::UiEvents;
+    if !world.contains_resource::<NetCommands>() {
+        return;
+    }
+    let Some(mut rolls) = world.remove_resource::<LootRolls>() else {
         return;
     };
-    for (roll_id, roll_type) in script.take_loot_roll_confirms() {
-        debug!("ui_loot_roll: confirm for {roll_type} on roll {roll_id}");
-        let event = if roll_type == benilla_protocol::messages::roll_vote::DISENCHANT {
-            "CONFIRM_DISENCHANT_ROLL"
-        } else {
-            "CONFIRM_LOOT_ROLL"
-        };
-        script.fire_event(
-            event,
-            vec![
-                ScriptValue::Int(roll_id as i64),
-                ScriptValue::Int(roll_type as i64),
-            ],
-        );
-    }
-    for (roll_id, roll_type) in script.take_loot_roll_votes() {
-        match rolls.vote(roll_id, &mut *script) {
-            Some((looted_target, item_slot)) => {
-                debug!("ui_loot_roll: vote {roll_type} on roll {roll_id}");
-                let _ = commands.0.send(ClientCommand::LootRoll {
+    let mut ui = world.remove_resource::<UiEvents>().unwrap_or_default();
+    match rolls.vote(roll_id, &mut ui) {
+        Some((looted_target, item_slot)) => {
+            debug!("ui_loot_roll: vote {roll_type} on roll {roll_id}");
+            let _ = world
+                .resource::<NetCommands>()
+                .0
+                .send(ClientCommand::LootRoll {
                     looted_target,
                     item_slot,
                     roll_type,
                 });
-            }
-            None => debug!("ui_loot_roll: RollOnLoot({roll_id}) — no open roll, ignored"),
         }
+        None => debug!("ui_loot_roll: vote on roll {roll_id} — no open roll, ignored"),
     }
+    world.insert_resource(rolls);
+    world.insert_resource(ui);
 }
 
 #[cfg(test)]
@@ -1088,17 +1090,25 @@ mod tests {
     #[test]
     fn the_refusal_reasons_follow_the_mask_and_the_item() {
         let mut t = crate::items::test_template("Cleaver");
-        assert_eq!(reasons(0x0F, 1, &t, 0), [0, 0, 0]);
+        assert_eq!(reasons(0x0F, &t, false), [0, 0, 0]);
         assert_eq!(
-            reasons(0x01, 1, &t, 0),
+            reasons(0x01, &t, false),
             [1, 2, 3],
             "plain item, not disenchantable"
         );
         t.required_disenchant_skill = 25;
         t.flags2 = ITEM_FLAG2_NEED_ROLL_DISABLED;
-        assert_eq!(reasons(0x05, 1, &t, 0), [5, 0, 4]);
-        t.max_count = 1;
-        assert_eq!(reasons(0x05, 1, &t, 1), [2, 0, 4], "one already held");
+        assert_eq!(reasons(0x05, &t, false), [5, 0, 4]);
+        assert_eq!(
+            reasons(0x05, &t, true),
+            [2, 0, 4],
+            "the count check refuses"
+        );
+        assert_eq!(
+            reasons(0x07, &t, true),
+            [0, 0, 4],
+            "the mask's Need bit wins (`0x6fa7e8`)"
+        );
     }
 
     // ── Driven through the handlers and the record callbacks ──
@@ -1121,11 +1131,7 @@ mod tests {
             .init_resource::<crate::net::GuidIndex>()
             .init_resource::<crate::ui_script::live::UiEvents>()
             .init_resource::<Time<bevy::time::Real>>()
-            .insert_resource(NetCommands(tx))
-            .add_systems(
-                Update,
-                crate::ui_script::raises::then_fire(drain_loot_rolls),
-            );
+            .insert_resource(NetCommands(tx));
         app.insert_non_send_resource(RecordWaits::default());
         let script = benilla_ui::script::UiScript::new().unwrap();
         script

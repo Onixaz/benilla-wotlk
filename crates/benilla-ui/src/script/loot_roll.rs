@@ -1,15 +1,16 @@
 //! The group loot roll bindings `GroupLootFrame` calls: each reads the client's roll list at the
-//! call through the live view ([`super::LiveState::loot_roll`]), and the app drains the votes
-//! `RollOnLoot` queues, 0 Pass, 1 Need, 2 Greed, 3 Disenchant. `START_LOOT_ROLL` carries
-//! `(rollID, rollTime)` and `CANCEL_LOOT_ROLL` the `rollID`. The `rollID` is client-internal, as
-//! `CMSG_LOOT_ROLL` addresses `(lootedTarget, itemSlot)`, so the app allocates its own.
+//! call through the live view ([`super::LiveState::loot_roll`]); a vote, 0 Pass, 1 Need, 2 Greed,
+//! 3 Disenchant, asks first or goes out inside its call, the host sending it and closing the frame
+//! ([`super::LootVerb::Roll`]). `START_LOOT_ROLL` carries `(rollID, rollTime)` and
+//! `CANCEL_LOOT_ROLL` the `rollID`. The `rollID` is client-internal, as `CMSG_LOOT_ROLL` addresses
+//! `(lootedTarget, itemSlot)`, so the app allocates its own.
 
 use mlua::{Lua, Value};
 
 use super::Model;
 
-/// `rollType` 3, whose confirm is `CONFIRM_DISENCHANT_ROLL` on a rare or better item (`0x6fbc70`).
-const DISENCHANT: i64 = 3;
+/// `rollType` 3, whose confirm is `CONFIRM_DISENCHANT_ROLL` on a rare or better item (`0x6fbce2`).
+const DISENCHANT: i32 = 3;
 
 /// The quality from which a Disenchant vote asks first (`0x6fbc70`: `quality >= 3`).
 const DISENCHANT_CONFIRM_QUALITY: u32 = 3;
@@ -60,19 +61,6 @@ impl super::UiScript {
     pub fn set_loot_rolls(&mut self, state: LootRollsState) {
         set_field!(self, loot_rolls, state);
     }
-
-    /// Drain the `(roll_id, roll_type)` votes queued by `RollOnLoot` since the last call. The app
-    /// maps each roll id back to its `(lootedTarget, itemSlot)` for `CMSG_LOOT_ROLL`.
-    pub fn take_loot_roll_votes(&mut self) -> Vec<(u32, u8)> {
-        drain_field!(self, loot_roll_votes)
-    }
-
-    /// Drain the `(roll_id, roll_type)` calls that ask first: Need or Greed on a bind-on-pickup
-    /// roll (`CONFIRM_LOOT_ROLL`) and Disenchant on a rare or better item
-    /// (`CONFIRM_DISENCHANT_ROLL`); the popup's `ConfirmLootRoll` queues the real vote.
-    pub fn take_loot_roll_confirms(&mut self) -> Vec<(u32, u8)> {
-        drain_field!(self, loot_roll_confirms)
-    }
 }
 
 /// The roll `roll_id` on the list at the call (`0x6fb150`); with no view lent, a fixture's.
@@ -96,37 +84,47 @@ pub(crate) fn find(model: &Model, roll_id: i64) -> Option<LootRollEntry> {
     }
 }
 
-/// `0x6fbc70`: a roll our vote finished takes none; a vote other than Pass asks first unless
-/// confirmed, by the cached template, then goes out only when the vote mask allows it.
+/// `0x6fbc70`, inside its call: a roll our vote finished takes none (`0x6fbcab`); a vote other
+/// than Pass, unconfirmed, on a cached record asks first, Disenchant on rare or better with
+/// `CONFIRM_DISENCHANT_ROLL (id, 3)` (`0x6fbcfb`), any other on bind on pickup with
+/// `CONFIRM_LOOT_ROLL (id, rollType)` (`0x6fbd22`); else a vote its mask's byte allows
+/// (`0x6fbd38`) goes out through the host.
 fn roll(lua: &Lua, roll_id: i64, roll_type: i64, confirmed: bool) {
-    let mut model = crate::script::model_mut_of(lua);
-    let Some(entry) = find(&model, roll_id) else {
+    let entry = {
+        let model = crate::script::model_mut_of(lua);
+        find(&model, roll_id)
+    };
+    let Some(entry) = entry.filter(|e| !e.finished) else {
         return;
     };
-    if entry.finished {
-        return;
-    }
-    let (Ok(id), Ok(kind)) = (u32::try_from(roll_id), u8::try_from(roll_type)) else {
-        return;
-    };
+    // The binding's integer conversion (`0x588d9d`).
+    let roll_type = roll_type as i32;
+    let id = i64::from(entry.roll_id);
     if roll_type != 0 && !confirmed {
         if let Some(quality) = entry.quality {
-            let asks = if roll_type == DISENCHANT {
-                quality >= DISENCHANT_CONFIRM_QUALITY
+            let ask = if roll_type == DISENCHANT {
+                (quality >= DISENCHANT_CONFIRM_QUALITY).then_some("CONFIRM_DISENCHANT_ROLL")
             } else {
-                entry.bind_on_pickup
+                entry.bind_on_pickup.then_some("CONFIRM_LOOT_ROLL")
             };
-            if asks {
-                model.loot_roll_confirms.push((id, kind));
+            if let Some(event) = ask {
+                let args = vec![
+                    super::ScriptValue::Int(id),
+                    super::ScriptValue::Int(i64::from(roll_type)),
+                ];
+                super::tick::fire_event_into(lua, event, args);
                 return;
             }
         }
     }
-    if 1u32
-        .checked_shl(u32::from(kind))
-        .is_some_and(|bit| bit & u32::from(entry.vote_mask) != 0)
-    {
-        model.loot_roll_votes.push((id, kind));
+    // `shl` takes the count's low five bits; the test reads the mask's byte.
+    let bit = 1u32.wrapping_shl(roll_type as u32) as u8;
+    if bit & entry.vote_mask != 0 {
+        let verb = super::LootVerb::Roll {
+            roll_id: entry.roll_id,
+            roll_type: roll_type as u8,
+        };
+        super::calls::make(lua, super::ScriptCall::Loot(verb));
     }
 }
 
@@ -312,11 +310,31 @@ mod tests {
             .unwrap());
     }
 
+    /// The votes the calls left waiting for a host, as `(rollID, rollType)`.
+    fn votes(s: &mut UiScript) -> Vec<(u32, u8)> {
+        s.take_loot_verbs()
+            .into_iter()
+            .filter_map(|v| match v {
+                crate::script::LootVerb::Roll { roll_id, roll_type } => Some((roll_id, roll_type)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The confirms raised inside the calls since the last read, as `event:rollID:rollType`.
+    fn asks(s: &UiScript) -> Vec<String> {
+        s.eval("local t = ASKS ASKS = {} return t").unwrap()
+    }
+
     /// `0x6fbc70`: Pass never asks; Need or Greed on bind-on-pickup and Disenchant on rare or better
-    /// ask; the vote mask decides what goes out.
+    /// raise their confirm inside the call; the vote mask's byte decides what goes out.
     #[test]
     fn roll_on_loot_asks_then_gates_on_the_vote_mask() {
         let mut s = UiScript::new().unwrap();
+        s.run(
+            "ASKS = {} local f = CreateFrame('Frame') f:RegisterEvent('CONFIRM_LOOT_ROLL')              f:RegisterEvent('CONFIRM_DISENCHANT_ROLL') f:SetScript('OnEvent',              function(_, e, id, t) ASKS[#ASKS + 1] = e .. ':' .. id .. ':' .. t end)",
+        )
+        .unwrap();
         s.set_loot_rolls(rolls());
         for v in [
             "RollOnLoot(7, 0)",
@@ -326,26 +344,41 @@ mod tests {
         ] {
             s.run(v).unwrap();
         }
-        assert_eq!(s.take_loot_roll_votes(), vec![(7, 0)]);
-        assert_eq!(s.take_loot_roll_confirms(), vec![(7, 1), (7, 2), (7, 3)]);
+        assert_eq!(votes(&mut s), vec![(7, 0)]);
+        assert_eq!(
+            asks(&s),
+            [
+                "CONFIRM_LOOT_ROLL:7:1",
+                "CONFIRM_LOOT_ROLL:7:2",
+                "CONFIRM_DISENCHANT_ROLL:7:3"
+            ]
+        );
         s.run("ConfirmLootRoll(7, 3)").unwrap();
-        assert_eq!(s.take_loot_roll_votes(), vec![(7, 3)], "the popup's accept");
+        assert_eq!(votes(&mut s), vec![(7, 3)], "the popup's accept");
 
         // Roll 8 (mask 0x05): Need and Disenchant are not allowed, rare Disenchant still asks.
         for v in ["RollOnLoot(8, 1)", "RollOnLoot(8, 2)", "RollOnLoot(8, 3)"] {
             s.run(v).unwrap();
         }
-        assert_eq!(s.take_loot_roll_votes(), vec![(8, 2)]);
-        assert_eq!(s.take_loot_roll_confirms(), vec![(8, 3)]);
+        assert_eq!(votes(&mut s), vec![(8, 2)]);
+        assert_eq!(asks(&s), ["CONFIRM_DISENCHANT_ROLL:8:3"]);
         s.run("ConfirmLootRoll(8, 3)").unwrap();
-        assert!(s.take_loot_roll_votes().is_empty(), "the mask refuses it");
+        assert!(votes(&mut s).is_empty(), "the mask refuses it");
 
         // Uncached: no confirm, straight to the mask.
         s.run("RollOnLoot(9, 1)").unwrap();
-        assert_eq!(s.take_loot_roll_votes(), vec![(9, 1)]);
+        assert_eq!(votes(&mut s), vec![(9, 1)]);
         s.run("RollOnLoot(99, 1)").unwrap();
+        assert!(
+            votes(&mut s).is_empty() && asks(&s).is_empty(),
+            "no such roll"
+        );
+        // Any other type on bind on pickup asks with it (`0x6fbd0a`); unconfirmed it never sends.
         s.run("RollOnLoot(7, 9)").unwrap();
-        assert!(s.take_loot_roll_votes().is_empty());
+        assert_eq!(asks(&s), ["CONFIRM_LOOT_ROLL:7:9"]);
+        // Confirmed, the shift takes the count's low five bits: 33 tests bit 1 (`0x6fbd38`).
+        s.run("ConfirmLootRoll(7, 33)").unwrap();
+        assert_eq!(votes(&mut s), vec![(7, 33)]);
         assert!(s.run("RollOnLoot('x')").is_err(), "usage error");
     }
 

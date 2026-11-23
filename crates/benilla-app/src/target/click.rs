@@ -1974,6 +1974,24 @@ pub(crate) fn clear_target_requests(
     }
 }
 
+/// The UI's targeted clear (`0x5241b0`) at its caller's step: the selection drops only while it is
+/// `guid`; `false` where the selection is not set up, and the caller asks through [`DeselectGuid`].
+pub(crate) fn deselect_guid_now(world: &mut World, guid: u64) -> bool {
+    world
+        .run_system_cached_with(
+            |In(guid): In<u64>,
+             mut selection: ResMut<Selection>,
+             mut seam: crate::creature_anim::AttackSeam,
+             engaged: Query<(), (With<Engaged>, With<SelfPlayer>)>| {
+                if selection.guid == Some(guid) {
+                    clear(&mut selection, &mut seam, !engaged.is_empty());
+                }
+            },
+            guid,
+        )
+        .is_ok()
+}
+
 /// The combat enter a melee walk's arrival owes, drained by [`clear_target_requests`].
 #[derive(bevy::ecs::message::Message, Clone, Copy, Debug)]
 pub(crate) struct ArrivalAttack {

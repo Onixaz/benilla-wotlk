@@ -36,7 +36,7 @@ use benilla_assets::{AssetSet, LockRecover, WorldAssets};
 const CREATE_ITEM_EFFECTS: [u32; 3] = [24, 59, 157];
 
 /// Inventory type to slot-filter bits (`0xa2d288`).
-const INVENTORY_TYPE_SLOTS: [u32; 29] = [
+pub(crate) const INVENTORY_TYPE_SLOTS: [u32; 29] = [
     0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 3072, 12288, 98304, 65536, 131072, 16384, 98304,
     7864320, 262144, 16, 98304, 98304, 65536, 0, 131072, 131072, 0, 131072,
 ];
