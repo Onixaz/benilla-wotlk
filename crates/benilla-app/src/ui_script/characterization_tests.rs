@@ -61,6 +61,10 @@ local VERBS = {
     { "skill2", function() return (select(4, GetSkillLineInfo(2))) end },
     { "tailor", function() local _, t = GetSpellLink(3908) return t and t:match("Htrade:%d+:(%d+:%d+)") end },
     { "alch", function() local _, t = GetSpellLink(2259) return t and t:match("Htrade:%d+:(%d+:%d+)") end },
+    { "tsline", function() local n, r, m = GetTradeSkillLine() return n .. ":" .. r .. ":" .. m end },
+    { "tsnum", function() return GetNumTradeSkills() end },
+    { "ts2", function() local n, t, a = GetTradeSkillInfo(2) return n and (n .. ":" .. t .. ":" .. a) end },
+    { "ts1", function() local n, t, a = GetTradeSkillInfo(1) return n and (n .. ":" .. t .. ":" .. (a or "")) end },
     { "rating6", function() return GetCombatRating(6) end },
     { "spdmg", function() return GetSpellBonusDamage(2) end },
     { "mainatk", function() return (UnitAttackBothHands("player")) end },
@@ -11317,5 +11321,197 @@ fn the_inspect_talent_packet_raises_inspect_talent_ready_for_the_target_alone() 
         rig.live_now().line(&["irank11"]),
         "NOW | irank11=2",
         "another guid's packet keeps the groups"
+    );
+}
+
+/// The crafting list (`0xc235a0`-`0xc23604`): a profession opener's press opens it, the rebuild's `TRADE_SKILL_UPDATE` then `TRADE_SKILL_SHOW` (`0x5de2c3`, `0x5de2e5`); the skill value watch rebuilds it in place (`0x6da5fa`) and a learned recipe whole (`0x6e7c1a`), each `TRADE_SKILL_UPDATE` at its own step, so in one frame each listener reads the rank and the list as of its packet, in either order.
+#[test]
+fn the_trade_skill_list_rebuilds_at_each_handler_step() {
+    use benilla_protocol::field::{FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_UNIT_BYTES_0};
+    const FIRST_AID: u32 = 3273;
+    const LINEN_BANDAGE: u32 = 3275;
+    const HEAVY_LINEN_BANDAGE: u32 = 3276;
+    const ANTI_VENOM: u32 = 7934;
+    let pair = |lo: u32, hi: u32| lo | hi << 16;
+    // A human paladin with First Aid (129) at 1 of 75.
+    // The products' records, cached ahead (Linen, Heavy Linen Bandage, Anti-Venom: Consumable, Bandage).
+    let bandage = |entry: u32, name: &str| {
+        let mut t = crate::items::test_template(name);
+        t.class = 0;
+        t.subclass = 7;
+        SessionEvent::ItemTemplate {
+            entry,
+            info: Some(Box::new(t)),
+        }
+    };
+    let Some(mut rig) = Rig::login_after(
+        vec![
+            bandage(1251, "Linen Bandage"),
+            bandage(2581, "Heavy Linen Bandage"),
+            bandage(6452, "Anti-Venom"),
+            book(&[FIRST_AID, LINEN_BANDAGE]),
+        ],
+        &[
+            OBJECT_TYPE_PLAYER,
+            (FIELD_UNIT_BYTES_0, 1 | 2 << 8 | 1 << 24),
+            (SKILL, 129),
+            (SKILL + 1, pair(1, 75)),
+        ],
+    ) else {
+        return;
+    };
+    const EVENTS: &[&str] = &[
+        "TRADE_SKILL_UPDATE",
+        "TRADE_SKILL_SHOW",
+        "TRADE_SKILL_CLOSE",
+    ];
+    const VERBS: &[&str] = &["tsline", "tsnum", "ts2"];
+    rig.take();
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("CastSpellByName('First Aid')")
+    })
+    .expect("a VM")
+    .expect("the cast runs");
+    rig.run(1);
+    assert_eq!(
+        pin(&rig.take(), EVENTS, VERBS),
+        vec![
+            "TRADE_SKILL_UPDATE | tsline=First Aid:1:75 tsnum=2 ts2=Linen Bandage:optimal:0",
+            // The stock window's show sets its two filters, each verb's update inside its call.
+            "TRADE_SKILL_UPDATE | tsline=First Aid:1:75 tsnum=2 ts2=Linen Bandage:optimal:0",
+            "TRADE_SKILL_UPDATE | tsline=First Aid:1:75 tsnum=2 ts2=Linen Bandage:optimal:0",
+            "TRADE_SKILL_SHOW | tsline=First Aid:1:75 tsnum=2 ts2=Linen Bandage:optimal:0",
+        ]
+    );
+    let value = rig.packets(vec![self_values(&[(SKILL + 1, pair(2, 75))])], 2);
+    assert_eq!(
+        pin(&value, EVENTS, VERBS),
+        vec!["TRADE_SKILL_UPDATE | tsline=First Aid:2:75 tsnum=2 ts2=Linen Bandage:optimal:0"]
+    );
+    // The value ahead of the learn: the watch's rebuild lists two, the learn's three.
+    let value_first = rig.packets(
+        vec![
+            self_values(&[(SKILL + 1, pair(3, 75))]),
+            SessionEvent::SpellLearned {
+                spell_id: HEAVY_LINEN_BANDAGE,
+            },
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&value_first, EVENTS, &["tsline", "tsnum"]),
+        vec![
+            "TRADE_SKILL_UPDATE | tsline=First Aid:3:75 tsnum=2",
+            "TRADE_SKILL_UPDATE | tsline=First Aid:3:75 tsnum=3",
+        ]
+    );
+    // The learn ahead of the value: the learn's rebuild reads the old rank.
+    let learn_first = rig.packets(
+        vec![
+            SessionEvent::SpellLearned {
+                spell_id: ANTI_VENOM,
+            },
+            self_values(&[(SKILL + 1, pair(4, 75))]),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&learn_first, EVENTS, &["tsline", "tsnum"]),
+        vec![
+            "TRADE_SKILL_UPDATE | tsline=First Aid:3:75 tsnum=4",
+            "TRADE_SKILL_UPDATE | tsline=First Aid:4:75 tsnum=4",
+        ]
+    );
+    // The opener again closes it (`0x5de1eb`).
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("CastSpellByName('First Aid')")
+    })
+    .expect("a VM")
+    .expect("the cast runs");
+    rig.run(1);
+    assert_eq!(
+        pin(&rig.take(), EVENTS, &["tsline"]),
+        vec![
+            "TRADE_SKILL_CLOSE | tsline=UNKNOWN:0:0",
+            // The stock window's hide calls CloseTradeSkill, which signals again (`0x5da8ef`).
+            "TRADE_SKILL_CLOSE | tsline=UNKNOWN:0:0",
+        ]
+    );
+}
+
+/// A product record in flight at the open: the rebuild files and counts the recipe (`0x5dd889`)
+/// and returns before its update (`0x5ddeb7`), so `TRADE_SKILL_SHOW` still fires (`0x5de2d1`,
+/// `0x5de2e5`); the record's callback rebuilds whole with its
+/// `TRADE_SKILL_UPDATE` (`0x5d9f94`); a learned recipe rebuilds whole (`0x6e7c1a`).
+#[test]
+fn the_trade_skill_window_shows_with_a_product_record_in_flight() {
+    use benilla_protocol::field::{FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_UNIT_BYTES_0};
+    const FIRST_AID: u32 = 3273;
+    const LINEN_BANDAGE: u32 = 3275;
+    const HEAVY_LINEN_BANDAGE: u32 = 3276;
+    let pair = |lo: u32, hi: u32| lo | hi << 16;
+    let bandage = |entry: u32, name: &str| {
+        let mut t = crate::items::test_template(name);
+        t.class = 0;
+        t.subclass = 7;
+        SessionEvent::ItemTemplate {
+            entry,
+            info: Some(Box::new(t)),
+        }
+    };
+    // A human paladin with First Aid (129) at 1 of 75; only Heavy Linen Bandage's record cached.
+    let Some(mut rig) = Rig::login_after(
+        vec![
+            bandage(2581, "Heavy Linen Bandage"),
+            book(&[FIRST_AID, LINEN_BANDAGE]),
+        ],
+        &[
+            OBJECT_TYPE_PLAYER,
+            (FIELD_UNIT_BYTES_0, 1 | 2 << 8 | 1 << 24),
+            (SKILL, 129),
+            (SKILL + 1, pair(1, 75)),
+        ],
+    ) else {
+        return;
+    };
+    const EVENTS: &[&str] = &[
+        "TRADE_SKILL_UPDATE",
+        "TRADE_SKILL_SHOW",
+        "TRADE_SKILL_CLOSE",
+    ];
+    const VERBS: &[&str] = &["tsnum", "ts1"];
+    rig.take();
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("CastSpellByName('First Aid')")
+    })
+    .expect("a VM")
+    .expect("the cast runs");
+    rig.run(1);
+    assert_eq!(
+        pin(&rig.take(), EVENTS, VERBS),
+        vec![
+            // Nested in the show: the stock window's two filter verbs run the filter pass
+            // (`0x5dcc40`) over the one filed recipe, each with its update.
+            "TRADE_SKILL_UPDATE | tsnum=1 ts1=Linen Bandage:optimal:0",
+            "TRADE_SKILL_UPDATE | tsnum=1 ts1=Linen Bandage:optimal:0",
+            "TRADE_SKILL_SHOW | tsnum=1 ts1=Linen Bandage:optimal:0",
+        ]
+    );
+    let landed = rig.packets(vec![bandage(1251, "Linen Bandage")], 2);
+    assert_eq!(
+        pin(&landed, EVENTS, VERBS),
+        vec!["TRADE_SKILL_UPDATE | tsnum=2 ts1=Bandage:header:0"]
+    );
+    let learned = rig.packets(
+        vec![SessionEvent::SpellLearned {
+            spell_id: HEAVY_LINEN_BANDAGE,
+        }],
+        2,
+    );
+    // The learn's line reaches the chat through its feed until #1416; `learned_spell`'s test pins
+    // the line ahead of the rebuild.
+    assert_eq!(
+        pin(&learned, EVENTS, &["tsnum"]),
+        vec!["TRADE_SKILL_UPDATE | tsnum=3"]
     );
 }
