@@ -10262,6 +10262,7 @@ fn say_from(guid: u64, text: &str) -> SessionEvent {
         sender_guid: guid,
         target_guid: 0,
         sender_name: None,
+        receiver_name: None,
         channel: None,
         text: text.into(),
         chat_tag: 0,

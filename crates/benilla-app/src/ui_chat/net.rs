@@ -369,10 +369,7 @@ fn chat(
             return None;
         }
     }
-    Some(super::ChatLine::Wire {
-        msg: m,
-        waited: false,
-    })
+    Some(super::ChatLine::Wire { msg: m })
 }
 
 /// The `/chatlist` roster (`SMSG_CHANNEL_LIST`). Members arrive as guids and are not resolved, so
@@ -493,6 +490,7 @@ mod tests {
             sender_guid: 0x21,
             target_guid: 0x21,
             sender_name: None,
+            receiver_name: None,
             channel: None,
             text: text.to_string(),
             chat_tag: 0,

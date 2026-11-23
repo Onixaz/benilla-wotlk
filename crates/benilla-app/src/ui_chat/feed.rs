@@ -47,9 +47,9 @@ pub(super) fn load_emote_texts(mut commands: Commands, assets: Option<Res<WorldA
 /// One chat add (`0x509dd0`) and the client-composed lines that share its path, as a handler or
 /// step hands it over; one that waits on a name is held on [`ChatLog`] until the name lands.
 pub(crate) enum ChatLine {
-    /// A decoded `SMSG_MESSAGECHAT`; the player types wait on the sender's name (`0x509f92`).
-    /// `waited`: a held `$`-macro line already waited once for its subject's name.
-    Wire { msg: ChatMessage, waited: bool },
+    /// A decoded `SMSG_MESSAGECHAT`; the player types wait on the sender's name (`0x509f92`), and
+    /// any type on a player or pet receiver's sent without its name (`0x509f98`-`0x509fd2`).
+    Wire { msg: ChatMessage },
     /// A channel notice with guids to name (`b_guid` is a kick's or ban's actor, 0 when absent).
     Notice {
         notice: u8,
@@ -139,16 +139,19 @@ impl ChatLine {
             .any(|g| g != 0 && names.answered_unknown(g))
     }
 
-    /// The player guids whose names the line waits on, 0 for none.
+    /// The player and pet guids whose names the line waits on, 0 for none.
     fn player_guids(&self) -> [u64; 2] {
         match self {
-            ChatLine::Wire { msg, .. } => [
+            ChatLine::Wire { msg } => [
                 if needs_name(msg.chat_type) {
                     msg.sender_guid
                 } else {
                     0
                 },
-                if MACRO_EXPANDED_TYPES.contains(&msg.chat_type) {
+                // A receiver sent without its name, a player or a pet (`0x509f98`-`0x509fd2`).
+                if msg.receiver_name.is_none()
+                    && (is_player_guid(msg.target_guid) || is_pet_guid(msg.target_guid))
+                {
                     msg.target_guid
                 } else {
                     0
@@ -285,7 +288,7 @@ pub(crate) trait ChatSink {
 
     /// Add a decoded wire line (`SMSG_MESSAGECHAT`).
     fn push_wire(&mut self, msg: ChatMessage) {
-        self.push_line(ChatLine::Wire { msg, waited: false });
+        self.push_line(ChatLine::Wire { msg });
     }
 
     /// Add a client-composed event: loot, quest and system lines.
@@ -1041,7 +1044,7 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
         ChatLine::Event(event) => {
             steps.push(Step::Deliver(event));
         }
-        ChatLine::Wire { msg, waited } => {
+        ChatLine::Wire { msg } => {
             let kind = kind_of_wire(msg.chat_type);
             if kind.is_none() {
                 warn!(
@@ -1059,7 +1062,16 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
                 _ => None,
             };
             if name.is_none() && needs_name(msg.chat_type) && msg.sender_guid != 0 {
-                return Built::Held(ChatLine::Wire { msg, waited });
+                return Built::Held(ChatLine::Wire { msg });
+            }
+            // A player or pet receiver sent without its name waits on it (`0x509f98`-`0x509fd2`);
+            // a creature's comes with the packet (`0x50c2df`-`0x50c30e`).
+            let target = msg.target_guid;
+            if msg.receiver_name.is_none()
+                && (is_player_guid(target) || is_pet_guid(target))
+                && names.peek(target).is_none()
+            {
+                return Built::Held(ChatLine::Wire { msg });
             }
             // A whisper in or out enters autocomplete, addon whispers aside (`0x57b7c0`).
             if matches!(
@@ -1074,28 +1086,22 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
             }
             // The base name; `stamp_channel` adds arg4's number and arg7-arg9 below.
             let channel_base = msg.channel.clone().unwrap_or_default();
-            // `$`-macros expand for the monster, boss, BG system and award types only, against
-            // the addressee. A failed expansion with a zero subject or a known name drops the
-            // line, one with an unknown name holds it for the name query (`waited`), and only a
-            // second failure shows the raw text.
+            // The `$`-macro parser over the monster, boss, battleground and award types
+            // (`0x50a120`-`0x50a157` -> `0x579590`), against the receiver: a failed token leaves the
+            // wire text whole (`0x50a17d`).
             let award = matches!(
                 msg.chat_type,
                 benilla_protocol::messages::CHAT_MSG_ACHIEVEMENT
                     | benilla_protocol::messages::CHAT_MSG_GUILD_ACHIEVEMENT
             );
             let expanded = if MACRO_EXPANDED_TYPES.contains(&msg.chat_type) || award {
-                // The addressee, else the sender: the BG system lines carry one guid only.
-                let subject_guid = if msg.target_guid != 0 {
-                    msg.target_guid
-                } else {
-                    msg.sender_guid
-                };
-                let subject = crate::npc_text::subject_for_guid(
+                let subject_guid = msg.target_guid;
+                let subject = macro_subject(
                     subject_guid,
+                    msg.receiver_name.as_deref(),
                     &guids,
                     &stores,
                     &names,
-                    &commands,
                 );
                 // `$a`: the earner's link, completed today with every criterion (`0x578f20`).
                 let link = award.then(|| {
@@ -1119,20 +1125,7 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
                         achievement: link.as_deref(),
                     },
                 );
-                if clean {
-                    Some(text)
-                } else if subject_guid == 0 || names.peek(subject_guid).is_some() {
-                    debug!(
-                        "chat: dropping unexpandable [{:#04x}] {:?} (subject {subject_guid:#x})",
-                        msg.chat_type, msg.text
-                    );
-                    return Built::Steps(steps); // the reference prints no line
-                } else if !waited {
-                    // `subject_for_guid` sent the name query: hold the raw line until it lands.
-                    return Built::Held(ChatLine::Wire { msg, waited: true });
-                } else {
-                    None // the second failure: show the raw text
-                }
+                clean.then_some(text)
             } else {
                 None
             };
@@ -1680,10 +1673,9 @@ fn ask_names(world: &mut World, line: &ChatLine) {
     ) else {
         return;
     };
-    // A player guid: no high type nibble, and not all zero (`0x509e23`-`0x509e3d`).
-    let player = |g: u64| g >> 60 == 0 && g & 0x0f7f_ffff_ffff_ffff != 0;
+    // A player guid asks the name cache, a pet guid the pet-name cache (`0x509f33`, `0x50a06f`).
     for guid in line.player_guids() {
-        if player(guid) {
+        if is_player_guid(guid) || is_pet_guid(guid) {
             let _ = names.resolve(guid, commands);
         }
     }
@@ -1823,6 +1815,55 @@ fn restore(world: &mut World, kept: Vec<(ChatLine, bool)>) {
 /// lands.
 fn award_date(time: &crate::net::ServerTime) -> (u32, u32, u32) {
     time.0.as_ref().map_or((0, 0, 0), |t| t.date())
+}
+
+/// The add's player test on a guid: no high type nibble, and not all zero (`0x509f5d`-`0x509f78`).
+fn is_player_guid(guid: u64) -> bool {
+    guid >> 60 == 0 && guid & 0xf07f_ffff_ffff_ffff != 0
+}
+
+/// The add's pet test on a guid: the high word's type bits are a pet's (`0x509f7a`-`0x509f86`).
+fn is_pet_guid(guid: u64) -> bool {
+    (guid >> 32) as u32 & 0xf0f0_0000 == 0xf040_0000
+}
+
+/// The `$`-macro parser's subject (`0x579590`): the unit in view, else the player name record;
+/// its name is the receiver's sent name first, then the unit's, then the record's. `None` when
+/// there is neither unit, record nor name, which fails every person token.
+fn macro_subject(
+    guid: u64,
+    receiver_name: Option<&str>,
+    index: &crate::net::GuidIndex,
+    stores: &Query<&ObjectStore>,
+    names: &NameCache,
+) -> Option<crate::npc_text::Subject> {
+    let store = index.0.get(&guid).and_then(|e| stores.get(*e).ok());
+    let record = is_player_guid(guid)
+        .then(|| names.peek(guid))
+        .flatten()
+        .filter(|_| store.is_none());
+    if store.is_none() && record.is_none() && receiver_name.is_none() {
+        return None;
+    }
+    let name = receiver_name
+        .or_else(|| store.and_then(|s| names.peek_unit(guid, Some(s))))
+        .or(record)
+        .unwrap_or_default()
+        .to_string();
+    let (race, class, gender) = match store {
+        Some(s) => (
+            s.0.unit_race().unwrap_or(0),
+            s.0.unit_class().unwrap_or(0),
+            s.0.unit_gender().unwrap_or(0),
+        ),
+        None => names.player_traits(guid).unwrap_or((0, 0, 0)),
+    };
+    Some(crate::npc_text::Subject {
+        name,
+        race,
+        class,
+        gender,
+    })
 }
 
 /// Whether a wire chat type carries a player guid to name (not a monster's inline name).

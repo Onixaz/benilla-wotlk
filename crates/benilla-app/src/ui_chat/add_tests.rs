@@ -23,6 +23,7 @@ fn world() -> (
         local f = CreateFrame("Frame")
         f:RegisterEvent("CHAT_MSG_ADDON")
         f:RegisterEvent("CHAT_MSG_SYSTEM")
+        f:RegisterEvent("CHAT_MSG_MONSTER_SAY")
         f:SetScript("OnEvent", function(_, e, a1, a2, a3, a4)
             Seen[#Seen + 1] = e .. ":" .. tostring(a1) .. ":" .. tostring(a4)
         end)
@@ -256,4 +257,60 @@ fn the_log_line_is_the_add_s_own_composition() {
         super::frames::log_line(&joined, ChatEventKind::ChannelNotice, Some(7), &strings).unwrap(),
         "Joined Channel: [1. General]"
     );
+}
+
+/// A monster's line to `target`, its receiver's name as the packet carries it.
+fn monster_say(target: u64, receiver: Option<&str>, text: &str) -> ChatLine {
+    ChatLine::Wire {
+        msg: benilla_protocol::messages::ChatMessage {
+            chat_type: benilla_protocol::messages::CHAT_MSG_MONSTER_SAY,
+            language: 0,
+            sender_guid: 0xF130_0000_0001_0001,
+            target_guid: target,
+            sender_name: Some("Hogger".into()),
+            receiver_name: receiver.map(Into::into),
+            channel: None,
+            text: text.into(),
+            chat_tag: 0,
+            achievement: 0,
+            wire_type: 0x0C,
+            sender_word: 0,
+        },
+    }
+}
+
+/// A creature receiver's name comes with the packet (`0x50c2df`-`0x50c30e`) and the parser takes it
+/// first (`0x579590`): the line is added in the call, nothing asked or held. Only a player or pet
+/// receiver sent without its name holds the line (`0x509f98`-`0x509fd2`), asked once with the
+/// answer's callback (`0x509f33`), and a line whose tokens fail shows the wire text (`0x50a17d`).
+#[test]
+fn a_monster_line_holds_only_on_an_unnamed_player_or_pet_receiver() {
+    let (mut world, sent) = world();
+    enter_world(&mut world);
+    add(
+        &mut world,
+        monster_say(0xF130_0000_0002_0002, Some("Kobold"), "$n, die!"),
+    );
+    assert_eq!(seen(&world), ["CHAT_MSG_MONSTER_SAY:Kobold, die!:"]);
+    assert!(
+        sent.try_recv().is_err(),
+        "a creature receiver is never asked"
+    );
+    assert_eq!(world.resource::<super::ChatLog>().pending_len(), 0);
+
+    add(&mut world, monster_say(ANN, None, "$n, die!"));
+    assert_eq!(seen(&world).len(), 1, "held on the player's name");
+    assert!(matches!(
+        sent.try_recv(),
+        Ok(crate::net::ClientCommand::NameQuery { guid: ANN })
+    ));
+    // No receiver at all: every person token fails, and the wire text shows whole.
+    add(&mut world, monster_say(0, None, "$n, die!"));
+    assert_eq!(seen(&world)[1], "CHAT_MSG_MONSTER_SAY:$n, die!:");
+    world
+        .resource_mut::<crate::names::NameCache>()
+        .insert_player(ANN, "Ann".into(), None);
+    name_landed(&mut world);
+    assert_eq!(seen(&world)[2], "CHAT_MSG_MONSTER_SAY:Ann, die!:");
+    assert_eq!(world.resource::<super::ChatLog>().pending_len(), 0);
 }

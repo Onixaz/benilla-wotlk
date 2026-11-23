@@ -446,6 +446,7 @@ fn server_first_line(
         sender_guid: a.guid,
         target_guid: a.guid,
         sender_name: Some(a.name.clone()),
+        receiver_name: None,
         channel: None,
         text,
         chat_tag: 0,
