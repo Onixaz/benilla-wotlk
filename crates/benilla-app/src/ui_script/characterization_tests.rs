@@ -8902,6 +8902,70 @@ fn a_pre_player_faction_store_reads_without_its_columns_until_the_world_entry() 
     );
 }
 
+/// `GetFactionInfoByID` on a `Faction.dbc` record without a reputation slot answers through the
+/// helper's record path (`0x5d0dd8`): its name and description, standingID 4 with the Neutral
+/// bounds and value 0 (`0x5d062d`, `0x5d05dd`), no war (`0x5d04dd`), war toggleable
+/// (`0x5d0e7d`, `0x5d052d`), no header, and watched exactly while the field holds -1, the
+/// record's slot read as `0xFFFFFFFF` (`0x5d0c9d`, `0x5d0cc5`).
+#[test]
+fn a_faction_without_a_slot_answers_by_id_neutral_and_watched_with_the_field_at_none() {
+    use benilla_protocol::field::{FIELD_PLAYER_WATCHED_FACTION_INDEX, FIELD_UNIT_BYTES_0};
+    let Some(mut rig) = Rig::login(&[
+        OBJECT_TYPE_PLAYER,
+        (FIELD_UNIT_BYTES_0, 1 | 1 << 8),
+        (FIELD_PLAYER_WATCHED_FACTION_INDEX, u32::MAX),
+    ]) else {
+        return;
+    };
+    let (id, name, stormwind) = {
+        let data = benilla_formats::wow_data().expect("install");
+        let mut chain = benilla_formats::open_chain(&data).unwrap();
+        let cat = benilla_formats::load_faction_catalog(&mut chain).unwrap();
+        let id = (1..4000u32)
+            .find(|&id| {
+                cat.faction_row(id).is_some_and(|f| f.rep_index < 0)
+                    && cat.faction_name(id).is_some_and(|n| !n.is_empty())
+            })
+            .expect("a named record without a slot");
+        (
+            id,
+            cat.faction_name(id).unwrap().to_string(),
+            cat.reputation_faction(72).unwrap().rep_index as u32,
+        )
+    };
+    let mut standings = vec![(0u8, 0i32); 128];
+    standings[stormwind as usize] = (benilla_formats::faction_flags::VISIBLE, 5100);
+    rig.packets(vec![SessionEvent::Reputations { standings }], 2);
+    let chunk = format!(
+        "local t = {{GetFactionInfoByID({id})}} for i = 1, 13 do t[i] = tostring(t[i]) end          return table.concat(t, '|')"
+    );
+    let read = |rig: &mut Rig| {
+        super::live::with_live_world(rig.app.world_mut(), |s| s.eval::<String>(&chunk))
+            .expect("a VM")
+            .unwrap()
+    };
+    let desc = |line: &str| line.split('|').nth(1).unwrap_or_default().to_string();
+    let none = read(&mut rig);
+    let d = desc(&none);
+    assert_eq!(
+        none,
+        format!("{name}|{d}|4|0|3000|0|nil|1|nil|nil|nil|1|nil"),
+        "watching nothing"
+    );
+    rig.packets(
+        vec![self_values(&[(
+            FIELD_PLAYER_WATCHED_FACTION_INDEX,
+            stormwind,
+        )])],
+        2,
+    );
+    assert_eq!(
+        read(&mut rig),
+        format!("{name}|{d}|4|0|3000|0|nil|1|nil|nil|nil|nil|nil"),
+        "watching Stormwind"
+    );
+}
+
 /// The faction list outlives the UI shutdown's `PLAYER_LEAVING_WORLD` (`0x528edc`) and
 /// `PLAYER_LOGOUT` (`0x52902a`): the game shutdown runs the UI's (`0x529163` -> `0x528f00`) before
 /// the list's clear (`0x5291b3` -> `0x5d14f0`), so an addon saving reputation at logout reads it.

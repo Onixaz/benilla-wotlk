@@ -172,7 +172,7 @@ impl AppFactions<'_> {
     }
 
     /// A record read against its slot's stored flags, standing and base (`0x5d05b0`: `0x5d05ea`).
-    fn record(&self, faction_id: u32, info: &FactionInfo) -> Option<FactionEntry> {
+    fn read_record(&self, faction_id: u32, info: &FactionInfo) -> Option<FactionEntry> {
         let slot = usize::try_from(info.rep_index).ok();
         let (flags, wire) = slot
             .and_then(|i| self.store.0.get(i))
@@ -188,6 +188,34 @@ impl AppFactions<'_> {
             base,
             self.race_class(),
         )
+    }
+
+    /// A record without a reputation slot as the faction-info helper reads it (`0x5d0da0`): its
+    /// name and description, Neutral at 0 (`0x5d062d`, `0x5d05dd`), never at war or peace-forced
+    /// (`0x5d04dd`, `0x5d052d`), and slot `0xFFFFFFFF` for the watched test (`0x5d0c9d`).
+    fn slotless(&self, faction_id: u32, info: &FactionInfo) -> Option<FactionEntry> {
+        let catalog = self.catalog?;
+        Some(FactionEntry {
+            faction_id,
+            rep_list_id: u32::MAX,
+            parent_id: info.team,
+            name: catalog.faction_name_or_empty(faction_id)?.to_string(),
+            description: catalog
+                .faction_description(faction_id)
+                .unwrap_or_default()
+                .to_string(),
+            standing: 0,
+            standing_id: 4,
+            bar_min: RANK_BOUNDS[3],
+            bar_max: RANK_BOUNDS[4],
+            fits_player: false,
+            visible: false,
+            is_header: false,
+            at_war: false,
+            peace_forced: false,
+            inactive: false,
+            has_rep: false,
+        })
     }
 
     /// The faction the store names at a slot (`0x5d2155`), with its name and the stored base its
@@ -206,13 +234,23 @@ impl AppFactions<'_> {
 impl FactionTable for AppFactions<'_> {
     fn faction(&self, faction_id: i64) -> Option<FactionEntry> {
         let id = u32::try_from(faction_id).ok()?;
-        self.record(id, self.catalog?.reputation_faction(id)?)
+        self.read_record(id, self.catalog?.reputation_faction(id)?)
+    }
+
+    fn record(&self, faction_id: i64) -> Option<FactionEntry> {
+        let id = u32::try_from(faction_id).ok()?;
+        let info = self.catalog?.faction_row(id)?;
+        if info.rep_index >= 0 {
+            self.read_record(id, info)
+        } else {
+            self.slotless(id, info)
+        }
     }
 
     /// The store's faction id at the slot (`0x5d0913`, `0x5d1285`), read as [`Self::faction`].
     fn slot_faction(&self, rep_list_id: u32) -> Option<FactionEntry> {
         let id = self.slots.faction(usize::try_from(rep_list_id).ok()?);
-        self.record(id, self.catalog?.reputation_faction(id)?)
+        self.read_record(id, self.catalog?.reputation_faction(id)?)
     }
 
     fn met_slots(&self) -> Vec<u32> {

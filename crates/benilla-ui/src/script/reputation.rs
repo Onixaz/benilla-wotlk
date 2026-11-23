@@ -82,6 +82,11 @@ pub enum FactionFlag {
 pub trait FactionTable {
     /// The record for a `Faction.dbc` id with a reputation slot, read with the slot as it stands.
     fn faction(&self, faction_id: i64) -> Option<FactionEntry>;
+    /// The faction-info helper's lookup (`0x5d0da0`): any `Faction.dbc` record, one without a slot
+    /// read as slot `0xFFFFFFFF`, Neutral at 0 (`0x5d062d`, `0x5d05dd`).
+    fn record(&self, faction_id: i64) -> Option<FactionEntry> {
+        self.faction(faction_id)
+    }
     /// The faction a reputation slot names (the store's faction id), as [`Self::faction`] reads it.
     fn slot_faction(&self, rep_list_id: u32) -> Option<FactionEntry>;
     /// The world entry's walk (`0x5d2bc0`): from the table's end, the slot of every faction whose
@@ -559,7 +564,7 @@ fn faction_info(
     t: &dyn FactionTable,
     faction: i64,
 ) -> mlua::Result<MultiValue> {
-    let Some(e) = t.faction(faction) else {
+    let Some(e) = t.record(faction) else {
         let synthetic =
             (faction == OTHER || faction == INACTIVE) && list.header_slot(faction).is_some();
         let mut out = if synthetic {
@@ -589,10 +594,9 @@ fn faction_info(
         .find(|r| r.faction_id == faction)
         .and_then(|r| list.headers.get(r.header))
         .is_some_and(|h| h.parent != 0);
-    // The watched test reads the player's field at the call (`0x5d0c70`).
-    let watched = t
-        .watched()
-        .is_some_and(|w| i64::from(w) == i64::from(e.rep_list_id));
+    // The watched test compares the record's slot dword with the player's field at the call
+    // (`0x5d0cc5`): a slotless record's -1 matches a player watching nothing.
+    let watched = t.watched().is_some_and(|w| w as u32 == e.rep_list_id);
     Ok(MultiValue::from_vec(vec![
         Value::String(lua.create_string(&e.name)?),
         Value::String(lua.create_string(&e.description)?),
