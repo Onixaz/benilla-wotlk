@@ -57,6 +57,11 @@ local VERBS = {
     { "known1", function() return IsTitleKnown(1) end },
     { "known70", function() return IsTitleKnown(70) end },
     { "known40", function() return IsTitleKnown(40) end },
+    { "skills", function() return GetNumSkillLines() end },
+    { "skill2", function() return (select(4, GetSkillLineInfo(2))) end },
+    { "rating6", function() return GetCombatRating(6) end },
+    { "spdmg", function() return GetSpellBonusDamage(2) end },
+    { "skillpts", function() return GetAdjustedSkillPoints() end },
     { "titlename", function() return GetTitleName(1) end },
     { "rep5", function() return (GetFactionInfo(5)) end },
     { "control", function() return HasFullControl() end },
@@ -10017,4 +10022,133 @@ fn set_current_title_sends_inside_the_call() {
         "both sent before the chunk returned"
     );
     assert_eq!(cur, 0, "the field waits for the server");
+}
+
+/// The character sheet's watches (`0x6e5180`): a skill value fires the three stat events, rebuilds the list and fires `SKILL_LINES_CHANGED` (`0x6da509`, `0x6da531`); a rating fires `COMBAT_RATING_UPDATE` then the rebuild (`0x6cddf0`); the damage mods `PLAYER_DAMAGE_DONE_MODS` (`0x6cddd0`); each verb reads the fields at the call, so a packet behind in the same frame is not yet seen.
+#[test]
+fn sheet_watches_fire_in_the_values_handler_with_the_fields_read_at_the_call() {
+    use benilla_protocol::field::{
+        FIELD_PLAYER_COMBAT_RATING_1, FIELD_PLAYER_MOD_DAMAGE_DONE_POS,
+        FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_UNIT_BYTES_0,
+    };
+    let pair = |lo: u32, hi: u32| lo | hi << 16;
+    // A human warrior with Swords (43) at 100 of 400.
+    let Some(mut rig) = Rig::login(&[
+        OBJECT_TYPE_PLAYER,
+        (FIELD_UNIT_BYTES_0, 1 | 1 << 8 | 1 << 24),
+        (SKILL, 43),
+        (SKILL + 1, pair(100, 400)),
+    ]) else {
+        return;
+    };
+    const EVENTS: &[&str] = &[
+        "UNIT_ATTACK",
+        "UNIT_DEFENSE",
+        "UNIT_RANGED_ATTACK_POWER",
+        "SKILL_LINES_CHANGED",
+        "COMBAT_RATING_UPDATE",
+        "PLAYER_DAMAGE_DONE_MODS",
+    ];
+    const VERBS: &[&str] = &["skills", "skill2", "rating6", "spdmg"];
+    assert_eq!(
+        rig.live_now().line(VERBS),
+        "NOW | skills=2 skill2=100 rating6=0 spdmg=0",
+        "the world entry's rebuild listed the line (`0x528226`)"
+    );
+    let value = rig.packets(vec![self_values(&[(SKILL + 1, pair(101, 400))])], 2);
+    assert_eq!(
+        pin(&value, EVENTS, VERBS),
+        vec![
+            "UNIT_ATTACK player | skills=2 skill2=101 rating6=0 spdmg=0",
+            "UNIT_DEFENSE player | skills=2 skill2=101 rating6=0 spdmg=0",
+            "UNIT_RANGED_ATTACK_POWER player | skills=2 skill2=101 rating6=0 spdmg=0",
+            "SKILL_LINES_CHANGED | skills=2 skill2=101 rating6=0 spdmg=0",
+        ]
+    );
+    // The max half alone: the rebuild, no stat event (`0x6cddb0`).
+    let max = rig.packets(vec![self_values(&[(SKILL + 1, pair(101, 405))])], 2);
+    assert_eq!(
+        pin(&max, EVENTS, &["skill2"]),
+        vec!["SKILL_LINES_CHANGED | skill2=101"]
+    );
+    // The temporary bonus: the three events, then the rebuild (`0x6d1bc0`).
+    let temp = rig.packets(vec![self_values(&[(SKILL + 2, pair(5, 0))])], 2);
+    assert_eq!(
+        pin(&temp, EVENTS, &[]),
+        vec![
+            "UNIT_ATTACK player",
+            "UNIT_DEFENSE player",
+            "UNIT_RANGED_ATTACK_POWER player",
+            "SKILL_LINES_CHANGED",
+        ]
+    );
+    // A rating ahead of a skill value in one frame reads the old value; behind it, the new.
+    let rating_first = rig.packets(
+        vec![
+            self_values(&[(FIELD_PLAYER_COMBAT_RATING_1 + 5, 20)]),
+            self_values(&[(SKILL + 1, pair(102, 405))]),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&rating_first, &["COMBAT_RATING_UPDATE"], VERBS),
+        vec!["COMBAT_RATING_UPDATE | skills=2 skill2=101 rating6=20 spdmg=0"]
+    );
+    let value_first = rig.packets(
+        vec![
+            self_values(&[(SKILL + 1, pair(103, 405))]),
+            self_values(&[(FIELD_PLAYER_COMBAT_RATING_1 + 5, 30)]),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&value_first, &["COMBAT_RATING_UPDATE"], VERBS),
+        vec!["COMBAT_RATING_UPDATE | skills=2 skill2=103 rating6=30 spdmg=0"]
+    );
+    // Two moved words of one range fire once; two ranges once each.
+    let mods = rig.packets(
+        vec![self_values(&[
+            (FIELD_PLAYER_MOD_DAMAGE_DONE_POS + 1, 50),
+            (FIELD_PLAYER_MOD_DAMAGE_DONE_POS + 2, 50),
+            (FIELD_PLAYER_MOD_DAMAGE_DONE_POS + 7, 0xffff_fff6),
+        ])],
+        2,
+    );
+    assert_eq!(
+        pin(&mods, EVENTS, &["spdmg"]),
+        vec![
+            "PLAYER_DAMAGE_DONE_MODS player | spdmg=50",
+            "PLAYER_DAMAGE_DONE_MODS player | spdmg=50",
+        ]
+    );
+}
+
+/// `AbandonSkill` sends `CMSG_UNLEARN_SKILL` inside the call (`0x5ce368`); the line stays until the skill fields move.
+#[test]
+fn abandon_skill_sends_inside_the_call() {
+    use benilla_protocol::field::{FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_UNIT_BYTES_0};
+    let Some(mut rig) = Rig::login(&[
+        OBJECT_TYPE_PLAYER,
+        (FIELD_UNIT_BYTES_0, 1 | 1 << 8 | 1 << 24),
+        (SKILL, 43),
+        (SKILL + 1, 100 | 400 << 16),
+    ]) else {
+        return;
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let lines = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval::<i64>("AbandonSkill(2) AbandonSkill(1) return GetNumSkillLines()")
+    })
+    .expect("a VM")
+    .unwrap();
+    let sent: Vec<u32> = rx
+        .try_iter()
+        .filter_map(|c| match c {
+            crate::net::ClientCommand::UnlearnSkill { skill_id } => Some(skill_id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sent, vec![43, 0], "both sent before the chunk returned");
+    assert_eq!(lines, 2, "the line waits for the server");
 }

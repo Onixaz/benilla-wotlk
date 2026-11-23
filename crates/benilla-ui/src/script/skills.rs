@@ -1,11 +1,12 @@
-//! The skills-pane bindings behind the stock `SkillFrame`. The app pushes a flat snapshot of known
+//! The skills-pane bindings behind the stock `SkillFrame`. The app rebuilds the list of known
 //! skill lines, resolved from `SkillLine.dbc` and `SkillLineCategory.dbc`, and the engine groups,
 //! sorts and folds it as the client's list build does: one header per category, by `category_order`
 //! (category id breaks a tie), and within a category the untrained lines (rank 0) after the trained
 //! ones, each by name. A push re-expands every group. As in `0x5cd5e0`, the
 //! visible rows come first and the folded groups' entries after them, which every index but
 //! `GetNumSkillLines` reaches; the selection is held by skill id. Which lines reach the engine at
-//! all is the app's half (`feed_skills`).
+//! all is the app's half, rebuilt at world entry and at each skill or rating watch (`0x5cd9b0`); the
+//! ranks and bonuses each row shows are read off the player at the call (`0x5cdfe7`).
 //!
 //! `numTempPoints` is what `AddSkillUp` has pending on the line, which a rebuild drops. `stepCost` is
 //! the tier the line's flags open and `rankCost` the next rank's price; the shipped data gives
@@ -104,17 +105,45 @@ impl super::UiScript {
         model.skill_ups.clear();
         model.skill_up_points = 0;
     }
+}
 
-    /// Drain the skill buys since the last call.
-    pub fn take_skill_requests(&mut self) -> Vec<SkillRequest> {
-        drain_field!(self, skill_requests)
-    }
+/// One skill slot as `GetSkillLineInfo` reads it off the player at the call (`0x5cdfe7`-`0x5ce00a`): the ranks, the two bonuses, and what the step decides.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SkillLive {
+    pub value: u32,
+    pub max: u32,
+    pub temp_bonus: i32,
+    pub perm_bonus: i32,
+    /// A nonzero step and the unlearnable flag (`0x5ce147`).
+    pub abandonable: bool,
+    /// The tier the flags and the step open, else 0 (`0x5ce16d`).
+    pub tier_cost: u32,
+}
 
-    /// Drain the skill ids `AbandonSkill` queued, one `CMSG_UNLEARN_SKILL` each; the removal comes
-    /// back as a skill-field update.
-    pub fn take_skill_abandons(&mut self) -> Vec<u32> {
-        drain_field!(self, skill_abandons)
+/// `e` with the player's slot read at the call (`0x5cdfe7`): a line the player no longer holds reads 0; with no view lent, as rebuilt.
+fn live_entry(e: &SkillEntry) -> std::borrow::Cow<'_, SkillEntry> {
+    match super::read_live(|l| l.skill_slot(e.skill_id)).flatten() {
+        None => std::borrow::Cow::Borrowed(e),
+        Some(slot) => {
+            let slot = slot.unwrap_or_default();
+            std::borrow::Cow::Owned(SkillEntry {
+                value: slot.value,
+                max: slot.max,
+                temp_bonus: slot.temp_bonus,
+                perm_bonus: slot.perm_bonus,
+                abandonable: slot.abandonable,
+                tier_cost: slot.tier_cost,
+                ..e.clone()
+            })
+        }
     }
+}
+
+/// `PLAYER_CHARACTER_POINTS2` read at the call (`0x5ce815`); with no view lent, as rebuilt.
+fn skill_points(model: &Model) -> u32 {
+    super::read_live(|l| l.skill_points())
+        .flatten()
+        .unwrap_or(model.skills.points)
 }
 
 /// One visible row: a header (its group index) or an entry (its position in
@@ -225,12 +254,14 @@ fn add_skill_up(model: &mut Model, index: usize) -> bool {
     let Some(e) = entry_at(model, index).filter(|_| model.player_guid() != 0) else {
         return false;
     };
+    // The ranks and the points are read at the call (`0x5cdca4`, `0x5cdce5`).
+    let e = live_entry(e).into_owned();
     let (id, ups) = (e.skill_id, skill_ups(model, e.skill_id));
     if e.value + ups >= e.max {
         return false;
     }
-    let cost = i64::from(rank_cost(e, i64::from(e.value + ups + 1)));
-    if cost + i64::from(model.skill_up_points) > i64::from(model.skills.points) {
+    let cost = i64::from(rank_cost(&e, i64::from(e.value + ups + 1)));
+    if cost + i64::from(model.skill_up_points) > i64::from(skill_points(model)) {
         return false;
     }
     model.skill_ups.insert(id, ups + 1);
@@ -243,11 +274,12 @@ fn remove_skill_up(model: &mut Model, index: usize) -> bool {
     let Some(e) = entry_at(model, index).filter(|_| model.player_guid() != 0) else {
         return false;
     };
+    let e = live_entry(e).into_owned();
     let (id, ups) = (e.skill_id, skill_ups(model, e.skill_id));
     if ups == 0 {
         return false;
     }
-    let cost = rank_cost(e, i64::from(e.value + ups));
+    let cost = rank_cost(&e, i64::from(e.value + ups));
     model.skill_ups.insert(id, ups - 1);
     model.skill_up_points -= cost as i32;
     true
@@ -380,10 +412,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     ]))
                 }
                 Row::Entry(ei) => {
-                    let e = &model.skills.entries[ei];
-                    let rating_points = model
-                        .player_combat_stats
-                        .as_ref()
+                    // The slot and the hand ratings are read off the player at the call (`0x5cdfe7`, `0x5ce037`).
+                    let e = live_entry(&model.skills.entries[ei]);
+                    let e = &*e;
+                    let rating_points = super::char_stats::player_combat_stats(&model)
                         .map_or(0, |s| s.skill_line_rating_points(e.skill_id));
                     let (rank, max) = displayed_ranks(e, i64::from(rating_points));
                     let ups = skill_ups(&model, e.skill_id);
@@ -471,7 +503,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(if model.player_guid() == 0 {
                 0
             } else {
-                i64::from(model.skills.points) - i64::from(model.skill_up_points)
+                i64::from(skill_points(&model)) - i64::from(model.skill_up_points)
             })
         })?,
     )?;
@@ -504,61 +536,78 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         )?;
     }
 
-    // AcceptSkillUps() (`0x5ce5d0`): with a cost pending, one packet for the visible lines; every
-    // line's points clear, with no event.
+    // AcceptSkillUps() (`0x5ce5d0`): with a cost pending, one packet for the visible lines, sent in
+    // the call (`0x5ce686`); every line's points clear, with no event.
     g.set(
         "AcceptSkillUps",
         lua.create_function(|lua, ()| {
-            let mut model = crate::script::model_mut_of(lua);
-            if model.skill_up_points == 0 {
-                return Ok(());
-            }
-            let lines = rows(&model)
-                .into_iter()
-                .filter_map(|row| match row {
-                    Row::Entry(ei) => model.skills.entries.get(ei),
-                    Row::Header(_) => None,
-                })
-                .map(|e| (e.skill_id, skill_ups(&model, e.skill_id)))
-                .filter(|&(_, ups)| ups != 0)
-                .collect();
-            model.skill_requests.push(SkillRequest::BuyRanks(lines));
-            model.skill_ups.clear();
-            model.skill_up_points = 0;
+            let lines = {
+                let mut model = crate::script::model_mut_of(lua);
+                if model.skill_up_points == 0 {
+                    return Ok(());
+                }
+                let lines = rows(&model)
+                    .into_iter()
+                    .filter_map(|row| match row {
+                        Row::Entry(ei) => model.skills.entries.get(ei),
+                        Row::Header(_) => None,
+                    })
+                    .map(|e| (e.skill_id, skill_ups(&model, e.skill_id)))
+                    .filter(|&(_, ups)| ups != 0)
+                    .collect();
+                model.skill_ups.clear();
+                model.skill_up_points = 0;
+                lines
+            };
+            super::write_live(|l| l.send_skill_request(SkillRequest::BuyRanks(lines)));
             Ok(())
         })?,
     )?;
 
-    // BuySkillTier(index) (`0x5ce6f0`): the line's open tier, when the points cover it.
+    // BuySkillTier(index) (`0x5ce6f0`): the line's open tier off its step at the call (`0x5ce7ea`), when the points cover it (`0x5ce815`), sent in the call (`0x5ce849`).
     g.set(
         "BuySkillTier",
         lua.create_function(|lua, index: Value| {
             let index = binding_abi::number_arg(lua, index, "Usage: BuySkillTier(index)")?;
-            let mut model = crate::script::model_mut_of(lua);
-            let line = usize::try_from(index)
-                .ok()
-                .and_then(|i| entry_at(&model, i))
-                .filter(|e| e.tier_cost != 0 && e.tier_cost <= model.skills.points)
-                .map(|e| e.skill_id);
+            let line = {
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                let points = skill_points(&model);
+                usize::try_from(index)
+                    .ok()
+                    .and_then(|i| entry_at(&model, i))
+                    .map(live_entry)
+                    .filter(|e| e.tier_cost != 0 && e.tier_cost <= points)
+                    .map(|e| e.skill_id)
+            };
             if let Some(line) = line {
-                model.skill_requests.push(SkillRequest::BuyTier(line));
+                super::write_live(|l| l.send_skill_request(SkillRequest::BuyTier(line)));
             }
             Ok(())
         })?,
     )?;
 
-    // AbandonSkill(index): queue the entry's skill id for `CMSG_UNLEARN_SKILL`, changing nothing
-    // locally: the reference waits for the skill-field update (vmangos `SetSkill(id,0,0)`).
+    // AbandonSkill(index) (`0x5ce2c0`): `CMSG_UNLEARN_SKILL` with the row's line, a header's 0 included, sent in the call (`0x5ce368`); nothing changes locally until the skill fields move.
     g.set(
         "AbandonSkill",
         lua.create_function(|lua, index: Value| {
             let index = binding_abi::number_arg(lua, index, "Usage: AbandonSkill(index)")?;
-            let mut model = crate::script::model_mut_of(lua);
-            let line = usize::try_from(index)
-                .ok()
-                .and_then(|i| entry_at(&model, i));
-            if let Some(id) = line.map(|e| e.skill_id) {
-                model.skill_abandons.push(id);
+            let line = {
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                usize::try_from(index)
+                    .ok()
+                    .and_then(|i| i.checked_sub(1))
+                    .and_then(|n| rows(&model).get(n).copied())
+                    .map(|row| match row {
+                        Row::Entry(ei) => model.skills.entries[ei].skill_id,
+                        Row::Header(_) => 0,
+                    })
+            };
+            if let Some(id) = line {
+                super::write_live(|l| l.send_unlearn_skill(id));
             }
             Ok(())
         })?,
@@ -638,23 +687,66 @@ mod skill_up_tests {
     #[test]
     fn accept_sends_the_pending_points_once() {
         let mut s = priced(7, 0);
-        s.run("AddSkillUp(2) AcceptSkillUps() AcceptSkillUps()")
-            .unwrap();
-        assert_eq!(
-            s.take_skill_requests(),
-            vec![SkillRequest::BuyRanks(vec![(40, 1)])]
-        );
+        let mut v = crate::script::live::TestView::default();
+        s.with_live(&mut v, |s| {
+            s.run("AddSkillUp(2) AcceptSkillUps()").unwrap();
+            // Sent inside the call (`0x5ce686`).
+            assert_eq!(
+                crate::script::live::test_view(|v| v.skill_sends.clone()),
+                vec![SkillRequest::BuyRanks(vec![(40, 1)])]
+            );
+            s.run("AcceptSkillUps()").unwrap();
+        });
+        assert_eq!(v.skill_sends, vec![SkillRequest::BuyRanks(vec![(40, 1)])]);
     }
 
-    /// `0x5ce6f0`: a tier needs a cost the points cover.
+    /// `0x5ce6f0`: a tier needs a cost the points cover, and goes out in the call (`0x5ce849`).
     #[test]
     fn a_tier_needs_the_points() {
         let mut s = priced(4, 5);
-        s.run("BuySkillTier(2)").unwrap();
-        assert!(s.take_skill_requests().is_empty());
+        let mut v = crate::script::live::TestView::default();
+        s.with_live(&mut v, |s| s.run("BuySkillTier(2)").unwrap());
+        assert!(v.skill_sends.is_empty());
         let mut s = priced(5, 5);
-        s.run("BuySkillTier(2)").unwrap();
-        assert_eq!(s.take_skill_requests(), vec![SkillRequest::BuyTier(40)]);
+        s.with_live(&mut v, |s| s.run("BuySkillTier(2)").unwrap());
+        assert_eq!(v.skill_sends, vec![SkillRequest::BuyTier(40)]);
+    }
+
+    /// `0x5cdfe7`: the ranks, bonuses, step and points are read off the player at the call, not the rebuilt rows.
+    #[test]
+    fn the_line_info_reads_the_slot_at_the_call() {
+        let mut s = priced(7, 0);
+        let mut v = crate::script::live::TestView {
+            skills: Some(std::collections::HashMap::from([(
+                40,
+                SkillLive {
+                    value: 2,
+                    max: 3,
+                    temp_bonus: 4,
+                    perm_bonus: 0,
+                    abandonable: true,
+                    tier_cost: 9,
+                },
+            )])),
+            ..Default::default()
+        };
+        let (rank, modifier, max, abandon, step) = s.with_live(&mut v, |s| {
+            s.eval::<(i64, i64, i64, Option<i64>, Option<i64>)>(
+                "local _,_,_,r,_,m,x,a,st = GetSkillLineInfo(2) return r, m, x, a, st",
+            )
+            .unwrap()
+        });
+        assert_eq!(
+            (rank, modifier, max, abandon, step),
+            (2, 4, 3, Some(1), Some(9))
+        );
+        // A line the player no longer holds reads 0 until the next rebuild drops it.
+        v.skills = Some(Default::default());
+        let rank = s.with_live(&mut v, |s| {
+            s.eval::<i64>("return (select(4, GetSkillLineInfo(2)))")
+                .unwrap()
+        });
+        assert_eq!(rank, 0);
     }
 }
 
@@ -756,15 +848,20 @@ mod tests {
         assert_eq!(ab(&mut s, 5), Some(1), "First Aid is abandonable");
         assert_eq!(ab(&mut s, 1), None, "a header never is");
 
-        // Queued by skill id; a header or an out-of-range index does nothing; the list stays.
-        s.run("AbandonSkill(5)").unwrap();
-        s.run("AbandonSkill(1)").unwrap();
-        s.run("AbandonSkill(99)").unwrap();
-        assert_eq!(s.take_skill_abandons(), vec![129]);
-        assert!(
-            s.take_skill_abandons().is_empty(),
-            "drain empties the queue"
-        );
+        // Sent by skill id in the call (`0x5ce368`); a header's row sends its line 0 (`0x5ce356`),
+        // an out-of-range index nothing (`0x5ce31d`); the list stays.
+        let mut v = crate::script::live::TestView::default();
+        s.with_live(&mut v, |s| {
+            s.run("AbandonSkill(5)").unwrap();
+            assert_eq!(
+                crate::script::live::test_view(|v| v.unlearn_sends.clone()),
+                vec![129],
+                "the send leaves inside the call"
+            );
+            s.run("AbandonSkill(1)").unwrap();
+            s.run("AbandonSkill(99)").unwrap();
+        });
+        assert_eq!(v.unlearn_sends, vec![129, 0]);
         assert_eq!(
             s.eval::<i64>("return GetNumSkillLines()").unwrap(),
             6,

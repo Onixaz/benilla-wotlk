@@ -22,9 +22,8 @@ const FEEDS: &[&str] = &[
     "benilla_app::ui_action::feed::feed_actions",
     "benilla_app::ui_auction::feed_auction",
     "benilla_app::ui_calendar::feed_calendar",
+    // The `"player"` token's unit-field stat fan-out, the units' (#1289), and the inventory snapshot (#1455).
     "benilla_app::ui_char::feed_char",
-    "benilla_app::ui_char::feed_skills",
-    "benilla_app::ui_char::watch_skill_ups",
     "benilla_app::ui_chat::broadcast::feed_broadcasts",
     "benilla_app::ui_chat::channels::seed_channels",
     "benilla_app::ui_chat::feed::feed_chat",

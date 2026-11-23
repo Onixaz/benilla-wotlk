@@ -746,12 +746,21 @@ fn tab_round_trip_with_a_selected_skill_by_point() {
             .unwrap(),
         "Do you want to unlearn Blacksmithing?"
     );
-    s.run("StaticPopup1Button1:Click()").unwrap();
-    assert_eq!(
-        s.take_skill_abandons(),
-        vec![164],
-        "accept queues the skill id"
-    );
+    // Sent inside the click's call (`0x5ce368`), through the `World` the call is lent.
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let mut world = bevy::prelude::World::new();
+    world.insert_resource(crate::net::NetCommands(tx));
+    crate::ui_script::live::lend_world(&mut world, &mut s, |s| {
+        s.run("StaticPopup1Button1:Click()").unwrap()
+    });
+    let sent: Vec<u32> = rx
+        .try_iter()
+        .filter_map(|c| match c {
+            crate::net::ClientCommand::UnlearnSkill { skill_id } => Some(skill_id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sent, vec![164], "accept sends the skill id in the call");
     assert!(!shown(&mut s, "StaticPopup1"), "accept closes the confirm");
     assert_eq!(
         s.eval::<i64>("return GetNumSkillLines()").unwrap(),

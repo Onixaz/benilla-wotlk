@@ -2090,7 +2090,6 @@ mod tests {
                  event would be a divergence, not a fix",
             ),
             ("SYSMSG", "UIErrorsFrame.lua"),
-            ("UNIT_DEFENSE", "PetPaperDollFrame.lua"),
             (
                 "UNIT_MODEL_CHANGED",
                 "four files — the paperdoll model refresh",

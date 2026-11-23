@@ -498,12 +498,24 @@ fn with_unit_stats<T>(
         .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data");
     let absent = UnitCombatStats::default();
+    let player;
     let pushed = match token.as_deref() {
-        Some("player") => model.player_combat_stats.as_ref(),
+        Some("player") => {
+            player = player_combat_stats(&model);
+            player.as_ref()
+        }
         Some("pet") => model.pet_combat_stats.as_ref(),
         _ => None,
     };
     f(pushed.unwrap_or(&absent))
+}
+
+/// The player's sheet figures read off the active player at the call (`0x610300`, `0x60ddb0`); with no view lent, a test's pushed figures.
+pub(super) fn player_combat_stats(model: &Model) -> Option<UnitCombatStats> {
+    match super::read_live(|l| l.player_combat_stats()) {
+        Some(live) => live,
+        None => model.player_combat_stats.clone(),
+    }
 }
 
 /// The clamp `UnitDefense` and each hand of `UnitAttackBothHands` apply: a modifier below `-base`
@@ -843,8 +855,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             Ok(match token.as_deref() {
-                Some("player") => model
-                    .player_combat_stats
+                Some("player") => player_combat_stats(&model)
                     .as_ref()
                     .map_or((0, 0, 0, 0), |s| {
                         let (mb, mm) = skill_clamped(s.rated_weapon(s.main_weapon_skill, 0));
@@ -879,8 +890,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             Ok(match token.as_deref() {
-                Some("player") => model
-                    .player_combat_stats
+                Some("player") => player_combat_stats(&model)
                     .as_ref()
                     .map_or((0, 0), |s| skill_clamped(s.rated_defense())),
                 Some("pet") => (cgunit_skill(&model, "pet"), 0),
@@ -902,8 +912,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let model = lua
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
-                Ok(model
-                    .player_combat_stats
+                Ok(player_combat_stats(&model)
                     .as_ref()
                     .map_or(0.0, |s| match pick {
                         0 => f64::from(s.dodge_percent),
@@ -940,8 +949,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             Ok(flag(
-                model
-                    .player_combat_stats
+                player_combat_stats(&model)
                     .as_ref()
                     .is_some_and(|s| s.has_wand),
             ))

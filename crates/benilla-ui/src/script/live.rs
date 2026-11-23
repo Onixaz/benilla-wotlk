@@ -1056,6 +1056,42 @@ pub trait LiveState {
     /// `CMSG_SET_TITLE` with `mask`, sent in the call (`0x522efb`).
     fn send_set_title(&mut self, _mask: i32) {}
 
+    /// The active player's sheet figures at the call, its fields, worn weapons and skill pairs, read where 12340's stat verbs read them (`0x610300`, `0x60ddb0`); `None` with no active player held.
+    fn player_combat_stats(&self) -> Option<super::UnitCombatStats> {
+        None
+    }
+
+    /// The active player's slot at live id `slot` (0 ammo, 1..=23 worn and bags) read off its slot field at the call (`0x5e7cd0`); `Some(None)` for an empty slot, `None` with no active player held.
+    fn player_inventory_slot(&self, _slot: usize) -> Option<Option<super::InvSlotView>> {
+        None
+    }
+
+    /// The active player's bank bag slot `i` (live ids 68..=74) at the call (`0x5e7cd0`); `Some(None)` for an empty slot, `None` with no active player held.
+    fn player_bank_bag_slot(&self, _i: usize) -> Option<Option<super::InvSlotView>> {
+        None
+    }
+
+    /// The temporary enchantment on the main hand (0) or off hand (1) at the call (`0x5eaca0`); `Some(None)` for none, `None` with no active player held.
+    fn weapon_enchant(&self, _hand: usize) -> Option<Option<super::WeaponEnchant>> {
+        None
+    }
+
+    /// The active player's skill slot for line `skill_id` at the call, as `GetSkillLineInfo` reads it (`0x5cdfe7`); `Some(None)` for a line the player lacks, `None` with no active player held.
+    fn skill_slot(&self, _skill_id: u32) -> Option<Option<super::SkillLive>> {
+        None
+    }
+
+    /// The active player's `PLAYER_CHARACTER_POINTS2` at the call (`0x5cd970`), `None` with no active player held.
+    fn skill_points(&self) -> Option<u32> {
+        None
+    }
+
+    /// `CMSG_UNLEARN_SKILL` for `skill_id`, sent in the call (`0x5ce368`).
+    fn send_unlearn_skill(&mut self, _skill_id: u32) {}
+
+    /// A skill buy, sent in the call (`0x5ce686`, `0x5ce849`).
+    fn send_skill_request(&mut self, _request: super::SkillRequest) {}
+
     /// The trade's network cells at the call: the partner's offered coins (`0xca0b78`) and each window's enchant spell (`0xca0ff0`); `None` where no view lends them.
     fn trade_cells(&self) -> Option<super::TradeCells> {
         None
@@ -1764,6 +1800,11 @@ pub(crate) struct TestView {
     pub char_titles: Vec<super::TitleRow>,
     pub player_titles: Option<super::PlayerTitles>,
     pub title_sends: Vec<i32>,
+    /// Our sheet figures, our skill slots by line, and the skill sends made, in order.
+    pub combat_stats: Option<super::UnitCombatStats>,
+    pub skills: Option<std::collections::HashMap<u32, super::SkillLive>>,
+    pub unlearn_sends: Vec<u32>,
+    pub skill_sends: Vec<super::SkillRequest>,
 }
 
 /// The gossip globals a test view lends.
@@ -1879,6 +1920,22 @@ impl LiveState for TestView {
 
     fn send_set_title(&mut self, mask: i32) {
         self.title_sends.push(mask);
+    }
+
+    fn player_combat_stats(&self) -> Option<super::UnitCombatStats> {
+        self.combat_stats.clone()
+    }
+
+    fn skill_slot(&self, skill_id: u32) -> Option<Option<super::SkillLive>> {
+        Some(self.skills.as_ref()?.get(&skill_id).copied())
+    }
+
+    fn send_unlearn_skill(&mut self, skill_id: u32) {
+        self.unlearn_sends.push(skill_id);
+    }
+
+    fn send_skill_request(&mut self, request: super::SkillRequest) {
+        self.skill_sends.push(request);
     }
 
     fn unit_cast(&self, guid: u64, channel: bool) -> Option<super::UnitCast> {

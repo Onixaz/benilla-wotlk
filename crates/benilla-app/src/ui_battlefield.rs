@@ -872,6 +872,8 @@ pub(crate) fn queue_enter_world(commands: &mut Commands) {
         crate::ui_trade::enter_world(world);
         // The registrar's, the petition window's and the vendor's (`0x528217`, `0x528221`, `0x528258`).
         crate::ui_petition::enter_world(world);
+        // The skill list's rebuild and `SKILL_LINES_CHANGED` (`0x528226` -> `0x5cd9b0`).
+        crate::ui_char::rebuild_skills(world);
         if let Err(e) = world.run_system_cached(enter_world) {
             warn!("ui_battlefield: the world entry did not run: {e}");
         }

@@ -1919,6 +1919,13 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
         .partition_point(|&(index, ..)| index < FIELD_UNIT_FLAGS);
     let (before, after) = merged.death.split_at(split);
     own_death_fields(sc, guid, before);
+    // Our power regen modifiers' watch, between health and level in field order: `PLAYER_DAMAGE_DONE_MODS` with `"player"` (`0x6e57f0` -> `0x6cddd0`).
+    if merged.regen_mods_moved {
+        sc.ui.fire(
+            "PLAYER_DAMAGE_DONE_MODS",
+            vec![benilla_ui::script::ScriptValue::Str("player".into())],
+        );
+    }
     // Our level's change, in field order: the trainer's re-evaluation (`0x6d6702`).
     if merged.level_moved {
         sc.ui.world(crate::ui_trainer::refresh);
@@ -1986,11 +1993,24 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
             crate::ui_action::usable_cache::Pass::Bar,
         ));
     }
-    // The level watch's book update, no re-sort (`0x6d66fd`), and each visible weapon's: the main
-    // hand's or the ranged slot's entry moved updates the book for its weapon face (`0x6e1f13`,
-    // `0x6e1f37`).
-    for _ in 0..u8::from(merged.level_moved) + merged.weapons_moved {
+    // The level watch's book update, no re-sort (`0x6d66fd`).
+    if merged.level_moved {
         sc.ui.fire("SPELLS_CHANGED", Vec::new());
+    }
+    // Each visible weapon's entry watch (`0x6e1e10`): the main hand's `UNIT_ATTACK` then its book update (`0x6e1f2c`, `0x6e1f37`), the off hand's `UNIT_ATTACK` (`0x6e1f21`), the ranged slot's `UNIT_RANGED_ATTACK_POWER` then its book update (`0x6e1f08`, `0x6e1f13`).
+    for &slot in &merged.weapon_slots {
+        let player = || vec![benilla_ui::script::ScriptValue::Str("player".into())];
+        match slot {
+            15 => {
+                sc.ui.fire("UNIT_ATTACK", player());
+                sc.ui.fire("SPELLS_CHANGED", Vec::new());
+            }
+            16 => sc.ui.fire("UNIT_ATTACK", player()),
+            _ => {
+                sc.ui.fire("UNIT_RANGED_ATTACK_POWER", player());
+                sc.ui.fire("SPELLS_CHANGED", Vec::new());
+            }
+        }
     }
     if let Some((old, new)) = merged.pvp_flags {
         sc.pvp.watch(old, new, std::time::Instant::now());
@@ -2107,15 +2127,66 @@ fn is_skill_watch(index: u16) -> bool {
     })
 }
 
-/// How many skill watches a moved skill word runs: the second word's value half (`0x6da4a0`) and max half (`0x6cddb0`), the third word's permanent-bonus half (`0x6cddb0`).
-fn skill_watch_runs(index: u16, old: u32, new: u32) -> usize {
+/// A moved skill word's watches in offset order, each its own handler step: the second word's value half (`0x6da4a0`) then max half (`0x6cddb0`), the third word's temporary-bonus half (`0x6d1bc0`) then permanent-bonus half (`0x6cddb0`).
+fn skill_watches(sc: &mut Scene, index: u16, old: u32, new: u32) {
     let first = benilla_protocol::field::FIELD_PLAYER_SKILL_INFO_1_1;
+    let slot = ((index - first) / 3) as u8;
     let low = old as u16 != new as u16;
     let high = old >> 16 != new >> 16;
-    match (index - first) % 3 {
-        1 => usize::from(low) + usize::from(high),
-        _ => usize::from(high),
+    if (index - first) % 3 == 1 {
+        if low {
+            let old_value = old as u16;
+            sc.ui.world(move |world| {
+                crate::ui_char::skill_value_watch(world, slot, old_value);
+            });
+        }
+        if high {
+            sc.ui.world(crate::ui_char::skill_max_watch);
+        }
+    } else {
+        if low {
+            sc.ui.world(crate::ui_char::skill_temp_watch);
+        }
+        if high {
+            sc.ui.world(crate::ui_char::skill_max_watch);
+        }
     }
+}
+
+/// The `PLAYER_DAMAGE_DONE_MODS` range an edge at `index` belongs to, registered on the player block (`0x6e556a`, `0x6e5590`, `0x6e55b9`, `0x6e55df`, `0x6e57ca`, `0x6e586e`); `None` off them.
+fn damage_mods_watch(index: u16) -> Option<u16> {
+    use benilla_protocol::field::UNIT_END;
+    // (first word past the player block's start, words), from each registration's byte range.
+    const RANGES: [(u16, u16); 6] = [
+        (0x3ff, 7),
+        (0x406, 7),
+        (0x40d, 7),
+        (0x414, 1),
+        (0x36c, 13),
+        (0x418, 1),
+    ];
+    let at = index.checked_sub(UNIT_END)?;
+    RANGES
+        .iter()
+        .find(|&&(first, n)| (first..first + n).contains(&at))
+        .map(|&(first, _)| first)
+}
+
+/// The `COMBAT_RATING_UPDATE` range an edge at `index` belongs to: the 25 ratings (`0x6e577e`), the shield block (`0x6e57a1`) and the target resistance (`0x6e5894`); `None` off them.
+fn rating_watch(index: u16) -> Option<u16> {
+    use benilla_protocol::field::UNIT_END;
+    const RANGES: [(u16, u16); 3] = [(0x43b, 25), (0x37b, 1), (0x417, 1)];
+    let at = index.checked_sub(UNIT_END)?;
+    RANGES
+        .iter()
+        .find(|&&(first, n)| (first..first + n).contains(&at))
+        .map(|&(first, _)| first)
+}
+
+/// Our power regen modifiers, the unit block's run `PLAYER_DAMAGE_DONE_MODS` watches (`0x6e57f0`).
+pub(super) fn is_regen_mods_watch(index: u16) -> bool {
+    let first = benilla_protocol::field::FIELD_UNIT_POWER_REGEN_FLAT_MODIFIER;
+    (first..first + 14).contains(&index)
 }
 
 /// Our slot fields' watches, the inventory watch's (`0x6e51c5`-`0x6e52c3`) and the containers' (`0x5d9c20`): every slot but the buyback's.
@@ -2241,10 +2312,26 @@ fn own_player_watches(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
             sc.ui.write(move |script| script.trim_trade_offer(new));
             continue;
         }
-        // The skill slots' value, max and permanent-bonus halves, each its own watch re-evaluating the trainer (`0x6da5f3`, `0x6cddb0`).
+        // The skill slots' halves, each its own watch (`0x6e5426`-`0x6e548c`).
         if is_skill_watch(index) {
-            for _ in 0..skill_watch_runs(index, old, new) {
-                sc.ui.world(crate::ui_trainer::refresh);
+            skill_watches(sc, index, old, new);
+            continue;
+        }
+        // `PLAYER_DAMAGE_DONE_MODS` with `"player"`, once per moved range (`0x6cddd0`).
+        if let Some(range) = damage_mods_watch(index) {
+            if at == 0 || damage_mods_watch(edges[at - 1].0) != Some(range) {
+                sc.ui.fire(
+                    "PLAYER_DAMAGE_DONE_MODS",
+                    vec![benilla_ui::script::ScriptValue::Str("player".into())],
+                );
+            }
+            continue;
+        }
+        // `COMBAT_RATING_UPDATE`, then the skill list's rebuild, once per moved range (`0x6cddf0`, `0x6cddff`).
+        if let Some(range) = rating_watch(index) {
+            if at == 0 || rating_watch(edges[at - 1].0) != Some(range) {
+                sc.ui.fire("COMBAT_RATING_UPDATE", Vec::new());
+                sc.ui.world(crate::ui_char::rebuild_skills);
             }
             continue;
         }
@@ -2459,13 +2546,14 @@ fn merge_fields(
             // A power field moving re-seeds the predicted copy (`0x7234d0` -> `0x722c50`).
             merged.power_moved |=
                 (0..7u16).any(|ty| e.unit_field(benilla_protocol::field::FIELD_UNIT_POWER1 + ty));
-            if own
-                && [15, 17].into_iter().any(|slot| {
-                    e.index == benilla_protocol::field::player_visible_item_entry_field(slot)
-                })
-            {
-                merged.weapons_moved += 1;
+            if let Some(slot) = [15, 16, 17].into_iter().find(|&slot| {
+                e.index == benilla_protocol::field::player_visible_item_entry_field(slot)
+            }) {
+                if own {
+                    merged.weapon_slots.push(slot);
+                }
             }
+            merged.regen_mods_moved |= own && e.is_unit() && is_regen_mods_watch(e.index);
             if own && e.is_unit() && QUEST_LOG_FIELDS.contains(&e.index) {
                 merged.quest_slots.push((e.index, e.old, e.new));
             }
@@ -2527,7 +2615,9 @@ fn merge_fields(
                     || is_slot_watch(e.index)
                     || e.unit_field(benilla_protocol::field::FIELD_PLAYER_FIELD_COINAGE)
                     || is_buyback_watch(e.index)
-                    || is_skill_watch(e.index))
+                    || is_skill_watch(e.index)
+                    || damage_mods_watch(e.index).is_some()
+                    || rating_watch(e.index).is_some())
             {
                 merged.watched.push((e.index, e.old, e.new));
             }
@@ -2617,9 +2707,10 @@ struct Merged {
     guild_moved: bool,
     /// Another player's `PLAYER_GUILD_TIMESTAMP` moved to this stamp (`0x6e1c60`).
     guild_stamp: Option<u32>,
-    /// How many of our own main-hand and ranged visible items' entries moved (`0x6e1e10`, slots
-    /// 15 and 17).
-    weapons_moved: u8,
+    /// Our own weapon slots whose visible entries moved, in field order (`0x6e1e10`, slots 15 to 17).
+    weapon_slots: Vec<u8>,
+    /// Our own power regen modifiers moved (`0x6e57f0`).
+    regen_mods_moved: bool,
     /// How many usable updates our own fields' watches run ([`usable_updates`]).
     usable_updates: u8,
     /// How many bar refreshes (`0x5aa470`) our own visible-item and ammo watches run.

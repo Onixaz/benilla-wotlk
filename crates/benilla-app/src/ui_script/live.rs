@@ -39,6 +39,8 @@ pub(crate) struct LiveView<'w, 's> {
     achievements: crate::ui_achievement::AchievementLive<'w>,
     /// `CharTitles.dbc`, the title verbs' rows (`0x719900`).
     char_titles: Option<Res<'w, crate::ui_quest::rewards::QuestRewardTablesRes>>,
+    /// The held objects and gt tables the sheet verbs read (`0x610300`).
+    char_sheet: Option<crate::ui_char::CharLive<'w, 's>>,
     /// The trade's network cells (`0xca0b68`-`0xca0ff8`), the trade verbs' wire reads.
     trade_cells: Option<Res<'w, crate::ui_trade::TradeSession>>,
     item_tables: Option<Res<'w, crate::ui_items::feed::ItemTablesLive>>,
@@ -2001,6 +2003,64 @@ impl LiveState for LiveView<'_, '_> {
                 .0
                 .send(crate::net::ClientCommand::SetTitle { mask_id: mask });
         }
+    }
+
+    fn player_combat_stats(&self) -> Option<benilla_ui::script::UnitCombatStats> {
+        let entity = self.player_entity(self.active_player()?)?;
+        let store = self.stores.get(entity).ok()?;
+        let (sheet, items, commands) = (
+            self.char_sheet.as_ref()?,
+            self.items.as_deref()?,
+            self.commands.as_deref()?,
+        );
+        Some(sheet.combat_stats(
+            store,
+            items,
+            commands,
+            self.classes.as_deref().map(|t| &t.0),
+        ))
+    }
+
+    fn skill_slot(&self, skill_id: u32) -> Option<Option<benilla_ui::script::SkillLive>> {
+        let entity = self.player_entity(self.active_player()?)?;
+        let fields = &self.stores.get(entity).ok()?.0;
+        let catalog = self.skill_lines.as_deref().map(|l| &*l.catalog);
+        Some(crate::ui_char::skill_slot(fields, catalog, skill_id))
+    }
+
+    fn skill_points(&self) -> Option<u32> {
+        let entity = self.player_entity(self.active_player()?)?;
+        Some(
+            self.stores
+                .get(entity)
+                .ok()?
+                .0
+                .player_free_professions()
+                .unwrap_or(0),
+        )
+    }
+
+    fn send_unlearn_skill(&mut self, skill_id: u32) {
+        debug!("ui_char: abandon skill line {skill_id}");
+        if let Some(commands) = self.commands.as_deref() {
+            let _ = commands
+                .0
+                .send(crate::net::ClientCommand::UnlearnSkill { skill_id });
+        }
+    }
+
+    fn send_skill_request(&mut self, request: benilla_ui::script::SkillRequest) {
+        let Some(commands) = self.commands.as_deref() else {
+            return;
+        };
+        let _ = commands.0.send(match request {
+            benilla_ui::script::SkillRequest::BuyRanks(lines) => {
+                crate::net::ClientCommand::SkillBuyRank { lines }
+            }
+            benilla_ui::script::SkillRequest::BuyTier(line) => {
+                crate::net::ClientCommand::SkillBuyStep { line }
+            }
+        });
     }
 
     fn mail_inbox_counts(&self) -> Option<(usize, u32)> {
