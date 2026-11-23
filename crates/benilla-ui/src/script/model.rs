@@ -7,11 +7,10 @@ use crate::widget::{FrameHandle, RegionHandle, WidgetArena};
 
 use super::{
     auction, backdrop, bind_confirm, calendar, camera_view, char_stats, chat_window, colorselect,
-    combat_log, container, cursor, death, duel, follow, guild, inspect, lfg, loot_roll, macros,
-    mail, mirror_timer, parse_unit_token, party, petition, pvp, quest, quest_log, reputation,
-    session, simplehtml, skills, slider, social, stable, trade, tradeskill, unit_menu,
-    weapon_enchant, FontObject, MusicRequest, RegionData, ScriptValue, SoundRequest, UnitState,
-    UnitTokenParse,
+    combat_log, container, cursor, death, duel, follow, guild, inspect, lfg, macros, mail,
+    mirror_timer, parse_unit_token, party, petition, pvp, quest, quest_log, reputation, session,
+    simplehtml, skills, slider, social, stable, trade, tradeskill, unit_menu, weapon_enchant,
+    FontObject, MusicRequest, RegionData, ScriptValue, SoundRequest, UnitState, UnitTokenParse,
 };
 
 // ── The Rust-side model ──
@@ -838,7 +837,8 @@ pub(crate) struct Model {
     pub(crate) loot: Option<super::loot::LootState>,
 
     /// The open group-loot rolls, and the `RollOnLoot` `(roll_id, roll_type)` votes.
-    pub(crate) loot_rolls: loot_roll::LootRollsState,
+    #[cfg(any(test, feature = "fixtures"))]
+    pub(crate) loot_rolls: super::loot_roll::LootRollsState,
     /// The combat log's entries, cursor and filters.
     pub(crate) combat_log: combat_log::CombatLogStore,
     pub(crate) loot_roll_votes: Vec<(u32, u8)>,
@@ -1790,7 +1790,8 @@ impl Model {
             loot: None,
             pending_equip_answers: Vec::new(),
             bind_on_use_confirms: 0,
-            loot_rolls: loot_roll::LootRollsState::default(),
+            #[cfg(any(test, feature = "fixtures"))]
+            loot_rolls: super::loot_roll::LootRollsState::default(),
             combat_log: combat_log::CombatLogStore::default(),
             loot_roll_votes: Vec::new(),
             loot_roll_confirms: Vec::new(),

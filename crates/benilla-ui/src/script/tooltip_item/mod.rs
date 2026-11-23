@@ -1289,12 +1289,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let h = frame_handle_of(lua, &this)?;
             let entry = {
                 let model = crate::script::model_mut_of(lua);
-                model
-                    .loot_rolls
-                    .rolls
-                    .iter()
-                    .find(|r| r.roll_id == roll_id)
-                    .cloned()
+                crate::script::loot_roll::find(&model, i64::from(roll_id))
                     .filter(|r| r.item_id != 0)
             };
             let Some(entry) = entry else {
