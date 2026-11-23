@@ -200,6 +200,10 @@ local VERBS = {
     { "tgold", function() return GetTargetTradeMoney() end },
     { "pgold", function() return GetPlayerTradeMoney() end },
     { "lootn", function() return GetNumLootItems() end },
+    { "roll0", function() return (select(2, GetLootRollItemInfo(0))) end },
+    { "roll1", function() return (select(2, GetLootRollItemInfo(1))) end },
+    { "roll2", function() return (select(2, GetLootRollItemInfo(2))) end },
+    { "rleft1", function() return GetLootRollTimeLeft(1) > 0 end },
     { "l1", function() return (select(2, GetLootSlotInfo(1))) end },
     { "l2", function() return (select(2, GetLootSlotInfo(2))) end },
     { "l3", function() return (select(2, GetLootSlotInfo(3))) end },
@@ -7467,7 +7471,7 @@ fn npc_on_a_gameobject_names_its_template_and_is_no_unit() {
     rig.app
         .world_mut()
         .resource_mut::<crate::go_templates::GameObjectTemplates>()
-        .insert(0x300, 19, "Mailbox".into(), &[0; 24]);
+        .insert(0x300, 19, 0, "Mailbox".into(), &[0; 24]);
     lua(
         &mut rig,
         "local f = CreateFrame('Frame') f:RegisterEvent('MAIL_SHOW') \
@@ -8417,6 +8421,116 @@ fn a_loot_window_fires_from_its_handlers_with_the_rows_read_at_the_call() {
                     "LOOT_CLOSED",
                     "lootn=0 l1= l2= l3= l3q=0 coin1=nil item2=nil"
                 ),
+            ],
+        ]
+    );
+}
+
+/// Two group loot rolls from start to their end: one whose record is cached, one whose record lands
+/// late, our own Need announced, the first won by us and the second passed by all, each event with
+/// the roll verbs' answers at it. The roll list is the client's (`0xada7b8`), moved by each handler
+/// at its step and read at the call:
+/// - a roll's id is the next of a serial from 0 (`[0xca0690]`);
+/// - a cached record shows the roll in the start's handler (`0x6fb446`), a late one from the
+///   record's callback (`0x6fb2a6`);
+/// - a won or all-passed roll closes once its line is composed (`0x6fb953`, `0x6fb4f6`). The chat
+///   line itself shows after, through the chat feed; 12340 adds it just before the close
+///   (`0x6fb937`, `0x6fb4da`).
+#[test]
+fn group_loot_rolls_fire_from_their_handlers_with_the_rolls_read_at_the_call() {
+    use benilla_protocol::messages::{LootAllPassed, LootRoll, LootRollWon, LootStartRoll};
+    const CORPSE: u64 = 0x0000_0000_0000_0999;
+    const GEM: u32 = 0x9_1001;
+    const LATE: u32 = 0x9_1002;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let template = |entry: u32, name: &str| SessionEvent::ItemTemplate {
+        entry,
+        info: Some(Box::new(crate::items::test_template(name))),
+    };
+    rig.packets(vec![template(GEM, "Charz Gem")], 2);
+    const EVENTS: &[&str] = &["START_LOOT_ROLL", "CANCEL_LOOT_ROLL", "CHAT_MSG_LOOT"];
+    const VERBS: &[&str] = &["roll0", "roll1", "roll2", "rleft1"];
+    let start = |item_slot: u32, item_id: u32| {
+        SessionEvent::LootStartRoll(LootStartRoll {
+            looted_target: CORPSE,
+            map_id: 0,
+            item_slot,
+            item_id,
+            random_suffix: 0,
+            random_property_id: 0,
+            count: 1,
+            countdown_ms: 60_000,
+            vote_mask: 0x0F,
+        })
+    };
+    let cached = rig.packets(vec![start(0, GEM)], 3);
+    let held = rig.packets(vec![start(1, LATE)], 3);
+    let landed = rig.packets(vec![template(LATE, "Charz Late")], 3);
+    let rolled = rig.packets(
+        vec![SessionEvent::LootRoll(LootRoll {
+            looted_target: CORPSE,
+            item_slot: 0,
+            roller: ME,
+            item_id: GEM,
+            random_suffix: 0,
+            random_property_id: 0,
+            roll_number: 0,
+            roll_type: 1,
+            auto_pass: false,
+        })],
+        3,
+    );
+    let won = rig.packets(
+        vec![SessionEvent::LootRollWon(LootRollWon {
+            looted_target: CORPSE,
+            item_slot: 0,
+            item_id: GEM,
+            random_suffix: 0,
+            random_property_id: 0,
+            winner: ME,
+            roll_number: 77,
+            roll_type: 1,
+        })],
+        3,
+    );
+    let passed = rig.packets(
+        vec![SessionEvent::LootAllPassed(LootAllPassed {
+            looted_target: CORPSE,
+            item_slot: 1,
+            item_id: LATE,
+            random_property_id: 0,
+            random_suffix: 0,
+        })],
+        3,
+    );
+    let got: Vec<Vec<String>> = [cached, held, landed, rolled, won, passed]
+        .iter()
+        .map(|seen| pin(seen, EVENTS, VERBS))
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            vec![
+                "START_LOOT_ROLL 0 60000 | roll0=Charz Gem roll1=nil roll2=nil rleft1=false".to_string(),
+            ],
+            Vec::<String>::new(),
+            vec![
+                "START_LOOT_ROLL 1 60000 | roll0=Charz Gem roll1=Charz Late roll2=nil rleft1=true".to_string(),
+            ],
+            vec![
+                "CHAT_MSG_LOOT Need Roll - 0 for |cffffffff|Hitem:593921:0:0:0:0:0:0:0:80|h[Charz Gem]|h|r by Probesix      0 0  0 1  0 | roll0=Charz Gem roll1=Charz Late roll2=nil rleft1=true".to_string(),
+            ],
+            vec![
+                "CANCEL_LOOT_ROLL 0 | roll0=nil roll1=Charz Late roll2=nil rleft1=true".to_string(),
+                "CHAT_MSG_LOOT You won: |cffffffff|Hitem:593921:0:0:0:0:0:0:0:80|h[Charz Gem]|h|r      0 0  0 2  0 | roll0=nil roll1=Charz Late roll2=nil rleft1=true".to_string(),
+            ],
+            vec![
+                "CANCEL_LOOT_ROLL 1 | roll0=nil roll1=nil roll2=nil rleft1=false".to_string(),
+                "CHAT_MSG_LOOT Everyone passed on: |cffffffff|Hitem:593922:0:0:0:0:0:0:0:80|h[Charz Late]|h|r      0 0  0 3  0 | roll0=nil roll1=nil roll2=nil rleft1=false".to_string(),
             ],
         ]
     );

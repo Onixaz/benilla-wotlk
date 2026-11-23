@@ -259,6 +259,11 @@ pub(crate) const PROBE_VARS: &[ProbeVar] = &[
         wall_clock: true,
     },
     ProbeVar {
+        name: "WOW_PROBE_LOOT",
+        purpose: "1 — loot each lootable corpse within reach, once, as the corpse click's loot leg does",
+        wall_clock: true,
+    },
+    ProbeVar {
         name: "WOW_PROBE_INTERACT",
         purpose: "<npc flag mask> — hop beside the nearest unit carrying any of the flags and right-click it through the service ladder",
         wall_clock: true,

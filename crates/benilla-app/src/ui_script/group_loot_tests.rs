@@ -97,6 +97,7 @@ fn rolls() -> LootRollsState {
     LootRollsState {
         rolls: vec![
             LootRollEntry {
+                finished: false,
                 roll_id: 7,
                 name: Some("Staff of Jordan".into()),
                 texture: Some("Interface\\Icons\\INV_Staff_12".into()),
@@ -112,6 +113,7 @@ fn rolls() -> LootRollsState {
                 disenchant_skill: -1,
             },
             LootRollEntry {
+                finished: false,
                 roll_id: 8,
                 name: Some("Worn Shortsword".into()),
                 texture: Some("Interface\\Icons\\INV_Sword_04".into()),
@@ -128,6 +130,7 @@ fn rolls() -> LootRollsState {
             },
             // No template yet: name, texture, quality and link (which embeds the name) are nil.
             LootRollEntry {
+                finished: false,
                 roll_id: 9,
                 name: None,
                 texture: None,
@@ -685,6 +688,7 @@ fn the_3_3_5a_group_loot_frame_paints_the_vote_mask_and_sends_disenchant() {
     let _ = s.take_errors();
     s.set_loot_rolls(LootRollsState {
         rolls: vec![LootRollEntry {
+            finished: false,
             roll_id: 1,
             name: Some("Orcish Cleaver".into()),
             texture: Some(r"Interface\Icons\INV_Axe_04".into()),

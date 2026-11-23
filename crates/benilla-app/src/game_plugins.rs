@@ -1315,7 +1315,8 @@ pub(crate) mod schedule_tests {
         // Counts the five raise steps between the UI phases and the nine chained after holders in
         // turn outside them (the zone feed's and the by-name asks' among them), each run only while
         // raises wait.
-        ("Update", 658, 636),
+        // Counts the four destructible-building systems, each gated on its component.
+        ("Update", 662, 636),
         // Counts `apply_host_sequence` (ship state -> props), gated on `Changed<HostSequence>`.
         ("PostUpdate", 183, 142),
         ("PreUpdate", 60, 60),
@@ -2013,8 +2014,6 @@ pub(crate) mod schedule_tests {
          "the pre-VM take of `LootMoveStart` is documented at the line and publishes nothing to the VM; the event-firing takes are Lua's queues"),
         ("ui_loot_roll.rs", "drain_loot_rolls", Because::FilledByVm,
          "only a Need/Greed/Pass click queues a confirm or vote, held in the VM"),
-        ("ui_loot_roll.rs", "feed_loot_rolls", Because::PlayerRoundTrip,
-         "a roll exists only after a group member loots under group loot; leftovers are cleared at socket teardown (another player's act: coincidence-only residual)"),
         ("ui_macro/mod.rs", "load_macros", Because::MemoLatched,
          "`MacroFiles.loaded` is a `VmMemo`, so a new session re-reads the files and re-fires UPDATE_MACROS; also `InWorldGated`"),
         ("ui_macro/mod.rs", "note_dirty_macros", Because::FilledByVm,

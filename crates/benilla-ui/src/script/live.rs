@@ -996,6 +996,11 @@ pub trait LiveState {
         None
     }
 
+    /// The group loot roll `roll_id` on the client's list (`0x6fb150`), its record read with no callback and its time left off the clock at the call (`0x5889d0`, `0x588cc0`); `Some(None)` for no such roll, `None` where no view lends it.
+    fn loot_roll(&self, _roll_id: i64) -> Option<Option<super::LootRollEntry>> {
+        None
+    }
+
     /// The open loot window resolved at the call: its coin slot and its 18 rows, each row's record read with no callback (`0x588310`, `0x5884a0`); `Some(None)` with no loot open, `None` where no view lends it.
     fn loot_window(&self) -> Option<Option<super::LootState>> {
         None

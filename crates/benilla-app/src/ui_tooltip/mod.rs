@@ -56,6 +56,9 @@ pub(crate) struct HoverMemo<'s> {
     trace: Local<'s, String>,
     /// Whether the VM holds a `"mouseover"` unit, so the clear is pushed once.
     published: Local<'s, crate::ui_script::VmMemo<bool>>,
+    /// The destructible building whose health a plate's bar shows, with the byte last pushed: its
+    /// field watcher (`0x61bf80`) keeps the bar live while the plate holds it, fading included.
+    health_subject: Local<'s, Option<(Entity, u64, u8)>>,
 }
 
 fn lines_view(s: &UnitState) -> UnitState {
@@ -138,6 +141,21 @@ fn drive_mouseover_tooltip(
     let last = last.get(&script);
     let last_lines = last_lines.get(&script);
     let published = memo.published.get(&script);
+    // The bar's building moved its health: the field watcher re-drives the bar (`0x61bf80`).
+    let health_subject = &mut *memo.health_subject;
+    if let Some((entity, guid, pushed)) = *health_subject {
+        match stores.get(entity) {
+            Ok(store) if store.0.gameobject_anim_progress() != pushed => {
+                let byte = store.0.gameobject_anim_progress();
+                in_turn_or_now(&mut script, move |s| {
+                    s.object_health(guid, health_fraction(byte))
+                });
+                *health_subject = Some((entity, guid, byte));
+            }
+            Ok(_) => {}
+            Err(_) => *health_subject = None,
+        }
+    }
     let self_store = self_q.iter().next();
     let chr = tables.classes();
     let types = tables.types(&names);
@@ -354,9 +372,22 @@ fn drive_mouseover_tooltip(
             }
         }
         let name = template.name.clone();
+        // A destructible building's plate carries its health, `GAMEOBJECT_BYTES_1` byte 3 over
+        // 255, on the bar (`0x626720`).
+        let health = go_store
+            .filter(|s| {
+                s.0.gameobject_type_id()
+                    == crate::entities::destructible::GO_TYPE_DESTRUCTIBLE_BUILDING
+            })
+            .map(|s| s.0.gameobject_anim_progress());
         in_turn_or_now(&mut script, move |s| {
-            s.world_tooltip_gameobject(&name, &lines, cursor_seated);
+            if s.world_tooltip_gameobject(&name, &lines, cursor_seated) {
+                if let Some(byte) = health {
+                    s.world_tooltip_object_health(guid, health_fraction(byte));
+                }
+            }
         });
+        *health_subject = health.map(|byte| (entity, guid, byte));
         *last = LastHover::Go(guid);
         return;
     }
@@ -365,6 +396,11 @@ fn drive_mouseover_tooltip(
         in_turn_or_now(&mut script, |s| s.world_tooltip_fade());
         *last = LastHover::None;
     }
+}
+
+/// A building's health byte as the bar's `0..1` fill (`0x61bf80`: `byte * (1 / 255)`).
+fn health_fraction(byte: u8) -> f32 {
+    f32::from(byte) * (1.0 / 255.0)
 }
 
 #[cfg(test)]

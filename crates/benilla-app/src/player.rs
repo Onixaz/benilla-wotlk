@@ -80,7 +80,7 @@ use controller::control;
 pub(crate) struct WorldClickSet;
 // The private camera and `state` items are re-imported for the modules beside this one, which
 // name them `super::X`.
-pub(crate) use camera::{head_height, CameraControl, CameraPivot};
+pub(crate) use camera::{clamp_pivot, head_height, pivot_ceiling, CameraControl, CameraPivot};
 use camera::{model_pivot_height, run_look_session, CollisionArm, FlyCam, LookButton};
 use camera_zoom::{apply_zoom_scroll, CAM_DIST_DEFAULT};
 // The area-trigger check's heartbeat ahead of `CMSG_AREATRIGGER`.
@@ -188,6 +188,8 @@ pub(super) type BodyQuery<'w, 's> = Query<
         Option<&'static crate::creature_anim::Wielded>,
         // The raw `OBJECT_FIELD_SCALE_X` for the pivot height, not the transform's 2 s-eased scale.
         Option<&'static crate::net::NetEntity>,
+        // The pivot's ceiling, from the unit's collision height (`0x718080`).
+        Option<&'static crate::entities::CollisionHeight>,
     ),
     (With<Embodied>, Without<FlyCam>),
 >;

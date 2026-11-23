@@ -1061,9 +1061,9 @@ impl Dispatch<'_, '_> {
                 debug!("right-click interact: {guid:#x} ({arm:?}) — silent: {why}");
             }
         }
-        // Talk on every taken arm, silent ones too; the anim's WeaponFlags `0x10` stows a drawn
-        // weapon for good.
-        if let Some((_, my_guid, _)) = me {
+        // Talk on a taken arm that talks, silent ones too; the anim's WeaponFlags `0x10` stows a
+        // drawn weapon for good.
+        if let Some((_, my_guid, _)) = me.filter(|_| arm.talks()) {
             self.gestures
                 .push(my_guid, crate::creature_anim::Gesture::Talk);
         }
@@ -1797,6 +1797,15 @@ pub(crate) enum ServiceArm {
     Mailbox,
 }
 
+impl ServiceArm {
+    /// Whether the arm plays our talk gesture (`0x6ddbb0`): every NPC-flag arm does, the spellclick
+    /// (`0x6d2740`) and the mailbox do not. A vehicle boards by the spellclick, so a talk there
+    /// would hold the body through the seat's jump.
+    pub(crate) fn talks(self) -> bool {
+        !matches!(self, ServiceArm::SpellClick | ServiceArm::Mailbox)
+    }
+}
+
 /// `npc_flags` less the spellclick bit where `0x71c570` refuses it: `UNIT_FIELD_FLAGS_2` `0x2000`
 /// bars it, and `0x1000` keeps it to a unit in our group.
 pub(crate) fn spell_clickable(npc_flags: u32, flags2: u32, in_group: bool) -> u32 {
@@ -2294,6 +2303,16 @@ mod tests {
         assert_eq!(spell_clickable(flags, 0x2000, true), f::MAILBOX);
         assert_eq!(spell_clickable(flags, 0x1000, false), f::MAILBOX);
         assert_eq!(spell_clickable(flags, 0x1000, true), flags);
+    }
+
+    /// The spellclick and the mailbox take no talk; the NPC-flag arms do (`0x6ddbb0`).
+    #[test]
+    fn a_spellclick_plays_no_talk() {
+        assert!(!ServiceArm::SpellClick.talks());
+        assert!(!ServiceArm::Mailbox.talks());
+        assert!(ServiceArm::Gossip.talks());
+        assert!(ServiceArm::Vendor.talks());
+        assert!(ServiceArm::GuildBanker.talks());
     }
 
     #[test]

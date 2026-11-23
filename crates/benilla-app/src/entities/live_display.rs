@@ -43,8 +43,18 @@ pub(super) struct ScaleEase {
 }
 
 /// The live display id, read per kind as `benilla_protocol` reads it at create: `0` is absent, so
-/// it never tears a visual down to a cube.
-fn live_display_id(kind: EntityKind, store: &ObjectStore) -> Option<u32> {
+/// it never tears a visual down to a cube. A destructible building shows its damage state's model
+/// in place of `GAMEOBJECT_DISPLAYID` (`0x70dfa0`).
+fn live_display_id(
+    kind: EntityKind,
+    store: &ObjectStore,
+    destructible: impl FnOnce() -> Option<u32>,
+) -> Option<u32> {
+    if kind == EntityKind::GameObject {
+        if let Some(state) = destructible() {
+            return Some(state);
+        }
+    }
     match kind {
         EntityKind::Unit | EntityKind::Player => store
             .0
@@ -72,6 +82,7 @@ fn live_display_id(kind: EntityKind, store: &ObjectStore) -> Option<u32> {
 pub(super) fn refresh_live_display(
     mut commands: Commands,
     creatures: Option<Res<Creatures>>,
+    buildings: BuildingInputs,
     mut entities: Query<
         (
             Entity,
@@ -94,10 +105,13 @@ pub(super) fn refresh_live_display(
 ) {
     // The prism reads only the static catalog of `Creatures`, whose model cache changes often.
     let catalog_new = creatures.as_ref().is_some_and(|c| c.is_added());
+    // A building's state model waits on its template.
+    let templates_new = buildings.templates.as_ref().is_some_and(|t| t.is_changed());
     for (entity, guid, mut net, store, applied, height, tf, model) in &mut entities {
         // Every answer below is a function of these rows and the catalog: with none changed since
         // the last pass, each diff would find what it found then.
         if !catalog_new
+            && !templates_new
             && !store.is_changed()
             && !applied.is_changed()
             && !net.is_changed()
@@ -110,7 +124,7 @@ pub(super) fn refresh_live_display(
         let (store, applied, height, model) =
             (&*store, &*applied, height.as_deref(), model.as_deref());
         // ── The display-id swap ──────────────────────────────────────────────────────────────
-        let live = live_display_id(net.kind, store);
+        let live = live_display_id(net.kind, store, || buildings.state_display(guid.0, store));
         if let Some(live) = live {
             if applied.0 != Some(live) {
                 info!(
@@ -170,6 +184,25 @@ pub(super) fn refresh_live_display(
             );
             commands.entity(entity).insert(h);
         }
+    }
+}
+
+/// What a destructible building's state model is read from.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(super) struct BuildingInputs<'w> {
+    templates: Option<Res<'w, crate::go_templates::GameObjectTemplates>>,
+    destructibles: Option<Res<'w, super::destructible::Destructibles>>,
+    gameobjects: Option<Res<'w, super::GameObjects>>,
+}
+
+impl BuildingInputs<'_> {
+    fn state_display(&self, guid: u64, store: &ObjectStore) -> Option<u32> {
+        super::destructible::live_state_display(
+            store,
+            self.templates.as_deref()?.get(guid),
+            self.destructibles.as_deref(),
+            &self.gameobjects.as_deref()?.catalog,
+        )
     }
 }
 
@@ -254,6 +287,10 @@ pub(super) fn heal_rig_starved(
                     // The art kit goes on the new body again, as each model load applies it.
                     super::art_kit::AppliedArtKit,
                     super::art_kit::ArtKitPending,
+                    // A WMO GameObject's props are children of the visual: resolve them again.
+                    super::wmo_props::WmoPropsResolved,
+                    super::wmo_props::WmoProps,
+                    crate::transport::ShipProps,
                 ),
             )>()
             .insert((super::equipment::Reattached, ShownRebuild));
@@ -320,8 +357,15 @@ pub(super) fn rebuild_visual(commands: &mut Commands, entity: Entity) {
             benilla_world::rig_palette::RigSkin,
             super::BoneAttach,
             super::equipment::HeldAttached,
-            // The art kit goes on the new body again, as each model load applies it.
-            (super::art_kit::AppliedArtKit, super::art_kit::ArtKitPending),
+            (
+                // The art kit goes on the new body again, as each model load applies it.
+                super::art_kit::AppliedArtKit,
+                super::art_kit::ArtKitPending,
+                // A WMO GameObject's props are children of the visual: resolve them again.
+                super::wmo_props::WmoPropsResolved,
+                super::wmo_props::WmoProps,
+                crate::transport::ShipProps,
+            ),
         )>()
         .insert(super::equipment::Reattached);
 }

@@ -589,6 +589,12 @@ fn record_callback(sc: &mut Scene, entry: u32, landed: bool, wait: crate::items:
         RecordWait::Loot(generation) => sc
             .ui
             .world(move |world| crate::ui_loot::record_callback(world, entry, generation)),
+        RecordWait::GroupRollStart(roll_id) => sc
+            .ui
+            .world(move |world| crate::ui_loot_roll::start_callback(world, roll_id, entry, landed)),
+        RecordWait::GroupRollLine(line_id) => sc
+            .ui
+            .world(move |world| crate::ui_loot_roll::line_record_callback(world, line_id, landed)),
         RecordWait::ItemPush => sc
             .ui
             .world(move |world| crate::ui_loot::push_callback(world, entry, landed)),
@@ -1129,6 +1135,7 @@ fn object_create(
         fields.gameobject_type_id(),
         fields.gameobject_dynamic_flags(),
     );
+    crate::entities::destructible::tag(&mut entity, kind, fields.gameobject_type_id());
     if let Some(s) = speeds {
         entity.insert(UnitSpeeds(s));
     }
@@ -1634,7 +1641,7 @@ fn gameobject_info(
     go_templates: &mut GameObjectTemplates,
 ) {
     debug!("net: gameobject template {entry} type {type_id} display {display_id} {name:?}");
-    go_templates.insert(entry, type_id, name, data);
+    go_templates.insert(entry, type_id, display_id, name, data);
 }
 
 /// A pet stat field's unit signal.
