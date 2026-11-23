@@ -226,10 +226,14 @@ fn on_played_time(
     In(ev): In<SessionEvent>,
     mut clock: ResMut<crate::net::PlayedClock>,
     mut ui: ResMut<UiEvents>,
+    active: Query<(), With<crate::net::SelfPlayer>>,
 ) {
     if let SessionEvent::PlayedTime { total, level, show } = ev {
         debug!("net: played time {total} s (level {level} s, shown {show})");
-        clock.0 = Some((total, std::time::Instant::now()));
+        // Only the active player's clock is seeded (`0x4013c6`-`0x4013f1`).
+        if !active.is_empty() {
+            clock.0 = Some((total, std::time::Instant::now()));
+        }
         // Only a shown answer prints and fires `TIME_PLAYED_MSG` (`0x4013f6`).
         if show {
             info!(
@@ -755,5 +759,28 @@ mod tests {
             .unwrap();
         crate::ui_script::live::fire_handler_events(&mut world);
         assert!(owner(&world), "our row carries the owner bit");
+    }
+
+    /// The answer seeds the active player's clock alone (`0x4013c6`-`0x4013f1`): with no active
+    /// player it is dropped, and the clock still reads 0.
+    #[test]
+    fn a_played_answer_seeds_only_the_active_players_clock() {
+        let mut world = World::new();
+        world.init_resource::<crate::net::PlayedClock>();
+        world.init_resource::<UiEvents>();
+        let answer = || SessionEvent::PlayedTime {
+            total: 3_600,
+            level: 60,
+            show: false,
+        };
+        world
+            .run_system_once_with(on_played_time, answer())
+            .unwrap();
+        assert_eq!(world.resource::<crate::net::PlayedClock>().now(), 0);
+        world.spawn(crate::net::SelfPlayer);
+        world
+            .run_system_once_with(on_played_time, answer())
+            .unwrap();
+        assert_eq!(world.resource::<crate::net::PlayedClock>().now(), 3_600);
     }
 }

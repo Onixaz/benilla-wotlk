@@ -28,6 +28,7 @@ fn app() -> (App, Receiver<ClientCommand>) {
             last_reason: None,
         })
         .init_resource::<ServerWallClock>()
+        .init_resource::<crate::net::PlayedClock>()
         .init_resource::<crate::ui_mail::MailPending>()
         .init_resource::<crate::ui_battlefield::Battlefield>()
         .init_resource::<crate::ui_battlefield::StatusRequestOwed>()
@@ -144,6 +145,28 @@ fn a_worldport_create_sends_them_again() {
     self_create(&mut app);
     app.update();
     assert_eq!(sent(&rx), the_sends());
+}
+
+/// The clock lives on the player: each create unseeds it (`0x6e6dfe`), so another character, or the
+/// same one after a worldport, reads 0 until its own answer (`0x6cf443`), never the last player's
+/// total.
+#[test]
+fn a_create_unseeds_the_played_clock() {
+    let (mut app, _rx) = app();
+    log_in(&mut app);
+    let first = self_create(&mut app);
+    app.update();
+    app.world_mut().resource_mut::<crate::net::PlayedClock>().0 =
+        Some((360_000, std::time::Instant::now()));
+    app.update();
+    assert_eq!(
+        app.world().resource::<crate::net::PlayedClock>().now(),
+        360_000
+    );
+    app.world_mut().despawn(first);
+    self_create(&mut app);
+    app.update();
+    assert_eq!(app.world().resource::<crate::net::PlayedClock>().now(), 0);
 }
 
 /// Our create with a pet out, the drain waiting for the UI's entry: the ask goes out after the time query and before the mail and dungeon finder asks (`0x5281db`, `0x5281fe` -> `0x5d6ed6`, `0x52822b`, `0x528267`), and the step's clear stays owed, so the bar stands for `PLAYER_ENTERING_WORLD`.
