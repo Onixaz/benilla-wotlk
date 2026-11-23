@@ -426,6 +426,11 @@ fn the_tracked_list_caps_at_ten_and_round_trips_its_cvar() {
     assert_eq!(encode_tracked(&[1, 93 * 93]), "v\u{1}##$$##");
     // The read takes any other tag as it is (`0x766f00` returns), and stops at an id of 0.
     assert_eq!(decode_tracked("v\u{2}##$###$##"), vec![1]);
+    // Each byte is sign-extended (`0x766fcd`): `C3 A9 23` is (-96 * 93 - 122) * 93 + 0.
+    assert_eq!(
+        decode_tracked("v\u{1}\u{e9}#"),
+        vec![((-96i32 * 93 - 122) * 93) as u32]
+    );
     // An untagged value is the version-0 form, upgraded under the tag (`0x766f00`).
     let v0 = format!("#{}{}", char::from(36u8), char::from(35u8 + 5));
     assert_eq!(decode_tracked(&v0), vec![220 + 5]);

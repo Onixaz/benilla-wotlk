@@ -815,21 +815,26 @@ pub fn encode_tracked(ids: &[u32]) -> String {
 }
 
 /// Decode the CVar as the int-list read does (`0x766f70`), over the value [`upgrade_tracked`]
-/// leaves: base-93 triples from the third byte, stopping at a short triple or an id of 0.
+/// leaves: base-93 triples from the third byte, stopping at a short triple, a NUL or an id of 0.
 pub fn decode_tracked(value: &str) -> Vec<u32> {
     let upgraded = upgrade_tracked(value);
     let bytes = upgraded.as_deref().unwrap_or(value).as_bytes();
     let mut out = Vec::new();
-    let digit = |b: u8| u32::from(b).wrapping_sub(35);
+    // Each byte sign-extended (`movsx` at `0x766fcd`, `0x766fd6`, `0x766fe4`).
+    let digit = |b: u8| i32::from(b as i8).wrapping_sub(35);
     for &[a, b, c] in bytes.get(2..).unwrap_or(&[]).as_chunks::<3>().0 {
+        if a == 0 || b == 0 || c == 0 {
+            break;
+        }
         let id = digit(a)
-            .wrapping_mul(93 * 93)
-            .wrapping_add(digit(b).wrapping_mul(93))
+            .wrapping_mul(93)
+            .wrapping_add(digit(b))
+            .wrapping_mul(93)
             .wrapping_add(digit(c));
         if id == 0 {
             break;
         }
-        out.push(id);
+        out.push(id as u32);
     }
     out
 }
