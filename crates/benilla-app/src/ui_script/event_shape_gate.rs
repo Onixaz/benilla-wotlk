@@ -18,6 +18,14 @@ struct Row {
     resolved: bool,
 }
 
+/// Computed-id producers the table does not attribute, each a shape the reference's own code
+/// pushes: (event, its extra alternative, the site). Each only adds an alternative to a gated row.
+const COMPUTED_SHAPES: &[(&str, &str, &str)] = &[(
+    "UPDATE_FACTION",
+    "s",
+    "the watched faction's mirror watch (0x6e56e0 registers 0x6cddd0 for event 0x16a), which pushes \"player\" (0x6cdde1)",
+)];
+
 fn table() -> BTreeMap<String, Row> {
     let tsv = concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -51,6 +59,12 @@ fn table() -> BTreeMap<String, Row> {
                     .collect()
             })
             .collect();
+        let mut shapes: Vec<Vec<char>> = shapes;
+        for (name, extra, _) in COMPUTED_SHAPES {
+            if *name == f[0] {
+                shapes.push(extra.chars().collect());
+            }
+        }
         out.insert(
             f[0].to_string(),
             Row {

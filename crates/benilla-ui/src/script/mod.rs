@@ -477,7 +477,9 @@ pub use quest_log::{
 pub use quest_poi::QuestPoiLines;
 pub use quest_watch::{QuestPoiRegion, QuestPoiView, QuestSpecialItemView};
 pub(crate) use region::{apply_font_parts, implicit_creation_anchor_lua, store_text};
-pub use reputation::{FactionEntry, ReputationSend, ReputationState};
+pub use reputation::{
+    FactionEntry, FactionFlag, FactionList, FactionTable, ReputationSend, StaticFactions,
+};
 pub use rune::{RuneEvent, RuneRegen, RuneState, MAX_RUNES, RUNE_KINDS};
 pub use session::SessionRequest;
 pub use shapeshift::ShapeshiftFormView;

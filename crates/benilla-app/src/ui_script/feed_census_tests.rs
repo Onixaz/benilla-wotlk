@@ -57,7 +57,6 @@ const FEEDS: &[&str] = &[
     "benilla_app::ui_pet::unit::feed_pet_unit",
     // The pet page's stat fan-out under `"pet"`, the units' (#1289).
     "benilla_app::ui_pet_doll::feed_pet_doll",
-    "benilla_app::ui_reputation::feed_reputation",
     "benilla_app::ui_script::demo_unit_feed",
     "benilla_app::ui_script::feed_framerate",
     "benilla_app::ui_social::feed::feed_social",
