@@ -168,6 +168,8 @@ pub(crate) struct LiveView<'w, 's> {
     loot_rolls: Option<crate::ui_loot_roll::LootRollsLive<'w>>,
     /// The inbox, the arrival state and what a row resolves against.
     mail: Option<crate::ui_mail::MailLive<'w, 's>>,
+    /// The auction house and what its rows resolve against and its sends go out on.
+    auction: Option<crate::ui_auction::AuctionLive<'w, 's>>,
     /// The taxi map's globals and what its fares and activates read.
     taxi: Option<crate::ui_taxi::TaxiLive<'w, 's>>,
     /// The trainer window and what its gates, descriptions and buys read.
@@ -2114,6 +2116,89 @@ impl LiveState for LiveView<'_, '_> {
         if let Some(mail) = self.mail.as_mut() {
             mail.close_query();
         }
+    }
+
+    fn auction_auctioneer(&self) -> Option<Option<u64>> {
+        Some(self.auction.as_ref()?.auctioneer())
+    }
+
+    fn auction_counts(&self, list: usize) -> Option<(usize, u32)> {
+        Some(self.auction.as_ref()?.counts(list))
+    }
+
+    fn auction_row(
+        &mut self,
+        list: usize,
+        index: usize,
+        info: bool,
+    ) -> Option<Option<benilla_ui::script::AuctionItemRow>> {
+        Some(self.auction.as_mut()?.row(list, index, info))
+    }
+
+    fn auction_find(&self, list: usize, auction_id: u32) -> Option<Option<usize>> {
+        Some(self.auction.as_ref()?.find(list, auction_id))
+    }
+
+    fn auction_deposit_rate(&self) -> Option<Option<u32>> {
+        Some(self.auction.as_ref()?.deposit_rate())
+    }
+
+    fn auction_can_send(&self, list: usize) -> Option<(bool, bool)> {
+        Some(self.auction.as_ref()?.can_send(list))
+    }
+
+    fn auction_criteria(&self, list: usize) -> Option<Vec<(u8, bool)>> {
+        Some(self.auction.as_ref()?.criteria(list))
+    }
+
+    fn set_auction_criteria(&mut self, list: usize, criteria: Vec<(u8, bool)>) -> Option<()> {
+        self.auction.as_mut()?.set_criteria(list, criteria);
+        Some(())
+    }
+
+    fn auction_sort(&mut self, list: usize) -> Option<()> {
+        self.auction.as_mut()?.sort(list);
+        Some(())
+    }
+
+    fn auction_send(&mut self, packet: benilla_ui::script::AuctionPacket) -> Option<()> {
+        self.auction.as_mut()?.send(packet);
+        Some(())
+    }
+
+    fn auction_multisell_start(
+        &mut self,
+        sell: benilla_ui::script::AuctionMultiSell,
+    ) -> Option<()> {
+        self.auction.as_mut()?.multisell_start(sell);
+        Some(())
+    }
+
+    fn auction_sell_next(&mut self) -> Option<benilla_ui::script::AuctionSellStep> {
+        Some(self.auction.as_mut()?.sell_next())
+    }
+
+    fn auction_pending_sell(&mut self, end: bool) -> Option<bool> {
+        Some(self.auction.as_mut()?.pending_sell(end))
+    }
+
+    fn auction_clear_target(&mut self) -> Option<bool> {
+        let auctioneer = self.auction.as_ref()?.auctioneer();
+        // The clear on the auctioneer (`0x59f189`); its window leg runs in the verb.
+        Some(auctioneer.is_some_and(|guid| {
+            self.tabard
+                .target_mut()
+                .is_some_and(|t| t.clear_in_call(guid))
+        }))
+    }
+
+    fn auction_end_session(&mut self) -> Option<()> {
+        self.auction.as_mut()?.end_session();
+        Some(())
+    }
+
+    fn auction_expired(&mut self, auction_id: u32) -> Option<Vec<&'static str>> {
+        Some(self.auction.as_mut()?.expired(auction_id))
     }
 
     fn mail_has_new(&self) -> Option<bool> {

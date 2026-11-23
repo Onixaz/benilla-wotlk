@@ -1,14 +1,15 @@
-//! The auction-house bindings, after 12340's auction-house engine: the app pushes the three lists
-//! (rows resolved, in wire order) and this module keeps each list's sort criteria, sorts the rows,
-//! and queues the intents the app drains. Getters are keyed by `"list"` (Browse), `"bidder"` (Bids)
-//! or `"owner"` (Auctions), with `index` 1-based in the current batch.
+//! The auction-house bindings, after 12340's auction-house engine: each verb reads the house at its
+//! call and sends, sorts and raises inside it, through the host's live view (the house's lists, sort
+//! criteria and query gates are the app's). Getters are keyed by `"list"` (Browse), `"bidder"` (Bids)
+//! or `"owner"` (Auctions), with `index` 1-based in the current batch. A fixture's house, pushed
+//! whole, stands in where no view lends one.
 
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::flag;
 use super::container::Arm;
 use super::cursor::{self, CursorItem, CursorPayload};
-use super::Model;
+use super::{Model, ScriptValue};
 
 /// The three list types, in the order the app pushes them (`0x59a9d0`).
 pub const LIST: usize = 0;
@@ -36,6 +37,9 @@ const MAX_CRITERIA: usize = 12;
 /// The time-left buckets' upper bounds in ms, the table at `0xa15238`.
 const TIME_LEFT_THRESHOLDS_MS: [f64; 3] = [1_800_000.0, 7_200_000.0, 43_200_000.0];
 
+/// A live row this far past its expiry leaves its lists at its time-left read (`0x59fe6d`).
+const EXPIRY_GRACE_MS: f64 = 10_000.0;
+
 /// The run times `StartAuction` and `CalculateAuctionDeposit` index by 1..3 (`0xa15248`).
 const RUN_TIMES_MINUTES: [u32; 3] = [720, 1440, 2880];
 
@@ -50,11 +54,6 @@ const MIN_DEPOSIT: u32 = 100;
 
 /// The bid ceiling `PlaceAuctionBid` refuses past (`0x59da40`).
 const MAXIMUM_BID: u32 = 2_000_000_000;
-
-/// A list type's index, for the other modules (the tooltip's `SetAuctionItem`).
-pub(super) fn list_index_of(kind: &str) -> Option<usize> {
-    list_index(kind)
-}
 
 /// A list type by name (`0x59a9d0`): case-insensitive.
 fn list_index(kind: &str) -> Option<usize> {
@@ -87,6 +86,8 @@ pub struct AuctionItemRow {
     pub random_property_id: u32,
     /// `None` while the item template query is in flight: the row then answers as a miss.
     pub name: Option<String>,
+    /// The record's own name, no suffix: the name sort's key (`0x59b460`); `None` reads [`Self::name`].
+    pub base_name: Option<String>,
     pub texture: Option<String>,
     pub count: u32,
     pub quality: Option<u32>,
@@ -108,9 +109,9 @@ pub struct AuctionItemRow {
     pub owner_guid: u64,
     /// The status sort's key: 2 when the player holds the bid, 1 for another bidder, 0 for none.
     pub bidder_status: u8,
-    /// The expiry on the `GetTime` clock: arrival plus the wire's time left, or for a sold row
-    /// the money mail's delivery.
-    pub expires_at: f64,
+    /// Seconds to the expiry at the read: arrival plus the wire's time left, or for a sold row the
+    /// money mail's delivery; negative once past.
+    pub time_left: f64,
     /// A sold auction from the pending-sales list: `GetAuctionItemInfo`'s `saleStatus` 1.
     pub sold: bool,
     /// The full item link: entry, enchant, random property and suffix.
@@ -164,7 +165,7 @@ pub struct AuctionSubCategory {
     pub has_inv_types: bool,
 }
 
-/// The open auction house's snapshot, pushed whole by the app.
+/// A fixture's auction house, pushed whole where no view lends the house.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AuctionState {
     /// Browse / Bids / Auctions, indexed by [`LIST`], [`BIDDER`], [`OWNER`].
@@ -173,7 +174,8 @@ pub struct AuctionState {
     pub deposit_percent: u32,
 }
 
-/// A drained `QueryAuctionItems`, already wire values (`0x59bcf0`).
+/// `QueryAuctionItems`'s search, already wire values (`0x59bcf0`); the send adds the browse list's
+/// criteria.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AuctionQuery {
     pub name: String,
@@ -188,27 +190,43 @@ pub struct AuctionQuery {
     pub list_from: u32,
     pub usable: u8,
     pub get_all: bool,
-    /// The Browse list's criteria at the call: `(column, reversed)`.
-    pub sort: Vec<(u8, bool)>,
 }
 
-/// A drained `StartAuction` (`0x59f990`).
+/// A send an auction verb makes inside its call, each behind the gate its send reads.
 #[derive(Clone, Debug, PartialEq)]
-pub struct AuctionStartRequest {
-    pub min_bid: u32,
+pub enum AuctionPacket {
+    /// `QueryAuctionItems` (`0x59bcf0`).
+    Query(AuctionQuery),
+    /// `GetOwnerAuctionItems`'s owner-list ask (`0x59cc50`).
+    OwnerList,
+    /// `GetBidderAuctionItems`'s bidder-list ask (`0x59ce50`) from this list offset.
+    BidderList(u32),
+    /// `PlaceAuctionBid`'s bid (`0x59dcca`), checked against the row as `0x59da40` checks it.
+    Bid { auction_id: u32, amount: u32 },
+    /// `CancelAuction`'s cancel (`0x59df3b`).
+    Cancel { auction_id: u32 },
+    /// `StartAuction`'s sale of the sell item alone (`0x59fc66`).
+    Sell {
+        item: u64,
+        count: u32,
+        bid: u32,
+        buyout: u32,
+        minutes: u32,
+    },
+}
+
+/// `StartAuction`'s multi-sell (`0x59fc92`): the sellable stacks gathered, `(guid, count)` in scan
+/// order, listed `num_stacks` auctions of `stack_size` each.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AuctionMultiSell {
+    pub items: Vec<(u64, u32)>,
+    pub stack_size: u32,
+    pub num_stacks: u32,
+    pub bid: u32,
     /// `0` = no buyout; never below the bid.
     pub buyout: u32,
     /// Minutes: 720, 1440 or 2880.
-    pub run_time_minutes: u32,
-    pub stack_size: u32,
-    pub num_stacks: u32,
-    /// The stacks to sell from, `(bag, slot, count)`: for a direct sale the sell item with
-    /// `stack_size`, otherwise every sellable stack the auction stack gather collected, in scan
-    /// order.
-    pub items: Vec<(i64, u32, u32)>,
-    /// The sell item alone covers one stack: one send, as is (`0x59fbe9`). Otherwise the app runs
-    /// The next-item sell over [`Self::items`] `num_stacks` times.
-    pub direct: bool,
+    pub minutes: u32,
 }
 
 /// Why the carried-count check (`0x754dd0`) refuses: past the record's `MaxCount`, shown as
@@ -230,15 +248,19 @@ impl CarryRefusal {
     }
 }
 
-/// A drained `PlaceAuctionBid`, checked against the row as `0x59da40` checks it.
-#[derive(Clone, Debug, PartialEq)]
-pub struct AuctionBid {
-    pub auction_id: u32,
-    pub amount: u32,
+/// What the next-item sell did (`0x59ba80`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuctionSellStep {
+    /// One stack went out.
+    Sent,
+    /// Every stack is out: the multi-sell ends quietly (`0x59bc37`).
+    Done,
+    /// The gathered items ran dry: the multi-sell failure (`0x59bc06`).
+    Failed,
 }
 
 /// The default criteria the auction house's game initialization sets (`0x5a0ba0`), front first.
-fn default_criteria() -> [Vec<(u8, bool)>; 3] {
+pub fn auction_default_criteria() -> [Vec<(u8, bool)>; 3] {
     let build = |sets: &[(u8, bool)]| {
         let mut c = Vec::new();
         for &(column, rev) in sets {
@@ -279,8 +301,9 @@ fn default_criteria() -> [Vec<(u8, bool)>; 3] {
 }
 
 /// The model's starting criteria, for [`Model`]'s constructor.
+#[cfg(any(test, feature = "fixtures"))]
 pub(super) fn initial_sort_criteria() -> [Vec<(u8, bool)>; 3] {
-    default_criteria()
+    auction_default_criteria()
 }
 
 /// The sort-criteria setter (`0x59a5e0`): the column moves to the front with `reversed`; a new
@@ -324,13 +347,20 @@ fn compare_column(column: u8, a: &AuctionItemRow, b: &AuctionItemRow) -> std::cm
                 .then_with(|| shown_bid(a).cmp(&shown_bid(b)))
         }
         3 => b.sold.cmp(&a.sold).then_with(|| {
-            a.expires_at
-                .partial_cmp(&b.expires_at)
+            a.time_left
+                .partial_cmp(&b.time_left)
                 .unwrap_or(Ordering::Equal)
         }),
         4 => b.bidder_status.cmp(&a.bidder_status),
+        // The record's name without the random property's suffix (`0x59b4d2`).
         5 if cached => {
-            let key = |r: &AuctionItemRow| r.name.as_deref().unwrap_or("").to_lowercase();
+            let key = |r: &AuctionItemRow| {
+                r.base_name
+                    .as_deref()
+                    .or(r.name.as_deref())
+                    .unwrap_or("")
+                    .to_lowercase()
+            };
             key(a).cmp(&key(b))
         }
         6 => {
@@ -354,36 +384,240 @@ fn compare_column(column: u8, a: &AuctionItemRow, b: &AuctionItemRow) -> std::cm
     }
 }
 
-/// Sort `rows` by `criteria`, the first deciding column winning (`0x59b890`).
-fn sort_rows(rows: &mut [AuctionItemRow], criteria: &[(u8, bool)]) {
-    rows.sort_by(|a, b| {
-        for &(column, reversed) in criteria {
-            let ord = compare_column(column, a, b);
-            if ord != std::cmp::Ordering::Equal {
-                return if reversed { ord.reverse() } else { ord };
-            }
+/// The order of two rows by `criteria`, the first deciding column winning (`0x59b890`).
+fn compare_rows(
+    a: &AuctionItemRow,
+    b: &AuctionItemRow,
+    criteria: &[(u8, bool)],
+) -> std::cmp::Ordering {
+    for &(column, reversed) in criteria {
+        let ord = compare_column(column, a, b);
+        if ord != std::cmp::Ordering::Equal {
+            return if reversed { ord.reverse() } else { ord };
         }
-        std::cmp::Ordering::Equal
-    });
+    }
+    std::cmp::Ordering::Equal
 }
 
-/// The update event each list fires once re-sorted (`0x59b980`, `0x59b9e0`, `0x59cab0`).
-fn raise_list_event(model: &mut crate::script::ModelGuard<'_>, list: usize) {
-    let event = match list {
+/// The indices of `rows` in their order by `criteria`, for a host that sorts its own list in place.
+pub fn auction_sort_order(rows: &[AuctionItemRow], criteria: &[(u8, bool)]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..rows.len()).collect();
+    order.sort_by(|&a, &b| compare_rows(&rows[a], &rows[b], criteria));
+    order
+}
+
+/// Sort `rows` by `criteria` in place.
+#[cfg(any(test, feature = "fixtures"))]
+fn sort_rows(rows: &mut [AuctionItemRow], criteria: &[(u8, bool)]) {
+    rows.sort_by(|a, b| compare_rows(a, b, criteria));
+}
+
+/// The update event each list fires once sorted (`0x59b980`, `0x59b9e0`, `0x59cab0`).
+fn list_event(list: usize) -> &'static str {
+    match list {
         LIST => "AUCTION_ITEM_LIST_UPDATE",
         BIDDER => "AUCTION_BIDDER_LIST_UPDATE",
         _ => "AUCTION_OWNED_LIST_UPDATE",
+    }
+}
+
+/// Whether a house is open at the call (`[0xc0f3e8]`).
+fn house_open(model: &Model) -> bool {
+    match super::read_live(|l| l.auction_auctioneer()).flatten() {
+        Some(auctioneer) => auctioneer.is_some(),
+        None => fixture_open(model),
+    }
+}
+
+#[cfg(any(test, feature = "fixtures"))]
+fn fixture_open(model: &Model) -> bool {
+    model.auction.is_some()
+}
+
+#[cfg(not(any(test, feature = "fixtures")))]
+fn fixture_open(_: &Model) -> bool {
+    false
+}
+
+/// One list's rows and its total.
+fn counts(model: &Model, list: usize) -> (usize, u32) {
+    if let Some(counts) = super::read_live(|l| l.auction_counts(list)).flatten() {
+        return counts;
+    }
+    #[cfg(any(test, feature = "fixtures"))]
+    if let Some(s) = model.auction.as_ref() {
+        return (s.lists[list].rows.len(), s.lists[list].total);
+    }
+    let _ = model;
+    (0, 0)
+}
+
+/// Row `index` (1-based) of the list named `kind`, read at the call; `info` is
+/// `GetAuctionItemInfo`'s read.
+fn row(model: &Model, kind: &str, index: usize, info: bool) -> Option<AuctionItemRow> {
+    let list = list_index(kind)?;
+    let i = index.checked_sub(1)?;
+    if let Some(row) = super::write_live(|l| l.auction_row(list, i, info)).flatten() {
+        return row;
+    }
+    #[cfg(any(test, feature = "fixtures"))]
+    if let Some(s) = model.auction.as_ref() {
+        return s.lists[list].rows.get(i).cloned();
+    }
+    let _ = (model, info);
+    None
+}
+
+/// Row `index` (1-based) of the list named `kind`, for the tooltip's hover.
+pub(super) fn row_for_tooltip(model: &Model, kind: &str, index: usize) -> Option<AuctionItemRow> {
+    row(model, kind, index, false)
+}
+
+/// The 1-based row of `auction_id` on `list`, 0 for none.
+fn find(model: &Model, list: usize, auction_id: u32) -> usize {
+    let found = match super::read_live(|l| l.auction_find(list, auction_id)).flatten() {
+        Some(found) => found,
+        None => fixture_find(model, list, auction_id),
     };
-    model.raise(event, Vec::new());
+    found.map_or(0, |i| i + 1)
+}
+
+#[cfg(any(test, feature = "fixtures"))]
+fn fixture_find(model: &Model, list: usize, auction_id: u32) -> Option<usize> {
+    model.auction.as_ref()?.lists[list]
+        .rows
+        .iter()
+        .position(|r| r.auction_id == auction_id)
+}
+
+#[cfg(not(any(test, feature = "fixtures")))]
+fn fixture_find(_: &Model, _: usize, _: u32) -> Option<usize> {
+    None
+}
+
+/// The house's deposit rate, `None` with no `AuctionHouse.dbc` row.
+fn deposit_rate(model: &Model) -> Option<u32> {
+    if let Some(rate) = super::read_live(|l| l.auction_deposit_rate()).flatten() {
+        return rate;
+    }
+    #[cfg(any(test, feature = "fixtures"))]
+    if let Some(s) = model.auction.as_ref() {
+        return Some(s.deposit_percent);
+    }
+    let _ = model;
+    None
+}
+
+/// The query gate of `list` and the get-all one.
+fn gate(model: &Model, list: usize) -> (bool, bool) {
+    if let Some(gate) = super::read_live(|l| l.auction_can_send(list)).flatten() {
+        return gate;
+    }
+    #[cfg(any(test, feature = "fixtures"))]
+    {
+        let can = model.auction_can_query[list];
+        (can, can && model.auction_can_get_all)
+    }
+    #[cfg(not(any(test, feature = "fixtures")))]
+    {
+        let _ = model;
+        (false, false)
+    }
+}
+
+/// `list`'s sort criteria, front first.
+fn criteria(model: &Model, list: usize) -> Vec<(u8, bool)> {
+    if let Some(c) = super::read_live(|l| l.auction_criteria(list)).flatten() {
+        return c;
+    }
+    #[cfg(any(test, feature = "fixtures"))]
+    {
+        model.auction_sort[list].clone()
+    }
+    #[cfg(not(any(test, feature = "fixtures")))]
+    {
+        let _ = model;
+        Vec::new()
+    }
+}
+
+fn set_criteria(model: &mut Model, list: usize, criteria: Vec<(u8, bool)>) {
+    if super::write_live(|l| l.set_auction_criteria(list, criteria.clone()))
+        .flatten()
+        .is_some()
+    {
+        return;
+    }
+    #[cfg(any(test, feature = "fixtures"))]
+    {
+        model.auction_sort[list] = criteria;
+    }
+    #[cfg(not(any(test, feature = "fixtures")))]
+    let _ = (model, criteria);
 }
 
 /// Re-sort one list in place and signal its update event, as the reference's list sorts do.
 fn apply_sort(model: &mut crate::script::ModelGuard<'_>, list: usize) {
-    let criteria = model.auction_sort[list].clone();
-    if let Some(state) = model.auction.as_mut() {
-        sort_rows(&mut state.lists[list].rows, &criteria);
+    if super::write_live(|l| l.auction_sort(list))
+        .flatten()
+        .is_none()
+    {
+        #[cfg(any(test, feature = "fixtures"))]
+        {
+            let criteria = model.auction_sort[list].clone();
+            if let Some(state) = model.auction.as_mut() {
+                sort_rows(&mut state.lists[list].rows, &criteria);
+            }
+        }
     }
-    raise_list_event(model, list);
+    model.raise(list_event(list), Vec::new());
+}
+
+/// Send `packet` inside the call; a fixture records it.
+fn send(model: &mut Model, packet: AuctionPacket) {
+    // A view that does not lend the house declines it, and the fixture keeps the packet.
+    if super::write_live(|l| l.auction_send(packet.clone()))
+        .flatten()
+        .is_some()
+    {
+        return;
+    }
+    #[cfg(any(test, feature = "fixtures"))]
+    model.auction_sent.push(packet);
+    #[cfg(not(any(test, feature = "fixtures")))]
+    let _ = (model, packet);
+}
+
+/// The sell-item clear (`0x59a560`): a held item unlocks and leaves the slot, and
+/// `NEW_AUCTION_UPDATE` fires.
+fn clear_sell_item(model: &mut crate::script::ModelGuard<'_>) {
+    let Some(it) = model.auction_sell_item.take() else {
+        return;
+    };
+    cursor::set_item_lock(model, it.bag, it.slot, false);
+    model.raise("NEW_AUCTION_UPDATE", Vec::new());
+}
+
+/// A multi-sell's end: the gathered items unlock (`0x59aae0`), the sell slot clears (`0x59a560`)
+/// and, on a failure, `AUCTION_MULTISELL_FAILURE` fires (`0x59ab20`).
+fn end_multisell(model: &mut crate::script::ModelGuard<'_>, failure: bool) {
+    for (bag, slot) in std::mem::take(&mut model.auction_locked) {
+        cursor::set_item_lock(model, bag, slot, false);
+    }
+    clear_sell_item(model);
+    if failure {
+        model.raise("AUCTION_MULTISELL_FAILURE", Vec::new());
+    }
+}
+
+/// The next-item sell's outcome raised (`0x59ba80`): the last stack out ends the multi-sell, running
+/// dry fails it.
+fn sell_step(model: &mut crate::script::ModelGuard<'_>, step: AuctionSellStep) {
+    match step {
+        AuctionSellStep::Sent => {}
+        AuctionSellStep::Done => end_multisell(model, false),
+        AuctionSellStep::Failed => end_multisell(model, true),
+    }
 }
 
 impl super::UiScript {
@@ -393,18 +627,40 @@ impl super::UiScript {
         set_field!(self, auction_item_classes, classes);
     }
 
-    /// Push the open house, rows in wire order; each list is sorted by its criteria here, as the
-    /// reference sorts a page on arrival. `None` is a closed window.
+    /// Empty the sell slot (`0x59a560`), as the auctioneer set does (`0x59f10b`); `NEW_AUCTION_UPDATE`
+    /// fires when it held an item.
+    pub fn clear_auction_sell_item(&mut self) {
+        if self.model_ref().auction_sell_item.is_none() {
+            return;
+        }
+        clear_sell_item(&mut self.model_mut());
+    }
+
+    /// The world entry's part (`0x59dfb0`): the sell slot clears with `NEW_AUCTION_UPDATE` when it
+    /// held an item, the Auctions tab reads hidden and no list keeps a selection.
+    pub fn enter_auction_world(&mut self) {
+        let mut model = self.model_mut();
+        clear_sell_item(&mut model);
+        model.auction_tab_showing = false;
+        model.auction_selected = [0; 3];
+    }
+
+    /// A multi-sell's end in a handler's turn: its items unlock, the slot clears and, on a
+    /// failure, `AUCTION_MULTISELL_FAILURE` fires (`0x59ab20`).
+    pub fn end_auction_multisell(&mut self, failure: bool) {
+        end_multisell(&mut self.model_mut(), failure);
+    }
+
+    /// The next-item sell's outcome in a handler's turn (`0x5a005d`).
+    pub fn auction_sell_step(&mut self, step: AuctionSellStep) {
+        sell_step(&mut self.model_mut(), step);
+    }
+
+    /// Push a fixture's house, rows sorted by its criteria as the reference sorts a page on
+    /// arrival. `None` is a closed house.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_auction(&mut self, state: Option<AuctionState>) {
         let mut model = self.model_mut();
-        // Only opening or closing the session drops the selection: it is an auction id, so it
-        // survives a new page or a re-sort and stops resolving when the auction leaves the page.
-        if model.auction.is_none() || state.is_none() {
-            model.auction_selected = [0; 3];
-        }
-        if state.is_none() {
-            model.auction_tab_showing = false;
-        }
         let mut state = state;
         if let Some(s) = state.as_mut() {
             for (list, l) in s.lists.iter_mut().enumerate() {
@@ -414,109 +670,24 @@ impl super::UiScript {
         model.auction = state;
     }
 
-    /// Push the query-allowed answer per list (`0x59a2f0`) and whether a get-all query may go out,
-    /// the app's throttle.
+    /// A fixture's query gate per list and its get-all gate.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_auction_can_query(&mut self, can: [bool; 3], get_all: bool) {
         set_field!(self, auction_can_query, can);
         set_field!(self, auction_can_get_all, get_all);
     }
 
-    /// The items a multi-sell holds locked, as `(bag, slot)`; each change signals
-    /// `ITEM_LOCK_CHANGED` for the slot.
-    pub fn set_auction_locked(&mut self, slots: Vec<(i64, u32)>) {
-        if self.model_ref().auction_locked == slots {
-            return;
-        }
-        let mut model = self.model_mut();
-        let old = model.auction_locked.clone();
-        for held in old.iter().filter(|s| !slots.contains(s)) {
-            model.auction_locked.retain(|s| s != held);
-            cursor::set_item_lock(&mut model, held.0, held.1, false);
-        }
-        for &(bag, slot) in slots.iter().filter(|s| !old.contains(s)) {
-            model.auction_locked.push((bag, slot));
-            cursor::set_item_lock(&mut model, bag, slot, true);
-        }
-        model.auction_locked = slots;
+    /// The sends a fixture's verbs made, taken.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub fn take_auction_sent(&mut self) -> Vec<AuctionPacket> {
+        drain_field!(self, auction_sent)
     }
 
-    /// Drain the Browse search the Lua queued, if any.
-    pub fn take_auction_query(&mut self) -> Option<AuctionQuery> {
-        drain_option!(self, auction_query)
+    /// A fixture's multi-sell, taken.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub fn take_auction_multisell(&mut self) -> Option<AuctionMultiSell> {
+        drain_option!(self, auction_multisell)
     }
-
-    /// Whether `GetOwnerAuctionItems` was called since the last drain.
-    pub fn take_auction_owner_query(&mut self) -> bool {
-        drain_field!(self, auction_owner_query)
-    }
-
-    /// Drain the bidder-list request (`GetBidderAuctionItems`): the wire's list start.
-    pub fn take_auction_bidder_query(&mut self) -> Option<u32> {
-        drain_option!(self, auction_bidder_query)
-    }
-
-    /// Drain the bids placed since the last drain.
-    pub fn take_auction_bids(&mut self) -> Vec<AuctionBid> {
-        drain_field!(self, auction_bids)
-    }
-
-    /// Drain the auction ids `CancelAuction` was called on.
-    pub fn take_auction_cancels(&mut self) -> Vec<u32> {
-        drain_field!(self, auction_cancels)
-    }
-
-    /// Drain a pending `StartAuction`.
-    pub fn take_auction_start(&mut self) -> Option<AuctionStartRequest> {
-        drain_option!(self, auction_start)
-    }
-
-    /// Whether `CancelSell` was called since the last drain.
-    pub fn take_auction_cancel_sell(&mut self) -> bool {
-        drain_field!(self, auction_cancel_sell)
-    }
-
-    /// Whether `CloseAuctionHouse` was called since the last drain (and clear the flag).
-    pub fn take_auction_close(&mut self) -> bool {
-        drain_field!(self, auction_close)
-    }
-
-    /// One list's auction ids in the order the Lua indexes them, for a host that maps an index.
-    pub fn auction_ids(&self, list: usize) -> Vec<u32> {
-        self.model_ref()
-            .auction
-            .as_ref()
-            .map_or_else(Vec::new, |s| {
-                s.lists[list].rows.iter().map(|r| r.auction_id).collect()
-            })
-    }
-
-    /// The sell slot's `(bag, slot)`.
-    pub fn auction_sell_item(&mut self) -> Option<(i64, u32)> {
-        self.model_ref()
-            .auction_sell_item
-            .as_ref()
-            .map(|it| (it.bag, it.slot))
-    }
-
-    /// Empty the sell slot (`0x59a560`): a listing went out, a multi-sell ended, or the session
-    /// closed.
-    pub fn clear_auction_sell_item(&mut self) {
-        if self.model_ref().auction_sell_item.is_none() {
-            return;
-        }
-        let mut model = self.model_mut();
-        if let Some(it) = model.auction_sell_item.take() {
-            cursor::set_item_lock(&mut model, it.bag, it.slot, false);
-        }
-    }
-}
-
-fn row_at<'a>(model: &'a Model, kind: &str, index: usize) -> Option<&'a AuctionItemRow> {
-    let i = list_index(kind)?;
-    model
-        .auction
-        .as_ref()
-        .and_then(|a| index.checked_sub(1).and_then(|n| a.lists[i].rows.get(n)))
 }
 
 /// A Lua number, or a numeric string as `lua_isnumber` accepts it.
@@ -702,20 +873,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let (batch, total) = list_index(&kind)
-                .and_then(|i| {
-                    model.auction.as_ref().map(|s| {
-                        let l = &s.lists[i];
-                        let batch = l.rows.len() as i64;
-                        let total = if i == OWNER {
-                            batch
-                        } else {
-                            i64::from(l.total)
-                        };
-                        (batch, total)
-                    })
-                })
-                .unwrap_or((0, 0));
+            let (batch, total) = list_index(&kind).map_or((0, 0), |i| {
+                let (rows, total) = counts(&model, i);
+                let batch = rows as i64;
+                (batch, if i == OWNER { batch } else { i64::from(total) })
+            });
             Ok((batch, total))
         })?,
     )?;
@@ -734,9 +896,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let model = lua
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
-                let row = row_at(&model, &kind, index)
-                    .filter(|r| r.name.is_some())
-                    .cloned();
+                let row = row(&model, &kind, index, true).filter(|r| r.name.is_some());
                 let can_use = row
                     .as_ref()
                     .is_some_and(|r| super::item_stats::item_usable_by_id(&model, r.item_id));
@@ -788,7 +948,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // GetAuctionItemTimeLeft(type, index) (`0x59fd60`) → the 1..4 bucket of the time to the
-    // expiry, for a sold row the seconds to delivery, 1 once past it, 0 for a miss.
+    // expiry, for a sold row the seconds to delivery, 1 once past it, 0 for a miss. A sold row past
+    // its delivery, or any row 10 s past its expiry, expires inside the call (`0x59fe7d`).
     g.set(
         "GetAuctionItemTimeLeft",
         lua.create_function(|lua, args: MultiValue| {
@@ -796,24 +957,30 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let (Some(kind), Some(index)) = (string_arg(a.first()), number(a.get(1))) else {
                 return Err(usage("Usage: GetAuctionItemTimeLeft(\"type\", index)"));
             };
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let index = usize::try_from(trunc_i64(index)).unwrap_or(0);
-            let Some(r) = row_at(&model, &kind, index) else {
+            let Some(r) = row(&model, &kind, index, false) else {
                 return Ok(0i64);
             };
-            let left_ms = (r.expires_at - model.now) * 1000.0;
-            if left_ms <= 0.0 {
-                return Ok(1);
+            let left_ms = r.time_left * 1000.0;
+            if left_ms > 0.0 {
+                if r.sold {
+                    return Ok((left_ms / 1000.0) as i64);
+                }
+                return Ok(TIME_LEFT_THRESHOLDS_MS
+                    .iter()
+                    .position(|&t| left_ms < t)
+                    .map_or(4, |i| i as i64 + 1));
             }
-            if r.sold {
-                return Ok((left_ms / 1000.0) as i64);
+            if r.sold || -left_ms > EXPIRY_GRACE_MS {
+                let events = super::write_live(|l| l.auction_expired(r.auction_id))
+                    .flatten()
+                    .unwrap_or_default();
+                for event in events {
+                    model.raise(event, Vec::new());
+                }
             }
-            Ok(TIME_LEFT_THRESHOLDS_MS
-                .iter()
-                .position(|&t| left_ms < t)
-                .map_or(4, |i| i as i64 + 1))
+            Ok(1)
         })?,
     )?;
 
@@ -830,7 +997,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
                 let index = usize::try_from(trunc_i64(index)).unwrap_or(0);
-                row_at(&model, &kind, index).and_then(|r| r.link.clone())
+                row(&model, &kind, index, false).and_then(|r| r.link)
             };
             Ok(match link {
                 Some(l) => MultiValue::from_vec(vec![Value::String(lua.create_string(&l)?)]),
@@ -857,13 +1024,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if id == 0 {
                 return Ok(0);
             }
-            Ok(model.auction.as_ref().map_or(0, |s| {
-                s.lists[i]
-                    .rows
-                    .iter()
-                    .position(|r| r.auction_id == id)
-                    .map_or(0, |p| p as i64 + 1)
-            }))
+            Ok(find(&model, i, id) as i64)
         })?,
     )?;
 
@@ -882,7 +1043,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             let id = usize::try_from(trunc_i64(index))
                 .ok()
-                .and_then(|index| row_at(&model, &kind, index))
+                .and_then(|index| row(&model, &kind, index, false))
                 .map_or(0, |r| r.auction_id);
             model.auction_selected[i] = id;
             Ok(())
@@ -902,12 +1063,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(());
             };
             let mut model = crate::script::model_mut_of(lua);
-            let criteria = &mut model.auction_sort[list];
-            let reversed = match criteria.first() {
-                Some(&(c, rev)) if c == column => !rev,
+            let mut c = criteria(&model, list);
+            let reversed = match c.first() {
+                Some(&(first, rev)) if first == column => !rev,
                 _ => false,
             };
-            set_criterion(criteria, column, reversed);
+            set_criterion(&mut c, column, reversed);
+            set_criteria(&mut model, list, c);
             apply_sort(&mut model, list);
             Ok(())
         })?,
@@ -929,10 +1091,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             let found = list_index(&kind).and_then(|i| {
-                model.auction_sort[i]
-                    .iter()
-                    .find(|&&(c, _)| c == column)
-                    .map(|&(_, rev)| rev)
+                criteria(&model, i)
+                    .into_iter()
+                    .find(|&(c, _)| c == column)
+                    .map(|(_, rev)| rev)
             });
             Ok(MultiValue::from_vec(match found {
                 Some(rev) => vec![flag(rev), Value::Integer(1)],
@@ -956,7 +1118,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let found = list_index(&kind).and_then(|i| {
                 usize::try_from(trunc_i64(index) - 1)
                     .ok()
-                    .and_then(|n| model.auction_sort[i].get(n).copied())
+                    .and_then(|n| criteria(&model, i).get(n).copied())
             });
             Ok(MultiValue::from_vec(match found {
                 Some((column, rev)) => vec![
@@ -976,7 +1138,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let kind = string_arg(a.first())
                 .ok_or_else(|| usage("Usage: SortAuctionClearSort(\"type\")"))?;
             if let Some(i) = list_index(&kind) {
-                crate::script::model_mut_of(lua).auction_sort[i].clear();
+                set_criteria(&mut crate::script::model_mut_of(lua), i, Vec::new());
             }
             Ok(())
         })?,
@@ -995,11 +1157,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             let reversed = matches!(a.get(2), Some(Value::Boolean(true)));
             if let (Some(i), Some(column)) = (list_index(&kind), sort_column(&sort)) {
-                set_criterion(
-                    &mut crate::script::model_mut_of(lua).auction_sort[i],
-                    column,
-                    reversed,
-                );
+                let mut model = crate::script::model_mut_of(lua);
+                let mut c = criteria(&model, i);
+                set_criterion(&mut c, column, reversed);
+                set_criteria(&mut model, i, c);
             }
             Ok(())
         })?,
@@ -1045,8 +1206,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let can = model.auction_can_query[list];
-            Ok((flag(can), flag(can && model.auction_can_get_all)))
+            let (can, get_all) = gate(&model, list);
+            Ok((flag(can), flag(get_all)))
         })?,
     )?;
 
@@ -1152,18 +1313,18 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // QueryAuctionItems(name, minLevel, maxLevel, invTypeIndex, classIndex, subclassIndex, page,
-    // usable, quality[, getAll]) (`0x59bcf0`): with a session and the throttle open, queue the
-    // search with the Browse list's criteria; each menu position maps to its wire id.
+    // usable, quality[, getAll]) (`0x59bcf0`): with a session and the throttle open, the search goes
+    // out inside the call with the Browse list's criteria; each menu position maps to its wire id.
     g.set(
         "QueryAuctionItems",
         lua.create_function(|lua, args: MultiValue| {
             let a: Vec<Value> = args.into_iter().collect();
             let mut model = crate::script::model_mut_of(lua);
-            if model.auction.is_none() || !model.auction_can_query[LIST] {
+            if !house_open(&model) || !gate(&model, LIST).0 {
                 return Ok(());
             }
             let get_all = matches!(a.get(9), Some(Value::Boolean(true)));
-            if get_all && !model.auction_can_get_all {
+            if get_all && !gate(&model, LIST).1 {
                 return Ok(());
             }
             let name = string_arg(a.first()).unwrap_or_default();
@@ -1192,37 +1353,40 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 list_from: (page * 50) as u32,
                 usable: byte(7),
                 get_all,
-                sort: model.auction_sort[LIST].clone(),
             };
-            model.auction_query = Some(query);
-            // The query is in flight from here (`[0xc0e734]`): the gate closes until it answers.
-            model.auction_can_query[LIST] = false;
-            Ok(())
-        })?,
-    )?;
-
-    // GetOwnerAuctionItems() (`0x59d4f0`): the app sends it while its owner gate is open.
-    g.set(
-        "GetOwnerAuctionItems",
-        lua.create_function(|lua, _: MultiValue| {
-            let mut model = crate::script::model_mut_of(lua);
-            if model.auction.is_some() {
-                model.auction_owner_query = true;
+            send(&mut model, AuctionPacket::Query(query));
+            // A fixture's query is in flight from here (`[0xc0e734]`): its gate closes.
+            #[cfg(any(test, feature = "fixtures"))]
+            {
+                model.auction_can_query[LIST] = false;
             }
             Ok(())
         })?,
     )?;
 
-    // GetBidderAuctionItems([page]) (`0x59d540`): the app sends `50 × page` while its bidder
-    // gate is open.
+    // GetOwnerAuctionItems() (`0x59d4f0`): the owner list and the pending sales go out inside the
+    // call while the owner gate and the query gate are open (`0x59cc50`).
+    g.set(
+        "GetOwnerAuctionItems",
+        lua.create_function(|lua, _: MultiValue| {
+            let mut model = crate::script::model_mut_of(lua);
+            if house_open(&model) {
+                send(&mut model, AuctionPacket::OwnerList);
+            }
+            Ok(())
+        })?,
+    )?;
+
+    // GetBidderAuctionItems([page]) (`0x59d540`): `50 × page` goes out inside the call while the
+    // bidder gate and the query gate are open (`0x59ce50`).
     g.set(
         "GetBidderAuctionItems",
         lua.create_function(|lua, args: MultiValue| {
             let a: Vec<Value> = args.into_iter().collect();
             let mut model = crate::script::model_mut_of(lua);
-            if model.auction.is_some() {
+            if house_open(&model) {
                 let page = number(a.first()).map_or(0, trunc_i64);
-                model.auction_bidder_query = Some((page * 50) as u32);
+                send(&mut model, AuctionPacket::BidderList((page * 50) as u32));
             }
             Ok(())
         })?,
@@ -1243,11 +1407,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let mut model = crate::script::model_mut_of(lua);
             let Some(r) = usize::try_from(trunc_i64(index))
                 .ok()
-                .and_then(|i| row_at(&model, &kind, i))
-                .cloned()
+                .and_then(|i| row(&model, &kind, i, false))
             else {
                 return Ok(());
             };
+            if !house_open(&model) {
+                return Ok(());
+            }
             let mut bid = trunc_i64(bid) as u32;
             if r.buyout_price != 0 && bid > r.buyout_price {
                 bid = r.buyout_price;
@@ -1291,17 +1457,21 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 crate::script::ui_errors::show_carry_refusal(lua, &refusal);
                 return Ok(());
             }
-            model.auction_bids.push(AuctionBid {
-                auction_id: r.auction_id,
-                amount: bid,
-            });
+            send(
+                &mut model,
+                AuctionPacket::Bid {
+                    auction_id: r.auction_id,
+                    amount: bid,
+                },
+            );
             Ok(())
         })?,
     )?;
 
     // StartAuction(minBid, buyoutPrice, runTime[, stackSize, numStacks]) (`0x59f990`): runTime is
-    // the duration menu's 1..3; the sell item alone covering one stack goes out at once and empties
-    // the slot, anything more is the app's multi-sell.
+    // the duration menu's 1..3. The sell item alone covering one stack goes out inside the call and
+    // empties the slot (`0x59fc66`); anything more gathers the sellable stacks (`0x59f640`) and
+    // lists one stack now (`0x59ba80`), a multi-sell of several firing its start and locking them.
     g.set(
         "StartAuction",
         lua.create_function(|lua, args: MultiValue| {
@@ -1314,7 +1484,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 ));
             };
             let mut model = crate::script::model_mut_of(lua);
-            if model.auction.is_none() {
+            if !house_open(&model) {
                 return Ok(());
             }
             let Some(it) = model.auction_sell_item.clone() else {
@@ -1327,8 +1497,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .and_then(|s| s.durability)
                 .is_some_and(|(cur, max)| cur < max);
             if worn {
-                drop(model);
-                crate::script::ui_errors::show_now(lua, "ERR_AUCTION_REPAIR_ITEM");
+                model.show("ERR_AUCTION_REPAIR_ITEM");
                 return Ok(());
             }
             let min_bid = trunc_i64(min_bid) as u32;
@@ -1336,43 +1505,90 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if buyout != 0 && buyout < min_bid {
                 buyout = min_bid;
             }
+            let minutes = run_time(duration);
             let stack_size = number(a.get(3)).map_or(0, |n| trunc_i64(n) as u32);
             let num_stacks = number(a.get(4)).map_or(1, |n| trunc_i64(n) as u32);
-            let direct = sell_count(&model, &it) >= stack_size && num_stacks <= 1;
-            let items = if direct {
-                vec![(it.bag, it.slot, stack_size)]
-            } else {
-                gather_for_sale(&model, it.item_id, stack_size.saturating_mul(num_stacks))
+            let guid = |model: &Model, bag: i64, slot: u32| {
+                super::container::live_slot(model, bag, slot).map_or(0, |s| s.guid)
             };
-            if items.is_empty() {
-                drop(model);
-                crate::script::ui_errors::show_now(lua, "ERR_AUCTION_ENOUGH_ITEMS");
-                model = crate::script::model_mut_of(lua);
-            } else {
-                model.auction_start = Some(AuctionStartRequest {
-                    min_bid,
-                    buyout,
-                    run_time_minutes: run_time(duration),
-                    stack_size,
-                    num_stacks,
-                    items,
-                    direct,
-                });
+            if sell_count(&model, &it) >= stack_size && num_stacks <= 1 {
+                let item = guid(&model, it.bag, it.slot);
+                send(
+                    &mut model,
+                    AuctionPacket::Sell {
+                        item,
+                        count: stack_size,
+                        bid: min_bid,
+                        buyout,
+                        minutes,
+                    },
+                );
+                clear_sell_item(&mut model);
+                return Ok(());
             }
-            // A multi-sell keeps the slot until its last stack is out.
-            if direct || num_stacks <= 1 || model.auction_start.is_none() {
-                model.auction_sell_item = None;
-                cursor::set_item_lock(&mut model, it.bag, it.slot, false);
+            let stacks = gather_for_sale(&model, it.item_id, stack_size.saturating_mul(num_stacks));
+            if stacks.is_empty() {
+                model.show("ERR_AUCTION_ENOUGH_ITEMS");
+                clear_sell_item(&mut model);
+                return Ok(());
+            }
+            let sell = AuctionMultiSell {
+                items: stacks
+                    .iter()
+                    .map(|&(bag, slot, count)| (guid(&model, bag, slot), count))
+                    .collect(),
+                stack_size,
+                num_stacks,
+                bid: min_bid,
+                buyout,
+                minutes,
+            };
+            let live = super::write_live(|l| l.auction_multisell_start(sell.clone()))
+                .flatten()
+                .is_some();
+            #[cfg(any(test, feature = "fixtures"))]
+            if !live {
+                model.auction_multisell = Some(sell);
+            }
+            #[cfg(not(any(test, feature = "fixtures")))]
+            let _ = sell;
+            let next = |model: &mut crate::script::ModelGuard<'_>| {
+                let step = if live {
+                    super::write_live(|l| l.auction_sell_next()).flatten()
+                } else {
+                    None
+                };
+                sell_step(model, step.unwrap_or(AuctionSellStep::Sent));
+            };
+            if num_stacks <= 1 {
+                next(&mut model);
+                clear_sell_item(&mut model);
+            } else {
+                model.raise(
+                    "AUCTION_MULTISELL_START",
+                    vec![ScriptValue::Int(i64::from(num_stacks))],
+                );
+                for &(bag, slot, _) in &stacks {
+                    model.auction_locked.push((bag, slot));
+                    cursor::set_item_lock(&mut model, bag, slot, true);
+                }
+                next(&mut model);
             }
             Ok(())
         })?,
     )?;
 
-    // CancelSell() (`0x59b040`): stop a multi-sell in progress.
+    // CancelSell() (`0x59b040`): a pending multi-sell fails (`0x59ab20`).
     g.set(
         "CancelSell",
         lua.create_function(|lua, _: MultiValue| {
-            crate::script::model_mut_of(lua).auction_cancel_sell = true;
+            let mut model = crate::script::model_mut_of(lua);
+            if super::write_live(|l| l.auction_pending_sell(true))
+                .flatten()
+                .unwrap_or(false)
+            {
+                end_multisell(&mut model, true);
+            }
             Ok(())
         })?,
     )?;
@@ -1385,11 +1601,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let a: Vec<Value> = args.into_iter().collect();
             let index = number(a.first()).ok_or_else(|| usage("Usage: CancelAuction(index)"))?;
             let mut model = crate::script::model_mut_of(lua);
+            if !house_open(&model) {
+                return Ok(());
+            }
             let Some(r) = usize::try_from(trunc_i64(index))
                 .ok()
-                .and_then(|i| row_at(&model, "owner", i))
+                .and_then(|i| row(&model, "owner", i, false))
                 .filter(|r| !r.sold)
-                .cloned()
             else {
                 return Ok(());
             };
@@ -1401,7 +1619,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     return Ok(());
                 }
             }
-            model.auction_cancels.push(r.auction_id);
+            send(
+                &mut model,
+                AuctionPacket::Cancel {
+                    auction_id: r.auction_id,
+                },
+            );
             Ok(())
         })?,
     )?;
@@ -1416,12 +1639,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            if model.auction.is_none() {
+            if !house_open(&model) {
                 return Ok(MultiValue::new());
             }
             let can = usize::try_from(trunc_i64(index))
                 .ok()
-                .and_then(|i| row_at(&model, "owner", i))
+                .and_then(|i| row(&model, "owner", i, false))
                 .is_some_and(|r| !r.sold);
             Ok(MultiValue::from_vec(vec![flag(can)]))
         })?,
@@ -1433,10 +1656,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(model
-                .auction
-                .as_ref()
-                .map_or(0, |a| i64::from(a.deposit_percent)))
+            Ok(deposit_rate(&model).map_or(0, i64::from))
         })?,
     )?;
 
@@ -1451,8 +1671,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let (Some(state), Some(it)) =
-                (model.auction.as_ref(), model.auction_sell_item.as_ref())
+            let (Some(rate), Some(it)) = (deposit_rate(&model), model.auction_sell_item.as_ref())
             else {
                 return Ok(0i64);
             };
@@ -1462,7 +1681,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let count =
                 number(a.get(1)).map_or_else(|| sell_count(&model, it), |n| trunc_i64(n) as u32);
             Ok(i64::from(deposit_for(
-                state.deposit_percent,
+                rate,
                 count.wrapping_mul(t.sell_price),
                 run_time(duration),
             )))
@@ -1525,26 +1744,56 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // ClickAuctionSellItemButton() (`0x59d410`): swap the cursor's item with the sell slot's; an
-    // item the house refuses stays held with its reason.
+    // ClickAuctionSellItemButton() (`0x59d410`): swap the cursor's item with the sell slot's and
+    // fire `NEW_AUCTION_UPDATE` (`0x59d4df`); an item the house refuses stays held with its reason.
     g.set(
         "ClickAuctionSellItemButton",
         lua.create_function(|lua, _: MultiValue| {
             let mut model = crate::script::model_mut_of(lua);
-            if let Some(key) = click_auction_sell_item(&mut model) {
-                drop(model);
-                crate::script::ui_errors::show_now(lua, key);
+            match click_auction_sell_item(&mut model) {
+                Click::Refused(key) => model.show(key),
+                Click::Swapped => model.raise("NEW_AUCTION_UPDATE", Vec::new()),
+                Click::Nothing => {}
             }
             Ok(())
         })?,
     )?;
 
-    // CloseAuctionHouse() (`0x59f750`): the client-side close; nothing goes on the wire.
+    // CloseAuctionHouse() (`0x59f750` -> `0x59f150`): with a house open, `AUCTION_HOUSE_CLOSED`
+    // fires, a pending multi-sell fails, and the interact target clears on the auctioneer
+    // (`0x59f189`); when the auctioneer held it, its interaction close runs the house's close again
+    // (`0x51304a`), a second `AUCTION_HOUSE_CLOSED`. Then the house empties and the sell slot
+    // clears. Nothing goes on the wire.
     g.set(
         "CloseAuctionHouse",
         lua.create_function(|lua, ()| {
             let mut model = crate::script::model_mut_of(lua);
-            model.auction_close = true;
+            if !house_open(&model) {
+                return Ok(());
+            }
+            model.raise("AUCTION_HOUSE_CLOSED", Vec::new());
+            if super::write_live(|l| l.auction_pending_sell(true))
+                .flatten()
+                .unwrap_or(false)
+            {
+                end_multisell(&mut model, true);
+            }
+            if super::write_live(|l| l.auction_clear_target())
+                .flatten()
+                .unwrap_or(false)
+            {
+                model.raise("AUCTION_HOUSE_CLOSED", Vec::new());
+            }
+            if super::write_live(|l| l.auction_end_session())
+                .flatten()
+                .is_none()
+            {
+                #[cfg(any(test, feature = "fixtures"))]
+                {
+                    model.auction = None;
+                }
+            }
+            clear_sell_item(&mut model);
             Ok(())
         })?,
     )?;
@@ -1559,7 +1808,7 @@ pub(super) fn use_container_item(
     bag: i64,
     slot: u32,
 ) -> Arm {
-    if !model.auction_tab_showing || model.auction.is_none() {
+    if !model.auction_tab_showing || !house_open(model) {
         return Arm::Pass;
     }
     let Some(s) = super::container::index_slot(model, bag, slot).filter(|s| s.item_id != 0) else {
@@ -1584,21 +1833,30 @@ pub(super) fn use_container_item(
         bar_placeable: s.bar_placeable,
     });
     cursor::set_item_lock(model, bag, slot, true);
+    model.raise("NEW_AUCTION_UPDATE", Vec::new());
     Arm::Took
 }
 
-/// The sell slot's click: a refused item stays held with its reason; the same item goes back;
-/// otherwise the cursor's item and the slot's trade places, either side possibly empty. The
-/// refusal is handed back for the caller to show at once.
-fn click_auction_sell_item(model: &mut crate::script::ModelGuard<'_>) -> Option<&'static str> {
+/// What the sell slot's click did.
+enum Click {
+    /// The house refuses the held item: it stays held, with this reason.
+    Refused(&'static str),
+    /// The slot's item and the cursor's traded places.
+    Swapped,
+    Nothing,
+}
+
+/// The sell slot's click (`0x59d410`): a refused item stays held with its reason; the same item
+/// goes back; otherwise the cursor's item and the slot's trade places, either side possibly empty.
+fn click_auction_sell_item(model: &mut crate::script::ModelGuard<'_>) -> Click {
     let held = match &model.cursor {
         Some(CursorPayload::Item(item)) => Some(item.clone()),
         None => None,
-        Some(_) => return None,
+        Some(_) => return Click::Nothing,
     };
     if let Some(item) = &held {
         if let Some(key) = sell_refusal(model, item.bag, item.slot, item.item_id) {
-            return Some(key);
+            return Click::Refused(key);
         }
         let same = model
             .auction_sell_item
@@ -1606,7 +1864,7 @@ fn click_auction_sell_item(model: &mut crate::script::ModelGuard<'_>) -> Option<
             .is_some_and(|s| s.bag == item.bag && s.slot == item.slot);
         if same {
             cursor::clear_cursor(model);
-            return None;
+            return Click::Nothing;
         }
     }
     let previous = model.auction_sell_item.take();
@@ -1616,7 +1874,7 @@ fn click_auction_sell_item(model: &mut crate::script::ModelGuard<'_>) -> Option<
     });
     // The slot's item back through the item setter, neither item unlocking (`0x59d4d3`).
     cursor::swap_cursor_item(model, previous);
-    None
+    Click::Swapped
 }
 
 #[cfg(test)]
@@ -1643,6 +1901,25 @@ mod tests {
             rows,
         };
         state
+    }
+
+    /// The name sort reads the record's own name (`0x59b4d2`): two rolls of one item tie on it, and
+    /// the next criterion decides.
+    #[test]
+    fn the_name_sort_ignores_the_suffix() {
+        let row = |auction_id: u32, suffix: &str, count: u32| AuctionItemRow {
+            auction_id,
+            name: Some(format!("Bandit Cinch {suffix}")),
+            base_name: Some("Bandit Cinch".into()),
+            count,
+            ..Default::default()
+        };
+        let rows = [row(1, "of the Wolf", 2), row(2, "of the Bear", 1)];
+        assert_eq!(
+            auction_sort_order(&rows, &[(5, false), (9, false)]),
+            vec![1, 0],
+            "the quantity decides, not the suffix"
+        );
     }
 
     fn sorts(s: &UiScript, kind: &str) -> Vec<(String, bool)> {
@@ -1827,6 +2104,14 @@ mod tests {
         s.set_auction_can_query([true; 3], true);
     }
 
+    /// The query a fixture's verbs sent, if one.
+    fn query(s: &mut UiScript) -> Option<AuctionQuery> {
+        s.take_auction_sent().into_iter().find_map(|p| match p {
+            AuctionPacket::Query(q) => Some(q),
+            _ => None,
+        })
+    }
+
     #[test]
     fn query_sends_ids_and_the_browse_criteria() {
         let mut s = UiScript::new().unwrap();
@@ -1834,20 +2119,19 @@ mod tests {
         open(&mut s);
         s.run(r#"QueryAuctionItems("lin", "10", "", 13, 1, 1, 2, 1, -1)"#)
             .unwrap();
-        let q = s.take_auction_query().expect("queued");
+        let q = query(&mut s).expect("sent in the call");
         assert_eq!(q.inv_type, 16, "INVTYPE_CLOAK is inventory type 16");
         assert_eq!((q.class, q.sub_class), (2, 0));
         assert_eq!((q.min_level, q.max_level), (10, 0));
         assert_eq!(q.list_from, 100);
         assert_eq!(q.usable, 1);
         assert_eq!(q.quality, u32::MAX, "-1 rides as any");
-        assert_eq!(q.sort[0], (1, false), "quality leads the default criteria");
         assert!(!q.get_all);
 
-        // The gate closed with the query; nothing more goes out until the app reopens it.
+        // The gate closed with the query; nothing more goes out until it reopens.
         s.run(r#"QueryAuctionItems("", "", "", nil, nil, nil, 0, nil, nil)"#)
             .unwrap();
-        assert!(s.take_auction_query().is_none());
+        assert!(query(&mut s).is_none());
         let can: Value = s.eval("return CanSendAuctionQuery()").unwrap();
         assert_eq!(can, Value::Nil);
 
@@ -1855,13 +2139,13 @@ mod tests {
         s.set_auction_can_query([true; 3], true);
         s.run(r#"QueryAuctionItems("", "", "", 14, 2, 3, 0, nil, 3, true)"#)
             .unwrap();
-        let q = s.take_auction_query().expect("queued");
+        let q = query(&mut s).expect("sent in the call");
         assert_eq!((q.inv_type, q.class, q.sub_class, q.quality), (23, 4, 6, 3));
         assert!(q.get_all);
         s.set_auction_can_query([true; 3], true);
         s.run(r#"QueryAuctionItems("", "", "", 15, 13, 1, 0)"#)
             .unwrap();
-        let q = s.take_auction_query().expect("queued");
+        let q = query(&mut s).expect("sent in the call");
         assert_eq!(
             (q.inv_type, q.class, q.sub_class),
             (u32::MAX, u32::MAX, u32::MAX)
@@ -1910,7 +2194,7 @@ mod tests {
     }
 
     #[test]
-    fn a_bid_is_checked_before_it_queues() {
+    fn a_bid_is_checked_before_it_sends() {
         let mut s = UiScript::new().unwrap();
         let mut state = page(&[5]);
         state.lists[LIST].rows[0].bid_amount = 1_000;
@@ -1922,12 +2206,12 @@ mod tests {
         assert_eq!(s.take_shown(), vec!["ERR_AUCTION_BID_INCREMENT"]);
         s.run(r#"PlaceAuctionBid("list", 1, 900)"#).unwrap();
         assert_eq!(s.take_shown(), vec!["ERR_AUCTION_HIGHER_BID"]);
-        assert!(s.take_auction_bids().is_empty());
+        assert!(s.take_auction_sent().is_empty());
         // Past the buyout is the buyout.
         s.run(r#"PlaceAuctionBid("list", 1, 9000)"#).unwrap();
         assert_eq!(
-            s.take_auction_bids(),
-            vec![AuctionBid {
+            s.take_auction_sent(),
+            vec![AuctionPacket::Bid {
                 auction_id: 5,
                 amount: 5_000
             }]
@@ -1966,7 +2250,7 @@ mod tests {
         });
         assert_eq!(s.take_shown(), vec!["ERR_ITEM_MAX_COUNT"]);
         assert!(
-            s.take_auction_bids().is_empty(),
+            s.take_auction_sent().is_empty(),
             "a refused bid sends nothing"
         );
         view.carry = Some(CarryRefusal::Category {
@@ -1980,7 +2264,7 @@ mod tests {
             s.eval::<Vec<String>>("return Log").unwrap().last().unwrap(),
             "You can only carry 2 Healthstone"
         );
-        assert!(s.take_auction_bids().is_empty());
+        assert!(s.take_auction_sent().is_empty());
         // The purse refuses first: the count is not asked (`0x59dc2d` before `0x59dc7c`).
         s.model_mut().money = 10;
         crate::script::live::lending(&mut view, || {
@@ -1998,8 +2282,8 @@ mod tests {
             s.run(r#"PlaceAuctionBid("list", 1, 600)"#).unwrap();
         });
         assert_eq!(
-            s.take_auction_bids(),
-            vec![AuctionBid {
+            s.take_auction_sent(),
+            vec![AuctionPacket::Bid {
                 auction_id: 5,
                 amount: 600
             }]
@@ -2007,12 +2291,12 @@ mod tests {
     }
 
     #[test]
-    fn the_time_left_reads_the_expiry_against_the_clock() {
+    fn the_time_left_buckets_the_time_to_the_expiry() {
         let mut s = UiScript::new().unwrap();
         let mut state = page(&[1, 2, 3]);
-        state.lists[LIST].rows[0].expires_at = 60.0 * 60.0; // an hour
-        state.lists[LIST].rows[1].expires_at = 20.0 * 3600.0; // past 12 h: 4
-        state.lists[LIST].rows[2].expires_at = 0.0; // already gone
+        state.lists[LIST].rows[0].time_left = 60.0 * 60.0; // an hour
+        state.lists[LIST].rows[1].time_left = 20.0 * 3600.0; // past 12 h: 4
+        state.lists[LIST].rows[2].time_left = 0.0; // already gone
         s.run(r#"SortAuctionClearSort("list")"#).unwrap();
         s.set_auction(Some(state));
         let left = |i: u32| {

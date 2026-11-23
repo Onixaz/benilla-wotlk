@@ -641,6 +641,9 @@ fn record_callback(sc: &mut Scene, entry: u32, landed: bool, wait: crate::items:
         RecordWait::CastFailure(fail) => sc.ui.world(move |world| {
             crate::ui_action::show_refusal(world, fail);
         }),
+        RecordWait::Auction(callback) => sc.ui.world(move |world| {
+            crate::ui_auction::record_callback(world, entry, landed, callback);
+        }),
     }
 }
 

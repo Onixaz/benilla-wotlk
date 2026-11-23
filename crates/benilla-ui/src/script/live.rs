@@ -1181,6 +1181,104 @@ pub trait LiveState {
     /// was open, sent once.
     fn mail_close_query(&mut self) {}
 
+    /// The auctioneer (`[0xc0f3e8]`), `Some(None)` with none; `None` where no view lends the
+    /// auction house.
+    fn auction_auctioneer(&self) -> Option<Option<u64>> {
+        None
+    }
+
+    /// One list's rows and its total (`0x59c1a0`); `None` where no view lends the auction house.
+    fn auction_counts(&self, _list: usize) -> Option<(usize, u32)> {
+        None
+    }
+
+    /// Row `index` (0-based) of `list` read at the call; `info`, `GetAuctionItemInfo`'s read, leaves
+    /// the list's callback on each name in flight once (`0x59d8dd`, `0x59d946`). `Some(None)` past the
+    /// rows, `None` where no view lends the auction house.
+    fn auction_row(
+        &mut self,
+        _list: usize,
+        _index: usize,
+        _info: bool,
+    ) -> Option<Option<super::AuctionItemRow>> {
+        None
+    }
+
+    /// The 0-based row of `auction_id` on `list` (`0x59b3a0`); `None` where no view lends the
+    /// auction house.
+    fn auction_find(&self, _list: usize, _auction_id: u32) -> Option<Option<usize>> {
+        None
+    }
+
+    /// The house's `AuctionHouse.dbc` deposit rate (`0x59bc90`), `Some(None)` with no row; `None`
+    /// where no view lends the auction house.
+    fn auction_deposit_rate(&self) -> Option<Option<u32>> {
+        None
+    }
+
+    /// The query gate of `list` (`0x59a2f0`) and the get-all one (`0x59c7ce`); `None` where no view
+    /// lends the auction house.
+    fn auction_can_send(&self, _list: usize) -> Option<(bool, bool)> {
+        None
+    }
+
+    /// `list`'s sort criteria, front first; `None` where no view lends the auction house.
+    fn auction_criteria(&self, _list: usize) -> Option<Vec<(u8, bool)>> {
+        None
+    }
+
+    /// Replace `list`'s sort criteria; `None` where no view lends the auction house.
+    fn set_auction_criteria(&mut self, _list: usize, _criteria: Vec<(u8, bool)>) -> Option<()> {
+        None
+    }
+
+    /// Sort `list` in place by its criteria (`0x59b980`, `0x59b9e0`, `0x59cab0`), the verb raising
+    /// its update; `None` where no view lends the auction house.
+    fn auction_sort(&mut self, _list: usize) -> Option<()> {
+        None
+    }
+
+    /// Send `packet` inside the verb's call, behind the gate its send reads; `None` where no view
+    /// lends the auction house.
+    fn auction_send(&mut self, _packet: super::AuctionPacket) -> Option<()> {
+        None
+    }
+
+    /// `StartAuction`'s multi-sell state (`0x59fc92`-`0x59fcf3`), pending with more than one stack;
+    /// `None` where no view lends the auction house.
+    fn auction_multisell_start(&mut self, _sell: super::AuctionMultiSell) -> Option<()> {
+        None
+    }
+
+    /// The next-item sell (`0x59ba80`); `None` where no view lends the auction house.
+    fn auction_sell_next(&mut self) -> Option<super::AuctionSellStep> {
+        None
+    }
+
+    /// Whether a multi-sell is pending (`[0xc0f434]`), with `end` ending it (`0x59ab26`); `None`
+    /// where no view lends the auction house.
+    fn auction_pending_sell(&mut self, _end: bool) -> Option<bool> {
+        None
+    }
+
+    /// The close's interact-target clear on the auctioneer (`0x59f189`): whether the auctioneer held
+    /// the target, whose interaction close runs the house's close again (`0x51304a`); `None` where no
+    /// view lends the auction house.
+    fn auction_clear_target(&mut self) -> Option<bool> {
+        None
+    }
+
+    /// The close's state (`0x59f198`-`0x59f22b`); `None` where no view lends the auction house.
+    fn auction_end_session(&mut self) -> Option<()> {
+        None
+    }
+
+    /// The auction expiry (`0x59f2f0`) of `auction_id`: the events it raises, in order; `None`
+    /// where no view lends the auction house.
+    fn auction_expired(&mut self, _auction_id: u32) -> Option<Vec<&'static str>> {
+        None
+    }
+
     /// What the trade offer's gates read off held item `item` (`0x587aff`-`0x587bcf`, `0x5877b0`, `0x5d896d`); `None` with no item store held.
     fn trade_item_facts(&self, _item: u64) -> Option<super::TradeItemFacts> {
         None
