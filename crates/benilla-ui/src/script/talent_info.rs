@@ -193,10 +193,10 @@ impl TalentGroup {
         pet: bool,
         find: &dyn Fn(u32) -> Option<TalentView>,
     ) -> Option<i32> {
+        let tab = self.tabs.get(index)?;
         if points == 0 {
             return Some(0);
         }
-        let tab = self.tabs.get(index)?;
         // No point left to raise with (`0x5c742e`).
         if self.unspent - self.preview_spent() <= 0 && points > 0 {
             return None;
@@ -795,5 +795,21 @@ mod tests {
         assert_eq!(g.preview_learns(), vec![(10, 2), (11, 0)]);
         g.reset_all_preview();
         assert_eq!(g.preview_spent(), 0);
+    }
+
+    /// A group with no tab laid at the index takes no move, a zero one included, and never indexes
+    /// past its tabs: 12340 checks the index against the info's tabs (`0x5c951e`) and lays every
+    /// group over them, so it never reads a missing one.
+    #[test]
+    fn a_move_on_an_unlaid_tab_takes_nothing() {
+        let mut info = TalentInfo::default();
+        info.update_talent_data(&packet(5, 0, vec![vec![]]), &any);
+        let p = pages();
+        let find = |id| p.find(id).map(|(_, v)| v.clone());
+        let a = p.talents[0][0].clone();
+        let g = info.group_mut(false, 0).unwrap();
+        assert_eq!(g.add_preview(0, &a, 0, false, &find), None);
+        assert_eq!(g.add_preview(0, &a, 1, false, &find), None);
+        assert!(g.item(10).is_none());
     }
 }
