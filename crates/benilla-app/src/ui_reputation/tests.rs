@@ -121,7 +121,6 @@ fn standing_world() -> Option<(World, FactionCatalog)> {
     world.insert_resource(Factions::from_catalog(load_again(&data)));
     world.init_resource::<crate::ui_chat::ChatLog>();
     world.init_resource::<crate::ui_quest::QuestStatuses>();
-    world.init_resource::<Messages<crate::ui_unit::CombatTextEvent>>();
     world.insert_non_send_resource(UniqueSignals::default());
     Some((world, cat))
 }
@@ -182,16 +181,13 @@ fn the_rows_pick_their_lines_and_the_rank_moves_the_war_flag() {
         .find(|(_, f)| f.rep_index == darnassus as i32)
         .map(|(_, f)| f.base_for(1, 1))
         .unwrap();
-    // Stormwind first, up to Honored: its change line and text, and the rank line. Darnassus
-    // second changes silently but still prints its rank and drops below Unfriendly.
+    // Stormwind first, up to Honored: its change line and the rank line; its `FACTION` text goes
+    // to the VM, pinned in the characterization rig. Darnassus second changes silently but still
+    // prints its rank and drops below Unfriendly.
     standing(
         &mut world,
         vec![(stormwind, 5100), (darnassus, -9000 - darnassus_base)],
     );
-    let texts = world
-        .resource::<Messages<crate::ui_unit::CombatTextEvent>>()
-        .len();
-    assert_eq!(texts, 1, "one FACTION text, the first row's");
     assert_eq!(
         lines(&world),
         3,

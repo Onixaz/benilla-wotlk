@@ -8647,9 +8647,10 @@ fn achievement_packets_fire_from_their_handlers_with_the_lists_read_at_the_call(
 /// The reputation handlers raise at their steps with the list and the store read at the call
 /// (`0x5d2e30`, `0x5d20a0`, `0x5d2050`, `0x5d0850`): the initialize builds the list with the player
 /// held and raises the fold's and the sort's `UPDATE_FACTION` (`0x5d2e0f`, `0x5d2e17` ->
-/// `0x5d1bfa`), then its own (`0x5d2e90`); a standing's change line (`0x5d21b2`) and rank line
-/// (`0x5d2243`) and its closing `UPDATE_FACTION` (`0x5d2342`) read the new standing and not the
-/// combat flag a later packet of the frame sets, which the other order reads; a reveal announces
+/// `0x5d1bfa`), then its own (`0x5d2e90`); a standing's change line (`0x5d21b2`), its `FACTION`
+/// combat text (`0x50b9f4`), rank line (`0x5d2243`) and closing `UPDATE_FACTION` (`0x5d2342`)
+/// read the new standing and not the combat flag a later packet of the frame sets, which the
+/// other order reads; a reveal announces
 /// the rank (`0x5d09f2`) before the sort grows the count (`0x5d208e`); the war flag reads set at its
 /// `UPDATE_FACTION` (`0x5d0898`); the watched field's watch raises with `"player"` (`0x6cdde1`);
 /// a fold verb raises inside its call (`0x5d1e23`).
@@ -8674,6 +8675,7 @@ fn reputation_handlers_fire_at_their_steps_with_the_list_read_at_the_call() {
     const EVENTS: &[&str] = &[
         "UPDATE_FACTION",
         "CHAT_MSG_COMBAT_FACTION_CHANGE",
+        "COMBAT_TEXT_UPDATE",
         "CHAT_MSG_SYSTEM",
         "QUEST_LOG_UPDATE",
     ];
@@ -8743,6 +8745,7 @@ fn reputation_handlers_fire_at_their_steps_with_the_list_read_at_the_call() {
         lines(&rise),
         vec![
             "CHAT_MSG_COMBAT_FACTION_CHANGE | repn=3 repsw=9100 repwar=nil repwatch=nil combat=nil",
+            "COMBAT_TEXT_UPDATE FACTION Stormwind 5100 | repn=3 repsw=9100 repwar=nil repwatch=nil combat=nil",
             "CHAT_MSG_SYSTEM | repn=3 repsw=9100 repwar=nil repwatch=nil combat=nil",
             "UPDATE_FACTION | repn=3 repsw=9100 repwar=nil repwatch=nil combat=nil",
             "QUEST_LOG_UPDATE | repn=3 repsw=9100 repwar=nil repwatch=nil combat=1",
@@ -8757,6 +8760,7 @@ fn reputation_handlers_fire_at_their_steps_with_the_list_read_at_the_call() {
         lines(&flags_after),
         vec![
             "CHAT_MSG_COMBAT_FACTION_CHANGE | repn=3 repsw=9200 repwar=nil repwatch=nil combat=1",
+            "COMBAT_TEXT_UPDATE FACTION Stormwind 100 | repn=3 repsw=9200 repwar=nil repwatch=nil combat=1",
             "UPDATE_FACTION | repn=3 repsw=9200 repwar=nil repwatch=nil combat=1",
         ],
         "the rank holds: no rank line, no quest update"
@@ -8779,6 +8783,57 @@ fn reputation_handlers_fire_at_their_steps_with_the_list_read_at_the_call() {
     assert_eq!(
         lines(&fold),
         vec!["UPDATE_FACTION | repn=1 repsw=9200 repwar=1 repwatch=Stormwind combat=nil"]
+    );
+}
+
+/// The faction list outlives the UI shutdown's `PLAYER_LEAVING_WORLD` (`0x528edc`) and
+/// `PLAYER_LOGOUT` (`0x52902a`): the game shutdown runs the UI's (`0x529163` -> `0x528f00`) before
+/// the list's clear (`0x5291b3` -> `0x5d14f0`), so an addon saving reputation at logout reads it.
+/// Each handler's read is kept through a `SetCVar`, which the dying VM's fold keeps.
+#[test]
+fn the_faction_list_answers_at_the_logout_events() {
+    use benilla_protocol::field::{FIELD_PLAYER_WATCHED_FACTION_INDEX, FIELD_UNIT_BYTES_0};
+    let Some(mut rig) = Rig::login(&[
+        OBJECT_TYPE_PLAYER,
+        (FIELD_UNIT_BYTES_0, 1 | 1 << 8),
+        (FIELD_PLAYER_WATCHED_FACTION_INDEX, u32::MAX),
+    ]) else {
+        return;
+    };
+    let stormwind = {
+        let data = benilla_formats::wow_data().expect("install");
+        let mut chain = benilla_formats::open_chain(&data).unwrap();
+        let cat = benilla_formats::load_faction_catalog(&mut chain).unwrap();
+        cat.reputation_faction(72).unwrap().rep_index as usize
+    };
+    let mut standings = vec![(0u8, 0i32); 128];
+    standings[stormwind] = (benilla_formats::faction_flags::VISIBLE, 0);
+    rig.packets(vec![SessionEvent::Reputations { standings }], 2);
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run(
+            "RegisterCVar('charzRepLeaving', '-') RegisterCVar('charzRepLogout', '-')              local f = CreateFrame('Frame')              f:RegisterEvent('PLAYER_LEAVING_WORLD') f:RegisterEvent('PLAYER_LOGOUT')              f:SetScript('OnEvent', function(_, e)                local t = {} for i = 1, GetNumFactions() do t[i] = (GetFactionInfo(i)) end                SetCVar(e == 'PLAYER_LOGOUT' and 'charzRepLogout' or 'charzRepLeaving',                  table.concat(t, ',')) end)",
+        )
+    })
+    .expect("a VM")
+    .unwrap();
+    rig.app
+        .world_mut()
+        .resource_mut::<NextState<crate::char_select::ClientState>>()
+        .set(crate::char_select::ClientState::CharSelect);
+    rig.run(2);
+    let cvars = rig.app.world().resource::<crate::cvars::Cvars>();
+    let rows = cvars.get("charzRepLeaving").unwrap_or_default();
+    assert!(rows.contains("Stormwind"), "{rows}");
+    assert_eq!(rows.split(',').count(), 3, "{rows}");
+    assert_eq!(cvars.get("charzRepLogout"), Some(rows));
+    assert_eq!(
+        rig.app
+            .world()
+            .resource::<crate::ui_reputation::ReputationList>()
+            .0
+            .len(),
+        0,
+        "cleared after the events"
     );
 }
 

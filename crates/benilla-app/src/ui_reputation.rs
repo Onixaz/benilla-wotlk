@@ -43,7 +43,12 @@ impl Plugin for UiReputationPlugin {
     fn build(&self, app: &mut App) {
         use SessionEventKind as K;
         app.init_resource::<ReputationList>()
-            .add_systems(OnExit(ClientState::InWorld), shutdown)
+            // After the UI shutdown's `PLAYER_LEAVING_WORLD` and `PLAYER_LOGOUT`, which still read
+            // the list (`0x529160`: `0x528f00`, then `0x5d14f0` at `0x5291b3`).
+            .add_systems(
+                OnExit(ClientState::InWorld),
+                shutdown.after(crate::ui_script::end_ui_session),
+            )
             .net_handler(K::Reputations, on_initialize_factions)
             .net_handler(K::ReputationDelta, on_standing)
             .net_handler(K::ReputationVisible, on_visible)
@@ -403,11 +408,23 @@ fn add_visible(world: &mut World, list_id: u32) -> bool {
     true
 }
 
+/// The change line's `FACTION` combat text, raised right after the line (`0x50b9f4` ->
+/// `0x74d480`), before the handler's rank line, sort and `UPDATE_FACTION`.
+fn faction_combat_text(world: &mut World, text: crate::ui_unit::CombatTextEvent) {
+    let mut args = Vec::with_capacity(text.args.len() + 1);
+    args.push(benilla_ui::script::ScriptValue::Str(
+        text.message_type.into(),
+    ));
+    args.extend(text.args);
+    crate::ui_script::live::with_live_world(world, |s| s.fire_event("COMBAT_TEXT_UPDATE", args));
+}
+
 /// `SMSG_SET_FACTION_STANDING` (`0x5d20a0`), row by row, each line raised at its step:
 ///
 /// - The line (`0x5d211d`-`0x5d2142`): a faction with flag `0x40` always, in the generic form
 ///   with `HIDDEN`; any other only as the packet's first row and not `HIDDEN`.
-/// - A new standing is stored and its delta printed (`0x5d217b`, `0x5d21b2`).
+/// - A new standing is stored and its delta printed, with its `FACTION` combat text (`0x5d217b`,
+///   `0x5d21b2`).
 /// - A faction neither `VISIBLE` nor `HIDDEN` is revealed and added to the list (`0x5d21d9`); a
 ///   new row announces its rank and marks the packet as revealing (`0x5d21e8`), for every later
 ///   row too.
@@ -470,7 +487,7 @@ fn on_standing(In(ev): In<SessionEvent>, world: &mut World) {
             if let Some((line, text)) = change {
                 crate::ui_chat::add_combat_line_now(world, line);
                 if let Some(text) = text {
-                    world.write_message(text);
+                    faction_combat_text(world, text);
                 }
             }
         }
