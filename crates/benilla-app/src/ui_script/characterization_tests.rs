@@ -1105,6 +1105,32 @@ fn zone_change() {
     );
 }
 
+/// The zone update runs on the active player's timer (`0x6d7bb0`) and skips with no active player (`0x6d7c0b`): an area under no player of ours fires nothing until our create.
+#[test]
+fn no_zone_event_fires_without_our_player() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let events = &[
+        "ZONE_CHANGED_NEW_AREA",
+        "ZONE_CHANGED",
+        "ZONE_CHANGED_INDOORS",
+    ];
+    let verbs = &["zone"];
+    rig.packets(vec![SessionEvent::ObjectDestroyed(ME)], 2);
+    rig.app
+        .world_mut()
+        .insert_resource(benilla_world::terrain_stream::CurrentArea(Some(12)));
+    rig.run(3);
+    let alone = rig.take();
+    let created = rig.packets(vec![self_create(&[])], 3);
+    assert_eq!(pin(&alone, events, verbs), Vec::<String>::new());
+    assert_eq!(
+        pin(&created, events, verbs),
+        vec!["ZONE_CHANGED_NEW_AREA | zone=Elwynn Forest"]
+    );
+}
+
 /// `UnitAffectingCombat` reads the live flags word (`0x60f8ac`), so the create names its type.
 #[test]
 fn combat_enter_and_leave() {
