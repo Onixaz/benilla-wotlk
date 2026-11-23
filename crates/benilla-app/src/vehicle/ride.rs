@@ -297,6 +297,10 @@ pub(super) fn ride_seats(
         if let Ok(mut rig) = poses.get_mut(entity) {
             crate::entities::mount::reseat_rig(&mut commands, &mut rig, anchor, false);
         }
+        debug!(
+            "vehicle: passenger {entity} seated on its anchor, ride anim {:?}",
+            ride_anim(seat)
+        );
         commands.entity(entity).insert(SeatRide {
             vehicle,
             seat: p.seat,

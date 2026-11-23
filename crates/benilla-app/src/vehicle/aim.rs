@@ -18,6 +18,12 @@ const PITCH_UP: u32 = 0x40;
 const PITCH_DOWN: u32 = 0x80;
 /// `MOVEMENTFLAG2_FULL_SPEED_PITCHING`: a pitch request turns rather than snaps.
 const FLAG2_FULL_SPEED_PITCHING: u16 = 0x10;
+/// `MOVEMENTFLAG2_ALWAYS_ALLOW_PITCHING`, the extra flag `0x5fa790` tests before the row's camera
+/// bit.
+const FLAG2_CAN_PITCH: u16 = 0x20;
+/// `MOVEMENTFLAG_SWIMMING` and `MOVEMENTFLAG_FLYING`, the `0x2200000` pair.
+const SWIMMING: u32 = 0x20_0000;
+const FLYING: u32 = 0x200_0000;
 
 /// A unit's 3.3.5a extra movement flags, from its create block.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -38,6 +44,11 @@ pub(crate) struct VehicleAim {
     pub(crate) turning: i8,
     /// `VehicleAimGetNormPower`, the launch power a trajectory cast reads.
     pub(crate) power: f32,
+    /// A pitch was set since the aim preview last looked: the pitch setter's closing mark
+    /// (`0x6fbf80`), which the preview reads and clears.
+    pub(crate) pitched: bool,
+    /// The camera aim pitch mouselook last pitched the mover from, `None` while it does not.
+    pub(crate) mouse_seen: Option<f32>,
 }
 
 /// The pitch limits a record sets: its own under `flags & 0x40`, else ±π/2.
@@ -101,6 +112,8 @@ pub(super) fn set_pitch(
         Some((_, max)) if max <= pitch => max,
         _ => pitch,
     };
+    // Marked on both arms: the reference's mark closes the function.
+    aim.pitched = true;
     if mover.flags2 & FLAG2_FULL_SPEED_PITCHING != 0 {
         if aim.held != Some(pitch) {
             aim.target = Some(pitch);
@@ -111,6 +124,76 @@ pub(super) fn set_pitch(
     aim.pitch = pitch;
     mover.send(net, opcode::MSG_MOVE_SET_PITCH, mover.flags, pitch);
     angle_event(script, rec, pitch);
+}
+
+/// The mouse's say in the aim this frame.
+pub(super) struct MouseAim {
+    /// Mouselook syncs the mover's facing to the camera (`0x5fa110`).
+    pub(super) syncing: bool,
+    /// The camera may pitch the mover (`0x5fa790`).
+    pub(super) can_pitch: bool,
+    /// The row aims with the mouse's vertical motion, the camera's pitch held (`0x5fba60`).
+    pub(super) held: bool,
+    /// The camera's aim pitch, for the camera route.
+    pub(super) camera_pitch: f32,
+    /// The held look's pitch motion since the last frame, for the motion route.
+    pub(super) delta: f32,
+}
+
+/// Mouselook's two routes to the pitch setter. A row that holds the camera's pitch takes the
+/// mouse's vertical motion onto the held aim (`0x5fba60`); any other takes the camera's pitch
+/// past the row's `MouseLookOffsetPitch` as it syncs the facing (`0x6023d0`, `0x5fbe70`). This
+/// pitch's sign is the reference's camera pitch negated, as the mover pitch takes it.
+pub(super) fn mouse_aim(
+    aim: &mut VehicleAim,
+    mover: &MoverPose,
+    rec: &VehicleRec,
+    mouse: &MouseAim,
+    net: &crate::net::NetCommands,
+    script: Option<&mut UiScript>,
+) {
+    if !mouse.syncing {
+        aim.mouse_seen = None;
+        return;
+    }
+    if !mouse.can_pitch {
+        return;
+    }
+    if mouse.held {
+        if mouse.delta != 0.0 {
+            let from = aim.held.unwrap_or(aim.pitch);
+            set_pitch(aim, mover, Some(rec), from + mouse.delta, net, script);
+        }
+        return;
+    }
+    if aim.mouse_seen != Some(mouse.camera_pitch) {
+        aim.mouse_seen = Some(mouse.camera_pitch);
+        let pitch = rec.mouse_look_offset_pitch + mouse.camera_pitch;
+        set_pitch(aim, mover, Some(rec), pitch, net, script);
+    }
+}
+
+/// The row aims with the mouse's motion and holds the camera's pitch: `flags & 0x40040000` is
+/// `0x40000`, off water and out of flight (`0x756f00`).
+pub(super) fn holds_camera_pitch(rec: &VehicleRec, move_flags: u32) -> bool {
+    move_flags & (SWIMMING | FLYING) == 0 && rec.flags & 0x4004_0000 == 0x4_0000
+}
+
+/// `0x5fa790`'s mover terms: alive, not stunned, standing, and, for a mover whose extra flags
+/// pitch it (`0x20`) on land, a row that lets the camera pitch it (`0x40000`).
+pub(super) fn camera_may_pitch(
+    rec: Option<&VehicleRec>,
+    move_flags: u32,
+    flags2: u16,
+    alive_and_standing: bool,
+) -> bool {
+    if !alive_and_standing {
+        return false;
+    }
+    if flags2 & FLAG2_CAN_PITCH != 0 && move_flags & (SWIMMING | FLYING) == 0 {
+        return rec.is_some_and(|r| r.flags & 0x4_0000 != 0);
+    }
+    true
 }
 
 /// The step a turn takes this frame toward `toward`, at `rate` radians a second.
@@ -263,5 +346,145 @@ mod tests {
                 opcode::MSG_MOVE_STOP_PITCH
             ]
         );
+    }
+
+    fn mouse(syncing: bool, held: bool, camera_pitch: f32, delta: f32) -> MouseAim {
+        MouseAim {
+            syncing,
+            can_pitch: true,
+            held,
+            camera_pitch,
+            delta,
+        }
+    }
+
+    /// The camera route: the camera's aim pitch past the row's offset, once per change, and a
+    /// fresh start after mouselook ends.
+    #[test]
+    fn mouselook_pitches_the_vehicle_by_the_camera_past_its_offset() {
+        let (net, rx) = net_pair();
+        let mut aim = VehicleAim::default();
+        let rec = VehicleRec {
+            mouse_look_offset_pitch: 0.25,
+            ..rec()
+        };
+        mouse_aim(
+            &mut aim,
+            &pose(0),
+            &rec,
+            &mouse(true, false, 0.25, 0.0),
+            &net,
+            None,
+        );
+        assert_eq!(aim.pitch, 0.5);
+        assert!(aim.pitched, "the preview sees the pitch");
+        mouse_aim(
+            &mut aim,
+            &pose(0),
+            &rec,
+            &mouse(true, false, 0.25, 0.0),
+            &net,
+            None,
+        );
+        assert_eq!(sent(&rx).len(), 1, "a still camera sends nothing more");
+        mouse_aim(
+            &mut aim,
+            &pose(0),
+            &rec,
+            &mouse(false, false, 0.25, 0.0),
+            &net,
+            None,
+        );
+        assert_eq!(aim.mouse_seen, None, "mouselook ended");
+        mouse_aim(
+            &mut aim,
+            &pose(0),
+            &rec,
+            &mouse(true, false, 0.25, 0.0),
+            &net,
+            None,
+        );
+        assert_eq!(
+            sent(&rx).len(),
+            1,
+            "the next mouselook takes the camera at once"
+        );
+    }
+
+    /// The motion route: the held aim moves by the mouse's pitch motion, the camera's pitch
+    /// untouched.
+    #[test]
+    fn a_held_camera_pitch_aims_by_the_mouse_motion() {
+        let (net, rx) = net_pair();
+        let mut aim = VehicleAim {
+            pitch: 0.25,
+            ..Default::default()
+        };
+        mouse_aim(
+            &mut aim,
+            &pose(0),
+            &rec(),
+            &mouse(true, true, 0.9, 0.125),
+            &net,
+            None,
+        );
+        assert_eq!(aim.pitch, 0.375);
+        mouse_aim(
+            &mut aim,
+            &pose(0),
+            &rec(),
+            &mouse(true, true, 0.9, 0.0),
+            &net,
+            None,
+        );
+        assert_eq!(sent(&rx), [(opcode::MSG_MOVE_SET_PITCH, 0.375)]);
+    }
+
+    /// No pitch while mouselook may not pitch the mover, or does not sync its facing.
+    #[test]
+    fn a_gated_mouse_does_not_pitch() {
+        let (net, rx) = net_pair();
+        let mut aim = VehicleAim::default();
+        let gated = MouseAim {
+            can_pitch: false,
+            ..mouse(true, false, 0.5, 0.0)
+        };
+        mouse_aim(&mut aim, &pose(0), &rec(), &gated, &net, None);
+        mouse_aim(
+            &mut aim,
+            &pose(0),
+            &rec(),
+            &mouse(false, true, 0.0, 0.5),
+            &net,
+            None,
+        );
+        assert!(sent(&rx).is_empty());
+    }
+
+    /// The row's two bits pick the route, on land; `0x20` movers need the row's camera bit.
+    #[test]
+    fn the_row_picks_the_mouse_route() {
+        let with = |flags| VehicleRec {
+            flags,
+            ..Default::default()
+        };
+        assert!(holds_camera_pitch(&with(0x4_0000), 0));
+        assert!(!holds_camera_pitch(&with(0x4004_0000), 0));
+        assert!(!holds_camera_pitch(&with(0x4_0000), SWIMMING));
+        assert!(camera_may_pitch(Some(&with(0)), 0, 0, true));
+        assert!(!camera_may_pitch(Some(&with(0)), 0, FLAG2_CAN_PITCH, true));
+        assert!(camera_may_pitch(
+            Some(&with(0x4_0000)),
+            0,
+            FLAG2_CAN_PITCH,
+            true
+        ));
+        assert!(camera_may_pitch(
+            Some(&with(0)),
+            FLYING,
+            FLAG2_CAN_PITCH,
+            true
+        ));
+        assert!(!camera_may_pitch(Some(&with(0x4_0000)), 0, 0, false));
     }
 }
