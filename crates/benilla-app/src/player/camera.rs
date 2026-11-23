@@ -721,7 +721,7 @@ pub(crate) struct CameraControl {
     pub(super) vehicle_zoom_seen: u32,
     /// The distance before a seat's zoom, which its exit restores (`m_vehicleExitZoomDistance`).
     pub(super) vehicle_exit_zoom: Option<f32>,
-    /// The vehicle's camera pitch offset as it eases in, radians: the view looks that much lower
+    /// The vehicle's camera pitch offset as it eases in, radians: the view looks that much higher
     /// (`0x606f90`), the arm untouched. Written by the seat camera.
     pub(crate) vehicle_pitch_offset: f32,
     /// The vehicle's camera yaw offset as it eases in: the arm swings that far about the pivot
@@ -1462,8 +1462,11 @@ pub(super) fn seat_camera(
     let arm_rotation = Quat::from_euler(EulerRot::YXZ, cam.yaw, arm_pitch, 0.0);
     // Not re-clamped: the bias is composed after that clamp, bounded only by its own one-sided
     // accumulate (`SmartPivot::route_pitch`) and ±89° at the body hand-off.
-    // A vehicle's pitch offset turns the view down before the bias turns it (`0x606f90`).
-    let look_pitch = arm_pitch + bias - rig.vehicle_pitch_offset;
+    // A vehicle's pitch offset turns the view before the bias does (`0x606f90`). The reference
+    // turns its basis by minus the offset and by the bias's own `[cam+0x104]`; this camera's
+    // pitch and bias run the other way (the vehicle aim takes `MouseLookOffsetPitch` plus the
+    // pitch, where `0x5fbe70` takes it less), so the offset adds: the view looks up.
+    let look_pitch = arm_pitch + bias + rig.vehicle_pitch_offset;
     let rotation = if look_pitch == arm_pitch {
         arm_rotation
     } else {
