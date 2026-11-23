@@ -2259,6 +2259,14 @@ fn own_player_watches(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
             own_slot_watches(sc, guid, edges, at);
             continue;
         }
+        // The watched faction's watch (`0x6cddd0`): `UPDATE_FACTION` with `"player"` (`0x6cdde1`).
+        if index == benilla_protocol::field::FIELD_PLAYER_WATCHED_FACTION_INDEX {
+            sc.ui.fire(
+                "UPDATE_FACTION",
+                vec![benilla_ui::script::ScriptValue::Str("player".into())],
+            );
+            continue;
+        }
         // The guild id's watch on the active player: the guild change's event (`0x6e1bd9` -> `0x6df7a0`), then the guild bank's tabs clear (`0x6e1bb0`).
         if index == benilla_protocol::field::FIELD_PLAYER_GUILDID {
             if old != new {
@@ -2501,6 +2509,7 @@ fn merge_fields(
                     || e.unit_field(benilla_protocol::field::FIELD_PLAYER_BYTES_2)
                     || e.unit_field(benilla_protocol::field::FIELD_PLAYER_GUILDID)
                     || e.unit_field(benilla_protocol::field::FIELD_PLAYER_GUILD_TIMESTAMP)
+                    || e.unit_field(benilla_protocol::field::FIELD_PLAYER_WATCHED_FACTION_INDEX)
                     || is_currency_watch(e.index)
                     || is_slot_watch(e.index)
                     || e.unit_field(benilla_protocol::field::FIELD_PLAYER_FIELD_COINAGE)

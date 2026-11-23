@@ -48,6 +48,11 @@ local VERBS = {
     { "achdone", function() return (select(2, GetNumCompletedAchievements())) end },
     { "achtotal", function() return (GetNumCompletedAchievements()) end },
     { "achpts", function() return GetTotalAchievementPoints() end },
+    { "repn", function() return GetNumFactions() end },
+    { "repsw", function() return (select(6, GetFactionInfoByID(72))) end },
+    { "repwar", function() return (select(7, GetFactionInfoByID(72))) end },
+    { "repwatch", function() return (GetWatchedFactionInfo()) end },
+    { "rep5", function() return (GetFactionInfo(5)) end },
     { "control", function() return HasFullControl() end },
     { "dead", function() return UnitIsDeadOrGhost("player") end },
     { "isdead", function() return UnitIsDead("player") end },
@@ -4990,11 +4995,13 @@ fn the_world_entry_looks_the_possess_spell_up_after_entering_the_world() {
             ],
             &["possess", "possname"]
         ),
+        // The faction list's world entry raises at its fold's sort and at its own sort (`0x5d2e0f`,
+        // `0x5d2e17` -> `0x5d1bfa`).
         vec![
-            "UPDATE_FACTION | possess=false possname=nil",
             "PLAYER_ENTERING_WORLD | possess=false possname=nil",
             "PET_BAR_UPDATE | possess=false possname=nil",
             "UPDATE_BONUS_ACTIONBAR | possess=true possname=Mind Control",
+            "UPDATE_FACTION | possess=true possname=Mind Control",
             "UPDATE_FACTION | possess=true possname=Mind Control",
         ]
     );
@@ -5034,6 +5041,8 @@ fn the_world_entry_runs_the_pet_setter_after_entering_the_world() {
             "PLAYER_ENTERING_WORLD | petbar=1 petbook=1",
             "UNIT_PET player | petbar=nil petbook=1",
             "PET_BAR_UPDATE | petbar=nil petbook=1",
+            // The list's world entry: the fold's sort, then its own (`0x5d2e0f`, `0x5d2e17`).
+            "UPDATE_FACTION | petbar=nil petbook=1",
             "UPDATE_FACTION | petbar=nil petbook=1",
         ]
     );
@@ -5092,6 +5101,8 @@ fn a_pet_bar_set_behind_our_create_lands_after_the_entry() {
         vec![
             "PLAYER_ENTERING_WORLD | petbar=nil",
             "PET_BAR_UPDATE | petbar=nil",
+            // The list's world entry: the fold's sort, then its own (`0x5d2e0f`, `0x5d2e17`).
+            "UPDATE_FACTION | petbar=nil",
             "UPDATE_FACTION | petbar=nil",
             "UNIT_PET player | petbar=1",
             "PET_BAR_UPDATE | petbar=1",
@@ -5123,6 +5134,8 @@ fn the_world_entry_signals_the_pet_bar_with_no_pet() {
         vec![
             "PLAYER_ENTERING_WORLD | petbar=nil",
             "PET_BAR_UPDATE | petbar=nil",
+            // The list's world entry: the fold's sort, then its own (`0x5d2e0f`, `0x5d2e17`).
+            "UPDATE_FACTION | petbar=nil",
             "UPDATE_FACTION | petbar=nil",
         ]
     );
@@ -5878,12 +5891,12 @@ fn currency_triggers_build_the_list_and_fire_from_their_handlers() {
     assert_eq!(
         login,
         [
-            "UPDATE_FACTION",
             "PLAYER_ENTERING_WORLD",
+            "UPDATE_FACTION",
             "UPDATE_FACTION",
             "CURRENCY_DISPLAY_UPDATE"
         ],
-        "the first UPDATE_FACTION is the pre-player faction packet's"
+        "the faction list's world entry raises at its fold's sort and at its own sort (`0x5d2e0f`, `0x5d2e17` -> `0x5d1bfa`)"
     );
     let bit = rig
         .app
@@ -8942,6 +8955,401 @@ fn achievement_packets_fire_from_their_handlers_with_the_lists_read_at_the_call(
             format!("TRACKED_ACHIEVEMENT_UPDATE {ach} | achcan=true achtracked=1 achpts={points}"),
             format!("VARIABLES_LOADED | achcan=true achtracked=1 achpts={points}"),
         ]
+    );
+}
+
+/// The reputation handlers raise at their steps with the list and the store read at the call
+/// (`0x5d2e30`, `0x5d20a0`, `0x5d2050`, `0x5d0850`): the initialize builds the list with the player
+/// held and raises the fold's and the sort's `UPDATE_FACTION` (`0x5d2e0f`, `0x5d2e17` ->
+/// `0x5d1bfa`), then its own (`0x5d2e90`); a standing's change line (`0x5d21b2`), its `FACTION`
+/// combat text (`0x50b9f4`), rank line (`0x5d2243`) and closing `UPDATE_FACTION` (`0x5d2342`)
+/// read the new standing and not the combat flag a later packet of the frame sets, which the
+/// other order reads; a reveal announces the rank (`0x5d09f2`) with the sort's count
+/// (`0x5cff24`) and the uncounted row in reach (`0x5d11a5`), before the sort grows the count
+/// (`0x5d208e`); the war flag reads set at its
+/// `UPDATE_FACTION` (`0x5d0898`); the watched field's watch raises with `"player"` (`0x6cdde1`);
+/// a fold verb raises inside its call (`0x5d1dd3` -> `0x5d1bfa`).
+#[test]
+fn reputation_handlers_fire_at_their_steps_with_the_list_read_at_the_call() {
+    use benilla_protocol::field::{FIELD_PLAYER_WATCHED_FACTION_INDEX, FIELD_UNIT_BYTES_0};
+    // A Human Warrior watching nothing: the server's -1.
+    let Some(mut rig) = Rig::login(&[
+        OBJECT_TYPE_PLAYER,
+        (FIELD_UNIT_BYTES_0, 1 | 1 << 8),
+        (FIELD_PLAYER_WATCHED_FACTION_INDEX, u32::MAX),
+    ]) else {
+        return;
+    };
+    let slot = {
+        let data = benilla_formats::wow_data().expect("install");
+        let mut chain = benilla_formats::open_chain(&data).unwrap();
+        let cat = benilla_formats::load_faction_catalog(&mut chain).unwrap();
+        move |id: u32| cat.reputation_faction(id).unwrap().rep_index as u32
+    };
+    let (stormwind, ironforge) = (slot(72), slot(47));
+    const EVENTS: &[&str] = &[
+        "UPDATE_FACTION",
+        "CHAT_MSG_COMBAT_FACTION_CHANGE",
+        "COMBAT_TEXT_UPDATE",
+        "CHAT_MSG_SYSTEM",
+        "QUEST_LOG_UPDATE",
+    ];
+    const VERBS: &[&str] = &["repn", "repsw", "repwar", "repwatch", "combat"];
+    let rep5 = |seen: &[Seen]| -> Vec<String> {
+        seen.iter()
+            .filter(|s| ["CHAT_MSG_SYSTEM", "UPDATE_FACTION"].contains(&s.event.as_str()))
+            .map(|s| {
+                let mut s = s.clone();
+                s.args.clear();
+                s.line(&["repn", "rep5"])
+            })
+            .collect()
+    };
+    let lines = |seen: &[Seen]| -> Vec<String> {
+        seen.iter()
+            .filter(|s| EVENTS.contains(&s.event.as_str()))
+            .map(|s| {
+                let mut s = s.clone();
+                if s.event.starts_with("CHAT_MSG") {
+                    s.args.clear();
+                }
+                s.line(VERBS)
+            })
+            .collect()
+    };
+    let mut standings = vec![(0u8, 0i32); 128];
+    standings[stormwind as usize] = (benilla_formats::faction_flags::VISIBLE, 0);
+    let init = rig.packets(vec![SessionEvent::Reputations { standings }], 2);
+    let delta = |rows: Vec<(u32, i32)>| SessionEvent::ReputationDelta {
+        bonus: 0.0,
+        show_effect: false,
+        standings: rows,
+    };
+    let rise = rig.packets(
+        vec![
+            delta(vec![(stormwind, 5100)]),
+            flags(crate::player::UNIT_FLAG_IN_COMBAT),
+        ],
+        2,
+    );
+    let flags_after = rig.packets(vec![delta(vec![(stormwind, 5200)]), flags(0)], 2);
+    let reveal = rig.packets(
+        vec![SessionEvent::ReputationVisible { list_id: ironforge }],
+        2,
+    );
+    let war = rig.packets(
+        vec![SessionEvent::ReputationAtWar {
+            list_id: stormwind,
+            at_war: true,
+        }],
+        2,
+    );
+    let watch = rig.packets(
+        vec![self_values(&[(
+            FIELD_PLAYER_WATCHED_FACTION_INDEX,
+            stormwind,
+        )])],
+        2,
+    );
+    super::live::with_live_world(rig.app.world_mut(), |s| s.run("CollapseFactionHeader(1)"))
+        .expect("a VM")
+        .unwrap();
+    rig.run(1);
+    let fold = rig.take();
+
+    assert_eq!(
+        lines(&init),
+        vec![
+            "UPDATE_FACTION | repn=3 repsw=4000 repwar=nil repwatch=nil combat=nil",
+            "UPDATE_FACTION | repn=3 repsw=4000 repwar=nil repwatch=nil combat=nil",
+            "UPDATE_FACTION | repn=3 repsw=4000 repwar=nil repwatch=nil combat=nil",
+        ],
+        "the fold's sort, the build's sort, the handler's own"
+    );
+    assert_eq!(
+        lines(&rise),
+        vec![
+            "CHAT_MSG_COMBAT_FACTION_CHANGE | repn=3 repsw=9100 repwar=nil repwatch=nil combat=nil",
+            "COMBAT_TEXT_UPDATE FACTION Stormwind 5100 | repn=3 repsw=9100 repwar=nil repwatch=nil combat=nil",
+            "CHAT_MSG_SYSTEM | repn=3 repsw=9100 repwar=nil repwatch=nil combat=nil",
+            "UPDATE_FACTION | repn=3 repsw=9100 repwar=nil repwatch=nil combat=nil",
+            "QUEST_LOG_UPDATE | repn=3 repsw=9100 repwar=nil repwatch=nil combat=1",
+        ]
+    );
+    assert!(
+        rise.iter()
+            .any(|s| s.event == "CHAT_MSG_COMBAT_FACTION_CHANGE" && s.args.contains("Stormwind")),
+        "{rise:?}"
+    );
+    assert_eq!(
+        lines(&flags_after),
+        vec![
+            "CHAT_MSG_COMBAT_FACTION_CHANGE | repn=3 repsw=9200 repwar=nil repwatch=nil combat=1",
+            "COMBAT_TEXT_UPDATE FACTION Stormwind 100 | repn=3 repsw=9200 repwar=nil repwatch=nil combat=1",
+            "UPDATE_FACTION | repn=3 repsw=9200 repwar=nil repwatch=nil combat=1",
+        ],
+        "the rank holds: no rank line, no quest update"
+    );
+    assert_eq!(
+        lines(&reveal),
+        vec![
+            "CHAT_MSG_SYSTEM | repn=3 repsw=9200 repwar=nil repwatch=nil combat=nil",
+            "UPDATE_FACTION | repn=4 repsw=9200 repwar=nil repwatch=nil combat=nil",
+        ]
+    );
+    // Rows Classic, Alliance, Stormwind, Inactive, then Ironforge's: at the announce the fifth row
+    // is the added one; the sort files it under Alliance and moves "Inactive" there.
+    assert_eq!(
+        rep5(&reveal),
+        vec![
+            "CHAT_MSG_SYSTEM | repn=3 rep5=Ironforge",
+            "UPDATE_FACTION | repn=4 rep5=Inactive",
+        ]
+    );
+    assert_eq!(
+        lines(&war),
+        vec!["UPDATE_FACTION | repn=4 repsw=9200 repwar=1 repwatch=nil combat=nil"]
+    );
+    assert_eq!(
+        lines(&watch),
+        vec!["UPDATE_FACTION player | repn=4 repsw=9200 repwar=1 repwatch=Stormwind combat=nil"]
+    );
+    assert_eq!(
+        lines(&fold),
+        vec!["UPDATE_FACTION | repn=1 repsw=9200 repwar=1 repwatch=Stormwind combat=nil"]
+    );
+}
+
+/// A login's `SMSG_INITIALIZE_FACTIONS` lands before our create, so its world entry returns
+/// without the player (`0x5d2be6`) and the store's faction and base columns stay zero until the
+/// UI's world entry runs it after `PLAYER_ENTERING_WORLD` (`0x5281a6`, then `0x528208` ->
+/// `0x5d2bc0`, which writes them at `0x5d2d1f` and `0x5d2d6e`). Up to then a faction read by id
+/// answers the wire standing alone (`0x5d05ea`) and the watched slot names no faction
+/// (`0x5d1285`); the entry's two `UPDATE_FACTION`s (`0x5d2e0f`, `0x5d2e17` -> `0x5d1bfa`) read
+/// the base and the name.
+#[test]
+fn a_pre_player_faction_store_reads_without_its_columns_until_the_world_entry() {
+    use benilla_protocol::field::{FIELD_PLAYER_WATCHED_FACTION_INDEX, FIELD_UNIT_BYTES_0};
+    let stormwind = {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).unwrap();
+        let cat = benilla_formats::load_faction_catalog(&mut chain).unwrap();
+        cat.reputation_faction(72).unwrap().rep_index as u32
+    };
+    let mut standings = vec![(0u8, 0i32); 128];
+    standings[stormwind as usize] = (benilla_formats::faction_flags::VISIBLE, 5100);
+    // A Human Warrior watching Stormwind.
+    let Some(mut rig) = Rig::login_after(
+        vec![SessionEvent::Reputations { standings }],
+        &[
+            OBJECT_TYPE_PLAYER,
+            (FIELD_UNIT_BYTES_0, 1 | 1 << 8),
+            (FIELD_PLAYER_WATCHED_FACTION_INDEX, stormwind),
+        ],
+    ) else {
+        return;
+    };
+    let seen = rig.take();
+    assert_eq!(
+        pin(
+            &seen,
+            &["PLAYER_LOGIN", "PLAYER_ENTERING_WORLD", "UPDATE_FACTION"],
+            &["repn", "repsw", "repwatch"],
+        ),
+        vec![
+            "PLAYER_LOGIN | repn=0 repsw=5100 repwatch=nil",
+            "PLAYER_ENTERING_WORLD | repn=0 repsw=5100 repwatch=nil",
+            "UPDATE_FACTION | repn=3 repsw=9100 repwatch=Stormwind",
+            "UPDATE_FACTION | repn=3 repsw=9100 repwatch=Stormwind",
+        ]
+    );
+}
+
+/// `GetFactionInfoByID` on a `Faction.dbc` record without a reputation slot answers through the
+/// helper's record path (`0x5d0dd8`): its name and description, standingID 4 with the Neutral
+/// bounds and value 0 (`0x5d062d`, `0x5d05dd`), no war (`0x5d04dd`), war toggleable
+/// (`0x5d0e7d`, `0x5d052d`), no header, and watched exactly while the field holds -1, the
+/// record's slot read as `0xFFFFFFFF` (`0x5d0c9d`, `0x5d0cc5`).
+#[test]
+fn a_faction_without_a_slot_answers_by_id_neutral_and_watched_with_the_field_at_none() {
+    use benilla_protocol::field::{FIELD_PLAYER_WATCHED_FACTION_INDEX, FIELD_UNIT_BYTES_0};
+    let Some(mut rig) = Rig::login(&[
+        OBJECT_TYPE_PLAYER,
+        (FIELD_UNIT_BYTES_0, 1 | 1 << 8),
+        (FIELD_PLAYER_WATCHED_FACTION_INDEX, u32::MAX),
+    ]) else {
+        return;
+    };
+    let (id, name, stormwind) = {
+        let data = benilla_formats::wow_data().expect("install");
+        let mut chain = benilla_formats::open_chain(&data).unwrap();
+        let cat = benilla_formats::load_faction_catalog(&mut chain).unwrap();
+        let id = (1..4000u32)
+            .find(|&id| {
+                cat.faction_row(id).is_some_and(|f| f.rep_index < 0)
+                    && cat.faction_name(id).is_some_and(|n| !n.is_empty())
+            })
+            .expect("a named record without a slot");
+        (
+            id,
+            cat.faction_name(id).unwrap().to_string(),
+            cat.reputation_faction(72).unwrap().rep_index as u32,
+        )
+    };
+    let mut standings = vec![(0u8, 0i32); 128];
+    standings[stormwind as usize] = (benilla_formats::faction_flags::VISIBLE, 5100);
+    rig.packets(vec![SessionEvent::Reputations { standings }], 2);
+    let chunk = format!(
+        "local t = {{GetFactionInfoByID({id})}} for i = 1, 13 do t[i] = tostring(t[i]) end          return table.concat(t, '|')"
+    );
+    let read = |rig: &mut Rig| {
+        super::live::with_live_world(rig.app.world_mut(), |s| s.eval::<String>(&chunk))
+            .expect("a VM")
+            .unwrap()
+    };
+    let desc = |line: &str| line.split('|').nth(1).unwrap_or_default().to_string();
+    let none = read(&mut rig);
+    let d = desc(&none);
+    assert_eq!(
+        none,
+        format!("{name}|{d}|4|0|3000|0|nil|1|nil|nil|nil|1|nil"),
+        "watching nothing"
+    );
+    rig.packets(
+        vec![self_values(&[(
+            FIELD_PLAYER_WATCHED_FACTION_INDEX,
+            stormwind,
+        )])],
+        2,
+    );
+    assert_eq!(
+        read(&mut rig),
+        format!("{name}|{d}|4|0|3000|0|nil|1|nil|nil|nil|nil|nil"),
+        "watching Stormwind"
+    );
+}
+
+/// The standing handler shows tutorial 15, raised 1-based, to a player of level 10 or more
+/// (`0x5d2328`, `0x5d2333`), after its lines and before its closing `UPDATE_FACTION` (`0x5d2342`); at level 9
+/// it shows nothing.
+#[test]
+fn a_standing_shows_tutorial_15_from_level_10_before_its_update_faction() {
+    use benilla_protocol::field::FIELD_UNIT_BYTES_0;
+    let stormwind = {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).unwrap();
+        let cat = benilla_formats::load_faction_catalog(&mut chain).unwrap();
+        cat.reputation_faction(72).unwrap().rep_index as u32
+    };
+    let Some(mut rig) = Rig::login_after(
+        vec![SessionEvent::TutorialFlags(vec![0; 32])],
+        &[
+            OBJECT_TYPE_PLAYER,
+            (FIELD_UNIT_BYTES_0, 1 | 1 << 8),
+            (FIELD_UNIT_LEVEL, 9),
+        ],
+    ) else {
+        return;
+    };
+    let mut standings = vec![(0u8, 0i32); 128];
+    standings[stormwind as usize] = (benilla_formats::faction_flags::VISIBLE, 0);
+    rig.packets(vec![SessionEvent::Reputations { standings }], 2);
+    let delta = |standing: i32| SessionEvent::ReputationDelta {
+        bonus: 0.0,
+        show_effect: false,
+        standings: vec![(stormwind, standing)],
+    };
+    let events = &[
+        "CHAT_MSG_COMBAT_FACTION_CHANGE",
+        "TUTORIAL_TRIGGER",
+        "UPDATE_FACTION",
+    ];
+    let shown = |seen: &[Seen]| -> Vec<String> {
+        seen.iter()
+            .filter(|s| events.contains(&s.event.as_str()))
+            .map(|s| {
+                let mut s = s.clone();
+                if s.event.starts_with("CHAT_MSG") {
+                    s.args.clear();
+                }
+                s.line(&[])
+            })
+            .collect()
+    };
+    let at_9 = rig.packets(vec![delta(100)], 2);
+    assert_eq!(
+        shown(&at_9),
+        vec!["CHAT_MSG_COMBAT_FACTION_CHANGE", "UPDATE_FACTION"],
+        "level 9"
+    );
+    rig.packets(vec![self_values(&[(FIELD_UNIT_LEVEL, 10)])], 2);
+    let at_10 = rig.packets(vec![delta(200)], 2);
+    assert_eq!(
+        shown(&at_10),
+        vec![
+            "CHAT_MSG_COMBAT_FACTION_CHANGE",
+            "TUTORIAL_TRIGGER 16",
+            "UPDATE_FACTION"
+        ],
+        "level 10"
+    );
+}
+
+/// The faction list outlives the UI shutdown's `PLAYER_LEAVING_WORLD` (`0x528edc`) and
+/// `PLAYER_LOGOUT` (`0x52902a`): the game shutdown runs the UI's (`0x529163` -> `0x528f00`) before
+/// the list's clear (`0x5291b3` -> `0x5d14f0`), so an addon saving reputation at logout reads it.
+/// Each handler's read is kept through a `SetCVar`, which the dying VM's fold keeps.
+#[test]
+fn the_faction_list_answers_at_the_logout_events() {
+    use benilla_protocol::field::{FIELD_PLAYER_WATCHED_FACTION_INDEX, FIELD_UNIT_BYTES_0};
+    let Some(mut rig) = Rig::login(&[
+        OBJECT_TYPE_PLAYER,
+        (FIELD_UNIT_BYTES_0, 1 | 1 << 8),
+        (FIELD_PLAYER_WATCHED_FACTION_INDEX, u32::MAX),
+    ]) else {
+        return;
+    };
+    let stormwind = {
+        let data = benilla_formats::wow_data().expect("install");
+        let mut chain = benilla_formats::open_chain(&data).unwrap();
+        let cat = benilla_formats::load_faction_catalog(&mut chain).unwrap();
+        cat.reputation_faction(72).unwrap().rep_index as usize
+    };
+    let mut standings = vec![(0u8, 0i32); 128];
+    standings[stormwind] = (benilla_formats::faction_flags::VISIBLE, 5100);
+    rig.packets(vec![SessionEvent::Reputations { standings }], 2);
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run(
+            "RegisterCVar('charzRepLeaving', '-') RegisterCVar('charzRepLogout', '-')              local f = CreateFrame('Frame')              f:RegisterEvent('PLAYER_LEAVING_WORLD') f:RegisterEvent('PLAYER_LOGOUT')              f:SetScript('OnEvent', function(_, e)                local t = {} for i = 1, GetNumFactions() do t[i] = (GetFactionInfo(i)) end                SetCVar(e == 'PLAYER_LOGOUT' and 'charzRepLogout' or 'charzRepLeaving',                  table.concat(t, ',')) end)",
+        )
+    })
+    .expect("a VM")
+    .unwrap();
+    rig.app
+        .world_mut()
+        .resource_mut::<NextState<crate::char_select::ClientState>>()
+        .set(crate::char_select::ClientState::CharSelect);
+    rig.run(2);
+    let cvars = rig.app.world().resource::<crate::cvars::Cvars>();
+    let rows = cvars.get("charzRepLeaving").unwrap_or_default();
+    assert!(rows.contains("Stormwind"), "{rows}");
+    assert_eq!(rows.split(',').count(), 3, "{rows}");
+    assert_eq!(cvars.get("charzRepLogout"), Some(rows));
+    assert_eq!(
+        rig.app
+            .world()
+            .resource::<crate::ui_reputation::ReputationList>()
+            .0
+            .len(),
+        0,
+        "cleared after the events"
+    );
+    // The store is zeroed with the list (`0x5d15ba`), so a re-login reads no previous standing.
+    let store = rig.app.world().resource::<crate::net::Reputations>();
+    assert!(
+        store.0.iter().all(|&s| s == (0, 0)),
+        "store zeroed: {:?}",
+        store.0[stormwind]
     );
 }
 

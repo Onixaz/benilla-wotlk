@@ -23,6 +23,7 @@ pub(crate) fn lend_to<R>(
 ) -> R {
     let lua = script.lua().clone();
     world_loan::set_live_access(live_access);
+    world_loan::set_reputation_access(crate::ui_reputation::live_access);
     benilla_ui::script::set_apply(&lua, crate::script_calls::apply_in_call);
     benilla_ui::script::set_answer(&lua, crate::script_calls::answer_in_call);
     world_loan::lend(&lua, world, || f(script))

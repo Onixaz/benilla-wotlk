@@ -8,9 +8,9 @@ use crate::widget::{FrameHandle, RegionHandle, WidgetArena};
 use super::{
     auction, backdrop, bind_confirm, calendar, camera_view, char_stats, chat_window, colorselect,
     combat_log, container, cursor, death, duel, follow, guild, inspect, lfg, macros, mirror_timer,
-    parse_unit_token, party, petition, pvp, quest, quest_log, reputation, session, simplehtml,
-    skills, slider, social, stable, trade, tradeskill, unit_menu, weapon_enchant, FontObject,
-    MusicRequest, RegionData, ScriptValue, SoundRequest, UnitState, UnitTokenParse,
+    parse_unit_token, party, petition, pvp, quest, quest_log, session, simplehtml, skills, slider,
+    social, stable, trade, tradeskill, unit_menu, weapon_enchant, FontObject, MusicRequest,
+    RegionData, ScriptValue, SoundRequest, UnitState, UnitTokenParse,
 };
 
 // ── The Rust-side model ──
@@ -1106,12 +1106,6 @@ pub(crate) struct Model {
     pub(crate) skill_up_points: i32,
     pub(crate) skill_requests: Vec<super::skills::SkillRequest>,
 
-    /// The reputation pane's snapshot, and the client's faction list and header tree over it.
-    pub(crate) reputation: reputation::ReputationState,
-    pub(crate) reputation_tree: reputation::FactionTree,
-    /// Reputation calls queued, applied locally first because none of the three sends is acked.
-    pub(crate) reputation_sends: Vec<reputation::ReputationSend>,
-
     /// Lines for the app's slash-command parser: a probe's, or a host `SlashCmdList` row's.
     pub(crate) chat_input: Vec<String>,
 
@@ -1978,9 +1972,6 @@ impl Model {
             skill_ups: HashMap::new(),
             skill_up_points: 0,
             skill_requests: Vec::new(),
-            reputation: reputation::ReputationState::default(),
-            reputation_tree: reputation::FactionTree::default(),
-            reputation_sends: Vec::new(),
         }
     }
 

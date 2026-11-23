@@ -30,6 +30,8 @@ thread_local! {
     static LOANS: RefCell<Loans> = RefCell::new(Loans::default());
     /// The host's view builder: turns the innermost loan into the verbs' [`LiveState`].
     static LIVE_ACCESS: RefCell<Option<LiveAccess>> = const { RefCell::new(None) };
+    /// The host's faction-list access over its own loan ([`set_reputation_access`]).
+    static REPUTATION_ACCESS: RefCell<Option<ReputationAccess>> = const { RefCell::new(None) };
 }
 
 /// A VM's turn, kept in its app data: the raises the open host step queued, and the quiet steps
@@ -240,6 +242,33 @@ pub type LiveAccess = fn(&mut dyn FnMut(&mut dyn LiveState)) -> bool;
 /// loan made by [`lend`].
 pub fn set_live_access(access: LiveAccess) {
     LIVE_ACCESS.with_borrow_mut(|a| *a = Some(access));
+}
+
+/// Runs the closure on the host's faction list and faction table over the innermost loan; `false`
+/// when nothing of the host's type is lent.
+pub type ReputationAccess =
+    fn(&mut dyn FnMut(&mut super::FactionList, &mut dyn super::FactionTable)) -> bool;
+
+/// Name the host's faction-list access: the list and the reputation store it writes are read by
+/// the host's other views, so the host lends them apart from its view builder.
+pub fn set_reputation_access(access: ReputationAccess) {
+    REPUTATION_ACCESS.with_borrow_mut(|a| *a = Some(access));
+}
+
+/// `f` over the faction list and table of the innermost loan: the host's own access over a host
+/// loan, the lent view's [`LiveState::reputation`] over a view; `false` with neither.
+pub(crate) fn reputation(
+    f: &mut dyn FnMut(&mut super::FactionList, &mut dyn super::FactionTable),
+) -> bool {
+    let Some(access) = LOANS.with_borrow(|l| l.live.last().map(|Loan(_, access)| *access)) else {
+        return false;
+    };
+    if access.is_none() {
+        if let Some(host) = REPUTATION_ACCESS.with_borrow(|a| *a) {
+            return host(f);
+        }
+    }
+    live(|l| l.reputation(f)).unwrap_or(false)
 }
 
 /// Pops the loan on return and on unwind.

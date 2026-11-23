@@ -76,17 +76,38 @@ pub(crate) fn add_chat_line(
 
 /// A chat line an app handler or step adds in its turn (`0x509dd0`): recorded on `chat_type` (`0x50a8a5`) and its event fired with the `World` lent (`0x4fdbc0` at `0x4fdd5c`); with no chat windows the chat feed's queue takes it.
 pub(crate) fn add_chat_line_now(world: &mut World, chat_type: u8, text: String) {
+    add_text_line_now(world, ChatEvent::text_only(kind_of_type(chat_type), text));
+}
+
+/// A bare-text line of any kind added at its step, as [`add_chat_line_now`] adds a system line.
+fn add_text_line_now(world: &mut World, event: ChatEvent) {
     let fired = match world.get_resource_mut::<ChatWindows>() {
-        Some(mut windows) => add_chat_line(&mut windows, chat_type, &text),
+        Some(mut windows) => record(&mut windows, &event, &|_| None),
         None => {
             if let Some(mut log) = world.get_resource_mut::<super::ChatLog>() {
-                log.push_event(ChatEvent::text_only(kind_of_type(chat_type), text));
+                log.push_event(event);
             }
             return;
         }
     };
     if let Some((event, args)) = fired {
         crate::ui_script::live::with_live_world(world, |script| script.fire_event(event, args));
+    }
+}
+
+/// A combat-family line an app handler adds at its step, the faction lines' (`0x50b8c0`, `0x50ba10` -> `0x509dd0`): composed off the VM's strings, then added as [`add_chat_line_now`] adds one; with no VM the chat feed's queue takes it.
+pub(crate) fn add_combat_line_now(world: &mut World, line: super::combat::PendingCombat) {
+    let composed = world
+        .get_non_send_resource::<benilla_ui::script::UiScript>()
+        .map(|script| super::combat::compose_line(script, line.family, line.me, &line.fills));
+    match composed {
+        Some(Some(text)) => add_text_line_now(world, ChatEvent::text_only(line.kind, text)),
+        Some(None) => {}
+        None => {
+            if let Some(mut log) = world.get_resource_mut::<super::ChatLog>() {
+                log.push_combat(line);
+            }
+        }
     }
 }
 

@@ -996,6 +996,14 @@ pub trait LiveState {
         None
     }
 
+    /// `f` over the client's faction list (`0xc23370`-`0xc2347c`) and the faction table and reputation store it reads, at the call; `false` where no view lends them.
+    fn reputation(
+        &mut self,
+        _f: &mut dyn FnMut(&mut super::FactionList, &mut dyn super::FactionTable),
+    ) -> bool {
+        false
+    }
+
     /// The achievement tables the game start indexes (`0x5b6df0`), `None` before they load.
     fn achievement_db(&self) -> Option<std::sync::Arc<super::AchievementDb>> {
         None
@@ -1722,6 +1730,9 @@ pub(crate) struct TestView {
     pub trainer_zeroes: u32,
     /// The chat lines the display added inside its calls, with their wire chat type.
     pub chat_lines: Vec<(u8, String)>,
+    /// The client's faction list and the faction table it reads.
+    pub faction_list: super::FactionList,
+    pub factions: super::StaticFactions,
     /// The achievement tables and lists, the cached player names, the name queries and the
     /// comparison queries sent, in order.
     pub achievement_db: Option<std::sync::Arc<super::AchievementDb>>,
@@ -1787,6 +1798,14 @@ impl TestView {
 
 #[cfg(test)]
 impl LiveState for TestView {
+    fn reputation(
+        &mut self,
+        f: &mut dyn FnMut(&mut super::FactionList, &mut dyn super::FactionTable),
+    ) -> bool {
+        f(&mut self.faction_list, &mut self.factions);
+        true
+    }
+
     fn carry_refusal(&self, item_id: u32, count: u32) -> Option<super::CarryRefusal> {
         self.carry_asks.borrow_mut().push((item_id, count));
         self.carry.clone()
