@@ -8906,7 +8906,7 @@ fn the_faction_list_answers_at_the_logout_events() {
         cat.reputation_faction(72).unwrap().rep_index as usize
     };
     let mut standings = vec![(0u8, 0i32); 128];
-    standings[stormwind] = (benilla_formats::faction_flags::VISIBLE, 0);
+    standings[stormwind] = (benilla_formats::faction_flags::VISIBLE, 5100);
     rig.packets(vec![SessionEvent::Reputations { standings }], 2);
     super::live::with_live_world(rig.app.world_mut(), |s| {
         s.run(
@@ -8933,6 +8933,13 @@ fn the_faction_list_answers_at_the_logout_events() {
             .len(),
         0,
         "cleared after the events"
+    );
+    // The store is zeroed with the list (`0x5d15ba`), so a re-login reads no previous standing.
+    let store = rig.app.world().resource::<crate::net::Reputations>();
+    assert!(
+        store.0.iter().all(|&s| s == (0, 0)),
+        "store zeroed: {:?}",
+        store.0[stormwind]
     );
 }
 

@@ -235,6 +235,41 @@ fn the_rows_pick_their_lines_and_the_rank_moves_the_war_flag() {
     );
 }
 
+/// A slot no `Faction.dbc` record names ranks Neutral at both reads (`0x5d0600` at `0x5d2161` and
+/// `0x5d21c1`, `0x5d0625`): its standing is stored, but no drop sets war, no rise clears it and no
+/// rank move owes the quest log's update.
+#[test]
+fn a_slot_without_a_record_never_moves_rank() {
+    use benilla_formats::faction_flags as flag;
+    let Some((mut world, cat)) = standing_world() else {
+        return;
+    };
+    let named: std::collections::HashSet<i32> = cat
+        .reputation_factions()
+        .map(|(_, f)| f.rep_index)
+        .collect();
+    let bare = (0..128u32)
+        .find(|i| !named.contains(&(*i as i32)))
+        .expect("an unnamed slot below 128");
+    world.resource_mut::<Reputations>().0[bare as usize].0 = flag::VISIBLE;
+    standing(&mut world, vec![(bare, -9000)]);
+    assert_eq!(
+        world.resource::<Reputations>().0[bare as usize],
+        (flag::VISIBLE, -9000),
+        "stored, war untouched"
+    );
+    assert!(!quests_owed(&mut world), "no rank move");
+    world.resource_mut::<Reputations>().0[bare as usize].0 = flag::VISIBLE | flag::AT_WAR;
+    standing(&mut world, vec![(bare, 40000)]);
+    assert_eq!(
+        world.resource::<Reputations>().0[bare as usize],
+        (flag::VISIBLE | flag::AT_WAR, 40000),
+        "a rise keeps war"
+    );
+    assert!(!quests_owed(&mut world));
+    assert_eq!(lines(&world), 0, "no change or rank line without a name");
+}
+
 /// The read verbs write nothing (`0x5cff20`, `0x5d0da0`, `0x5d1240`), so a read leaves the store
 /// unchanged for the reaction readers; a written flag marks it (`0x5d0a10`).
 #[test]

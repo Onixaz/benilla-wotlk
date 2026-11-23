@@ -56,9 +56,13 @@ impl Plugin for UiReputationPlugin {
     }
 }
 
-/// The game shutdown's clear (`0x5d14f0`): no rows, no headers, no selection.
-fn shutdown(mut list: ResMut<ReputationList>) {
+/// The game shutdown's clear (`0x5d14f0`): no rows, no headers, no selection (`0x5d14f9`), then
+/// every slot's flags and standing zeroed (`0x5d15ba`).
+fn shutdown(mut list: ResMut<ReputationList>, store: Option<ResMut<Reputations>>) {
     *list = ReputationList::default();
+    if let Some(mut store) = store {
+        store.0.fill((0, 0));
+    }
 }
 
 /// One faction's record with its slot as it stands, or `None` without a reputation slot or a
@@ -472,7 +476,13 @@ fn on_standing(In(ev): In<SessionEvent>, world: &mut World) {
         } else {
             None
         };
-        let old_rank = benilla_formats::reputation_rank(base + old);
+        // A faction without a record ranks Neutral at both reads (`0x5d0600`: `0x5d0625`).
+        let rank = |standing: i32| {
+            record
+                .as_ref()
+                .map_or(3, |_| benilla_formats::reputation_rank(base + standing))
+        };
+        let old_rank = rank(old);
         if standing != old {
             world.resource_mut::<Reputations>().0[i].1 = standing;
             let change = match (log_mode, record.as_ref()) {
@@ -491,7 +501,7 @@ fn on_standing(In(ev): In<SessionEvent>, world: &mut World) {
                 }
             }
         }
-        let new_rank = benilla_formats::reputation_rank(base + standing);
+        let new_rank = rank(standing);
         if flags & (flag::VISIBLE | flag::HIDDEN) == 0 {
             flags |= flag::VISIBLE;
             revealed |= add_visible(world, list_id);
