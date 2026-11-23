@@ -315,6 +315,24 @@ pub(crate) fn show_in_turn(
     ui.world(move |world| show_line_in_world(world, who, line));
 }
 
+/// [`show_in_turn`], then `then` in the same step: a handler's writes after its line, which its
+/// listeners read before them (`0x5216f0` returns before the handler goes on).
+pub(crate) fn show_in_turn_then(
+    ui: &mut crate::ui_script::live::UiEvents,
+    who: &'static str,
+    line: UiError,
+    then: impl FnOnce(&mut World) + Send + Sync + 'static,
+) {
+    #[cfg(test)]
+    LINES_IN_TURN.with(|lines| lines.borrow_mut().push(line.clone()));
+    ui.world(move |world| {
+        show_line_in_world(world, who, line);
+        // The line's chat add and its event run before the handler goes on (`0x52183c`).
+        crate::ui_script::live::fire_handler_events(world);
+        then(world);
+    });
+}
+
 #[cfg(test)]
 thread_local! {
     /// Every line [`show_in_turn`] queued on this thread, for the handlers' tests.

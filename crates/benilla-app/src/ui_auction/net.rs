@@ -356,13 +356,122 @@ fn expire_and_signal(live: &mut AuctionLive, ui: &mut UiEvents, auction_id: u32)
 }
 
 /// The notices' mail arrival with its delay (`0x5704d0`), which signals when it lights the icon.
+/// A handler's writes after its line: the line's listeners read the house as it was before them.
+enum Tail {
+    /// The owner list after a listing (`0x5a006f`, `0x5a0075`).
+    Started,
+    /// A placed bid: the outbid clear (`0x5a00a8`), the bidder list (`0x5a00b9`), the browse row's
+    /// bid (`0x5a0112`, `0x5a0121`) and its event (`0x5a0195`), then the bid emote (`0x5a01d5`).
+    BidPlaced { auction_id: u32, min_increment: u32 },
+    /// The mail, when one arrives, then the expiry (`0x5a0208` -> `0x5a0211`, `0x5a0aa2` ->
+    /// `0x5a0aab`, `0x5a0b7f`).
+    Expired {
+        auction_id: u32,
+        mail: Option<(f32, &'static str)>,
+    },
+    /// A bidder notice: won expires the auction (`0x5a076c`); outbid keeps the id (`0x5a0598`) and
+    /// patches this house's bidder and browse rows (`0x5a0674`, `0x5a073a`); either mails
+    /// (`0x5a077a`).
+    Bidder(AuctionBidderNotification),
+}
+
+/// Show `line` at the handler's step and run `tail` after its listeners (`0x5216f0` returns
+/// before the handler goes on).
+fn line_then(ui: &mut UiEvents, line: UiError, tail: Tail) {
+    crate::ui_action::show_in_turn_then(ui, "ui_lines", line, move |world| {
+        if let Err(e) = world.run_system_cached_with(run_tail, tail) {
+            warn!("ui_auction: a handler's tail did not run: {e}");
+        }
+    });
+}
+
+/// A notice's line, then `tail`; with the item's record not cached the line waits on it
+/// (`0x59a400`) and `tail` runs at once.
+fn notice_then(
+    step: &mut Step,
+    mail: &mut MailArrival,
+    (key, item, property): (&'static str, u32, i32),
+    tail: Tail,
+) {
+    match notice_line(step, key, item, property) {
+        Some(line) => line_then(&mut step.ui, line, tail),
+        None => apply_tail(tail, step, mail),
+    }
+}
+
+fn run_tail(In(tail): In<Tail>, mut step: Step, mut mail: MailArrival) {
+    apply_tail(tail, &mut step, &mut mail);
+}
+
+/// Run a handler's [`Tail`], its events raised in turn.
+fn apply_tail(tail: Tail, step: &mut Step, mail: &mut MailArrival) {
+    let Step { live, ui, .. } = step;
+    match tail {
+        Tail::Started => {
+            live.auction.can_get_owner = true;
+            owner_list(&mut live.auction, &live.look);
+        }
+        Tail::BidPlaced {
+            auction_id,
+            min_increment,
+        } => {
+            let look = &live.look;
+            let a = &mut *live.auction;
+            // The outbid clear drops the first entry of the id alone (`0x59ba10`).
+            if let Some(i) = a.outbid.iter().position(|&(_, id)| id == auction_id) {
+                a.outbid.remove(i);
+            }
+            a.can_get_bidder = true;
+            let page = a.last_bidder_page;
+            bidder_list(a, look, page);
+            if a.auctioneer.is_some() {
+                let me = look.player().unwrap_or(0);
+                let bid = (a.last_bid_amount, min_increment, me);
+                if patch(a, LIST, auction_id, bid, Some(look.now())) {
+                    patched(a, ui, LIST);
+                }
+            }
+            look.send(ClientCommand::Emote {
+                emote_id: BID_EMOTE,
+            });
+        }
+        Tail::Expired {
+            auction_id,
+            mail: arrival,
+        } => {
+            if let Some((delay, source)) = arrival {
+                mail_arrived(mail, ui, delay, source);
+            }
+            expire_and_signal(live, ui, auction_id);
+        }
+        Tail::Bidder(n) => {
+            if n.bid_or_zero == 0 {
+                expire_and_signal(live, ui, n.auction_id);
+            } else {
+                let now = live.look.now();
+                let a = &mut *live.auction;
+                a.outbid.push((n.house_id, n.auction_id));
+                if a.house_id == n.house_id {
+                    for list in [BIDDER, LIST] {
+                        let bid = (n.bid_or_zero, n.out_bid, n.bidder_guid);
+                        if patch(a, list, n.auction_id, bid, Some(now)) {
+                            patched(a, ui, list);
+                        }
+                    }
+                }
+            }
+            mail_arrived(mail, ui, 0.0, "SMSG_AUCTION_BIDDER_NOTIFICATION");
+        }
+    }
+}
+
 fn mail_arrived(mail: &mut MailArrival, ui: &mut UiEvents, delay: f32, source: &str) {
     if mail.arrive(delay, source) {
         ui.fire("UPDATE_PENDING_MAIL", Vec::new());
     }
 }
 
-fn on_command_result(In(ev): In<SessionEvent>, mut step: Step, mut mail: MailArrival) {
+fn on_command_result(In(ev): In<SessionEvent>, mut step: Step) {
     if let SessionEvent::AuctionCommandResult {
         auction_id,
         action,
@@ -370,7 +479,7 @@ fn on_command_result(In(ev): In<SessionEvent>, mut step: Step, mut mail: MailArr
         tail,
     } = ev
     {
-        command_result(auction_id, action, error, &tail, &mut step, &mut mail);
+        command_result(auction_id, action, error, &tail, &mut step);
     }
 }
 
@@ -382,7 +491,6 @@ fn command_result(
     error: u32,
     tail: &AuctionCommandTail,
     step: &mut Step,
-    mail: &mut MailArrival,
 ) {
     let Step { live, ui, .. } = step;
     let look = &live.look;
@@ -414,38 +522,34 @@ fn command_result(
                     let next = sell_next(a, look);
                     ui.write(move |s| s.auction_sell_step(next));
                 }
-                ui.line(UiError::key("ERR_AUCTION_STARTED"));
-                a.can_get_owner = true;
-                owner_list(a, look);
+                // The line (`0x5a0067`), then the owner list (`0x5a006f`, `0x5a0075`).
+                line_then(ui, UiError::key("ERR_AUCTION_STARTED"), Tail::Started);
             }
             auction_action::BID_PLACED => {
-                ui.line(UiError::key("ERR_AUCTION_BID_PLACED"));
-                // The outbid clear drops the first entry of the id alone (`0x59ba10`).
-                if let Some(i) = a.outbid.iter().position(|&(_, id)| id == auction_id) {
-                    a.outbid.remove(i);
-                }
-                a.can_get_bidder = true;
-                let page = a.last_bidder_page;
-                bidder_list(a, look, page);
-                if a.auctioneer.is_some() {
-                    let min_increment = match tail {
-                        AuctionCommandTail::BidPlaced { new_min_outbid } => *new_min_outbid,
-                        _ => 0,
-                    };
-                    let me = look.player().unwrap_or(0);
-                    let bid = (a.last_bid_amount, min_increment, me);
-                    if patch(a, LIST, auction_id, bid, Some(look.now())) {
-                        patched(a, ui, LIST);
-                    }
-                }
-                look.send(ClientCommand::Emote {
-                    emote_id: BID_EMOTE,
-                });
+                // The line (`0x5a009f`), then the house's writes and its event after its listeners.
+                let min_increment = match tail {
+                    AuctionCommandTail::BidPlaced { new_min_outbid } => *new_min_outbid,
+                    _ => 0,
+                };
+                line_then(
+                    ui,
+                    UiError::key("ERR_AUCTION_BID_PLACED"),
+                    Tail::BidPlaced {
+                        auction_id,
+                        min_increment,
+                    },
+                );
             }
             auction_action::REMOVED => {
-                ui.line(UiError::key("ERR_AUCTION_REMOVED"));
-                mail_arrived(mail, ui, 0.0, "SMSG_AUCTION_COMMAND_RESULT cancel");
-                expire_and_signal(live, ui, auction_id);
+                // The line (`0x5a01fe`), then the mail (`0x5a0208`) and the expiry (`0x5a0211`).
+                line_then(
+                    ui,
+                    UiError::key("ERR_AUCTION_REMOVED"),
+                    Tail::Expired {
+                        auction_id,
+                        mail: Some((0.0, "SMSG_AUCTION_COMMAND_RESULT cancel")),
+                    },
+                );
             }
             _ => {}
         },
@@ -481,22 +585,21 @@ fn command_result(
     }
 }
 
-/// A notice's `_S` line: at once with the item's record cached, else from its record callback
-/// (`0x59a400`).
-fn notice_line(step: &mut Step, key: &'static str, item: u32, property: i32) {
-    let Step { live, ui, waits } = step;
-    match live.look.item_name(item, property) {
-        Some(name) => ui.line(UiError::s(key, name)),
-        None => {
-            if let Some(w) = waits.as_deref_mut() {
-                w.wait(
-                    item,
-                    RecordWait::Auction(Callback::Notice(key, property)),
-                    false,
-                );
-            }
+/// A notice's `_S` line to show now with the item's record cached, else `None` and the line left
+/// to its record callback (`0x59a400`).
+fn notice_line(step: &mut Step, key: &'static str, item: u32, property: i32) -> Option<UiError> {
+    let Step { live, waits, .. } = step;
+    let name = live.look.item_name(item, property);
+    if name.is_none() {
+        if let Some(w) = waits.as_deref_mut() {
+            w.wait(
+                item,
+                RecordWait::Auction(Callback::Notice(key, property)),
+                false,
+            );
         }
     }
+    name.map(|name| UiError::s(key, name))
 }
 
 fn on_bidder_notification(In(ev): In<SessionEvent>, mut step: Step, mut mail: MailArrival) {
@@ -515,24 +618,9 @@ fn bidder_notification(n: &AuctionBidderNotification, step: &mut Step, mail: &mu
     } else {
         "ERR_AUCTION_OUTBID_S"
     };
-    notice_line(step, key, n.item_entry, n.random_property_id);
-    let Step { live, ui, .. } = step;
-    if won {
-        expire_and_signal(live, ui, n.auction_id);
-    } else {
-        let now = live.look.now();
-        let a = &mut *live.auction;
-        a.outbid.push((n.house_id, n.auction_id));
-        if a.house_id == n.house_id {
-            for list in [BIDDER, LIST] {
-                let bid = (n.bid_or_zero, n.out_bid, n.bidder_guid);
-                if patch(a, list, n.auction_id, bid, Some(now)) {
-                    patched(a, ui, list);
-                }
-            }
-        }
-    }
-    mail_arrived(mail, ui, 0.0, "SMSG_AUCTION_BIDDER_NOTIFICATION");
+    // The line (`0x5a057c`, `0x5a0754`), then the house's writes after its listeners.
+    let line = (key, n.item_entry, n.random_property_id);
+    notice_then(step, mail, line, Tail::Bidder(*n));
 }
 
 fn on_owner_notification(In(ev): In<SessionEvent>, mut step: Step, mut mail: MailArrival) {
@@ -565,29 +653,37 @@ fn owner_notification(n: &AuctionOwnerNotification, step: &mut Step, mail: &mut 
     } else {
         "ERR_AUCTION_EXPIRED_S"
     };
-    notice_line(step, key, n.item_entry, n.random_property_id);
-    let Step { live, ui, .. } = step;
+    // The line (`0x5a0a5e`, `0x5a0a7d`), then the mail (`0x5a0aa2`) and the expiry (`0x5a0aab`).
     let delay = if n.bid != 0 { n.mail_delay } else { 0.0 };
-    mail_arrived(mail, ui, delay, "SMSG_AUCTION_OWNER_NOTIFICATION");
-    expire_and_signal(live, ui, n.auction_id);
+    notice_then(
+        step,
+        mail,
+        (key, n.item_entry, n.random_property_id),
+        Tail::Expired {
+            auction_id: n.auction_id,
+            mail: Some((delay, "SMSG_AUCTION_OWNER_NOTIFICATION")),
+        },
+    );
 }
 
 /// `SMSG_AUCTION_REMOVED_NOTIFICATION` (`0x5a0ac0`): its line, then the expiry.
-fn on_removed_notification(In(ev): In<SessionEvent>, mut step: Step) {
+fn on_removed_notification(In(ev): In<SessionEvent>, mut step: Step, mut mail: MailArrival) {
     if let SessionEvent::AuctionRemovedNotification {
         auction_id,
         item_entry,
         random_property_id,
     } = ev
     {
-        notice_line(
+        // The line (`0x5a0b73`), then the expiry (`0x5a0b7f`).
+        notice_then(
             &mut step,
-            "ERR_AUCTION_REMOVED_S",
-            item_entry,
-            random_property_id,
+            &mut mail,
+            ("ERR_AUCTION_REMOVED_S", item_entry, random_property_id),
+            Tail::Expired {
+                auction_id,
+                mail: None,
+            },
         );
-        let Step { live, ui, .. } = &mut step;
-        expire_and_signal(live, ui, auction_id);
     }
 }
 
@@ -660,12 +756,12 @@ mod tests {
             .open(AUCTIONEER, 1);
     }
 
-    /// The events and lines the handlers queued since the last read, the lines by key.
+    /// The events and lines the handlers queued since the last read, the lines by key, each
+    /// line's step run where it stands so the writes after it show in order.
     fn raised(app: &mut App) -> Vec<&'static str> {
-        let queued = app.world_mut().resource_mut::<UiEvents>().set_aside();
+        let queued = UiEvents::walk_for_test(app.world_mut());
         let mut lines = crate::ui_action::take_lines_in_turn().into_iter();
         queued
-            .names()
             .into_iter()
             .map(|n| match n {
                 "<world>" => lines.next().map_or(n, |l| l.key),
@@ -906,6 +1002,7 @@ mod tests {
             auction_error::OK,
             AuctionCommandTail::BidPlaced { new_min_outbid: 1 },
         );
+        let _ = raised(&mut app);
         assert_eq!(
             app.world().resource::<AuctionOpen>().outbid,
             vec![(1, 5), (1, 4)]

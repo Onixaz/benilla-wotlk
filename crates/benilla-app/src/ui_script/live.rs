@@ -2763,18 +2763,42 @@ impl UiEvents {
     /// The fired event names, in order.
     #[cfg(test)]
     pub(crate) fn names(&self) -> Vec<&'static str> {
-        self.0
-            .iter()
-            .map(|e| match e {
-                UiEvent::Fire(name, _) => *name,
-                UiEvent::ClearCursor => "<clear cursor>",
-                UiEvent::Write(_) => "<write>",
-                UiEvent::SystemLine(key, _) => key,
-                UiEvent::World(_) => "<world>",
-                UiEvent::CastEdge(_) => "<cast edge>",
-                UiEvent::Chat(_) => "<chat>",
-            })
-            .collect()
+        self.0.iter().map(name_of).collect()
+    }
+
+    /// Take the queue's names in order, each step over the `World` run where it stands and what it
+    /// queued named after it, nothing fired: a handler's tail seen without a VM.
+    #[cfg(test)]
+    pub(crate) fn walk_for_test(world: &mut World) -> Vec<&'static str> {
+        let mut out = Vec::new();
+        let mut events = std::collections::VecDeque::from(std::mem::take(
+            &mut world.resource_mut::<UiEvents>().0,
+        ));
+        while let Some(event) = events.pop_front() {
+            out.push(name_of(&event));
+            if let UiEvent::World(step) = event {
+                step(world);
+                let queued = std::mem::take(&mut world.resource_mut::<UiEvents>().0);
+                for e in queued.into_iter().rev() {
+                    events.push_front(e);
+                }
+            }
+        }
+        out
+    }
+}
+
+/// A queued event's name, for tests.
+#[cfg(test)]
+fn name_of(event: &UiEvent) -> &'static str {
+    match event {
+        UiEvent::Fire(name, _) => name,
+        UiEvent::ClearCursor => "<clear cursor>",
+        UiEvent::Write(_) => "<write>",
+        UiEvent::SystemLine(key, _) => key,
+        UiEvent::World(_) => "<world>",
+        UiEvent::CastEdge(_) => "<cast edge>",
+        UiEvent::Chat(_) => "<chat>",
     }
 }
 
