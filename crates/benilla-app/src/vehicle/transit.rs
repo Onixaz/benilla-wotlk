@@ -179,6 +179,7 @@ pub(super) fn ride_transits(
     let now = time.elapsed_secs_f64();
     // A finished motion's rig stands back on its own frame; a seated one moves on to its seat.
     for (entity, net, &TransitAnchor(anchor)) in &left {
+        debug!("vehicle: passenger {entity} motion done at {now:.3} s, rig back on its own frame");
         let ground =
             crate::entities::mount::ground_frame(&mut commands, entity, net, creatures.as_deref());
         if let Ok(mut rig) = poses.get_mut(entity) {
@@ -230,7 +231,14 @@ pub(super) fn ride_transits(
         };
         let Some(to) = to else { continue };
         if t.end_s.is_none() && p.state != 1 {
-            let (duration, gravity, scale) = motion(seat, entering, from.0.distance(to));
+            let distance = from.0.distance(to);
+            let (duration, gravity, scale) = motion(seat, entering, distance);
+            debug!(
+                "vehicle: passenger {entity} {} motion {duration:.3} s over {distance:.2} yd \
+                 (gravity {gravity:.2}, arc scale {scale:.3}, anim {:?}) at {now:.3} s",
+                if entering { "enter" } else { "exit" },
+                enter_anim(seat),
+            );
             t.end_s = Some(t.start_s + f64::from(duration));
             t.gravity = gravity;
             t.arc_scale = scale;
