@@ -2305,13 +2305,12 @@ fn own_player_watches(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
         }
         // The glyph watches, one per glyph field and one on the enabled mask (`0x6e58ea`, `0x6e591b`): each its events, the glyph's rows read as the update stands (`0x6daa80`, `0x6dab80`).
         if crate::ui_glyph::is_glyph_watch(index) {
-            if let Some(glyphs) = sc.glyphs.as_deref() {
-                for (event, socket) in
-                    crate::ui_glyph::watcher_events(&glyphs.catalog, index, old, new)
-                {
-                    sc.ui
-                        .fire(event, vec![benilla_ui::script::ScriptValue::Int(socket)]);
-                }
+            // With no rows loaded a glyph edge finds none, but the mask watch reads no row (`0x6dab80`).
+            let empty = benilla_formats::GlyphCatalog::default();
+            let catalog = sc.glyphs.as_deref().map_or(&empty, |g| &g.catalog);
+            for (event, socket) in crate::ui_glyph::watcher_events(catalog, index, old, new) {
+                sc.ui
+                    .fire(event, vec![benilla_ui::script::ScriptValue::Int(socket)]);
             }
             continue;
         }

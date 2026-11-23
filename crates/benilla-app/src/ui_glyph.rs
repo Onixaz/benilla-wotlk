@@ -216,4 +216,16 @@ mod tests {
             [("GLYPH_DISABLED", 1), ("GLYPH_ENABLED", 3)]
         );
     }
+
+    /// With no rows loaded a glyph edge fires nothing, and the mask still fires: `0x6dab80` reads
+    /// no row.
+    #[test]
+    fn without_rows_the_mask_still_fires() {
+        let c = GlyphCatalog::default();
+        assert!(events(&c, edge(FIELD_PLAYER_GLYPHS_1, 0, 181)).is_empty());
+        assert_eq!(
+            events(&c, edge(FIELD_PLAYER_GLYPHS_ENABLED, 0, 1)),
+            [("GLYPH_ENABLED", 1)]
+        );
+    }
 }
