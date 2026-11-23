@@ -65,8 +65,6 @@ const ON_THE_QUEUE: &[(&str, &str)] = &[
     ("ui_companion.rs", "drain_companions"),
     ("ui_companion.rs", "feed_companion_booth"),
     ("ui_duel.rs", "drain_duel"),
-    ("ui_glyph.rs", "drain_glyph_removes"),
-    ("ui_glyph.rs", "feed_glyphs"),
     ("ui_gm_ticket.rs", "drain_gm_ticket"),
     ("ui_gm_ticket.rs", "feed_gm_ticket"),
     ("ui_guild/feed.rs", "drain_guild"),
