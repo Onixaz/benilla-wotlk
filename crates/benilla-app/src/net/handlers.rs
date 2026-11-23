@@ -132,128 +132,22 @@ impl NetHandlerApp for App {
 }
 
 /// The events queued now, in wire order, each handler's commands applied before the next, stopping behind one that owes the UI's world entry ([`super::EntryHold`]): the rest stay queued until its step has run (`0x6e8186`, `0x52ae84`).
-/// Packets behind `Connected` held in wire order for the UI load ([`UiLoadHold`]) go first, before the channel's.
 pub(crate) fn dispatch_until_entry(
     world: &mut World,
     rx: &crossbeam_channel::Receiver<SessionEvent>,
 ) {
     let handlers = world.remove_resource::<NetHandlers>().unwrap_or_default();
-    world.get_resource_or_init::<UiLoadHold>();
-    world.resource_scope(|world, mut hold: Mut<UiLoadHold>| {
-        drain_held(world, rx, &handlers, hold.bypass_change_detection());
-    });
-    world.insert_resource(handlers);
-}
-
-/// [`dispatch_until_entry`]'s loop over the held packets, then the channel's.
-fn drain_held(
-    world: &mut World,
-    rx: &crossbeam_channel::Receiver<SessionEvent>,
-    handlers: &NetHandlers,
-    hold: &mut UiLoadHold,
-) {
-    if hold.awaiting && crate::ui_script::ingame_ui_up_in(world) {
-        hold.awaiting = false;
-    }
-    let mut fresh = rx.len();
-    loop {
+    for _ in 0..rx.len() {
         if entry_held(world) {
-            debug!(
-                "net: {} packet(s) wait for the UI's world entry",
-                hold.held.len() + rx.len()
-            );
+            debug!("net: {} packet(s) wait for the UI's world entry", rx.len());
             break;
         }
-        let next = if hold.awaiting {
-            None
-        } else {
-            hold.held.pop_front()
+        let Ok(ev) = rx.try_recv() else {
+            break;
         };
-        let ev = match next {
-            Some(ev) => ev,
-            None if fresh > 0 => {
-                fresh -= 1;
-                let Ok(ev) = rx.try_recv() else {
-                    break;
-                };
-                ev
-            }
-            None => break,
-        };
-        let ev = if hold.awaiting {
-            let me = world.get_resource::<super::SelfGuid>().and_then(|g| g.0);
-            match hold.admit(ev, me) {
-                Admit::Run(ev) => *ev,
-                Admit::Held => continue,
-                Admit::TimeSync(counter) => {
-                    if let Some(commands) = world.get_resource::<super::NetCommands>() {
-                        crate::player::answer_time_sync(commands, counter);
-                    }
-                    continue;
-                }
-            }
-        } else {
-            ev
-        };
-        let connected = matches!(ev, SessionEvent::Connected { .. });
         handlers.run(world, ev);
-        if connected
-            && world.contains_resource::<State<crate::char_select::ClientState>>()
-            && !crate::ui_script::ingame_ui_up_in(world)
-        {
-            hold.awaiting = true;
-            hold.created = false;
-        }
     }
-    if hold.awaiting && !hold.held.is_empty() {
-        debug!(
-            "net: {} packet(s) wait for the in-game UI's load",
-            hold.held.len()
-        );
-    }
-}
-
-/// The world session's packets held for the in-game UI's load: 12340 loads the UI (`0x4db8f5`) a tick before it sends the login (`0x4db95a`), so every packet of the session reaches a loaded UI and fires into it; here the login goes out first, so what arrives behind `Connected` waits, in wire order, until the load has run.
-#[derive(Resource, Default)]
-pub(crate) struct UiLoadHold {
-    /// `Connected` has run and the in-game UI is not up yet.
-    awaiting: bool,
-    held: std::collections::VecDeque<SessionEvent>,
-    /// A held packet created our player and no later one destroyed it: in wire order, our player is held.
-    created: bool,
-}
-
-/// What the hold does with an arriving packet.
-enum Admit {
-    Run(Box<SessionEvent>),
-    Held,
-    /// `SMSG_TIME_SYNC_REQ` behind our held create: answered on arrival, as 12340 answers it with the UI long loaded.
-    TimeSync(u32),
-}
-
-impl UiLoadHold {
-    /// `ev` back to run now while the hold stands, or held behind the rest.
-    /// The account data runs ahead, since the load waits on it ([`crate::account_data::ready_for_ui`]): it writes only the store the load reads, so no other handler sees the reorder.
-    /// A session's end releases the hold, so it runs behind every packet held before it.
-    /// A time-sync request is answered at once when our create is held ahead of it, as its handler's player test (`0x6dc047`) passes in wire order; 12340 loads the UI before its login, so none waits on a load there. One ahead of our create is held, to fail that test in order.
-    fn admit(&mut self, ev: SessionEvent, me: Option<u64>) -> Admit {
-        match ev {
-            SessionEvent::AccountDataTimes(_) | SessionEvent::AccountDataUpdate(_) => {
-                return Admit::Run(Box::new(ev));
-            }
-            SessionEvent::TimeSyncReq { counter } if self.created => {
-                return Admit::TimeSync(counter);
-            }
-            SessionEvent::CharacterLoginFailed { .. } | SessionEvent::Disconnected { .. } => {
-                self.awaiting = false;
-            }
-            SessionEvent::ObjectCreate { guid, .. } if Some(guid) == me => self.created = true,
-            SessionEvent::ObjectDestroyed(guid) if Some(guid) == me => self.created = false,
-            _ => {}
-        }
-        self.held.push_back(ev);
-        Admit::Held
-    }
+    world.insert_resource(handlers);
 }
 
 /// Whether the drain waits for the UI's world entry; a hold with no in-game UI to run the entry is dropped.
@@ -356,151 +250,6 @@ mod tests {
         assert_eq!(drain(&mut app, &rx), Vec::<String>::new(), "still owed");
         app.world_mut().resource_mut::<crate::net::EntryHold>().0 = false;
         assert_eq!(drain(&mut app, &rx), vec!["queued:2", "queued:3"]);
-    }
-
-    fn on_connected(In(ev): In<SessionEvent>, mut log: ResMut<Log>) {
-        assert!(matches!(ev, SessionEvent::Connected { .. }));
-        log.0.push("connected".into());
-    }
-
-    fn on_times(In(ev): In<SessionEvent>, mut log: ResMut<Log>) {
-        assert!(matches!(ev, SessionEvent::AccountDataTimes(_)));
-        log.0.push("times".into());
-    }
-
-    fn on_disconnected(In(ev): In<SessionEvent>, mut log: ResMut<Log>) {
-        assert!(matches!(ev, SessionEvent::Disconnected { .. }));
-        log.0.push("disconnected".into());
-    }
-
-    fn connected() -> SessionEvent {
-        SessionEvent::Connected {
-            self_guid: 1,
-            name: "Probe".into(),
-            billing_time_rested: 0,
-            expansion: 2,
-            tutorial_flags: None,
-            addon_info: None,
-        }
-    }
-
-    fn times() -> SessionEvent {
-        SessionEvent::AccountDataTimes(benilla_protocol::messages::AccountDataTimes {
-            server_time: 1,
-            flag: 1,
-            mask: 0xff,
-            times: [Some(0); 8],
-        })
-    }
-
-    /// An app at character select with the login's handlers, as the pick's `Connected` finds it.
-    fn login_app() -> App {
-        let mut app = app();
-        app.insert_resource(State::new(crate::char_select::ClientState::CharSelect))
-            .net_handler(SessionEventKind::Connected, on_connected)
-            .net_handler(SessionEventKind::AccountDataTimes, on_times)
-            .net_handler(SessionEventKind::Disconnected, on_disconnected)
-            .net_handler(SessionEventKind::LoginQueued, on_queued);
-        app
-    }
-
-    /// 12340 loads the in-game UI (`0x4db8f5`) before it logs in (`0x4db95a`), so no packet of the session runs before the UI is up: the packets behind `Connected` wait in wire order until the load has run, all but the account data the load waits on.
-    #[test]
-    fn the_packets_behind_connected_wait_for_the_ui_load() {
-        let mut app = login_app();
-        let (tx, rx) = crossbeam_channel::unbounded();
-        for ev in [connected(), queued(1), times(), queued(2)] {
-            tx.send(ev).unwrap();
-        }
-        assert_eq!(drain(&mut app, &rx), vec!["connected", "times"]);
-        // The world entry's edge arms the load: still held.
-        app.insert_resource(State::new(crate::char_select::ClientState::InWorld))
-            .insert_resource(crate::ui_script::PendingEntryUiLoad);
-        tx.send(queued(3)).unwrap();
-        assert_eq!(drain(&mut app, &rx), Vec::<String>::new());
-        // The load has run: the held packets first, then the channel's, in wire order.
-        app.world_mut()
-            .remove_resource::<crate::ui_script::PendingEntryUiLoad>();
-        tx.send(queued(4)).unwrap();
-        assert_eq!(
-            drain(&mut app, &rx),
-            vec!["queued:1", "queued:2", "queued:3", "queued:4"]
-        );
-        tx.send(queued(5)).unwrap();
-        assert_eq!(
-            drain(&mut app, &rx),
-            vec!["queued:5"],
-            "no hold after the load"
-        );
-    }
-
-    /// A time-sync request behind our held create is answered on arrival, as 12340 answers it with its UI loaded before the login; one ahead of the create waits in wire order (`0x6dc047`).
-    #[test]
-    fn a_time_sync_behind_our_held_create_is_answered_on_arrival() {
-        let mut app = login_app();
-        let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
-        app.insert_resource(crate::net::NetCommands(cmd_tx))
-            .insert_resource(crate::net::SelfGuid(Some(1)));
-        let create = SessionEvent::ObjectCreate {
-            guid: 1,
-            kind: benilla_protocol::EntityKind::Player,
-            display_id: None,
-            position: [0.0; 3],
-            orientation: 0.0,
-            scale: 1.0,
-            speeds: None,
-            mover: None,
-            transport_progress: None,
-            transport: None,
-            spline: None,
-            vehicle: None,
-            attack_target: None,
-            spawned: false,
-            fields: benilla_protocol::ObjectFields::default(),
-        };
-        let (tx, rx) = crossbeam_channel::unbounded();
-        for ev in [
-            connected(),
-            SessionEvent::TimeSyncReq { counter: 0 },
-            create,
-            SessionEvent::TimeSyncReq { counter: 1 },
-            queued(1),
-        ] {
-            tx.send(ev).unwrap();
-        }
-        assert_eq!(drain(&mut app, &rx), vec!["connected"]);
-        let answered: Vec<u32> = cmd_rx
-            .try_iter()
-            .filter_map(|c| match c {
-                crate::net::ClientCommand::TimeSyncResp { counter, .. } => Some(counter),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(answered, vec![1]);
-        let hold = app.world().resource::<UiLoadHold>();
-        assert_eq!(
-            hold.held.len(),
-            3,
-            "the early request, the create and the queue line wait"
-        );
-    }
-
-    /// A session ending before the load releases the hold: the end runs behind every packet held before it, in wire order.
-    #[test]
-    fn a_session_end_before_the_ui_load_runs_behind_the_held_packets() {
-        let mut app = login_app();
-        let (tx, rx) = crossbeam_channel::unbounded();
-        let end = SessionEvent::Disconnected {
-            reason: String::new(),
-            end: benilla_protocol::SessionEnd::Lost,
-        };
-        for ev in [connected(), queued(1), end, queued(2)] {
-            tx.send(ev).unwrap();
-        }
-        assert_eq!(
-            drain(&mut app, &rx),
-            vec!["connected", "queued:1", "disconnected", "queued:2"]
-        );
     }
 
     /// With no in-game UI up there is no entry step to wait for, so the hold drops (the state 12340's synchronous UI load never reaches).
