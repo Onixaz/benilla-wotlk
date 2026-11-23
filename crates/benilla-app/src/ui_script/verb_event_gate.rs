@@ -19,33 +19,11 @@ struct Pair {
 /// file matched as a path suffix: a feed reading the state the verb changed, or a helper on the
 /// verb's own path. Each row's comment names the trigger.
 const ELSEWHERE: &[(&str, &str, &str)] = &[
-    // The sell slot's diff (`auction_sell_item` moved), from the click, the right-click arm or
-    // the cancelled multi-sell's slot clear.
-    (
-        "ClickAuctionSellItemButton",
-        "NEW_AUCTION_UPDATE",
-        "benilla-app/src/ui_auction/mod.rs",
-    ),
+    // The right-click's auction arm fills the sell slot and signals in its call (`0x5d895c`).
     (
         "UseContainerItem",
         "NEW_AUCTION_UPDATE",
-        "benilla-app/src/ui_auction/mod.rs",
-    ),
-    (
-        "CancelSell",
-        "NEW_AUCTION_UPDATE",
-        "benilla-app/src/ui_auction/mod.rs",
-    ),
-    // The multi-sell runs in the app: its drain starts it and its feed fires the events.
-    (
-        "CancelSell",
-        "AUCTION_MULTISELL_FAILURE",
-        "benilla-app/src/ui_auction/mod.rs",
-    ),
-    (
-        "StartAuction",
-        "AUCTION_MULTISELL_START",
-        "benilla-app/src/ui_auction/mod.rs",
+        "benilla-ui/src/script/auction.rs",
     ),
     // `keybinds.generation` moves; `sync_dispatch` re-derives the table and fires.
     (

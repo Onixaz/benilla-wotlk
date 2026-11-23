@@ -43,8 +43,6 @@ const ON_THE_QUEUE: &[(&str, &str)] = &[
     ("ui_action/errors.rs", "show_line_now"),
     ("ui_action/feed.rs", "feed_actions"),
     ("ui_arena_team.rs", "drain_arena_teams"),
-    ("ui_auction/mod.rs", "drain_auction"),
-    ("ui_auction/mod.rs", "feed_auction"),
     ("ui_aura.rs", "drain_aura_cancels"),
     ("ui_battlefield.rs", "drain_battlefield"),
     ("ui_calendar.rs", "feed_calendar"),
@@ -164,7 +162,7 @@ const ON_THE_QUEUE: &[(&str, &str)] = &[
 ];
 
 /// The raise steps: the five between the UI phases and each `then_fire` chain.
-const RAISE_STEPS: usize = 67;
+const RAISE_STEPS: usize = 66;
 
 /// `source` with every inline test module cut out, to its closing brace.
 pub(super) fn production(source: &str) -> String {

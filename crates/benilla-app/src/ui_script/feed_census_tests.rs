@@ -20,7 +20,6 @@ const FEEDS: &[&str] = &[
     "benilla_app::screenshot::report_captures",
     "benilla_app::tutorial::feed_tutorials",
     "benilla_app::ui_action::feed::feed_actions",
-    "benilla_app::ui_auction::feed_auction",
     "benilla_app::ui_calendar::feed_calendar",
     "benilla_app::ui_char::feed_char",
     "benilla_app::ui_char::feed_skills",
