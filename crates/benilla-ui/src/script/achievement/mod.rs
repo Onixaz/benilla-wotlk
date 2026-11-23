@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 
-use super::{Model, ScriptValue};
+use super::{LiveState, ScriptValue};
 
 mod text;
 mod tooltip;
@@ -780,17 +780,16 @@ pub(crate) struct AchievementModel {
 }
 
 impl AchievementModel {
-    /// The active player's PvP faction index, `None` before the player's unit is pushed.
-    fn player_faction(model: &Model) -> Option<i32> {
-        model.unit("player").map(|u| i32::from(u.pvp_team))
+    /// The active player's PvP faction index read at the call (`0x4d3790`, `0x5b3d0a`), `None`
+    /// with no player object held.
+    fn player_faction(l: &dyn LiveState) -> Option<i32> {
+        l.player_pvp_faction(l.active_player()?)
     }
 
-    /// The compared player's (`guid`), when the client holds that unit.
-    fn inspect_faction(model: &Model, guid: u64) -> Option<i32> {
-        (guid != 0)
-            .then(|| model.units_by_guid.get(&guid))
-            .flatten()
-            .map(|u| i32::from(u.pvp_team))
+    /// The compared player's (`guid`, `0xc1f458`) read at the call (`0x5b3bf0`), when the
+    /// client holds that player.
+    fn inspect_faction(l: &dyn LiveState, guid: u64) -> Option<i32> {
+        l.player_pvp_faction(guid)
     }
 }
 
