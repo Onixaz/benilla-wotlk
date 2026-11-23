@@ -2262,6 +2262,18 @@ fn own_player_watches(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
             own_slot_watches(sc, guid, edges, at);
             continue;
         }
+        // The known-titles watches, registered once per u64 (`0x6e53cf`): `KNOWN_TITLES_UPDATE` with `"player"` (`0x6cddd0` -> `0x6cdde1`), once per moved field.
+        if let Some(watch) = crate::ui_title::known_titles_watch(index) {
+            let low_moved =
+                at > 0 && crate::ui_title::known_titles_watch(edges[at - 1].0) == Some(watch);
+            if !low_moved {
+                sc.ui.fire(
+                    "KNOWN_TITLES_UPDATE",
+                    vec![benilla_ui::script::ScriptValue::Str("player".into())],
+                );
+            }
+            continue;
+        }
         // The watched faction's watch (`0x6cddd0`): `UPDATE_FACTION` with `"player"` (`0x6cdde1`).
         if index == benilla_protocol::field::FIELD_PLAYER_WATCHED_FACTION_INDEX {
             sc.ui.fire(
@@ -2513,6 +2525,7 @@ fn merge_fields(
                     || e.unit_field(benilla_protocol::field::FIELD_PLAYER_GUILDID)
                     || e.unit_field(benilla_protocol::field::FIELD_PLAYER_GUILD_TIMESTAMP)
                     || e.unit_field(benilla_protocol::field::FIELD_PLAYER_WATCHED_FACTION_INDEX)
+                    || crate::ui_title::known_titles_watch(e.index).is_some()
                     || is_currency_watch(e.index)
                     || is_slot_watch(e.index)
                     || e.unit_field(benilla_protocol::field::FIELD_PLAYER_FIELD_COINAGE)

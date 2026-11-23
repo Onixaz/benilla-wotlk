@@ -295,9 +295,8 @@ pub(super) fn pvp_name(lua: &Lua, u: &super::UnitState, name: &str) -> String {
     if !u.is_player {
         return name.to_owned();
     }
-    let model = read(lua);
     super::title::chosen_title_name(
-        &model.title_rows,
+        super::title::live_title_row,
         u.chosen_title,
         u.sex == 3,
         u.pvp_medal,

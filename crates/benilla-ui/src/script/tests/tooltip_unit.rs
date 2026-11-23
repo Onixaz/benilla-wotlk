@@ -228,11 +228,18 @@ fn a_pending_name_titles_unknownobject_and_the_answer_replaces_it() {
 fn the_tooltip_title_is_the_chosen_title_name() {
     let mut s = script();
     s.set_screen_size(800.0, 600.0);
-    s.set_title_rows(vec![TitleRow {
-        mask_id: 46,
-        name: "%s the Explorer".into(),
-        name1: "%s the Exploress".into(),
-    }]);
+    let mut view = crate::script::live::TestView {
+        char_titles: vec![TitleRow {
+            mask_id: 46,
+            name: "%s the Explorer".into(),
+            name1: "%s the Exploress".into(),
+        }],
+        ..Default::default()
+    };
+    crate::script::live::lending(&mut view, || tooltip_titles(&mut s));
+}
+
+fn tooltip_titles(s: &mut UiScript) {
     let player = |sex: u8, chosen_title: i32| UnitState {
         exists: true,
         is_player: true,
@@ -259,12 +266,12 @@ fn the_tooltip_title_is_the_chosen_title_name() {
 
     s.set_unit("target", Some(player(2, 46)));
     s.run(r#"assert(TT:SetUnit("target") == 1)"#).unwrap();
-    assert_eq!(title(&s), "Pfedh the Explorer");
+    assert_eq!(title(s), "Pfedh the Explorer");
 
     s.set_unit("target", Some(player(3, 46)));
     s.run(r#"assert(TT:SetUnit("target") == 1)"#).unwrap();
     assert_eq!(
-        title(&s),
+        title(s),
         "Pfedh the Exploress",
         "the unit's sex picks the form"
     );
@@ -272,7 +279,7 @@ fn the_tooltip_title_is_the_chosen_title_name() {
     s.set_unit("target", Some(player(2, 0)));
     s.run(r#"assert(TT:SetUnit("target") == 1)"#).unwrap();
     assert_eq!(
-        title(&s),
+        title(s),
         "Pfedh",
         "no chosen title, and the rank byte decorates nothing"
     );
@@ -282,7 +289,7 @@ fn the_tooltip_title_is_the_chosen_title_name() {
     s.set_unit("target", Some(protector));
     s.run(r#"assert(TT:SetUnit("target") == 1)"#).unwrap();
     assert_eq!(
-        title(&s),
+        title(s),
         "Pfedh the Explorer
 Guardian of Stormwind",
         "the medal rides a second line"
@@ -292,7 +299,7 @@ Guardian of Stormwind",
     beast.chosen_title = 46;
     s.set_unit("target", Some(beast));
     s.run(r#"assert(TT:SetUnit("target") == 1)"#).unwrap();
-    assert_eq!(title(&s), "Timber Wolf", "a creature takes no title");
+    assert_eq!(title(s), "Timber Wolf", "a creature takes no title");
     assert!(s.take_errors().is_empty());
 }
 

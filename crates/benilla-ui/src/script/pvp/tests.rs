@@ -650,8 +650,8 @@ fn unit_pvp_rank_answers_for_a_foreign_unit() {
     });
 }
 
-fn seat_titles(s: &mut UiScript) {
-    s.set_title_rows(vec![
+fn title_rows() -> Vec<crate::script::TitleRow> {
+    vec![
         crate::script::TitleRow {
             mask_id: 2,
             name: "Corporal %s".into(),
@@ -662,7 +662,7 @@ fn seat_titles(s: &mut UiScript) {
             name: "%s the Explorer".into(),
             name1: "%s the Exploress".into(),
         },
-    ]);
+    ]
 }
 
 /// `UnitPVPName` (`0x60e9a0` → `0x72a290`): a player's chosen title, gendered by this unit, with
@@ -671,9 +671,9 @@ fn seat_titles(s: &mut UiScript) {
 #[test]
 fn unit_pvp_name_shows_the_chosen_title() {
     let (mut s, mut live_v) = seated();
+    live_v.char_titles = title_rows();
     crate::script::live::lending(&mut live_v, || {
         seat_name_globals(&s);
-        seat_titles(&mut s);
 
         // The seated player is a female rank 9 with no chosen title.
         assert_eq!(

@@ -271,7 +271,7 @@ impl PvpNameStrings {
     /// The chosen-title name for `key`; `None` for no title, where the plain name shows.
     fn decorated(&self, key: TitleKey, name: &str) -> Option<String> {
         benilla_ui::script::chosen_title_name(
-            &self.rows,
+            |mask| benilla_ui::script::title_row(&self.rows, mask).cloned(),
             key.chosen,
             key.female,
             key.medal,

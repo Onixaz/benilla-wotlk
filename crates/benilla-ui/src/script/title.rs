@@ -99,12 +99,13 @@ fn strip_name_slot(format: &str) -> String {
 
 /// The chosen-title name's title leg (`0x72a290`): a player's chosen title (above 0) with the name
 /// in its `%s`, and the `PVP_MEDAL<n>` line under it for a set medal byte (`PLAYER_BYTES_3` byte
-/// 2), its text from `medal_text`. `None` for no title, where the caller shows the plain name.
+/// 2), its text from `medal_text`; `row` finds the title's row (`0x719900`). `None` for no title,
+/// where the caller shows the plain name.
 ///
 /// Deviation: a chosen title no row names answers `None`, where the reference returns its
 /// unwritten buffer.
 pub fn chosen_title_name(
-    rows: &[TitleRow],
+    row: impl FnOnce(i64) -> Option<TitleRow>,
     chosen: i32,
     female: bool,
     medal: u8,
@@ -114,8 +115,8 @@ pub fn chosen_title_name(
     if chosen <= 0 {
         return None;
     }
-    let row = title_row(rows, i64::from(chosen))?;
-    let mut out = super::pvp::format_two_strings(gendered(row, female), name, "");
+    let row = row(i64::from(chosen))?;
+    let mut out = super::pvp::format_two_strings(gendered(&row, female), name, "");
     if medal != 0 {
         out.push('\n');
         out.push_str(&medal_text(&format!("PVP_MEDAL{medal}")).unwrap_or_default());
@@ -123,26 +124,14 @@ pub fn chosen_title_name(
     Some(out)
 }
 
-impl super::UiScript {
-    /// Push `CharTitles.dbc`'s rows in file order.
-    pub fn set_title_rows(&mut self, rows: Vec<TitleRow>) {
-        set_field!(self, title_rows, rows);
-    }
-
-    /// Push the active player's title fields, `None` with no player.
-    pub fn set_player_titles(&mut self, titles: Option<PlayerTitles>) {
-        set_field!(self, player_titles, titles);
-    }
-
-    /// Take `SetCurrentTitle`'s sends, each a `CMSG_SET_TITLE` body, in call order.
-    pub fn take_title_sets(&mut self) -> Vec<i32> {
-        drain_field!(self, title_sets)
-    }
+/// The `CharTitles.dbc` row for `mask` in the view lent now (`0x719900`).
+pub(crate) fn live_title_row(mask: i64) -> Option<TitleRow> {
+    super::live::read_live(|l| l.char_title(mask)).flatten()
 }
 
-fn read(lua: &Lua) -> mlua::AppDataRef<'_, super::ModelCell> {
-    lua.app_data_ref::<super::ModelCell>()
-        .expect("model app_data")
+/// The active player's title fields in the view lent now, `None` with no active player held.
+fn live_player_titles() -> Option<PlayerTitles> {
+    super::live::read_live(|l| l.player_titles()).flatten()
 }
 
 /// `lua_isnumber`, then `fistp` under a chop control word: a truncating integer.
@@ -161,28 +150,26 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // 1 through it.
     g.set(
         "GetNumTitles",
-        lua.create_function(|lua, ()| {
-            let model = read(lua);
-            Ok(model.title_rows.len() as f64 + 1.0)
+        lua.create_function(|_, ()| {
+            let rows = super::live::read_live(|l| l.char_title_count()).unwrap_or(0);
+            Ok(rows as f64 + 1.0)
         })?,
     )?;
 
-    // GetCurrentTitle() (`0x51b3b0`): `PLAYER_CHOSEN_TITLE` signed, 0 with no player.
+    // GetCurrentTitle() (`0x51b3b0`): the active player's `PLAYER_CHOSEN_TITLE` signed, 0 with no
+    // player held.
     g.set(
         "GetCurrentTitle",
-        lua.create_function(|lua, ()| {
-            let model = read(lua);
-            Ok(model.player_titles.as_ref().map_or(0, |t| t.chosen))
-        })?,
+        lua.create_function(|_, ()| Ok(live_player_titles().map_or(0, |t| t.chosen)))?,
     )?;
 
-    // IsTitleKnown(mask) (`0x51b410`): 1 for a set known-titles bit, else 0; mask 0 is unknown.
+    // IsTitleKnown(mask) (`0x51b410`): 1 for a set known-titles bit of the active player
+    // (`0x51b4a6`), else 0; mask 0 is unknown (`0x51b489`).
     g.set(
         "IsTitleKnown",
         lua.create_function(|lua, mask: Value| {
             let mask = mask_arg(lua, mask, "Usage: IsTitleKnown(titleMaskID)")? as u32;
-            let model = read(lua);
-            let known = model.player_titles.as_ref().is_some_and(|t| {
+            let known = live_player_titles().is_some_and(|t| {
                 mask != 0
                     && t.known
                         .get((mask / 32) as usize)
@@ -198,11 +185,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetTitleName",
         lua.create_function(|lua, mask: Value| {
             let mask = mask_arg(lua, mask, "Usage: GetTitleName(titleMaskID)")?;
-            let text = {
-                let model = read(lua);
-                let female = model.player_titles.as_ref().is_some_and(|t| t.female);
-                title_row(&model.title_rows, mask).map(|r| strip_name_slot(gendered(r, female)))
-            };
+            let female = live_player_titles().is_some_and(|t| t.female);
+            let text = live_title_row(mask).map(|r| strip_name_slot(gendered(&r, female)));
             let mut out = MultiValue::new();
             if let Some(text) = text {
                 out.push_back(Value::String(lua.create_string(&text)?));
@@ -211,25 +195,24 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // SetCurrentTitle(mask) (`0x522e30`): `CMSG_SET_TITLE` with the mask, nothing with no player,
-    // and `ERR_CLIENT_LOCKED_OUT` past the throttle.
+    // SetCurrentTitle(mask) (`0x522e30`): nothing with no player held (`0x522e90`),
+    // `ERR_CLIENT_LOCKED_OUT` past the throttle (`0x522ec3`), else `CMSG_SET_TITLE` with the mask
+    // sent in the call (`0x522efb`).
     g.set(
         "SetCurrentTitle",
         lua.create_function(|lua, mask: Value| {
             let mask = mask_arg(lua, mask, "Usage: SetCurrentTitle(titleMaskID)")? as i32;
-            let now = super::clock::now(lua);
-            let mut model = super::model_mut_of(lua);
-            if model.player_titles.is_none() {
+            if live_player_titles().is_none() {
                 return Ok(());
             }
-            if model.title_throttle.admit(now) {
-                model.title_sets.push(mask);
-            } else {
-                {
-                    drop(model);
-                    crate::script::ui_errors::show_now(lua, "ERR_CLIENT_LOCKED_OUT");
-                }
+            // Not built yet (#1450): tainted code outside a hardware event gets the blocked feedback and no send (`0x522e96`).
+            let now = super::clock::now(lua);
+            let admitted = super::model_mut_of(lua).title_throttle.admit(now);
+            if !admitted {
+                crate::script::ui_errors::show_now(lua, "ERR_CLIENT_LOCKED_OUT");
+                return Ok(());
             }
+            super::live::write_live(|l| l.send_set_title(mask));
             Ok(())
         })?,
     )?;
@@ -239,6 +222,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::script::live::TestView;
     use crate::script::UiScript;
 
     fn script() -> UiScript {
@@ -265,76 +249,102 @@ mod tests {
         ]
     }
 
-    /// The picker's reads: the count is rows + 1, a known bit by mask id, the gendered and
-    /// stripped name, and nothing for a mask no row has.
+    /// The picker's reads at each call: the count is rows + 1, a known bit by mask id, the
+    /// gendered and stripped name, and nothing for a mask no row has.
     #[test]
-    fn the_picker_verbs_read_the_rows_and_the_fields() {
+    fn the_picker_verbs_read_the_rows_and_the_fields_at_the_call() {
         let mut s = script();
-        s.set_title_rows(rows());
-        assert_eq!(s.eval::<i64>("return GetCurrentTitle()").unwrap(), 0);
-        assert_eq!(s.eval::<i64>("return IsTitleKnown(46)").unwrap(), 0);
+        let mut v = TestView {
+            char_titles: rows(),
+            ..Default::default()
+        };
+        s.with_live(&mut v, |s| {
+            assert_eq!(s.eval::<i64>("return GetNumTitles()").unwrap(), 4);
+            assert_eq!(s.eval::<i64>("return GetCurrentTitle()").unwrap(), 0);
+            assert_eq!(s.eval::<i64>("return IsTitleKnown(46)").unwrap(), 0);
+            assert_eq!(
+                s.eval::<String>("return GetTitleName(46)").unwrap(),
+                " the Explorer",
+                "no player reads the male form"
+            );
+        });
         let mut known = [0u32; 6];
         known[46 / 32] |= 1 << (46 % 32);
         known[2] |= 1;
-        s.set_player_titles(Some(PlayerTitles {
+        v.player_titles = Some(PlayerTitles {
             chosen: 46,
             known,
             female: true,
-        }));
-        assert_eq!(s.eval::<i64>("return GetNumTitles()").unwrap(), 4);
-        assert_eq!(s.eval::<i64>("return GetCurrentTitle()").unwrap(), 46);
-        assert_eq!(s.eval::<i64>("return IsTitleKnown(46)").unwrap(), 1);
-        assert_eq!(s.eval::<i64>("return IsTitleKnown(64.9)").unwrap(), 1);
-        assert_eq!(s.eval::<i64>("return IsTitleKnown(1)").unwrap(), 0);
-        assert_eq!(s.eval::<i64>("return IsTitleKnown(0)").unwrap(), 0);
+        });
+        s.with_live(&mut v, |s| {
+            assert_eq!(s.eval::<i64>("return GetCurrentTitle()").unwrap(), 46);
+            assert_eq!(s.eval::<i64>("return IsTitleKnown(46)").unwrap(), 1);
+            assert_eq!(s.eval::<i64>("return IsTitleKnown(64.9)").unwrap(), 1);
+            assert_eq!(s.eval::<i64>("return IsTitleKnown(1)").unwrap(), 0);
+            assert_eq!(s.eval::<i64>("return IsTitleKnown(0)").unwrap(), 0);
+            assert_eq!(
+                s.eval::<String>("return GetTitleName(46)").unwrap(),
+                " the Exploress"
+            );
+            assert_eq!(
+                s.eval::<String>("return GetTitleName(64)").unwrap(),
+                " Champion of the Naaru"
+            );
+            assert_eq!(
+                s.eval::<String>("return GetTitleName(1)").unwrap(),
+                "Private "
+            );
+            assert_eq!(
+                s.eval::<i64>("return select('#', GetTitleName(7))")
+                    .unwrap(),
+                0
+            );
+            assert!(s.run("GetTitleName()").is_err());
+        });
         assert_eq!(
-            s.eval::<String>("return GetTitleName(46)").unwrap(),
-            " the Exploress"
+            s.eval::<i64>("return GetNumTitles()").unwrap(),
+            1,
+            "no view lent reads an unloaded table"
         );
-        assert_eq!(
-            s.eval::<String>("return GetTitleName(64)").unwrap(),
-            " Champion of the Naaru"
-        );
-        assert_eq!(
-            s.eval::<String>("return GetTitleName(1)").unwrap(),
-            "Private "
-        );
-        assert_eq!(
-            s.eval::<i64>("return select('#', GetTitleName(7))")
-                .unwrap(),
-            0
-        );
-        assert!(s.run("GetTitleName()").is_err());
     }
 
-    /// `SetCurrentTitle` queues the mask, "None" as -1; the eleventh send inside the window is
-    /// refused with `ERR_CLIENT_LOCKED_OUT`.
+    /// `SetCurrentTitle` sends the mask inside the call, "None" as -1; the eleventh send inside the
+    /// window is refused with `ERR_CLIENT_LOCKED_OUT`.
     #[test]
-    fn set_current_title_queues_and_throttles() {
+    fn set_current_title_sends_in_the_call_and_throttles() {
         let mut s = script();
-        s.run("SetCurrentTitle(46)").unwrap();
-        assert!(s.take_title_sets().is_empty(), "no player, no send");
-        s.set_player_titles(Some(PlayerTitles::default()));
-        s.run("SetCurrentTitle(46) SetCurrentTitle(-1)").unwrap();
-        assert_eq!(s.take_title_sets(), vec![46, -1]);
-        s.run("for i = 1, 10 do SetCurrentTitle(i) end").unwrap();
-        assert_eq!(s.take_title_sets().len(), 9);
+        let mut v = TestView::default();
+        s.with_live(&mut v, |s| s.run("SetCurrentTitle(46)").unwrap());
+        assert!(v.title_sends.is_empty(), "no player, no send");
+        v.player_titles = Some(PlayerTitles::default());
+        s.with_live(&mut v, |s| {
+            s.run("SetCurrentTitle(46) SetCurrentTitle(-1)").unwrap();
+            assert_eq!(
+                crate::script::live::test_view(|v| v.title_sends.clone()),
+                vec![46, -1],
+                "both sent before the chunk returned"
+            );
+            s.run("for i = 1, 10 do SetCurrentTitle(i) end").unwrap();
+        });
+        assert_eq!(v.title_sends.len(), 11);
         assert_eq!(s.take_shown(), vec!["ERR_CLIENT_LOCKED_OUT"]);
+        assert!(s.run("SetCurrentTitle()").is_err());
     }
 
     /// The chosen-title name: the format filled, the female form, a medal line, and none at 0.
     #[test]
     fn the_chosen_title_name_fills_the_format() {
         let medal = |k: &str| (k == "PVP_MEDAL2").then(|| "Protector".to_string());
+        let row = |m: i64| title_row(&rows(), m).cloned();
         assert_eq!(
-            chosen_title_name(&rows(), 46, true, 0, "Elza", medal).as_deref(),
+            chosen_title_name(row, 46, true, 0, "Elza", medal).as_deref(),
             Some("Elza the Exploress")
         );
         assert_eq!(
-            chosen_title_name(&rows(), 1, false, 2, "Elza", medal).as_deref(),
+            chosen_title_name(row, 1, false, 2, "Elza", medal).as_deref(),
             Some("Private Elza\nProtector")
         );
-        assert_eq!(chosen_title_name(&rows(), 0, false, 2, "Elza", medal), None);
-        assert_eq!(chosen_title_name(&rows(), 9, false, 0, "Elza", medal), None);
+        assert_eq!(chosen_title_name(row, 0, false, 2, "Elza", medal), None);
+        assert_eq!(chosen_title_name(row, 9, false, 0, "Elza", medal), None);
     }
 }

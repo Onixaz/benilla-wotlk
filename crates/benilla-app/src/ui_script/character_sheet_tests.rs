@@ -3,7 +3,8 @@
 //! dialog and slot flyout.
 
 use benilla_ui::script::{
-    EquipmentSetRequest, InvSlotView, PlayerTitles, ScriptValue, TitleRow, UiScript, UnitState,
+    EquipmentSetRequest, InvSlotView, LiveState, PlayerTitles, ScriptValue, TitleRow, UiScript,
+    UnitState,
 };
 
 fn load(tag: &str) -> UiScript {
@@ -43,8 +44,54 @@ fn sheet_errors(s: &mut UiScript) -> Vec<String> {
         .collect()
 }
 
+/// `CharTitles.dbc`'s rows and our title fields as the title verbs read them at the call, and the
+/// `CMSG_SET_TITLE` masks sent inside the calls.
+struct TitleView {
+    rows: Vec<TitleRow>,
+    titles: PlayerTitles,
+    sent: Vec<i32>,
+}
+
+impl LiveState for TitleView {
+    fn unit_flags(&self, _guid: u64) -> Option<u32> {
+        None
+    }
+
+    fn unit_health(&self, _guid: u64) -> Option<u32> {
+        None
+    }
+
+    fn active_player(&self) -> Option<u64> {
+        None
+    }
+
+    fn has_control(&self) -> bool {
+        true
+    }
+
+    fn far_sight(&self) -> bool {
+        false
+    }
+
+    fn char_title_count(&self) -> usize {
+        self.rows.len()
+    }
+
+    fn char_title(&self, mask: i64) -> Option<TitleRow> {
+        benilla_ui::script::title_row(&self.rows, mask).cloned()
+    }
+
+    fn player_titles(&self) -> Option<PlayerTitles> {
+        Some(self.titles.clone())
+    }
+
+    fn send_set_title(&mut self, mask: i32) {
+        self.sent.push(mask);
+    }
+}
+
 /// The window opens with no raise now `Blizzard_TokenUI` loads at startup, and the title picker
-/// lists "None" and each known title, sending the chosen one.
+/// lists "None" and each known title, sending the chosen one inside the click (`0x522efb`).
 #[test]
 fn the_character_window_opens_and_the_title_picker_lists_the_known_titles() {
     benilla_formats::wow_data_or_skip!();
@@ -56,60 +103,61 @@ fn the_character_window_opens_and_the_title_picker_lists_the_known_titles() {
         s.eval::<bool>("return TokenFrame ~= nil").unwrap(),
         "TokenFrame loaded"
     );
-    s.set_title_rows(vec![
-        TitleRow {
-            mask_id: 1,
-            name: "Private %s".into(),
-            name1: String::new(),
-        },
-        TitleRow {
-            mask_id: 2,
-            name: "%s the Explorer".into(),
-            name1: String::new(),
-        },
-    ]);
     // The picker walks mask ids 1 through `GetNumTitles()`, the row count plus 1.
     let mut known = [0u32; 6];
     known[0] |= 1 << 2;
-    s.set_player_titles(Some(PlayerTitles {
-        chosen: 0,
-        known,
-        female: false,
-    }));
-    s.run(r#"ToggleCharacter("PaperDollFrame")"#).unwrap();
-    assert!(s
-        .eval::<bool>("return PaperDollFrame:IsShown() == 1")
-        .unwrap());
-    s.fire_event(
-        "KNOWN_TITLES_UPDATE",
-        vec![ScriptValue::Str("player".into())],
-    );
-    let errors = sheet_errors(&mut s);
-    assert!(errors.is_empty(), "{errors:#?}");
-    assert!(s
-        .eval::<bool>("return PlayerTitleFrame:IsShown() == 1")
-        .unwrap());
-    assert_eq!(
-        s.eval::<String>("return PlayerTitleFrameText:GetText()")
-            .unwrap(),
-        s.eval::<String>("return PAPERDOLL_SELECT_TITLE").unwrap()
-    );
-    let (count, first, second): (i64, String, String) = s
-        .eval(
-            "local t = PlayerTitleFrame.titles \
-             return #t, t[1].name, t[2].name",
+    let mut view = TitleView {
+        rows: vec![
+            TitleRow {
+                mask_id: 1,
+                name: "Private %s".into(),
+                name1: String::new(),
+            },
+            TitleRow {
+                mask_id: 2,
+                name: "%s the Explorer".into(),
+                name1: String::new(),
+            },
+        ],
+        titles: PlayerTitles {
+            chosen: 0,
+            known,
+            female: false,
+        },
+        sent: Vec::new(),
+    };
+    s.with_live(&mut view, |s| {
+        s.run(r#"ToggleCharacter("PaperDollFrame")"#).unwrap();
+        assert!(s
+            .eval::<bool>("return PaperDollFrame:IsShown() == 1")
+            .unwrap());
+        s.fire_event(
+            "KNOWN_TITLES_UPDATE",
+            vec![ScriptValue::Str("player".into())],
+        );
+        let errors = sheet_errors(s);
+        assert!(errors.is_empty(), "{errors:#?}");
+        assert!(s
+            .eval::<bool>("return PlayerTitleFrame:IsShown() == 1")
+            .unwrap());
+        assert_eq!(
+            s.eval::<String>("return PlayerTitleFrameText:GetText()")
+                .unwrap(),
+            s.eval::<String>("return PAPERDOLL_SELECT_TITLE").unwrap()
+        );
+        let (count, first, second): (i64, String, String) = s
+            .eval(
+                "local t = PlayerTitleFrame.titles                  return #t, t[1].name, t[2].name",
+            )
+            .unwrap();
+        assert_eq!((count, second.as_str()), (2, "the Explorer"));
+        assert_eq!(first, s.eval::<String>("return NONE").unwrap());
+        s.run(
+            "PlayerTitlePickerFrame_Toggle()              for _, b in ipairs(PlayerTitlePickerScrollFrame.buttons) do                if b.titleId == 2 then PlayerTitleButton_OnClick(b) end              end",
         )
         .unwrap();
-    assert_eq!((count, second.as_str()), (2, "the Explorer"));
-    assert_eq!(first, s.eval::<String>("return NONE").unwrap());
-    s.run(
-        "PlayerTitlePickerFrame_Toggle() \
-         for _, b in ipairs(PlayerTitlePickerScrollFrame.buttons) do \
-           if b.titleId == 2 then PlayerTitleButton_OnClick(b) end \
-         end",
-    )
-    .unwrap();
-    assert_eq!(s.take_title_sets(), vec![2]);
+    });
+    assert_eq!(view.sent, vec![2]);
     assert!(sheet_errors(&mut s).is_empty());
 }
 
