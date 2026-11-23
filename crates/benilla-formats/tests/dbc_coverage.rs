@@ -22,7 +22,6 @@ use benilla_formats::{dbc_width, READ_TABLES};
 const NOT_READ: &[(&str, &str)] = &[
     ("BannedAddOns", "#245 the addon ban list"),
     ("DanceMoves", "#243 dance studio emotes"),
-    ("DestructibleModelData", "#243 destructible buildings"),
     ("ItemPurchaseGroup", "#239 merchant purchase groups"),
     ("MailTemplate", "#245 templated mail text: GetInboxText"),
     ("NamesProfanity", "#242 character name checks"),

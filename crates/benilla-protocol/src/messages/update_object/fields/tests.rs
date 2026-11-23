@@ -399,6 +399,18 @@ fn a_gameobject_reads_its_art_kit_as_a_signed_byte() {
     assert_eq!(ObjectFields::from_pairs(&[]).gameobject_art_kit(), 0);
 }
 
+/// `GAMEOBJECT_BYTES_1` byte 3 is the anim progress, a building's health out of 255.
+#[test]
+fn a_gameobject_reads_its_anim_progress_from_byte_3() {
+    let progress = |bytes: u32| {
+        ObjectFields::from_pairs(&[(FIELD_GAMEOBJECT_BYTES_1, bytes)]).gameobject_anim_progress()
+    };
+    // A full-health Wintergrasp wall: state 1, type 33, no art kit, progress 255.
+    assert_eq!(progress(0xFF00_2101), 255);
+    assert_eq!(progress(0x7F00_2101), 127);
+    assert_eq!(ObjectFields::from_pairs(&[]).gameobject_anim_progress(), 0);
+}
+
 /// `GAMEOBJECT_BYTES_1` holds the state and type; `GAMEOBJECT_DYNAMIC`'s low half the dynamic
 /// flags under a path progress. The parent rotation is not the spawn's own.
 #[test]

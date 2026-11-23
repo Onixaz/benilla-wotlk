@@ -406,6 +406,7 @@ pub(super) fn clear_content(model: &mut Model, h: FrameHandle) {
         t.min_width_forced = false;
         // Clear drops the subject and unregisters its health watcher.
         t.unit_guid = None;
+        t.health_object = None;
         t.item_id = 0;
         t.item_guid = 0;
         t.item_link = Default::default();
@@ -419,8 +420,8 @@ pub(super) fn clear_content(model: &mut Model, h: FrameHandle) {
     model.item_tooltip_waits.remove(&h);
     model.quest_tooltip_waits.remove(&h);
     model.achievement.tooltips.remove(&h);
-    // The `<name>StatusBar` health bar is unit content: it hides with the lines, and the next
-    // unit render re-shows it.
+    // The `<name>StatusBar` health bar is unit or building content: it hides with the lines, and
+    // the next unit or building render re-shows it.
     let bar = model
         .arena
         .frame(h)
