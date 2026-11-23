@@ -287,7 +287,14 @@ pub(super) fn ride_seats(
                 if let Ok(mut ec) = commands.get_entity(r.anchor) {
                     ec.despawn();
                 }
-                commands.entity(entity).remove::<(SeatRide, SeatPose)>();
+                // An exit's motion owns the anims from here: its transit gives the exit's, in
+                // this frame's commands or an earlier one's, and drops them as it lands. Only a
+                // seat left without one drops the ride's here.
+                if in_transit || passenger.is_some_and(|p| p.state == 5) {
+                    commands.entity(entity).remove::<SeatRide>();
+                } else {
+                    commands.entity(entity).remove::<(SeatRide, SeatPose)>();
+                }
                 continue;
             }
         }
