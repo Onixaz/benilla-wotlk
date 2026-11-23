@@ -960,7 +960,7 @@ mod tests {
         assert!(!held_until_release(false, Some(&stages), Some(&still)));
         let flagged = benilla_formats::VisualStages {
             flags: 0x4,
-            ..stages.clone()
+            ..stages
         };
         assert!(!held_until_release(false, Some(&flagged), Some(&kit)));
     }
