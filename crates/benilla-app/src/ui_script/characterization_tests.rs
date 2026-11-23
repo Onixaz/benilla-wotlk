@@ -1110,7 +1110,7 @@ fn zone_change() {
     );
 }
 
-/// The zone update runs on the active player's timer (`0x6d7bb0`) and skips with no active player (`0x6d7c0b`): an area under no player of ours fires nothing until our create.
+/// The zone update (`0x6d7bb0`) reads the active mover (`0x6d7be2`), else the active player (`0x6d7c01`), and skips with neither held (`0x6d7c0b`): an area under no unit of ours fires nothing until a mover is held.
 #[test]
 fn no_zone_event_fires_without_our_player() {
     let Some(mut rig) = Rig::login(&[]) else {
@@ -1128,10 +1128,35 @@ fn no_zone_event_fires_without_our_player() {
         .insert_resource(benilla_world::terrain_stream::CurrentArea(Some(12)));
     rig.run(3);
     let alone = rig.take();
-    let created = rig.packets(vec![self_create(&[])], 3);
+    // A unit of the server's that we steer (the Eye of Acherus' case) is the active mover.
+    let eye = SessionEvent::ObjectCreate {
+        guid: PET,
+        kind: EntityKind::Unit,
+        display_id: None,
+        position: [-8949.0, -132.0, 83.5],
+        orientation: 0.0,
+        scale: 1.0,
+        speeds: None,
+        mover: None,
+        transport_progress: None,
+        transport: None,
+        spline: None,
+        vehicle: None,
+        attack_target: None,
+        spawned: true,
+        fields: ObjectFields::from_pairs(&[(FIELD_UNIT_HEALTH, 500), (FIELD_UNIT_MAXHEALTH, 500)])
+            .into_created(ObjectType::Unit),
+    };
+    rig.packets(vec![eye], 1);
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::player::Player>()
+        .foreign_mover = Some(PET);
+    rig.run(3);
+    let moved = rig.take();
     assert_eq!(pin(&alone, events, verbs), Vec::<String>::new());
     assert_eq!(
-        pin(&created, events, verbs),
+        pin(&moved, events, verbs),
         vec!["ZONE_CHANGED_NEW_AREA | zone=Elwynn Forest"]
     );
 }
