@@ -71,7 +71,8 @@ impl TraceLog {
         for (gi, g) in model.group_nav.iter().enumerate() {
             let start = g.ref_start as usize;
             let end = (start + g.ref_count as usize).min(model.portal_refs.len());
-            for r in &model.portal_refs[start..end] {
+            // A start past the table (a portal-less group's) reads no refs, not a panic.
+            for r in model.portal_refs.get(start..end).unwrap_or(&[]) {
                 let Some(info) = model.portal_infos.get(r.portal as usize) else {
                     continue;
                 };
