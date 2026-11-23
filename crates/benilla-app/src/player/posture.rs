@@ -27,7 +27,7 @@ pub(super) fn update(
     let (stand_byte, reads_dead) = body
         .single()
         .ok()
-        .and_then(|(.., store, _, _, _, _, _)| {
+        .and_then(|(.., store, _, _, _, _, _, _)| {
             // The stand-state setter's first guards, health ≤ 0 or `UNIT_DYNAMIC_FLAGS & 0x20`
             // (feigning), without `unit_reads_dead`'s stand state 7.
             store.map(|s| {
@@ -105,7 +105,7 @@ pub(super) fn update(
     // ([`crate::creature_anim::SheathRequest`]), which sends `CMSG_SETSHEATHED`; only it plays the
     // ceremony (`bInstant = 0` in `ToggleSheath`). No body model yet drops the press.
     if binds.fired(crate::bindings::Input::ToggleSheath) {
-        if let Ok((e, _, _, _, Some(drv), store, engaged, _, _, wielded, _)) = body.single() {
+        if let Ok((e, _, _, _, Some(drv), store, engaged, _, _, wielded, _, _)) = body.single() {
             // Of `ToggleSheath`'s 12 silent guards: dead, in combat, any nonzero stand state,
             // mid-ceremony (clip 89/90) and mounted; its stunned and channeling guards are not
             // tested here.
@@ -157,7 +157,7 @@ fn apply_locally(
 ) {
     predict(&mut player.stand_pending, s, stand_now);
     if s != 0 && s != 2 {
-        if let Ok((e, _, _, _, drv, _, _, _, _, _, _)) = body.single() {
+        if let Ok((e, _, _, _, drv, _, _, _, _, _, _, _)) = body.single() {
             if drv.and_then(|d| d.sheath_state()).unwrap_or(0) != 0 {
                 sheath.write(crate::creature_anim::SheathRequest {
                     entity: e,

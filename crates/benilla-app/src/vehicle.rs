@@ -20,6 +20,7 @@ mod passenger;
 mod ride;
 mod seats;
 mod shot;
+mod targeting;
 mod transit;
 
 pub(crate) use shot::{TrajectoryCast, TrajectoryCasts};
@@ -153,6 +154,7 @@ impl Plugin for VehiclePlugin {
             .init_resource::<aim::VehicleAim>()
             .init_resource::<SeatStop>()
             .init_resource::<shot::TrajectoryCasts>()
+            .init_resource::<targeting::TrajectoryTargeting>()
             .init_resource::<VehicleSignals>()
             .add_message::<EnteredWorldMessage>()
             // After the object handlers, whose commands spawn the unit this reads.
@@ -194,6 +196,10 @@ impl Plugin for VehiclePlugin {
                         .after(drive_vehicle_aim)
                         .after(benilla_world::schedule::WorldStage::Present)
                         .after(crate::entities::EntityVisualsSet),
+                    // After the frame's sends, which name the spell it draws, and its pose.
+                    targeting::update_trajectory_targeting
+                        .after(shot::send_trajectory_casts)
+                        .run_if(targeting::preview_may_run),
                     // Before the camera reads its subject and zoom.
                     camera::feed_vehicle_camera
                         .after(passenger::advance_transits)
@@ -217,7 +223,16 @@ impl Plugin for VehiclePlugin {
                         .after(crate::entities::MountReseatSet)
                         .after(passenger::advance_transits),
                 ),
+            )
+            // The aim preview's strip and decal, after the frame's stream clear.
+            .add_systems(
+                PostUpdate,
+                targeting::push_trajectory_targeting
+                    .after(benilla_world::particles::buffer::begin_effect_frame)
+                    .run_if(targeting::preview_shown),
             );
+        // The aim preview's held cast ends with its go or its refusal.
+        targeting::register(app);
     }
 }
 
@@ -685,6 +700,8 @@ fn drive_vehicle_aim(
             Option<&Vehicle>,
             Option<&aim::MoveFlags2>,
             Option<&crate::net::UnitSpeeds>,
+            Option<&crate::net::ObjectStore>,
+            Option<&Passenger>,
         ),
         With<crate::net::ActiveMover>,
     >,
@@ -692,7 +709,17 @@ fn drive_vehicle_aim(
     tables: Res<VehicleTables>,
     time: Res<Time>,
     mut aim: ResMut<aim::VehicleAim>,
+    (mut rig, index, vehicles): (
+        Option<ResMut<crate::player::CameraControl>>,
+        Option<Res<GuidIndex>>,
+        Query<&Vehicle>,
+    ),
 ) {
+    // The mouse's motion is the camera's again unless a held aim takes it this frame.
+    let delta = rig.as_deref_mut().map_or(0.0, |r| {
+        r.hold_pitch_for_aim = false;
+        std::mem::take(&mut r.aim_pitch_delta)
+    });
     if let Some(power) = script
         .turn()
         .as_deref()
@@ -705,12 +732,9 @@ fn drive_vehicle_aim(
     let (Some(net), Some(player)) = (net, player) else {
         return;
     };
-    let Ok((guid, vehicle, flags2, speeds)) = mover.single() else {
+    let Ok((guid, vehicle, flags2, speeds, store, seat)) = mover.single() else {
         return;
     };
-    if aim.target.is_none() && aim.keys == [false, false] && aim.turning == 0 {
-        return;
-    }
     let pose = aim::MoverPose {
         guid: guid.0,
         flags: player.move_flags(),
@@ -719,6 +743,36 @@ fn drive_vehicle_aim(
         orientation: player.facing().rem_euclid(std::f32::consts::TAU),
     };
     let rec = vehicle.and_then(|v| tables.vehicle(v.id));
+    if let (Some(rec), Some(rig)) = (rec, rig.as_deref_mut()) {
+        let upright = store.is_some_and(|s| {
+            !s.0.unit_is_dead()
+                && s.0.unit_flags() & targeting::UNIT_FLAG_STUNNED == 0
+                && s.0.unit_stand_state() == 0
+        });
+        let syncing = rig.freelook()
+            && targeting::may_sync_facing(store, seat, index.as_deref(), &vehicles, &tables);
+        let held = aim::holds_camera_pitch(rec, pose.flags);
+        // The camera keeps its pitch from the next frame on.
+        rig.hold_pitch_for_aim = held && syncing;
+        let mouse = aim::MouseAim {
+            syncing,
+            can_pitch: aim::camera_may_pitch(Some(rec), pose.flags, pose.flags2, upright),
+            held,
+            camera_pitch: player.mouse_aim_pitch(),
+            delta,
+        };
+        aim::mouse_aim(
+            &mut aim,
+            &pose,
+            rec,
+            &mouse,
+            &net,
+            script.turn().as_deref_mut(),
+        );
+    }
+    if aim.target.is_none() && aim.keys == [false, false] && aim.turning == 0 {
+        return;
+    }
     let rate = speeds.map_or(std::f32::consts::PI, |s| s.0.pitch_rate);
     let mut script = script;
     aim::drive(

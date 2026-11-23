@@ -194,7 +194,7 @@ pub(super) fn control(
     let (stunned, dead, stand_byte) = body
         .single()
         .ok()
-        .and_then(|(.., store, _, _, _, _, _)| {
+        .and_then(|(.., store, _, _, _, _, _, _)| {
             store.map(|s| {
                 (
                     s.0.unit_flags() & UNIT_FLAG_STUNNED != 0,
@@ -226,7 +226,7 @@ pub(super) fn control(
         let f = body
             .single()
             .ok()
-            .and_then(|(.., store, _, _, _, _, _)| store.and_then(|s| s.0.player_drunk_byte()))
+            .and_then(|(.., store, _, _, _, _, _, _)| store.and_then(|s| s.0.player_drunk_byte()))
             .map_or(0.0, drunk::fraction);
         if !may_turn {
             0.0
@@ -367,15 +367,18 @@ pub(super) fn control(
                 0.0,
                 player.pos,
                 head,
-                body.single().ok().and_then(|(_, _, _, pivot, .., net)| {
-                    // The pivot preset follows the body's own SWIMMING, here the last streamed
-                    // word, which `wire_in` merges from the server's poses.
-                    body_pose::pivot_target(
-                        pivot,
-                        net,
-                        player.move_flags() & crate::creature_anim::move_flags::SWIMMING != 0,
-                    )
-                }),
+                body.single()
+                    .ok()
+                    .and_then(|(_, _, _, pivot, .., net, height)| {
+                        // The pivot preset follows the body's own SWIMMING, here the last streamed
+                        // word, which `wire_in` merges from the server's poses.
+                        body_pose::pivot_target(
+                            pivot,
+                            net,
+                            height,
+                            player.move_flags() & crate::creature_anim::move_flags::SWIMMING != 0,
+                        )
+                    }),
                 view_subject,
                 &mut rig,
                 &mut cam,
@@ -610,9 +613,12 @@ pub(super) fn control(
         // decision jumps an ascent within a third of a yard of the swim depth (`0x730e52`), reading
         // the latch it enters with; a root refuses it, as every jump (`0x9883f0`). It goes through
         // the jump-key core, which eats a mounted, still swimmer's press in deep water.
-        let mount_display = body.single().ok().map_or(0, |(.., store, _, _, _, _, _)| {
-            store.map_or(0, |s| s.0.unit_mount_display_id())
-        });
+        let mount_display = body
+            .single()
+            .ok()
+            .map_or(0, |(.., store, _, _, _, _, _, _)| {
+                store.map_or(0, |s| s.0.unit_mount_display_id())
+            });
         let press = vertical::jump_press(vertical::JumpInputs {
             mount_display,
             mount_jumps_when_still: pointer

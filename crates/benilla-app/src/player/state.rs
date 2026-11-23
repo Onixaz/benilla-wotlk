@@ -579,6 +579,12 @@ pub(super) struct PendingKnockback {
 }
 
 impl Player {
+    /// The camera's aim pitch as mouselook last pitched the mover with it (the camera pitch plus
+    /// its pivot bias), for the vehicle aim's camera route.
+    pub(crate) fn mouse_aim_pitch(&self) -> f32 {
+        self.aim_pitch_seen
+    }
+
     /// Airborne at the last mover step: `AcceptBattlefieldPort`'s falling refusal reads
     /// `MOVEFLAG_FALLING` (`0x54db58`).
     pub(crate) fn is_airborne(&self) -> bool {

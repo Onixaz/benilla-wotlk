@@ -509,6 +509,43 @@ pub(super) fn model_pivot_height(pivot: &CameraPivot, scale: f32, swimming: bool
     (local * scale).clamp(CAM_PIVOT_FLOOR, CAM_PIVOT_CEIL)
 }
 
+/// The ceiling on a camera target's pivot height (`0x718080`, read by `0x604e00`): a non-player
+/// unit's collision height less 1/6 yd, capped at `2.0278 − 1/6` yd, so a tall vehicle such as the
+/// Demolisher frames like a man-sized unit. A ceiling at or under 0 is the 15 yd default.
+///
+/// Deviation: the reference caps a player at its collision height less 1/6 too; that half is not
+/// applied, as a capture measured a human's pivot at 1.9003 yd and benilla's player collision
+/// heights are not yet checked against it.
+pub(crate) fn pivot_ceiling(collision_height: Option<f32>, player: bool) -> f32 {
+    const UNIT_CAP: f32 = 2.027_777_7;
+    const MARGIN: f32 = 1.0 / 6.0;
+    if player {
+        return CAM_PIVOT_CEIL;
+    }
+    let h = collision_height.unwrap_or(crate::player::DEFAULT_COLLISION_HEIGHT);
+    let ceiling = if h <= UNIT_CAP {
+        h - MARGIN
+    } else {
+        UNIT_CAP - MARGIN
+    };
+    if ceiling <= 0.0 {
+        CAM_PIVOT_CEIL
+    } else {
+        ceiling
+    }
+}
+
+/// A pivot height under `0x604e00`'s clamp: the 5/6 yd floor first, then the ceiling.
+pub(crate) fn clamp_pivot(height: f32, ceiling: f32) -> f32 {
+    if height < CAM_PIVOT_FLOOR {
+        CAM_PIVOT_FLOOR
+    } else if height >= ceiling {
+        ceiling
+    } else {
+        height
+    }
+}
+
 /// World head height above a unit's feet: the standing preset, or [`CAM_PIVOT_FALLBACK`] with no
 /// model. For the 3D-audio listener (`Sound_ListenerAtCharacter=1`) and a far-sight subject, whose
 /// movement flags we do not carry. A camera pivot passes the raw `OBJECT_FIELD_SCALE_X`, as the
@@ -624,6 +661,12 @@ pub(crate) struct CameraControl {
     /// Mouse-look is on: the reference's `[cam+0x90] & 1`. Written by [`run_look_session`], read
     /// the same frame for `cameraTerrainTilt`'s hand-off.
     pub(super) freelook: bool,
+    /// The driven vehicle aims with the mouse's vertical motion instead of the camera's pitch
+    /// (`0x5fba60`): while the facing syncs, the look leaves the pitch still and banks its change
+    /// in [`Self::aim_pitch_delta`]. Set each frame by the vehicle aim.
+    pub(crate) hold_pitch_for_aim: bool,
+    /// The pitch the held look would have turned the camera by, for the vehicle aim to take.
+    pub(crate) aim_pitch_delta: f32,
     /// The mouse buttons the world owns this frame, latched by [`latch_world_mouse`].
     pub(super) world_mouse: WorldMouse,
     /// Logical cursor position captured when look began, to restore on release.
@@ -655,6 +698,17 @@ pub(crate) struct CameraControl {
 }
 
 impl CameraControl {
+    /// The TurnOrAction channel, `[input+4] & 1`, for readers outside the player: the vehicle aim
+    /// preview's turn and free-look terms.
+    pub(crate) fn turn_or_action(&self) -> bool {
+        self.world_mouse.turn()
+    }
+
+    /// Mouse-look is on, the facing syncing to the camera.
+    pub(crate) fn freelook(&self) -> bool {
+        self.freelook
+    }
+
     /// A vehicle seat's zoom (`0x74c0e0`): on the enter the preferred distance, raised or lowered
     /// as the seat allows, held within `(min, max)`, the distance before kept; on the exit that
     /// distance back. Each request is applied once.
@@ -1024,7 +1078,11 @@ pub(super) fn run_look_session(
         // The pivot's fork: a pinned camera looking level or up, dragged mostly vertically, spends
         // the delta on the pitch bias; `None` means the integrator does not run.
         let d_pitch = -dy * pitch_rate;
-        if let Some(d_pitch) = rig.smart_pivot.route_pitch(
+        let syncs = active == LookButton::Right || both_buttons;
+        if syncs && rig.hold_pitch_for_aim {
+            // The vehicle takes the motion as its aim; the camera keeps its pitch.
+            rig.aim_pitch_delta += d_pitch;
+        } else if let Some(d_pitch) = rig.smart_pivot.route_pitch(
             d_pitch,
             d_yaw,
             cam.pitch,
@@ -1034,7 +1092,7 @@ pub(super) fn run_look_session(
         ) {
             cam.pitch = (cam.pitch + d_pitch).clamp(-CAM_PITCH_LIMIT, CAM_PITCH_LIMIT);
         }
-        if active == LookButton::Right || both_buttons {
+        if syncs {
             *face_yaw = cam.yaw;
         }
     }
@@ -1887,6 +1945,28 @@ mod tests {
         assert_eq!(model_pivot_height(&p, 1.0, false), 2.0);
         assert_eq!(model_pivot_height(&p, 0.01, false), CAM_PIVOT_FLOOR);
         assert_eq!(model_pivot_height(&p, 100.0, false), CAM_PIVOT_CEIL);
+    }
+
+    /// A creature's pivot stops at `2.0278 − 1/6` yd whatever its height, a short one's at its own
+    /// collision height less 1/6; the floor wins over a ceiling under it.
+    #[test]
+    fn a_tall_unit_frames_under_the_reference_ceiling() {
+        let unit = pivot_ceiling(Some(6.0), false);
+        assert!((unit - (2.027_777_7 - 1.0 / 6.0)).abs() < 1e-6);
+        assert!(
+            (clamp_pivot(4.48, unit) - unit).abs() < 1e-6,
+            "the Demolisher's 4.48"
+        );
+        assert_eq!(clamp_pivot(1.59, unit), 1.59, "the Catapult's is under it");
+        let short = pivot_ceiling(Some(1.5), false);
+        assert!((short - (1.5 - 1.0 / 6.0)).abs() < 1e-6);
+        assert_eq!(
+            pivot_ceiling(Some(2.5), true),
+            CAM_PIVOT_CEIL,
+            "a player is not capped"
+        );
+        assert_eq!(pivot_ceiling(Some(0.1), false), CAM_PIVOT_CEIL);
+        assert_eq!(clamp_pivot(0.2, 0.5), CAM_PIVOT_FLOOR);
     }
 
     /// The swim preset, `cam+0x124`: the standing height less `StandSeq.max.z − SwimSeq.max.z`. The
