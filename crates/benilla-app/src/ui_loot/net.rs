@@ -1,13 +1,12 @@
 //! The loot window's packet handlers: the [`LootState`] window and the [`LootLatch`], each moved and
 //! signalled at its step, the fishing verdicts, and the item push behind "You receive …".
 
-use benilla_protocol::messages::ItemPushResult;
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
 
 use super::{LootLatch, LootState};
-use crate::items::{Items, RecordWait, RecordWaits};
-use crate::net::{ClientCommand, NetCommands, NetHandlerApp, SelfGuid};
+use crate::items::RecordWaits;
+use crate::net::{ClientCommand, NetCommands, NetHandlerApp};
 use crate::pending_item_ops::PendingItemOps;
 use crate::ui_action::signals::SignalSink;
 use crate::ui_action::UiError;
@@ -237,34 +236,15 @@ fn on_fish_verdict(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
 }
 
 /// What the item push reads: the record and its callbacks, the icons and suffixes, the chat log.
-#[derive(bevy::ecs::system::SystemParam)]
-struct PushReads<'w> {
-    items: Res<'w, Items>,
-    waits: NonSendMut<'w, RecordWaits>,
-    net: Res<'w, NetCommands>,
-    icons: Option<Res<'w, crate::entities::ItemDisplays>>,
-    props: Option<Res<'w, crate::items::RandomProperties>>,
-    enchants: Option<Res<'w, crate::items::Enchants>>,
-    chat: ResMut<'w, crate::ui_chat::ChatLog>,
-}
-
-fn on_item_push_result(
-    In(ev): In<SessionEvent>,
-    self_guid: Res<SelfGuid>,
-    mut loot: ResMut<LootState>,
-    mut tutorials: ResMut<crate::tutorial::Tutorials>,
-    mut reads: PushReads,
-    mut ui: ResMut<UiEvents>,
-) {
+/// `SMSG_ITEM_PUSH_RESULT` (`0x523900`): the push runs at the handler's step, its events and line
+/// in turn with the handler's.
+pub(super) fn on_item_push_result(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
     if let SessionEvent::ItemPushResult(p) = ev {
-        item_push_result(
-            p,
-            &self_guid,
-            &mut loot,
-            &mut tutorials,
-            &mut reads,
-            &mut *ui,
+        debug!(
+            "net: item push {} x{} for {:#x} → bag {} slot {:#x}",
+            p.item_entry, p.count, p.player_guid, p.bag_slot, p.item_slot
         );
+        ui.world(move |world| super::push::item_push(world, p));
     }
 }
 
@@ -453,51 +433,6 @@ fn loot_release_response(
 fn loot_master_list(candidates: Vec<u64>, loot: &mut LootState) {
     debug!("net: master-loot candidates: {} eligible", candidates.len());
     loot.set_master_candidates(candidates);
-}
-
-/// `OnItemPush`'s outermost gate: only our own push prints or animates. Another member's push takes
-/// the arm and prints `LOOT_ITEM` with their name, which is not built, so a foreign push is
-/// dropped. `showInChat` is a later gate, carried into [`LootState::push_receive`].
-fn is_our_push(p: &ItemPushResult, self_guid: &SelfGuid) -> bool {
-    self_guid.0 == Some(p.player_guid)
-}
-
-/// `SMSG_ITEM_PUSH_RESULT` (`0x523900`): our own push shows `ITEM_PUSH` and its chat line off its
-/// record, or, on a miss, asks the record and runs again from its callback (`0x52398d`).
-fn item_push_result(
-    p: ItemPushResult,
-    self_guid: &SelfGuid,
-    loot: &mut LootState,
-    tutorials: &mut crate::tutorial::Tutorials,
-    reads: &mut PushReads,
-    sink: &mut dyn SignalSink,
-) {
-    debug!(
-        "net: item push {} x{} → bag {} slot {:#x}",
-        p.item_entry, p.count, p.bag_slot, p.item_slot
-    );
-    if !is_our_push(&p, self_guid) {
-        return;
-    }
-    tutorials.item_received(p.item_entry, p.bag_slot, p.item_slot);
-    let receive = loot.push_receive(&p);
-    if let Some(info) = reads.items.ask_template(p.item_entry, 0, &reads.net) {
-        let rolls = crate::items::RollCatalogs {
-            props: reads.props.as_deref(),
-            enchants: reads.enchants.as_deref(),
-        };
-        super::show_receive(
-            &receive,
-            info,
-            reads.icons.as_deref(),
-            rolls,
-            &mut reads.chat,
-            sink,
-        );
-        return;
-    }
-    reads.waits.wait(p.item_entry, RecordWait::ItemPush, false);
-    loot.receives.push(receive);
 }
 
 #[cfg(test)]
@@ -1689,100 +1624,6 @@ mod tests {
         );
     }
 
-    const ME: u64 = 0x0000_0000_0000_002A;
-    const THEM: u64 = 0x0000_0000_0000_00FF;
-
-    fn push(player_guid: u64, show_in_chat: bool) -> ItemPushResult {
-        ItemPushResult {
-            player_guid,
-            from_npc: false,
-            created: false,
-            show_in_chat,
-            bag_slot: 0xFF,
-            item_slot: 0,
-            item_entry: 2589,
-            suffix_factor: 0,
-            random_property_id: 0,
-            count: 1,
-            total_count: 1,
-        }
-    }
-
-    /// A push whose record is not in asks it and waits; the record's callback runs the push again
-    /// (`0x52398d` -> `0x512b60`), `ITEM_PUSH` then the chat line, and a denied record drops it.
-    #[test]
-    fn a_push_waits_on_its_record_and_shows_from_its_callback() {
-        const LINEN: u32 = 2589;
-        let mut world = World::new();
-        world.insert_resource(SelfGuid(Some(ME)));
-        world.init_resource::<LootState>();
-        world.init_resource::<crate::tutorial::Tutorials>();
-        world.init_resource::<crate::items::Items>();
-        world.insert_non_send_resource(crate::items::RecordWaits::default());
-        let (net, rx) = net();
-        world.insert_resource(net);
-        world.init_resource::<crate::ui_chat::ChatLog>();
-        world.init_resource::<UiEvents>();
-        let pushed = |world: &mut World, entry: u32| {
-            world
-                .run_system_once_with(
-                    on_item_push_result,
-                    SessionEvent::ItemPushResult(ItemPushResult {
-                        item_entry: entry,
-                        ..push(ME, true)
-                    }),
-                )
-                .expect("the handler runs as a one-shot system");
-        };
-        pushed(&mut world, LINEN);
-        assert!(
-            rx.try_iter()
-                .any(|c| matches!(c, ClientCommand::ItemQuery { entry, .. } if entry == LINEN)),
-            "the record is asked"
-        );
-        assert_eq!(world.resource::<LootState>().pending_receive_count(), 1);
-        assert!(world
-            .resource::<crate::ui_chat::ChatLog>()
-            .pending_lines()
-            .is_empty());
-        assert_eq!(
-            world
-                .non_send_resource::<crate::items::RecordWaits>()
-                .waiting(),
-            [(LINEN, RecordWait::ItemPush)]
-        );
-
-        world
-            .resource_mut::<crate::items::Items>()
-            .insert_template(LINEN, Some(crate::items::test_template("Linen Cloth")));
-        super::super::push_callback(&mut world, LINEN, true);
-        assert_eq!(world.resource::<LootState>().pending_receive_count(), 0);
-        assert_eq!(
-            world.resource::<UiEvents>().names(),
-            ["ITEM_PUSH"],
-            "fired whatever the icon resolves to (`0x523a60`)"
-        );
-        let lines = world.resource::<crate::ui_chat::ChatLog>().pending_lines();
-        assert_eq!(lines.len(), 1, "{lines:?}");
-        assert!(lines[0].contains("[Linen Cloth]"), "{lines:?}");
-
-        // A record the server cannot describe drops the push.
-        pushed(&mut world, 77_777);
-        world
-            .resource_mut::<crate::items::Items>()
-            .insert_template(77_777, None);
-        super::super::push_callback(&mut world, 77_777, false);
-        assert_eq!(world.resource::<LootState>().pending_receive_count(), 0);
-        assert_eq!(
-            world
-                .resource::<crate::ui_chat::ChatLog>()
-                .pending_lines()
-                .len(),
-            1,
-            "nothing more shown"
-        );
-    }
-
     /// `GetMasterLootCandidate` on a name not cached asks it and leaves the list's callback, one
     /// per miss (`0x58899d`); a found answer signals `UPDATE_MASTER_LOOT_LIST` for each
     /// (`0x588150`), and a denied one nothing.
@@ -1843,37 +1684,6 @@ mod tests {
             world.resource::<UiEvents>().names(),
             ["UPDATE_MASTER_LOOT_LIST", "UPDATE_MASTER_LOOT_LIST"],
             "one per miss"
-        );
-    }
-
-    #[test]
-    fn only_our_own_pushes_reach_the_receive_queue() {
-        let me = SelfGuid(Some(ME));
-        assert!(is_our_push(&push(ME, true), &me));
-        assert!(!is_our_push(&push(THEM, true), &me));
-        // No guid before login: no active player to match.
-        assert!(!is_our_push(&push(ME, true), &SelfGuid(None)));
-        // `showInChat` is not this gate: a silent push still queues and animates.
-        assert!(is_our_push(&push(ME, false), &me));
-        let mut world = World::new();
-        world.insert_resource(me);
-        world.init_resource::<LootState>();
-        world.init_resource::<crate::tutorial::Tutorials>();
-        world.init_resource::<crate::items::Items>();
-        world.insert_non_send_resource(crate::items::RecordWaits::default());
-        world.insert_resource(net().0);
-        world.init_resource::<crate::ui_chat::ChatLog>();
-        world.init_resource::<UiEvents>();
-        world
-            .run_system_once_with(
-                on_item_push_result,
-                SessionEvent::ItemPushResult(push(ME, false)),
-            )
-            .expect("the handler runs as a one-shot system");
-        assert_eq!(
-            world.resource::<LootState>().pending_receive_count(),
-            1,
-            "a push whose record is not in waits on it"
         );
     }
 }

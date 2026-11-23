@@ -91,6 +91,25 @@ pub(crate) fn pickup_trade_money(model: &mut crate::script::ModelGuard<'_>, amou
     true
 }
 
+/// The coin text (`0x7e7d80`): each denomination present through `GOLD_AMOUNT`, `SILVER_AMOUNT`
+/// or `COPPER_AMOUNT`, gold first, joined by `separator`; "" for no coin.
+pub(crate) fn currency_text(lua: &Lua, copper: u32, separator: &str) -> String {
+    [
+        (copper / 10_000, "GOLD_AMOUNT"),
+        (copper / 100 % 100, "SILVER_AMOUNT"),
+        (copper % 100, "COPPER_AMOUNT"),
+    ]
+    .into_iter()
+    .filter(|&(v, _)| v != 0)
+    .map(|(v, key)| {
+        crate::strings::global(lua, key)
+            .unwrap_or_default()
+            .replacen("%d", &v.to_string(), 1)
+    })
+    .collect::<Vec<_>>()
+    .join(separator)
+}
+
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
     g.set(
@@ -153,20 +172,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, (amount, separator): (Value, Option<mlua::String>)| {
             let n = number_arg(lua, amount, "Usage: GetCoinText(amount [,separator])")? as u32;
             let separator = separator.map_or_else(|| ", ".to_string(), |s| s.to_string_lossy());
-            let parts: Vec<String> = [
-                (n / 10_000, "GOLD_AMOUNT"),
-                (n / 100 % 100, "SILVER_AMOUNT"),
-                (n % 100, "COPPER_AMOUNT"),
-            ]
-            .into_iter()
-            .filter(|&(v, _)| v != 0)
-            .map(|(v, key)| {
-                crate::strings::global(lua, key)
-                    .unwrap_or_default()
-                    .replacen("%d", &v.to_string(), 1)
-            })
-            .collect();
-            Ok(parts.join(&separator))
+            Ok(currency_text(lua, n, &separator))
         })?,
     )?;
     // GetCoinTextureString(amount [, fontHeight]) (`0x510d00` → `0x7e7e10`): each denomination

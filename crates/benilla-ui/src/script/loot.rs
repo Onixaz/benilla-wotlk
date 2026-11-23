@@ -37,7 +37,7 @@ const NO_SLOT_QUALITY: i64 = 0;
 /// One loot-window row, resolved at the call; its 1-based slot is its place in [`LootState::rows`].
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LootRow {
-    /// Item name or the coin's money text; `None` while in flight, answered as [`CACHE_MISS_NAME`].
+    /// Item name; `None` while in flight, answered as [`CACHE_MISS_NAME`], and for the coin row.
     pub name: Option<String>,
     /// Icon path; `None` without a display icon, answered as [`MISSING_ICON`].
     pub texture: Option<String>,
@@ -47,6 +47,9 @@ pub struct LootRow {
     pub quality: Option<u32>,
     /// The synthesized coin pile (`LootSlotIsCoin` true, `LootSlotIsItem` false).
     pub is_coin: bool,
+    /// The coin row's copper, its text composed at the call from the global strings (`0x588430`);
+    /// 0 for an item row.
+    pub coins: u32,
     /// The tooltip store's key, 0 for the coin row.
     pub item_id: u32,
     /// The wire `slot_type` is `LOCKED` (3): `GetLootSlotInfo`'s fifth return, which tints the row
@@ -233,8 +236,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             let texture =
                 Value::String(lua.create_string(row.texture.as_deref().unwrap_or(MISSING_ICON))?);
-            let item =
-                Value::String(lua.create_string(row.name.as_deref().unwrap_or(CACHE_MISS_NAME))?);
+            // The coin row's text: each denomination through its global string, newline-joined
+            // (`0x588430` -> `0x7e7d80`).
+            let item = if row.is_coin {
+                super::cursor::money::currency_text(lua, row.coins, "\n")
+            } else {
+                row.name.clone().unwrap_or_else(|| CACHE_MISS_NAME.into())
+            };
+            let item = Value::String(lua.create_string(item)?);
             let quality = Value::Integer(row.quality.map_or(CACHE_MISS_QUALITY, i64::from));
             Ok(MultiValue::from_vec(vec![
                 texture,
@@ -457,11 +466,12 @@ mod tests {
             rows: vec![
                 Some(LootRow {
                     item_id: 0,
-                    name: Some("1g 23s 45c".into()),
+                    name: None,
                     texture: Some("Interface\\Icons\\INV_Misc_Coin_01".into()),
                     quantity: 1,
                     quality: Some(1),
                     is_coin: true,
+                    coins: 12_345,
                     link: None,
                     random_property_id: 0,
                     locked: false,
@@ -473,6 +483,7 @@ mod tests {
                     quantity: 3,
                     quality: Some(1),
                     is_coin: false,
+                    coins: 0,
                     link: Some("|cffffffff|Hitem:2589:0:0:0|h[Wool Cloth]|h|r".into()),
                     random_property_id: 0,
                     locked: false,
@@ -485,6 +496,7 @@ mod tests {
                     quantity: 1,
                     quality: None,
                     is_coin: false,
+                    coins: 0,
                     link: None,
                     random_property_id: 0,
                     locked: false,
@@ -497,6 +509,8 @@ mod tests {
     #[test]
     fn loot_snapshot_reads() {
         let mut s = UiScript::new().unwrap();
+        s.run(r#"GOLD_AMOUNT = "%d Gold" SILVER_AMOUNT = "%d Silver" COPPER_AMOUNT = "%d Copper""#)
+            .unwrap();
         assert_eq!(s.eval::<i64>("return GetNumLootItems()").unwrap(), 0);
         assert!(s.eval::<bool>("return GetLootSlotInfo(1) == nil").unwrap());
 
@@ -509,7 +523,10 @@ mod tests {
             .eval::<(String, String, i64, i64)>("return GetLootSlotInfo(1)")
             .unwrap();
         assert_eq!(texture, "Interface\\Icons\\INV_Misc_Coin_01");
-        assert_eq!(item, "1g 23s 45c");
+        assert_eq!(
+            item, "1 Gold\n23 Silver\n45 Copper",
+            "`0x588430` -> `0x7e7d80`"
+        );
         assert_eq!((quantity, quality), (1, 1));
 
         assert!(s.eval::<bool>("return LootSlotIsItem(2)").unwrap());

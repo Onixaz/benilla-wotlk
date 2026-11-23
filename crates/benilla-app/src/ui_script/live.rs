@@ -2428,6 +2428,25 @@ impl UiEvents {
             .collect()
     }
 
+    /// The queued events as `NAME arg ...`, any other entry as `<world>`, in order.
+    #[cfg(test)]
+    pub(crate) fn lines(&self) -> Vec<String> {
+        self.0
+            .iter()
+            .map(|e| match e {
+                UiEvent::Fire(name, args) => std::iter::once(name.to_string())
+                    .chain(args.iter().map(|a| match a {
+                        ScriptValue::Int(i) => i.to_string(),
+                        ScriptValue::Str(s) => s.clone(),
+                        other => format!("{other:?}"),
+                    }))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                _ => "<world>".to_string(),
+            })
+            .collect()
+    }
+
     /// The fired event names, in order.
     #[cfg(test)]
     pub(crate) fn names(&self) -> Vec<&'static str> {

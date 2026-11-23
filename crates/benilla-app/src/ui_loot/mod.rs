@@ -5,7 +5,6 @@
 //! the call through [`LootLive`], and the acting verbs run inside their call ([`run_verb`]).
 
 use benilla_protocol::messages::{slot_type, ItemPushResult, LootItem, BAG_PLAYER_INVENTORY};
-use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::*;
 
 use benilla_ui::script::{LootRow, LootState as LootWindow, LootVerb, ScriptValue, UiScript};
@@ -22,8 +21,10 @@ use crate::ui_script::UiDrain;
 
 mod looters;
 mod net;
+mod push;
 
 pub(crate) use looters::{apply_looters, LootLists};
+pub(crate) use push::push_callback;
 
 /// `ItemBondingType::BIND_WHEN_PICKED_UP`, the first conjunct of the `LOOT_BIND` confirm: the take
 /// dispatcher `0x589140` compares the item record's `+0x178` against 1.
@@ -39,29 +40,9 @@ const ITEM_FLAG_MULTI_DROP: u32 = 0x800;
 /// The coin row's quality, 0, so its text is grey: the reference's coin guard returns 0, and
 /// `LootFrame_Update` has no coin case (`LootFrame.lua:81-85`).
 const COIN_QUALITY: u32 = 0;
-/// 1.12's `GOLD`, `SILVER` and `COPPER` (`GlobalStrings.lua:2025`, `:3465`, `:865`).
-const GOLD_WORD: &str = "Gold";
-const SILVER_WORD: &str = "Silver";
-const COPPER_WORD: &str = "Copper";
 /// The slots the item-push result handler treats as the keyring: `slot - 0x56 <= 0x1f`
 /// (`0x523a36`).
 const PUSH_KEYRING_SLOTS: std::ops::RangeInclusive<u32> = 86..=117;
-
-/// A push waiting on its item record: the push handler leaves the record's callback on a miss and
-/// runs again from it (`0x523900` -> `0x512b60`).
-struct PendingReceive {
-    /// Crafted or conjured: "You create: …".
-    created: bool,
-    entry: u32,
-    count: u32,
-    from_npc: bool,
-    random_property_id: u32,
-    suffix_factor: u32,
-    /// `showInChat` gates the line only: `ITEM_PUSH` fires before the chat test, so a silent push
-    /// still animates.
-    in_chat: bool,
-    container: i64,
-}
 
 /// `ITEM_PUSH`'s `arg1`, the reference's selector: a wire bag other than 255 gives `bag + 1`
 /// (20..=23 for an equipped bag, the ids its bar buttons carry), a keyring slot gives
@@ -104,7 +85,8 @@ pub(crate) struct LootState {
     waits: Vec<RowWait>,
     /// The records the window still waits on (`[0xbfa688]`); it opens at 0.
     pending: u32,
-    receives: Vec<PendingReceive>,
+    /// The pushes waiting on their item record, each to run again from its callback (`0x512b60`).
+    receives: Vec<ItemPushResult>,
     /// The open's wire `loot_type` (`[0xbfa68c]`), which `IsFishingLoot` and the close's sweep
     /// read; a close leaves it.
     loot_type: u8,
@@ -415,20 +397,6 @@ impl LootState {
     /// The window still has loot (`0x588eb0`): its object `held`, with coins or a row left.
     fn has_loot(&self, held: bool) -> bool {
         held && !self.is_empty()
-    }
-
-    /// Queues a push the net handler has already checked is ours.
-    fn push_receive(&mut self, p: &ItemPushResult) -> PendingReceive {
-        PendingReceive {
-            created: p.created,
-            entry: p.item_entry,
-            count: p.count,
-            from_npc: p.from_npc,
-            random_property_id: p.random_property_id,
-            suffix_factor: p.suffix_factor,
-            in_chat: p.show_in_chat,
-            container: push_container(p.bag_slot, p.item_slot),
-        }
     }
 
     /// The table cleared by the set with no object (`0x5897b0`-`0x5897bb`): `LOOT_CLOSED`.
@@ -969,23 +937,6 @@ impl Plugin for UiLootPlugin {
     }
 }
 
-/// The coin row's name: each nonzero denomination as "<n> <Word>", joined by spaces. The
-/// reference's composer emits the same "%d %s" parts but separates them with a newline.
-fn format_money(copper: u32) -> String {
-    let (g, s, c) = (copper / 10000, (copper % 10000) / 100, copper % 100);
-    let mut parts: Vec<String> = Vec::new();
-    if g > 0 {
-        parts.push(format!("{g} {GOLD_WORD}"));
-    }
-    if s > 0 {
-        parts.push(format!("{s} {SILVER_WORD}"));
-    }
-    if c > 0 || parts.is_empty() {
-        parts.push(format!("{c} {COPPER_WORD}"));
-    }
-    parts.join(" ")
-}
-
 /// The coin row's icon: the reference's six-step ladder, shared with `GetCoinIcon` and the money
 /// cursor.
 fn coin_icon(copper: u32) -> &'static str {
@@ -1027,6 +978,7 @@ fn resolve_item(
         quantity: item.count,
         quality,
         is_coin: false,
+        coins: 0,
         item_id: item.item_id,
         link,
         // The raw id, as the client's loot record keeps it; the tooltip resolves it.
@@ -1049,12 +1001,14 @@ fn window_rows(
     let mut rows = Vec::with_capacity(LOOT_WINDOW_ROWS + 1);
     if loot.coin_slot {
         rows.push(loot.has_coin().then(|| LootRow {
-            name: Some(format_money(loot.gold)),
+            // Its text is composed at the call from the global strings (`0x588430`).
+            name: None,
             texture: Some(coin_icon(loot.gold).into()),
             // 0: the reference's coin guard returns before the record read.
             quantity: 0,
             quality: Some(COIN_QUALITY),
             is_coin: true,
+            coins: loot.gold,
             item_id: 0,
             // No item behind it: a modified click finds nil.
             link: None,
@@ -1122,65 +1076,6 @@ impl LootLive<'_, '_> {
         let _ = self.names.resolve(guid, &self.commands);
         self.loot.wait_candidate_name(guid);
         None
-    }
-}
-
-/// The item-push handler's self line: its `%s` is an item link, so a count after it takes the
-/// line's own colour. The strings are `GlobalStrings.lua:2599-2605`, with no space before `x%d`;
-/// created wins over received.
-fn receive_line(r: &PendingReceive, name: &str, quality: u32) -> String {
-    let verb = if r.created {
-        "You create"
-    } else if r.from_npc {
-        "You receive item"
-    } else {
-        "You receive loot"
-    };
-    let link = crate::ui_items::item_link_full(
-        r.entry,
-        &benilla_ui::script::ItemLinkFields::roll(
-            r.random_property_id as i32,
-            r.suffix_factor as i32,
-        ),
-        name,
-        quality,
-    );
-    if r.count > 1 {
-        format!("{verb}: {link}x{}.", r.count)
-    } else {
-        format!("{verb}: {link}.")
-    }
-}
-
-/// The push handler's self leg once the record is in (`0x523a60`): `ITEM_PUSH` with the bag and the
-/// icon, then the chat line if the wire asked for it (`0x523b52`).
-fn show_receive(
-    r: &PendingReceive,
-    info: &benilla_protocol::ItemInfo,
-    icons: Option<&ItemDisplays>,
-    rolls: RollCatalogs,
-    chat: &mut crate::ui_chat::ChatLog,
-    sink: &mut dyn SignalSink,
-) {
-    // Ungated by `in_chat`. `arg2` is the icon path the reference builds from the display record.
-    let icon = crate::ui_items::item_icon(icons, info.display_info_id).unwrap_or_default();
-    debug!(
-        "ui_loot: ITEM_PUSH container {} icon {icon} (item {})",
-        r.container, r.entry
-    );
-    sink.fire(
-        "ITEM_PUSH",
-        vec![ScriptValue::Int(r.container), ScriptValue::Str(icon)],
-    );
-    if r.in_chat {
-        chat.push_event(crate::ui_chat::ChatEvent::text_only(
-            crate::ui_chat::ChatEventKind::Loot,
-            receive_line(
-                r,
-                &rolls.name(&info.name, r.random_property_id),
-                info.quality,
-            ),
-        ));
     }
 }
 
@@ -1337,35 +1232,6 @@ pub(crate) fn close_emptied(world: &mut World) {
         loot.source?;
         close_interaction(loot, step.latch, step.net, true, step.sink)
     });
-}
-
-/// The push's record callback (`0x512b60`): a found record runs the push again, the first one
-/// waiting on it, and a denied one drops it.
-pub(crate) fn push_callback(world: &mut World, entry: u32, landed: bool) {
-    let _ = world.run_system_once_with(
-        |In((entry, landed)): In<(u32, bool)>,
-         mut loot: ResMut<LootState>,
-         items: Res<Items>,
-         icons: Option<Res<ItemDisplays>>,
-         props: Option<Res<crate::items::RandomProperties>>,
-         enchants: Option<Res<crate::items::Enchants>>,
-         mut chat: ResMut<crate::ui_chat::ChatLog>,
-         mut ui: ResMut<crate::ui_script::live::UiEvents>| {
-            let Some(at) = loot.receives.iter().position(|r| r.entry == entry) else {
-                return;
-            };
-            let r = loot.receives.remove(at);
-            let Some(info) = items.template_cached(entry).filter(|_| landed) else {
-                return;
-            };
-            let rolls = RollCatalogs {
-                props: props.as_deref(),
-                enchants: enchants.as_deref(),
-            };
-            show_receive(&r, info, icons.as_deref(), rolls, &mut chat, &mut *ui);
-        },
-        (entry, landed),
-    );
 }
 
 /// The object manager as `SetLootPortrait` asks it (typemask 8): whether the loot source is a unit
@@ -2538,10 +2404,6 @@ mod tests {
         }
     }
 
-    fn pending(entry: u32, count: u32, from_npc: bool, created: bool) -> PendingReceive {
-        LootState::default().push_receive(&push(entry, count, from_npc, created))
-    }
-
     #[test]
     fn action_maps_coin_first_then_items_by_wire_slot() {
         let mut loot = LootState::default();
@@ -2871,50 +2733,12 @@ mod tests {
     fn a_waiting_push_outlives_the_window() {
         let mut loot = LootState::default();
         open_bare(&mut loot, 0x42, loot_type::CORPSE, 0, vec![item(0, 117, 1)]);
-        loot.receives.push(pending(117, 1, false, false));
+        loot.receives.push(push(117, 1, false, false));
         loot.close_table(&mut Fired::default());
         assert!(loot.source.is_none());
         assert_eq!(loot.receives.len(), 1, "a receive line outlives the window");
         loot.clear_session();
         assert!(loot.receives.is_empty(), "disconnect drops receive lines");
-    }
-
-    /// The count after the link's `|r` takes the line's own colour.
-    #[test]
-    fn receive_line_carries_a_quality_colored_item_link() {
-        // Common, single: `LOOT_ITEM_SELF`.
-        assert_eq!(
-            receive_line(&pending(2589, 1, false, false), "Linen Cloth", 1),
-            "You receive loot: |cffffffff|Hitem:2589:0:0:0:0:0:0:0:0|h[Linen Cloth]|h|r."
-        );
-        // Poor, stacked: `LOOT_ITEM_SELF_MULTIPLE`, with no space before `x2`.
-        assert_eq!(
-            receive_line(&pending(7092, 2, false, false), "Chipped Claw", 0),
-            "You receive loot: |cff9d9d9d|Hitem:7092:0:0:0:0:0:0:0:0|h[Chipped Claw]|h|rx2."
-        );
-        // The (created, received) pair picks the verb, created winning over received.
-        assert_eq!(
-            receive_line(&pending(4306, 1, true, false), "Silk Cloth", 2),
-            "You receive item: |cff1eff00|Hitem:4306:0:0:0:0:0:0:0:0|h[Silk Cloth]|h|r."
-        );
-        assert_eq!(
-            receive_line(&pending(2320, 4, true, true), "Coarse Thread", 1),
-            "You create: |cffffffff|Hitem:2320:0:0:0:0:0:0:0:0|h[Coarse Thread]|h|rx4."
-        );
-    }
-
-    /// `|Hitem:id:0:randomPropertyId:suffixFactor|h`, the reference's argument order.
-    #[test]
-    fn receive_line_carries_the_wire_random_property_fields() {
-        let r = LootState::default().push_receive(&ItemPushResult {
-            random_property_id: 862,
-            suffix_factor: 1234,
-            ..push(15268, 1, false, false)
-        });
-        assert_eq!(
-            receive_line(&r, "Bloodrazor", 3),
-            "You receive loot: |cff0070dd|Hitem:15268:0:0:0:0:0:862:1234:0|h[Bloodrazor]|h|r."
-        );
     }
 
     /// The reference joins the suffix by `ITEM_SUFFIX_TEMPLATE`, for the row and tooltip.
@@ -2964,15 +2788,6 @@ mod tests {
         assert!(rolls.lines(0).is_empty(), "no roll, no lines");
     }
 
-    /// The reference clamps a quality outside the table to 1, white.
-    #[test]
-    fn receive_line_clamps_an_out_of_range_quality_to_white() {
-        assert_eq!(
-            receive_line(&pending(1, 1, false, false), "Odd Thing", 9),
-            "You receive loot: |cffffffff|Hitem:1:0:0:0:0:0:0:0:0|h[Odd Thing]|h|r."
-        );
-    }
-
     /// [`push_container`] against the selector, arm by arm.
     #[test]
     fn push_container_maps_the_wire_destination_onto_a_bag_bar_button() {
@@ -2991,16 +2806,6 @@ mod tests {
         assert_eq!(push_container(BAG_PLAYER_INVENTORY, u32::MAX), 0);
         // A bank bag (wire 67..73) lands on an id no bag-bar button carries.
         assert!(!(20..=23).contains(&push_container(67, 0)));
-    }
-
-    #[test]
-    fn money_formats_with_real_words_dropping_zero_denominations() {
-        assert_eq!(format_money(0), "0 Copper");
-        assert_eq!(format_money(4), "4 Copper");
-        assert_eq!(format_money(25), "25 Copper");
-        assert_eq!(format_money(10025), "1 Gold 25 Copper");
-        assert_eq!(format_money(12_345), "1 Gold 23 Silver 45 Copper");
-        assert_eq!(format_money(10_000), "1 Gold");
     }
 
     /// The reference's six-step ladder, both sides of every boundary.
@@ -3022,10 +2827,10 @@ mod tests {
     }
 
     #[test]
-    fn coin_row_uses_real_words_and_the_ladders_icon() {
+    fn coin_row_carries_its_coins_and_the_ladders_icon() {
         let items = Items::default();
         let mut loot = LootState::default();
-        // A pure-copper drop: name reads "4 Copper", icon is the copper coin pile (_05).
+        // A pure-copper drop: its coins for the call's text, icon the copper coin pile (_05).
         open_bare(&mut loot, 0x42, loot_type::CORPSE, 4, vec![]);
         let rows = window_rows(&loot, &items, None, RollCatalogs::NONE);
         assert_eq!(
@@ -3035,7 +2840,7 @@ mod tests {
         );
         let coin = rows[0].as_ref().expect("coin row present");
         assert!(coin.is_coin);
-        assert_eq!(coin.name.as_deref(), Some("4 Copper"));
+        assert_eq!((coin.name.as_deref(), coin.coins), (None, 4));
         assert_eq!(coin.texture.as_deref(), Some(coin_icon(4)));
         assert!(rows[1..].iter().all(Option::is_none), "an empty table");
     }
@@ -3058,7 +2863,7 @@ mod tests {
         let rows = window_rows(&loot, &items, None, RollCatalogs::NONE);
         let coin = rows[0].as_ref().expect("coin row present");
         assert!(coin.is_coin);
-        assert_eq!(coin.name.as_deref(), Some("1 Gold 23 Silver 45 Copper"));
+        assert_eq!((coin.name.as_deref(), coin.coins), (None, 12_345));
         assert_eq!(coin.texture.as_deref(), Some(coin_icon(12_345)));
         // The item's name is nil while its record is in flight; its quantity is present.
         let row = rows[1].as_ref().expect("item row present");

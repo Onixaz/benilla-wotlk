@@ -8453,7 +8453,8 @@ fn a_loot_window_fires_from_its_handlers_with_the_rows_read_at_the_call() {
         .map(|seen| pin(seen, EVENTS, VERBS))
         .collect();
     let at = |e: &str, rest: &str| format!("{e} | {rest}");
-    let full = "lootn=3 l1=2 Silver 50 Copper l2=Charz Gem";
+    // The coin row's text joins its denominations by a newline (`0x588430` -> `0x7e7d80`).
+    let full = "lootn=3 l1=2 Silver\n50 Copper l2=Charz Gem";
     assert_eq!(
         got,
         vec![
@@ -8475,7 +8476,7 @@ fn a_loot_window_fires_from_its_handlers_with_the_rows_read_at_the_call() {
             ],
             vec![at(
                 "LOOT_SLOT_CLEARED 2",
-                "lootn=3 l1=2 Silver 50 Copper l2= l3=Charz New l3q=1 coin1=1 item2=nil"
+                "lootn=3 l1=2 Silver\n50 Copper l2= l3=Charz New l3q=1 coin1=1 item2=nil"
             )],
             vec![at(
                 "LOOT_SLOT_CLEARED 1",
@@ -8593,7 +8594,8 @@ fn the_loot_verbs_act_and_raise_inside_their_call() {
     assert_eq!(
         pin(&seen, EVENTS, VERBS),
         vec![
-            format!("MARK a | lootn=3 l1=2 Silver 50 Copper {full} coin1=1"),
+            // The coin text's newline joins (`0x588430` -> `0x7e7d80`).
+            format!("MARK a | lootn=3 l1=2 Silver\n50 Copper {full} coin1=1"),
             format!("LOOT_SLOT_CLEARED 1 | lootn=3 l1= {full} coin1=nil"),
             format!("MARK b | lootn=3 l1= {full} coin1=nil"),
             format!("LOOT_BIND_CONFIRM 3 | lootn=3 l1= {full} coin1=nil"),
@@ -8766,6 +8768,86 @@ fn group_loot_rolls_fire_from_their_handlers_with_the_rolls_read_at_the_call() {
             vec![
                 "CANCEL_LOOT_ROLL 1 | roll0=nil roll1=nil roll2=nil rleft1=false".to_string(),
                 "CHAT_MSG_LOOT Everyone passed on: |cffffffff|Hitem:593922:0:0:0:0:0:0:0:80|h[Charz Late]|h|r      0 0  0 3  0 | roll0=nil roll1=nil roll2=nil rleft1=false".to_string(),
+            ],
+        ]
+    );
+}
+
+/// `SMSG_ITEM_PUSH_RESULT` at its handler's step (`0x523900`), in wire order: our push fires
+/// `ITEM_PUSH` then its tutorials (`0x523a60`, `0x523b5c`), and its loot line shows; another
+/// player's push shows their line alone (`0x523d5b`). A push whose record is not cached shows
+/// nothing until the record lands, and then runs whole from its callback (`0x52398d` -> `0x512b60`).
+#[test]
+fn item_pushes_run_at_their_step_and_from_their_records_callback() {
+    use benilla_protocol::messages::ItemPushResult;
+    const OTHER: u64 = 0x0000_0000_0000_0A0A;
+    const CLOTH: u32 = 0x8_3001;
+    const LATE: u32 = 0x8_3002;
+    let Some(mut rig) = Rig::login_after(
+        vec![SessionEvent::TutorialFlags(vec![0; 32])],
+        &[OBJECT_TYPE_PLAYER],
+    ) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let template = |entry: u32, name: &str| SessionEvent::ItemTemplate {
+        entry,
+        info: Some(Box::new(crate::items::test_template(name))),
+    };
+    rig.packets(
+        vec![
+            player_create(OTHER),
+            name_answer(OTHER, "Charzother"),
+            template(CLOTH, "Charz Cloth"),
+        ],
+        2,
+    );
+    let push = |player_guid: u64, item_entry: u32, count: u32| {
+        SessionEvent::ItemPushResult(ItemPushResult {
+            player_guid,
+            from_npc: false,
+            created: false,
+            show_in_chat: true,
+            bag_slot: 0xFF,
+            item_slot: 23,
+            item_entry,
+            suffix_factor: 0,
+            random_property_id: 0,
+            count,
+            total_count: count,
+        })
+    };
+    const EVENTS: &[&str] = &["ITEM_PUSH", "TUTORIAL_TRIGGER", "CHAT_MSG_LOOT"];
+    let cached = rig.packets(vec![push(OTHER, CLOTH, 2), push(ME, CLOTH, 1)], 3);
+    let waiting = rig.packets(vec![push(ME, LATE, 3), push(OTHER, LATE, 1)], 3);
+    let landed = rig.packets(vec![template(LATE, "Charz Late")], 3);
+    let got: Vec<Vec<String>> = [cached, waiting, landed]
+        .iter()
+        .map(|seen| pin(seen, EVENTS, &[]))
+        .collect();
+    // The lines keep wire order; their `CHAT_MSG_LOOT` fires from the chat log after the
+    // handler's events, not inside the push before its tutorials (#1283). The landed push's
+    // Backpack tutorial has fired once already (`0x530840`).
+    let icon = "ITEM_PUSH 0 Interface\\Icons\\INV_Misc_QuestionMark";
+    let link =
+        |entry: u32, name: &str| format!("|cffffffff|Hitem:{entry}:0:0:0:0:0:0:0:80|h[{name}]|h|r");
+    let cloth = link(CLOTH, "Charz Cloth");
+    let late = link(LATE, "Charz Late");
+    assert_eq!(
+        got,
+        vec![
+            vec![
+                icon.to_string(),
+                "TUTORIAL_TRIGGER 8".to_string(),
+                format!("CHAT_MSG_LOOT Charzother receives loot: {cloth}x2.      0 0  0 1  0"),
+                format!("CHAT_MSG_LOOT You receive loot: {cloth}.      0 0  0 2  0"),
+            ],
+            Vec::new(),
+            vec![
+                icon.to_string(),
+                format!("CHAT_MSG_LOOT You receive loot: {late}x3.      0 0  0 3  0"),
+                format!("CHAT_MSG_LOOT Charzother receives loot: {late}.      0 0  0 4  0"),
             ],
         ]
     );
