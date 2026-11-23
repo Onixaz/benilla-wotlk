@@ -824,8 +824,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // LearnPreviewTalents([isPet]) (`0x5c6a10`): the active group's (the pet's one) previewed
-    // ranks, sent in the call when any preview point is spent and the unit resolves
-    // (`0x5c6aa1`): `CMSG_LEARN_PREVIEW_TALENTS`, or the pet's with its guid (`0x5c6aae`).
+    // ranks, sent in the call when the tabs' preview total is above 0 (`0x5c6aa1`) and the unit
+    // resolves (`0x5c6ae4`): `CMSG_LEARN_PREVIEW_TALENTS` (`0x5c6b2b`), or the pet's form
+    // (`0x5c6b0d`) with the pet's guid (`0x5c6b24`).
     g.set(
         "LearnPreviewTalents",
         lua.create_function(|_, args: MultiValue| {

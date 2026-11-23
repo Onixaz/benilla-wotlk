@@ -306,8 +306,8 @@ impl TalentGroup {
         Some(delta)
     }
 
-    /// The preview learn's walk (`0x5c6a84`): each tab, tier and seated talent whose preview rank
-    /// is past its rank, as `(talentId, previewRank)`.
+    /// The preview learn's walk over each tab (`0x5c6b49`) and tier (`0x5c6b80`): each seated
+    /// talent whose preview rank is past its rank (`0x5c6ba4`), as `(talentId, previewRank)`.
     pub fn preview_learns(&self) -> Vec<(u32, u32)> {
         let mut out = Vec::new();
         for tab in &self.tabs {
