@@ -1404,7 +1404,7 @@ fn sync_portraits(
             // The seated player's transport (`0x60ac87`) and the focus `[0xbd07d0]`, each gated on
             // the UI drawing it: the stock vehicle art and the focus frame ship hidden.
             "vehicle" | "focus" => {
-                let (entity, stand_in) = drawn_unit_subject(
+                let (entity, key, stand_in) = drawn_unit_subject(
                     party.panes.0.contains_key(token),
                     if token == "vehicle" {
                         crate::ui_unit::tokens::seated_vehicle(
@@ -1417,8 +1417,10 @@ fn sync_portraits(
                             .map(benilla_ui::script::UiScript::focus_guid)
                     },
                     |g| party.index.0.get(&g).copied(),
+                    &party.names,
+                    &party.roster,
                 );
-                unseen = stand_in.or(unseen);
+                (occupant, unseen) = (key, stand_in);
                 entity
             }
             // Gated on the UI drawing it, as `"targettarget"`: no stock file binds it.
@@ -2361,21 +2363,27 @@ fn unheld_subject(
     )
 }
 
-/// `"vehicle"`'s or `"focus"`'s subject, by the token's resolved guid: nothing while the UI is not
-/// drawing the slot, the held entity, else the reference's 2D TemporaryPortrait for a unit the
-/// object manager does not hold. A focus naming nobody names no unit, so it draws blank.
+/// `"vehicle"`'s or `"focus"`'s subject, by the token's resolved guid, as the entity to bake, the
+/// bake-cache key and the stand-in file: nothing while the UI is not drawing the slot, the held
+/// entity, else what `SetPortraitTexture` draws for a guid the object manager does not hold
+/// ([`unheld_subject`]). A focus naming nobody names no unit, so it draws blank.
 fn drawn_unit_subject(
     drawn: bool,
     guid: Option<u64>,
     held: impl Fn(u64) -> Option<Entity>,
-) -> (Option<Entity>, Option<String>) {
+    names: &crate::names::NameCache,
+    roster: &crate::ui_party::GroupState,
+) -> (Option<Entity>, Option<u64>, Option<String>) {
     let Some(guid) = guid.filter(|&g| drawn && g != 0 && g != benilla_ui::script::focus::NOBODY)
     else {
-        return (None, None);
+        return (None, None, None);
     };
     match held(guid) {
-        Some(e) => (Some(e), None),
-        None => (None, Some(creature_temporary_portrait())),
+        Some(e) => (Some(e), None, None),
+        None => {
+            let (key, stand_in) = unheld_subject(guid, names, roster);
+            (None, key, stand_in)
+        }
     }
 }
 
@@ -2465,28 +2473,36 @@ mod tests {
         }
     }
 
-    /// The vehicle's and the focus's portrait: the held unit's bake, the stand-in for a unit not
-    /// held, and nothing while undrawn, unseated, unfocused or focused on nobody.
+    /// The vehicle's and the focus's portrait: the held unit's bake; for a unit not held, a named
+    /// player's race and sex stand-in under its guid and blank for a creature, as `0x61152f`; and
+    /// nothing while undrawn, unseated, unfocused or focused on nobody.
     #[test]
-    fn a_drawn_vehicle_or_focus_bakes_its_unit_else_its_stand_in() {
+    fn a_drawn_vehicle_or_focus_bakes_its_unit_else_the_unheld_stand_in() {
         const CART: u64 = 0xF150_0000_0000_0007;
+        const FAR: u64 = 0x0000_0000_0000_0042;
         let mut world = World::new();
         let held = world.spawn_empty().id();
         let index = |g: u64| (g == CART).then_some(held);
+        let mut names = crate::names::NameCache::default();
+        names.insert_player(FAR, "Brisca".into(), Some((10, 2, 1)));
+        let group = crate::ui_party::GroupState::default();
+        let subject = |drawn, guid| drawn_unit_subject(drawn, guid, index, &names, &group);
+        assert_eq!(subject(true, Some(CART)), (Some(held), None, None));
+        assert_eq!(subject(true, Some(CART + 1)), (None, None, None));
         assert_eq!(
-            drawn_unit_subject(true, Some(CART), index),
-            (Some(held), None)
+            subject(true, Some(FAR)),
+            (
+                None,
+                Some(FAR),
+                Some("Interface\\CharacterFrame\\TemporaryPortrait-Female-BloodElf.blp".into())
+            )
         );
+        assert_eq!(subject(false, Some(CART)), (None, None, None));
+        assert_eq!(subject(true, None), (None, None, None));
+        assert_eq!(subject(true, Some(0)), (None, None, None));
         assert_eq!(
-            drawn_unit_subject(true, Some(CART + 1), index),
-            (None, Some(creature_temporary_portrait()))
-        );
-        assert_eq!(drawn_unit_subject(false, Some(CART), index), (None, None));
-        assert_eq!(drawn_unit_subject(true, None, index), (None, None));
-        assert_eq!(drawn_unit_subject(true, Some(0), index), (None, None));
-        assert_eq!(
-            drawn_unit_subject(true, Some(benilla_ui::script::focus::NOBODY), index),
-            (None, None)
+            subject(true, Some(benilla_ui::script::focus::NOBODY)),
+            (None, None, None)
         );
     }
 
