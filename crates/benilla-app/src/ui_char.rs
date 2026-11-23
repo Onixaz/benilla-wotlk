@@ -14,7 +14,6 @@ use benilla_ui::script::{
     weapon_subclass_skill, BankBagSlots, InvSlotView, InventorySlots, ScriptValue, SkillEntry,
     SkillLive, SkillsState, UiScript, UnitCombatStats, SKILL_DEFENSE, SKILL_UNARMED,
 };
-use benilla_ui::strings::Arg;
 
 use crate::entities::ItemDisplays;
 use crate::items::Items;
@@ -232,30 +231,45 @@ pub(crate) fn fire_skill_stat_events(ui: &mut crate::ui_script::live::UiEvents) 
     }
 }
 
-/// The skill value watch (`0x6da4a0`) on slot `slot`, its old value `old`: a moved value fires the stat events (`0x6da509`), rebuilds the list (`0x6da531`) and prints the gain or rank line (`0x6da59f`); then the trainer's and the merchant's refreshes (`0x6da5f3`, `0x6da602`).
+/// The skill value reader (`0x51a250`): the value half (`0x51a286`), plus the permanent-bonus half read unsigned when the value is positive (`0x51a291`-`0x51a299`).
+pub(crate) fn skill_value_read(slot: &benilla_protocol::messages::PlayerSkillSlot) -> i32 {
+    let value = i32::from(slot.value);
+    if value > 0 {
+        value + i32::from(slot.perm_bonus as u16)
+    } else {
+        value
+    }
+}
+
+/// The skill value watch (`0x6da4a0`) on slot `slot`, its old raw value half `old`: a read (`0x6da4fa`) that differs from `old` fires the stat events (`0x6da509`), rebuilds the list (`0x6da531`) and raises the gain or rank line (`0x6da59f`); then the trainer's refresh (`0x6da5f3`), the trade-skill list's refresh (`0x6da5fa`, the trade-skill module's, #1282) and the merchant's (`0x6da602`).
 pub(crate) fn skill_value_watch(world: &mut World, slot: u8, old: u16) {
     let moved = {
         let mut me = world.query_filtered::<&ObjectStore, With<SelfPlayer>>();
-        me.iter(world)
-            .next()
-            .and_then(|s| s.0.player_skill(slot))
-            .map(|s| (s.skill_id, s.value))
-            .filter(|&(_, value)| value != old)
+        me.iter(world).next().and_then(|s| {
+            let skill = s.0.player_skill(slot)?;
+            let read = skill_value_read(&skill);
+            let race_class = (s.0.unit_race().unwrap_or(0), s.0.unit_class().unwrap_or(0));
+            (read != i32::from(old)).then_some((u32::from(skill.skill_id), read, race_class))
+        })
     };
-    if let Some((skill_id, value)) = moved {
+    if let Some((skill_id, read, (race, class))) = moved {
         if let Some(mut ui) = world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
             fire_skill_stat_events(&mut ui);
         }
         crate::ui_script::live::in_turn(world, rebuild_skills);
-        crate::ui_script::live::in_turn(world, move |world| {
-            skill_line(world, u32::from(skill_id), old, value);
-        });
+        // The display at its step (`0x6da5b4`, `0x6da5d9`); its `CHAT_MSG_SKILL` still fires from the chat feed (#1416).
+        if let Some(line) = skill_line(world, skill_id, race, class, old, read) {
+            match world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
+                Some(mut ui) => crate::ui_action::show_in_turn(&mut ui, "skills", line),
+                None => crate::ui_action::show_line_in_world(world, "skills", line),
+            }
+        }
     }
     crate::ui_script::live::in_turn(world, crate::ui_trainer::refresh);
     crate::ui_script::live::in_turn(world, crate::ui_merchant::refresh);
 }
 
-/// The skill max and permanent-bonus watch (`0x6cddb0`): the trainer's refresh, then the rebuild (`0x6cddbf`).
+/// The skill max and permanent-bonus watch (`0x6cddb0`): the trainer's refresh, the trade-skill list's refresh (`0x6cddb7`, the trade-skill module's, #1282), then the rebuild (`0x6cddbf`).
 pub(crate) fn skill_max_watch(world: &mut World) {
     crate::ui_script::live::in_turn(world, crate::ui_trainer::refresh);
     crate::ui_script::live::in_turn(world, rebuild_skills);
@@ -276,48 +290,29 @@ pub(crate) fn skill_temp_watch(world: &mut World) {
     crate::ui_script::live::in_turn(world, rebuild_skills);
 }
 
-/// The value watch's line through the message display (`0x5216f0`): `ERR_SKILL_GAINED_S` from 0 (`0x6da5b4`), else `ERR_SKILL_UP_SI` on a positive value (`0x6da5d9`), into the chat log as `CHAT_MSG_SKILL`; none for a line with no record, or whose race and class row is missing or carries `0x402` (`0x6da597`-`0x6da5a6`).
-fn skill_line(world: &mut World, skill_id: u32, old: u16, value: u16) {
-    let Some(name) = world
-        .get_resource::<crate::ui_spellbook::SkillLines>()
-        .and_then(|s| s.catalog.line(skill_id).map(|l| l.name.clone()))
-    else {
-        return;
-    };
-    let (race, class) = {
-        let mut me = world.query_filtered::<&ObjectStore, With<SelfPlayer>>();
-        me.iter(world).next().map_or((0, 0), |s| {
-            (s.0.unit_race().unwrap_or(0), s.0.unit_class().unwrap_or(0))
-        })
-    };
-    let announces = world
-        .get_resource::<crate::ui_spellbook::SkillLines>()
-        .is_some_and(|s| s.catalog.announces_skill_ups(skill_id, race, class));
-    if !announces {
-        debug!("chat: skill line {skill_id} silenced ({old} -> {value}, the 0x402 gate)");
-        return;
+/// The value watch's line for the message display (`0x5216f0`): `ERR_SKILL_GAINED_S` from a raw 0 (`0x6da5b4`), else `ERR_SKILL_UP_SI` with the read value when positive (`0x6da5c6`-`0x6da5d9`); none for a line with no record, or whose race and class row is missing or carries `0x402` (`0x6da597`-`0x6da5a6`).
+fn skill_line(
+    world: &World,
+    skill_id: u32,
+    race: u8,
+    class: u8,
+    old: u16,
+    read: i32,
+) -> Option<crate::ui_action::UiError> {
+    use crate::ui_action::{FillArg, UiError};
+    let lines = world.get_resource::<crate::ui_spellbook::SkillLines>()?;
+    let name = lines.catalog.line(skill_id)?.name.clone();
+    if !lines.catalog.announces_skill_ups(skill_id, race, class) {
+        debug!("chat: skill line {skill_id} silenced ({old} -> {read}, the 0x402 gate)");
+        return None;
     }
-    let (key, rank) = match (old, value) {
-        (0, _) => ("ERR_SKILL_GAINED_S", None),
-        (_, v) if v > 0 => ("ERR_SKILL_UP_SI", Some(i64::from(v))),
-        _ => return,
-    };
-    let Some(template) = world
-        .get_non_send_resource::<UiScript>()
-        .and_then(|s| s.lua().globals().get::<String>(key).ok())
-        .filter(|t| !t.is_empty())
-    else {
-        return;
-    };
-    let text = match rank {
-        Some(v) => benilla_ui::strings::fill(&template, &[Arg::S(&name), Arg::D(v)]),
-        None => benilla_ui::strings::fill(&template, &[Arg::S(&name)]),
-    };
-    if let Some(mut chat) = world.get_resource_mut::<crate::ui_chat::ChatLog>() {
-        chat.push_event(crate::ui_chat::ChatEvent::text_only(
-            crate::ui_chat::ChatEventKind::Skill,
-            text,
-        ));
+    match (old, read) {
+        (0, _) => Some(UiError::s("ERR_SKILL_GAINED_S", name)),
+        (_, v) if v > 0 => Some(UiError::args(
+            "ERR_SKILL_UP_SI",
+            vec![FillArg::S(name), FillArg::D(i64::from(v))],
+        )),
+        _ => None,
     }
 }
 

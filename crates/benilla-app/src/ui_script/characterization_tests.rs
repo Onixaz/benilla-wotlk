@@ -10123,6 +10123,39 @@ fn sheet_watches_fire_in_the_values_handler_with_the_fields_read_at_the_call() {
     );
 }
 
+/// The value watch compares and announces the skill value reader's figure (`0x6da4fa`, `0x6da5cd` -> `0x51a250`): the value half plus the permanent bonus when positive, against the old raw half. With a +15 bonus a move from 100 to 101 announces 116 after the rebuild; a move from 100 to 85 reads 100, the old raw value, and fires nothing.
+#[test]
+fn skill_value_watch_reads_the_permanent_bonus() {
+    use benilla_protocol::field::{FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_UNIT_BYTES_0};
+    let pair = |lo: u32, hi: u32| lo | hi << 16;
+    // A human warrior with Swords (43) at 100 of 400 and a +15 permanent bonus.
+    let Some(mut rig) = Rig::login(&[
+        OBJECT_TYPE_PLAYER,
+        (FIELD_UNIT_BYTES_0, 1 | 1 << 8 | 1 << 24),
+        (SKILL, 43),
+        (SKILL + 1, pair(100, 400)),
+        (SKILL + 2, pair(0, 15)),
+    ]) else {
+        return;
+    };
+    const EVENTS: &[&str] = &["UNIT_ATTACK", "SKILL_LINES_CHANGED", "CHAT_MSG_SKILL"];
+    let up = rig.packets(vec![self_values(&[(SKILL + 1, pair(101, 400))])], 2);
+    assert_eq!(
+        pin(&up, EVENTS, &["skill2"]),
+        vec![
+            "UNIT_ATTACK player | skill2=116",
+            "SKILL_LINES_CHANGED | skill2=116",
+            "CHAT_MSG_SKILL Your skill in Swords has increased to 116.      0 0  0 1  0 | skill2=116",
+        ],
+        "the rank reads the bonus too (`0x5cdff4`)"
+    );
+    // Back to 100, then down to 85: the read 85 + 15 equals the old raw 100, so the watch stops at `0x6da501`.
+    let _ = rig.packets(vec![self_values(&[(SKILL + 1, pair(100, 400))])], 2);
+    let down = rig.packets(vec![self_values(&[(SKILL + 1, pair(85, 400))])], 2);
+    assert!(pin(&down, EVENTS, &[]).is_empty(), "{down:?}");
+    assert_eq!(rig.live_now().line(&["skill2"]), "NOW | skill2=100");
+}
+
 /// `AbandonSkill` sends `CMSG_UNLEARN_SKILL` inside the call (`0x5ce368`); the line stays until the skill fields move.
 #[test]
 fn abandon_skill_sends_inside_the_call() {
