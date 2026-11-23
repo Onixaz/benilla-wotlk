@@ -142,6 +142,7 @@ fn seat_send_tab(s: &mut UiScript) {
                 quality: Some(1),
                 texture: Some("Interface\\Icons\\INV_Fabric_Linen_01".into()),
                 link: Some("|cffffffff|Hitem:2589:0:0:0:0:0:0:0:0|h[Linen Cloth]|h|r".into()),
+                guid: 0x100 + u64::from(slot),
                 ..Default::default()
             },
         );
@@ -195,9 +196,9 @@ fn the_stock_mail_window_paints_a_12340_inbox() {
     .unwrap();
     // The inbox list was asked for once.
     assert!(s
-        .take_mail_commands()
+        .take_mail_sent()
         .iter()
-        .any(|c| matches!(c, benilla_ui::script::MailCommand::GetList)));
+        .any(|c| matches!(c, benilla_ui::script::MailPacket::GetList)));
 
     // Open the letter: its two attachments lay out, with the money button.
     s.run("MailItem1Button:Click()").unwrap();
@@ -215,9 +216,9 @@ fn the_stock_mail_window_paints_a_12340_inbox() {
         "#,
     )
     .unwrap();
-    assert!(s.take_mail_commands().iter().any(|c| matches!(
+    assert!(s.take_mail_sent().iter().any(|c| matches!(
         c,
-        benilla_ui::script::MailCommand::MarkRead { message_id: 11 }
+        benilla_ui::script::MailPacket::MarkRead { message_id: 11 }
     )));
 
     // The invoice: a pending sale's funds line.
@@ -237,7 +238,7 @@ fn the_stock_mail_window_paints_a_12340_inbox() {
 }
 
 /// The Send tab: a bag click attaches to the next free slot, the postage counts each item, and
-/// the stock send queues one `CMSG_SEND_MAIL` with both attachments.
+/// the stock send sends one `CMSG_SEND_MAIL` with both attachments.
 #[test]
 fn the_stock_send_tab_attaches_by_bag_click_and_sends_both() {
     benilla_formats::wow_data_or_skip!();
@@ -254,7 +255,7 @@ fn the_stock_send_tab_attaches_by_bag_click_and_sends_both() {
     s.open_mailbox();
     frame(&mut s);
     // The open's list query is answered, ending the command in flight.
-    let _ = s.take_mail_commands();
+    let _ = s.take_mail_sent();
     s.mail_command_done(false);
     s.run("MailFrameTab_OnClick(nil, 2) UseContainerItem(0, 1) UseContainerItem(0, 2)")
         .unwrap();
@@ -272,10 +273,10 @@ fn the_stock_send_tab_attaches_by_bag_click_and_sends_both() {
         "#,
     )
     .unwrap();
-    match s.take_mail_commands().as_slice() {
-        [benilla_ui::script::MailCommand::Send(req)] => {
+    match s.take_mail_sent().as_slice() {
+        [benilla_ui::script::MailPacket::Send(req)] => {
             assert_eq!(req.target, "Claude");
-            assert_eq!(req.items, vec![(0, 0, 1), (1, 0, 2)]);
+            assert_eq!(req.items, vec![(0, 0x101), (1, 0x102)]);
             assert_eq!(
                 req.stationery, 41,
                 "the reset selected the first stationery"
