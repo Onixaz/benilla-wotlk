@@ -508,6 +508,11 @@ pub(crate) enum RecordWait {
     GroupRollLine(u32),
     /// An item push's, from the push handler's miss (`0x52398d` -> `0x512b60`).
     ItemPush,
+    /// The inbox's, from a mail read's or a list's miss (`0x56e711`, `0x56f672` -> `0x56d4b0`,
+    /// `0x56f4e0`).
+    MailInbox,
+    /// The stationery list's, from the world entry's asks (`0x5715e3` -> `0x571520`).
+    MailStationery,
     /// A refusal's line that named the item, linked each time (`0x8086bc`, `0x80874e` ->
     /// `0x7fea80`, `0x7feb50`): it shows again, unlogged.
     CastFailure(crate::ui_action::CastFail),

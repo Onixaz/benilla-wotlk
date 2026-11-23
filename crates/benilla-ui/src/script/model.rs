@@ -866,7 +866,8 @@ pub(crate) struct Model {
     /// The message of the day, `KBSystem_GetMOTD`.
     pub(crate) kb_motd: String,
 
-    /// The inbox, rows 1-based, kept past the window's close as the reference's inbox is.
+    #[cfg(any(test, feature = "fixtures"))]
+    /// A fixture's inbox, rows 1-based, read where no view is lent.
     pub(crate) mail: mail::MailState,
     /// A mailbox is open.
     pub(crate) mail_mailbox: bool,
@@ -886,16 +887,20 @@ pub(crate) struct Model {
     pub(crate) mail_send_showing: bool,
     /// The refund-lock prompt is up.
     pub(crate) mail_lock_send_items: bool,
+    #[cfg(any(test, feature = "fixtures"))]
     /// `GetLatestThreeSenders`' answer, one entry per delivered sender.
     pub(crate) mail_latest_senders: Vec<Option<String>>,
+    #[cfg(any(test, feature = "fixtures"))]
     /// The usable stationery, in the picker's order.
     pub(crate) mail_stationeries: Vec<mail::StationeryView>,
     /// `SelectStationery`'s `Stationery.dbc` id; 0 is none, which silences `SendMail`.
     pub(crate) mail_stationery: u32,
+    #[cfg(any(test, feature = "fixtures"))]
     /// `Package.dbc`'s rows in file order, `GetPackageInfo`'s list.
     pub(crate) mail_packages: Vec<mail::PackageView>,
     /// `SelectPackage`'s `Package.dbc` id; 0 is none.
     pub(crate) mail_package: u32,
+    #[cfg(any(test, feature = "fixtures"))]
     /// `HasNewMail()` (`0x56f350`), from `MSG_QUERY_NEXT_MAIL_TIME` and `SMSG_RECEIVED_MAIL`.
     pub(crate) has_new_mail: bool,
 
@@ -1813,6 +1818,7 @@ impl Model {
             opt_out_of_loot: false,
             ui_time_offset: 0,
             kb_motd: String::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             mail: mail::MailState::default(),
             mail_mailbox: false,
             mail_commands: Vec::new(),
@@ -1824,11 +1830,15 @@ impl Model {
             mail_send_items: Default::default(),
             mail_send_showing: false,
             mail_lock_send_items: false,
+            #[cfg(any(test, feature = "fixtures"))]
             mail_latest_senders: Vec::new(),
+            #[cfg(any(test, feature = "fixtures"))]
             mail_stationeries: Vec::new(),
             mail_stationery: 0,
+            #[cfg(any(test, feature = "fixtures"))]
             mail_packages: Vec::new(),
             mail_package: 0,
+            #[cfg(any(test, feature = "fixtures"))]
             has_new_mail: false,
             auction: None,
             auction_item_classes: Vec::new(),

@@ -1,7 +1,8 @@
-//! The mail bindings, 12340's mail verbs. The app pushes the inbox, resolved from the wire
-//! (`UiScript::set_mail`), and whether a mailbox is open; the verbs gate on the reference's
-//! command-pending flag and queue [`MailCommand`]s the app sends. Indices are 1-based, as
-//! `MailFrame.lua` uses them.
+//! The mail bindings, 12340's mail verbs. The verbs read the client's inbox, its arrival state
+//! and the stationery at the call through the live view, each read leaving its callbacks on the
+//! records it missed ([`MailRead`]); with no view lent, a fixture's (`UiScript::set_mail`). They
+//! gate on the reference's command-pending flag and queue [`MailCommand`]s the app sends. Indices
+//! are 1-based, as `MailFrame.lua` uses them.
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -367,21 +368,42 @@ pub(super) fn send_item(model: &Model, index: usize) -> Option<&CursorItem> {
     model.mail_send_items.get(index).and_then(Option::as_ref)
 }
 
+/// The records a mail verb's row read leaves a callback on when they miss, as each 12340 verb
+/// reads its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MailRead {
+    /// `GetInboxHeaderInfo` (`0x56e520`): the sender's name (`0x56e76c`), the stationery's item
+    /// (`0x56e711`) and a lone attachment's (`0x56e668`).
+    Header,
+    /// `GetInboxText` (`0x570bd0`): a calendar notice's sender name (`0x570d2a`).
+    Text,
+    /// `GetInboxInvoiceInfo` (`0x56e9b0`): the other player's name (`0x56eb79`).
+    Invoice,
+    /// `GetInboxItem` and `GetInboxItemLink` (`0x571017`, `0x56ed9f`): the attachment's item;
+    /// `None` is the first filled one.
+    Item(Option<u32>),
+    /// A read that leaves none.
+    Plain,
+}
+
 /// An inbox attachment for the tooltip: `slot` `None` is the first filled one.
 pub(super) fn inbox_attachment(
+    lua: &Lua,
     model: &Model,
     index: usize,
     slot: Option<u32>,
 ) -> Option<MailAttachmentView> {
-    row(model, index).and_then(|r| r.attachment(slot)).cloned()
+    row(lua, model, index, MailRead::Plain).and_then(|r| r.attachment(slot).cloned())
 }
 
 impl super::UiScript {
+    #[cfg(any(test, feature = "fixtures"))]
     /// Push the inbox.
     pub fn set_mail(&mut self, state: MailState) {
         set_field!(self, mail, state);
     }
 
+    #[cfg(any(test, feature = "fixtures"))]
     /// Push `GetLatestThreeSenders`' answer: one entry per delivered sender, `None` while its name
     /// is in flight, which the reference pushes as nil (`0x56f3e7`).
     pub fn set_mail_latest_senders(&mut self, senders: Vec<Option<String>>) {
@@ -454,16 +476,19 @@ impl super::UiScript {
         }
     }
 
+    #[cfg(any(test, feature = "fixtures"))]
     /// Push the usable stationery list, in the picker's order.
     pub fn set_mail_stationeries(&mut self, list: Vec<StationeryView>) {
         set_field!(self, mail_stationeries, list);
     }
 
+    #[cfg(any(test, feature = "fixtures"))]
     /// Push `Package.dbc`'s rows, in file order.
     pub fn set_mail_packages(&mut self, packages: Vec<PackageView>) {
         set_field!(self, mail_packages, packages);
     }
 
+    #[cfg(any(test, feature = "fixtures"))]
     /// Push `HasNewMail()`'s answer. The app sets it before each `UPDATE_PENDING_MAIL`, on which
     /// the minimap icon re-reads it.
     pub fn set_has_new_mail(&mut self, has: bool) {
@@ -482,15 +507,100 @@ fn close_mail(model: &mut crate::script::ModelGuard<'_>) {
     }
 }
 
-/// The inbox row at a 1-based index, as the reference indexes `index - 1` unsigned.
-fn row(model: &Model, index: usize) -> Option<&MailInboxRow> {
-    index.checked_sub(1).and_then(|i| model.mail.inbox.get(i))
+/// The 24-hour clock the calendar notice's date reads (`timeMgrUseMilitaryTime`).
+fn military(model: &Model) -> bool {
+    model
+        .cvars
+        .get("timemgrusemilitarytime")
+        .is_some_and(|c| super::sstr_to_int(&c.value) != 0)
 }
 
-fn row_mut(model: &mut Model, index: usize) -> Option<&mut MailInboxRow> {
-    index
-        .checked_sub(1)
-        .and_then(|i| model.mail.inbox.get_mut(i))
+/// The inbox's shown rows and the server's whole count at the call; with no view lent, a
+/// fixture's.
+fn inbox_counts(model: &Model) -> (usize, u32) {
+    if let Some(Some(counts)) = super::read_live(|l| l.mail_inbox_counts()) {
+        return counts;
+    }
+    #[cfg(any(test, feature = "fixtures"))]
+    {
+        (model.mail.inbox.len(), model.mail.total)
+    }
+    #[cfg(not(any(test, feature = "fixtures")))]
+    {
+        let _ = model;
+        (0, 0)
+    }
+}
+
+/// The inbox row at a 1-based index, as the reference indexes `index - 1` unsigned, resolved at
+/// the call; with no view lent, a fixture's.
+fn row(lua: &Lua, model: &Model, index: usize, read: MailRead) -> Option<MailInboxRow> {
+    let i = index.checked_sub(1)?;
+    let text = |key: &str| lua.globals().get::<String>(key).ok();
+    let military = military(model);
+    if let Some(r) = super::write_live(|l| l.mail_row(i, read, &text, military)).flatten() {
+        return r;
+    }
+    #[cfg(any(test, feature = "fixtures"))]
+    {
+        model.mail.inbox.get(i).cloned()
+    }
+    #[cfg(not(any(test, feature = "fixtures")))]
+    {
+        None
+    }
+}
+
+/// A return or delete in flight on the row at a 1-based index (`+0x2940`), written where the
+/// rows live.
+fn set_delete_pending(model: &mut Model, index: usize) {
+    let Some(i) = index.checked_sub(1) else {
+        return;
+    };
+    if super::write_live(|l| l.mail_mark_delete_pending(i))
+        .flatten()
+        .is_some()
+    {
+        return;
+    }
+    #[cfg(any(test, feature = "fixtures"))]
+    if let Some(r) = model.mail.inbox.get_mut(i) {
+        r.delete_pending = true;
+    }
+    let _ = model;
+}
+
+/// The usable stationery list, rebuilt first on `rebuild` as `GetNumStationeries` does with no
+/// record in flight (`0x571abd`); with no view lent, a fixture's.
+fn stationeries(model: &Model, rebuild: bool) -> Vec<StationeryView> {
+    if let Some(Some(list)) = super::write_live(|l| l.mail_stationeries(rebuild)) {
+        return list;
+    }
+    #[cfg(any(test, feature = "fixtures"))]
+    {
+        model.mail_stationeries.clone()
+    }
+    #[cfg(not(any(test, feature = "fixtures")))]
+    {
+        let _ = model;
+        Vec::new()
+    }
+}
+
+/// `Package.dbc`'s rows; with no view lent, a fixture's.
+fn packages(model: &Model) -> Vec<PackageView> {
+    if let Some(Some(list)) = super::read_live(|l| l.mail_packages()) {
+        return list;
+    }
+    #[cfg(any(test, feature = "fixtures"))]
+    {
+        model.mail_packages.clone()
+    }
+    #[cfg(not(any(test, feature = "fixtures")))]
+    {
+        let _ = model;
+        Vec::new()
+    }
 }
 
 /// A 1-based index argument, raising `usage` unless it is a number (`lua_isnumber`).
@@ -526,10 +636,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetInboxNumItems",
         lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok((model.mail.inbox.len() as i64, i64::from(model.mail.total)))
+            let model = crate::script::model_mut_of(lua);
+            let (shown, total) = inbox_counts(&model);
+            Ok((shown as i64, i64::from(total)))
         })?,
     )?;
 
@@ -539,10 +648,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, index: Value| {
             let index = index_arg(lua, index, "Usage: GetInboxHeaderInfo(index)")?;
             let r = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                row(&model, index).cloned()
+                let model = crate::script::model_mut_of(lua);
+                row(lua, &model, index, MailRead::Header)
             };
             let Some(r) = r else {
                 let mut miss = vec![Value::Nil; 4];
@@ -588,7 +695,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let r = {
                 let mut model = crate::script::model_mut_of(lua);
                 mark_as_read(&mut model, index);
-                row(&model, index).cloned()
+                row(lua, &model, index, MailRead::Text)
             };
             let Some(r) = r else {
                 return Ok(values(vec![Value::Nil; 4]));
@@ -609,10 +716,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, index: Value| {
             let index = index_arg(lua, index, "Usage: GetInboxInvoiceInfo(index)")?;
             let inv = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                row(&model, index).and_then(|r| r.invoice.clone())
+                let model = crate::script::model_mut_of(lua);
+                row(lua, &model, index, MailRead::Invoice).and_then(|r| r.invoice)
             };
             let Some(inv) = inv else {
                 let mut miss = vec![Value::Nil; 3];
@@ -642,12 +747,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let slot = attach_arg(lua, attach)?;
             // `canUse` is the shared item-usable gate (`0x5710ea`).
             let a = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                row(&model, index)
-                    .and_then(|r| r.attachment(slot))
-                    .cloned()
+                let model = crate::script::model_mut_of(lua);
+                row(lua, &model, index, MailRead::Item(slot))
+                    .and_then(|r| r.attachment(slot).cloned())
                     .map(|a| {
                         let usable = super::item_stats::item_usable_by_id(&model, a.item_id);
                         (a, usable)
@@ -697,12 +799,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             )?;
             let slot = attach_arg(lua, attach)?;
             let link = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                row(&model, index)
-                    .and_then(|r| r.attachment(slot))
-                    .and_then(|a| a.link.clone())
+                let model = crate::script::model_mut_of(lua);
+                row(lua, &model, index, MailRead::Item(slot))
+                    .and_then(|r| r.attachment(slot).and_then(|a| a.link.clone()))
             };
             Ok(match link {
                 Some(l) => values(vec![Value::String(lua.create_string(&l)?)]),
@@ -716,11 +815,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "InboxItemCanDelete",
         lua.create_function(|lua, index: Value| {
             let index = index_arg(lua, index, "Usage: InboxItemCanDelete(index)")?;
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
+            let model = crate::script::model_mut_of(lua);
             Ok(flag(
-                row(&model, index).is_some_and(MailInboxRow::can_delete),
+                row(lua, &model, index, MailRead::Plain).is_some_and(|r| r.can_delete()),
             ))
         })?,
     )?;
@@ -730,10 +827,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "CanComplainInboxItem",
         lua.create_function(|lua, index: Value| {
             let index = index_arg(lua, index, "Usage: InboxItemCanComplain(index)")?;
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(flag(row(&model, index).is_some_and(|r| r.can_complain)))
+            let model = crate::script::model_mut_of(lua);
+            Ok(flag(
+                row(lua, &model, index, MailRead::Plain).is_some_and(|r| r.can_complain),
+            ))
         })?,
     )?;
 
@@ -747,7 +844,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if model.mail_command_pending || !model.mail_mailbox {
                 return Ok(());
             }
-            let Some(r) = row(&model, index).filter(|r| r.can_complain) else {
+            let Some(r) = row(lua, &model, index, MailRead::Plain).filter(|r| r.can_complain)
+            else {
                 return Ok(());
             };
             let message_id = r.message_id;
@@ -761,10 +859,18 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "HasNewMail",
         lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(flag(model.has_new_mail))
+            if let Some(Some(has)) = super::read_live(|l| l.mail_has_new()) {
+                return Ok(flag(has));
+            }
+            #[cfg(any(test, feature = "fixtures"))]
+            {
+                Ok(flag(crate::script::model_mut_of(lua).has_new_mail))
+            }
+            #[cfg(not(any(test, feature = "fixtures")))]
+            {
+                let _ = lua;
+                Ok(flag(false))
+            }
         })?,
     )?;
 
@@ -773,11 +879,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetLatestThreeSenders",
         lua.create_function(|lua, ()| {
-            let senders = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data")
-                .mail_latest_senders
-                .clone();
+            let text = |key: &str| lua.globals().get::<String>(key).ok();
+            let senders = match super::write_live(|l| l.mail_latest_senders(&text)).flatten() {
+                Some(senders) => senders,
+                #[cfg(any(test, feature = "fixtures"))]
+                None => crate::script::model_mut_of(lua).mail_latest_senders.clone(),
+                #[cfg(not(any(test, feature = "fixtures")))]
+                None => Vec::new(),
+            };
             senders
                 .iter()
                 .map(|s| opt_str(lua, s))
@@ -816,7 +925,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if model.mail_command_pending || !model.mail_mailbox {
                 return Ok(());
             }
-            if let Some(id) = row(&model, index)
+            if let Some(id) = row(lua, &model, index, MailRead::Plain)
                 .filter(|r| r.money != 0)
                 .map(|r| r.message_id)
             {
@@ -838,7 +947,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if model.mail_command_pending || !model.mail_mailbox {
                 return Ok(());
             }
-            if let Some(id) = row(&model, index)
+            if let Some(id) = row(lua, &model, index, MailRead::Plain)
                 .filter(|r| r.has_letter && r.flags & flags::COPIED == 0)
                 .map(|r| r.message_id)
             {
@@ -860,7 +969,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if model.mail_command_pending || !model.mail_mailbox {
                 return Ok(());
             }
-            let Some(r) = row_mut(&mut model, index) else {
+            let Some(r) = row(lua, &model, index, MailRead::Plain) else {
                 return Ok(());
             };
             if r.delete_pending
@@ -870,7 +979,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             {
                 return Ok(());
             }
-            r.delete_pending = true;
+            set_delete_pending(&mut model, index);
             let id = r.message_id;
             model
                 .mail_commands
@@ -889,13 +998,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if model.mail_command_pending || !model.mail_mailbox {
                 return Ok(());
             }
-            let Some(r) = row_mut(&mut model, index) else {
+            let Some(r) = row(lua, &model, index, MailRead::Plain) else {
                 return Ok(());
             };
             if r.delete_pending || !r.can_delete() {
                 return Ok(());
             }
-            r.delete_pending = true;
+            set_delete_pending(&mut model, index);
             let id = r.message_id;
             model
                 .mail_commands
@@ -920,7 +1029,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(());
             }
             let slot = attach_arg(lua, attach)?;
-            let Some((id, cod, guid)) = row(&model, index).and_then(|r| {
+            let Some((id, cod, guid)) = row(lua, &model, index, MailRead::Plain).and_then(|r| {
                 r.attachment(slot)
                     .filter(|a| a.item_id != 0)
                     .map(|a| (r.message_id, r.cod, a.item_guid_low))
@@ -952,7 +1061,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if model.mail_command_pending || !model.mail_mailbox {
                 return Ok(());
             }
-            let Some(r) = row(&model, index).cloned() else {
+            let Some(r) = row(lua, &model, index, MailRead::Plain) else {
                 return Ok(());
             };
             if r.money != 0 {
@@ -1178,13 +1287,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetSendMailPrice",
         lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
+            let model = crate::script::model_mut_of(lua);
             let mut price = POSTAGE_PER_ITEM * (num_send_items(&model).max(1) as u32);
             if model.mail_stationery != 0 {
-                if let Some(cost) = model
-                    .mail_stationeries
+                if let Some(cost) = stationeries(&model, false)
                     .iter()
                     .find(|s| s.id == model.mail_stationery)
                     .and_then(|s| s.cost)
@@ -1193,11 +1299,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 }
             }
             if model.mail_package != 0 {
-                if let Some(p) = model
-                    .mail_packages
-                    .iter()
-                    .find(|p| p.id == model.mail_package)
-                {
+                if let Some(p) = packages(&model).iter().find(|p| p.id == model.mail_package) {
                     price = price.wrapping_add(p.cost as u32);
                 }
             }
@@ -1267,10 +1369,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumStationeries",
         lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(model.mail_stationeries.len() as i64)
+            let model = crate::script::model_mut_of(lua);
+            Ok(stationeries(&model, true).len() as i64)
         })?,
     )?;
 
@@ -1279,13 +1379,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetStationeryInfo",
         lua.create_function(|lua, index: Value| {
             let index = number_arg(lua, index, "Usage: GetStationeryInfo(index)")?;
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
+            let list = stationeries(&crate::script::model_mut_of(lua), false);
             let row = usize::try_from(index)
                 .ok()
                 .and_then(|i| i.checked_sub(1))
-                .and_then(|i| model.mail_stationeries.get(i));
+                .and_then(|i| list.get(i));
             let Some(row) = row else {
                 return Ok(values(vec![Value::Nil, Value::Nil, Value::Nil]));
             };
@@ -1304,10 +1402,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, index: Value| {
             let index = number_arg(lua, index, "Usage: SelectStationery(index)")?;
             let mut model = crate::script::model_mut_of(lua);
+            let list = stationeries(&model, false);
             model.mail_stationery = usize::try_from(index)
                 .ok()
                 .and_then(|i| i.checked_sub(1))
-                .and_then(|i| model.mail_stationeries.get(i))
+                .and_then(|i| list.get(i))
                 .map_or(0, |row| row.id);
             Ok(())
         })?,
@@ -1317,12 +1416,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetSelectedStationeryTexture",
         lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
+            let model = crate::script::model_mut_of(lua);
             let id = model.mail_stationery;
+            let list = stationeries(&model, false);
             let tex = (id != 0)
-                .then(|| model.mail_stationeries.iter().find(|r| r.id == id))
+                .then(|| list.iter().find(|r| r.id == id))
                 .flatten();
             Ok(match tex {
                 Some(row) => Value::String(lua.create_string(&row.texture)?),
@@ -1344,10 +1442,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumPackages",
         lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(model.mail_packages.len() as i64)
+            let model = crate::script::model_mut_of(lua);
+            Ok(packages(&model).len() as i64)
         })?,
     )?;
 
@@ -1356,12 +1452,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetPackageInfo",
         lua.create_function(|lua, index: Value| {
             let index = number_arg(lua, index, "Usage: GetPackageInfo(index)")?;
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
+            let list = packages(&crate::script::model_mut_of(lua));
             let row = usize::try_from(index.wrapping_sub(1))
                 .ok()
-                .and_then(|i| model.mail_packages.get(i));
+                .and_then(|i| list.get(i));
             Ok(match row {
                 Some(row) => values(vec![
                     Value::String(lua.create_string(&row.name)?),
@@ -1379,9 +1473,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, index: Value| {
             let index = number_arg(lua, index, "Usage: SelectPackage(index)")?;
             let mut model = crate::script::model_mut_of(lua);
+            let list = packages(&model);
             model.mail_package = usize::try_from(index.wrapping_sub(1))
                 .ok()
-                .and_then(|i| model.mail_packages.get(i))
+                .and_then(|i| list.get(i))
                 .map_or(0, |row| row.id);
             Ok(MultiValue::new())
         })?,
@@ -1402,17 +1497,37 @@ fn send_slot_arg(lua: &Lua, v: Value) -> mlua::Result<Option<usize>> {
     })
 }
 
-/// The mark-as-read (`0x56fe30`): an unread row turns read locally and queues the packet; a read
-/// one, or none, does nothing.
-fn mark_as_read(model: &mut Model, index: usize) {
-    let Some(r) = row_mut(model, index).filter(|r| r.flags & flags::READ == 0) else {
+/// The mark-as-read (`0x56fe30`) inside the call: an unread row turns read where the rows live,
+/// which sends the packet, and its signals fire: `UPDATE_PENDING_MAIL` when a sender dropped out
+/// (`0x56de00`) and when the waiting icon went out (`0x56ff23`), then `MAIL_INBOX_UPDATE`
+/// (`0x56ff31`). With no view lent, a fixture's row turns read
+/// and queues the packet; a read one, or none, does nothing.
+fn mark_as_read(model: &mut crate::script::ModelGuard<'_>, index: usize) {
+    let Some(i) = index.checked_sub(1) else {
         return;
     };
-    r.flags |= flags::READ;
-    let id = r.message_id;
-    model
-        .mail_commands
-        .push(MailCommand::MarkRead { message_id: id });
+    if let Some(signals) = super::write_live(|l| l.mail_mark_read(i)).flatten() {
+        for event in signals {
+            signal_event(model, event, vec![]);
+        }
+        return;
+    }
+    #[cfg(any(test, feature = "fixtures"))]
+    {
+        let Some(r) = model
+            .mail
+            .inbox
+            .get_mut(i)
+            .filter(|r| r.flags & flags::READ == 0)
+        else {
+            return;
+        };
+        r.flags |= flags::READ;
+        let id = r.message_id;
+        model
+            .mail_commands
+            .push(MailCommand::MarkRead { message_id: id });
+    }
 }
 
 /// `ClickSendMailItemButton` (`0x570550`). Without `clear`, a held item attaches to the slot (or

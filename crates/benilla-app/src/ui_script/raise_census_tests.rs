@@ -100,7 +100,6 @@ const ON_THE_QUEUE: &[(&str, &str)] = &[
     ("ui_macro/mod.rs", "load_macros"),
     ("ui_macro/mod.rs", "note_dirty_macros"),
     ("ui_mail/mod.rs", "drain_mail"),
-    ("ui_mail/mod.rs", "feed_mail"),
     ("ui_models/mod.rs", "forget_dead_vm_tiles"),
     ("ui_models/mod.rs", "sync_tiles"),
     ("ui_notices.rs", "drain_level_grant"),

@@ -1021,6 +1021,55 @@ pub trait LiveState {
         None
     }
 
+    /// The inbox's shown rows and the server's whole count (`[0xbeb1d8]`, `[0xbeb1dc]`); `None` where no view lends the mail.
+    fn mail_inbox_counts(&self) -> Option<(usize, u32)> {
+        None
+    }
+
+    /// Inbox row `index` (0-based) resolved at the call, `text` the global strings and `military` the 24-hour clock: each record `read` names leaves its callback on a miss (`0x56d4b0`, `0x56d460`); `Some(None)` past the rows, `None` where no view lends the mail.
+    fn mail_row(
+        &mut self,
+        _index: usize,
+        _read: super::MailRead,
+        _text: &dyn Fn(&str) -> Option<String>,
+        _military: bool,
+    ) -> Option<Option<super::MailInboxRow>> {
+        None
+    }
+
+    /// The mark-as-read of inbox row `index` (0-based) inside the call (`0x56fe30`): the packet sent and the row turned read, then the signals it raises in order, none for no unread row; `None` where no view lends the mail.
+    fn mail_mark_read(&mut self, _index: usize) -> Option<Vec<&'static str>> {
+        None
+    }
+
+    /// A return or delete in flight on inbox row `index` (0-based) (`+0x2940`); `None` where no view lends the mail.
+    fn mail_mark_delete_pending(&mut self, _index: usize) -> Option<()> {
+        None
+    }
+
+    /// `HasNewMail()`'s test (`0x56f350`); `None` where no view lends the mail.
+    fn mail_has_new(&self) -> Option<bool> {
+        None
+    }
+
+    /// The delivered senders' names (`0x56f3a0`), a miss leaving the sender's callback (`0x56f3e0`); `None` where no view lends the mail.
+    fn mail_latest_senders(
+        &mut self,
+        _text: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<Vec<Option<String>>> {
+        None
+    }
+
+    /// The usable stationery list, rebuilt first (`0x56fc80`) on `rebuild` with no stationery record in flight; `None` where no view lends the mail.
+    fn mail_stationeries(&mut self, _rebuild: bool) -> Option<Vec<super::StationeryView>> {
+        None
+    }
+
+    /// `Package.dbc`'s rows; `None` where no view lends the mail.
+    fn mail_packages(&self) -> Option<Vec<super::PackageView>> {
+        None
+    }
+
     /// What the trade offer's gates read off held item `item` (`0x587aff`-`0x587bcf`, `0x5877b0`, `0x5d896d`); `None` with no item store held.
     fn trade_item_facts(&self, _item: u64) -> Option<super::TradeItemFacts> {
         None

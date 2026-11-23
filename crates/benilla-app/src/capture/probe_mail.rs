@@ -32,6 +32,8 @@ const MAILBOX_AT: [f32; 3] = [-9455.99, 45.82, 56.44];
 const GO_TYPE_MAILBOX: i32 = 19;
 /// Wider than the interaction gate, so a slightly-off `.go` landing still finds it.
 const MAILBOX_SCAN_RANGE: f32 = 10.0;
+/// The wait before using the mailbox again after the reader closed it.
+const REOPEN_SECS: f64 = 0.2;
 /// The GM-mailed and Send-tab stacks: Linen Cloth and Silk Cloth.
 const LINEN: u32 = 2589;
 const SILK: u32 = 4306;
@@ -150,6 +152,11 @@ struct MailProbe {
     clear_since: Option<f64>,
     /// The mailbox in use, to re-open after the letter reader closed the window.
     mailbox: Option<u64>,
+    /// The one step onto a mailbox found past the interaction reach went out.
+    stepped: bool,
+    /// When to use the mailbox again after the reader closed it: a frame on, once the drain has
+    /// taken the close the VM queued, which would otherwise clear the reopened session.
+    reopen_at: Option<f64>,
     passes: u32,
     fails: u32,
     exited: bool,
@@ -306,7 +313,8 @@ fn mail_probe(world: &mut World) {
     });
     world.insert_resource(probe);
     for mailbox in clicks {
-        world.resource_mut::<MailOpen>().click(mailbox);
+        crate::ui_mail::talk_to_mailbox(world, mailbox);
+        crate::ui_script::live::fire_handler_events(world);
     }
     for e in exit {
         world.write_message(e);
@@ -339,6 +347,11 @@ fn mail_step(
             info!("PROBE_MAIL: t={now:.2} HasNewMail={lit} senders=[{senders}]");
             probe.traced = Some((lit, senders));
         }
+    }
+
+    if probe.reopen_at.is_some_and(|at| now >= at) {
+        probe.reopen_at = None;
+        clicks.extend(probe.mailbox);
     }
 
     let step = probe.step;
@@ -412,14 +425,28 @@ fn mail_step(
                     && s.0.gameobject_type_id() == GO_TYPE_MAILBOX
                     && tf.translation.distance(me) < MAILBOX_SCAN_RANGE
             });
-            if let Some((guid, ..)) = found {
+            // The open sets the interact target, whose watchdog closes the window past the
+            // mailbox's reach: a landing inside the scan but past the reach steps onto it once.
+            let reach_sq = crate::target::cursor_mode::go_interact_range_sq(GO_TYPE_MAILBOX);
+            if let Some((guid, _, _, tf)) = found
+                .filter(|(.., tf)| tf.translation.distance_squared(me) > reach_sq && !probe.stepped)
+            {
+                let toward = (me - tf.translation).normalize_or_zero() * 1.5;
+                let [x, y, z] = benilla_assets::coords::bevy_to_wow(tf.translation + toward);
+                info!(
+                    "PROBE_MAIL: mailbox {:#x} at {:?} is {:.1} yd away, past its reach; stepping to it",
+                    guid.0,
+                    benilla_assets::coords::bevy_to_wow(tf.translation),
+                    tf.translation.distance(me)
+                );
+                say(net, format!(".go xyz {x} {y} {z} 0"));
+                probe.stepped = true;
+                probe.go(Step::FindMailbox, now);
+            } else if let Some((guid, ..)) = found {
                 info!("PROBE_MAIL: mailbox {:#x} in range, using it", guid.0);
                 probe.baseline = event_count(script, "MAIL_INBOX_UPDATE");
                 probe.mailbox = Some(guid.0);
-                {
-                    mail.click(guid.0);
-                    clicks.push(guid.0);
-                }
+                clicks.push(guid.0);
                 probe.step = Step::WaitList;
                 probe.since = now;
             } else if probe.timed_out(now, SCAN_TIMEOUT_SECS) {
@@ -574,12 +601,7 @@ fn mail_step(
                     &format!("PickupContainerItem({bag}, {slot}) DeleteCursorItem()"),
                 );
                 // The reader took the interaction and closed the mailbox: use it again.
-                if let Some(guid) = probe.mailbox {
-                    {
-                    mail.click(guid);
-                    clicks.push(guid);
-                }
-                }
+                probe.reopen_at = Some(now + REOPEN_SECS);
                 probe.go(Step::TakeMoney, now);
             } else if probe.timed_out(now, ACTION_TIMEOUT_SECS) {
                 let shown = lua_bool(script, "ItemTextFrame:IsShown()");
@@ -587,12 +609,7 @@ fn mail_step(
                 probe.fail(&format!(
                     "(b3) — the reader never showed the letter (shown {shown}, text {text:?})"
                 ));
-                if let Some(guid) = probe.mailbox {
-                    {
-                    mail.click(guid);
-                    clicks.push(guid);
-                }
-                }
+                probe.reopen_at = Some(now + REOPEN_SECS);
                 probe.go(Step::TakeMoney, now);
             }
         }
@@ -924,10 +941,7 @@ fn mail_step(
                     })
                     .map(|(g, ..)| g.0)
                 {
-                    {
-                        mail.click(guid);
-                        clicks.push(guid);
-                    }
+                    clicks.push(guid);
                 }
                 probe.step = Step::ReadNew;
                 probe.since = now;
