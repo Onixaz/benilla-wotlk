@@ -314,8 +314,7 @@ pub(crate) struct Model {
     pub(crate) refer_a_friend: unit_menu::ReferAFriendState,
     /// Party and loot-method calls (`AcceptGroup`, `InviteUnit`, `SetLootMethod`, …) queued.
     pub(crate) party_requests: Vec<party::PartyRequest>,
-    /// System chat lines the bindings composed (`SendSystemMessage`, the party verbs), drained by
-    /// the app.
+    /// System chat lines the party verbs composed, drained by the app.
     pub(crate) party_lines: Vec<String>,
     /// The ready-check deadline and the unanswered flags the timeout tick reads.
     pub(crate) ready_check: party::ReadyCheckState,
