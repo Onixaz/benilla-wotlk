@@ -9542,6 +9542,7 @@ fn group_loot_rolls_fire_from_their_handlers_with_the_rolls_read_at_the_call() {
                 "CANCEL_LOOT_ROLL 0 | roll0=nil roll1=Charz Late roll2=nil rleft1=true".to_string(),
             ],
             vec![
+                // The all-passed line is added (`0x6fb4da`) before the roll closes (`0x6fb4f6`).
                 "CHAT_MSG_LOOT Everyone passed on: |cffffffff|Hitem:593922:0:0:0:0:0:0:0:80|h[Charz Late]|h|r      0 0  0 3  0 | roll0=nil roll1=Charz Late roll2=nil rleft1=true".to_string(),
                 "CANCEL_LOOT_ROLL 1 | roll0=nil roll1=nil roll2=nil rleft1=false".to_string(),
             ],
