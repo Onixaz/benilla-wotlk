@@ -633,3 +633,82 @@ fn a_filter_verb_rebuilds_then_signals_inside_its_call() {
         ["TRADE_SKILL_UPDATE:2", "after:2"]
     );
 }
+
+/// `recipe` as the app files it.
+fn row(r: &TradeSkillRecipe) -> TradeSkillRow {
+    TradeSkillRow {
+        spell_id: r.spell_id,
+        name: r.name.clone(),
+        difficulty: r.difficulty,
+        num_available: r.num_available,
+        trivial_high: r.trivial_high,
+        group: r.group.clone(),
+        item_level: r.item_level,
+        inv_slots: r.inv_slots,
+    }
+}
+
+/// A whole rebuild that goes in flight drops the sub-classes and opens both masks (`0x5dd638`,
+/// `0x5dd63e`, `0x5dd644`), files only those before the first miss, shown and unfolded
+/// (`0x5dde6e`), and returns before the saved flags come back (`0x5ddeb7`); past the miss only a
+/// recipe without a product adds its slot bits (`0x5ddb08`, `0x5ddcfc`). The callback's whole
+/// rebuild then saves those defaults: every header unfolds and every sub-class shows.
+#[test]
+fn a_whole_rebuild_in_flight_files_the_sub_classes_before_the_miss_with_default_flags() {
+    let mut rows: Vec<TradeSkillRow> = enchanting().recipes.iter().map(row).collect();
+    // Verb, rod, verb, verb, oil: the third goes in flight, the fourth has no product and the
+    // fifth's product is cached.
+    rows[3].inv_slots = 1 << 9;
+    rows[4].inv_slots = 1 << 10;
+    let mut l = TradeSkillList::default();
+    l.open_line(333, 7411);
+    l.refresh(true, Some(rows.clone()), &|_| true);
+    // Fold the verb header, hide the rods.
+    l.sub_class_filter &= !(1 << 2);
+    l.collapse_filter &= !1;
+    l.apply(true, &|_| true);
+    assert!(l.sub_class_flags().iter().any(|&(_, _, folded)| folded));
+    assert!(l.sub_class_flags().iter().any(|&(_, shown, _)| !shown));
+    l.inv_slots = 0;
+
+    let mut pending = rows.clone();
+    pending[2].group = None;
+    assert!(!l.refresh(true, Some(pending), &|_| true));
+    let filed = l.sub_class_flags();
+    assert_eq!(filed, [((-1, -1), true, false), ((7, 12), true, false)]);
+    assert_eq!(
+        (l.sub_class_filter, l.collapse_filter),
+        (u32::MAX, u32::MAX)
+    );
+    assert_eq!(l.inv_slots, (1 << 8) | SLOT_NONEQUIP | (1 << 9));
+
+    assert!(l.refresh(true, Some(rows), &|_| true));
+    assert_eq!(l.sub_class_flags().len(), 3);
+    assert!(l
+        .sub_class_flags()
+        .iter()
+        .all(|&(_, shown, folded)| shown && !folded));
+    assert_eq!(
+        (l.sub_class_filter, l.collapse_filter),
+        (u32::MAX, u32::MAX)
+    );
+    assert_eq!(l.filtered(), 8);
+}
+
+/// An in-place rebuild in flight keeps the sub-classes and their flags (`0x5ddd02`).
+#[test]
+fn an_in_place_rebuild_in_flight_keeps_the_sub_classes() {
+    let rows: Vec<TradeSkillRow> = enchanting().recipes.iter().map(row).collect();
+    let mut l = TradeSkillList::default();
+    l.open_line(333, 7411);
+    l.refresh(true, Some(rows.clone()), &|_| true);
+    l.collapse_filter &= !1;
+    l.apply(true, &|_| true);
+    let before = l.sub_class_flags();
+    let mut pending = rows;
+    pending[0].group = None;
+    assert!(!l.refresh(false, Some(pending), &|_| true));
+    let after = l.sub_class_flags();
+    assert_eq!(before, after);
+    assert_eq!(l.collapse_filter, !1);
+}

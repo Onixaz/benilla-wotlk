@@ -192,28 +192,68 @@ impl TradeSkillList {
     }
 
     /// The list refresh (`0x5dd5a0`) over the recipes `rows` the app filed, `None` with no line or
-    /// player: with `full`, the sub-classes rebuilt keeping each one's shown and folded flags by
-    /// key; then the slot filter pass (`0x5dcc40`) with `passes` as the text filter (`0x5dc110`).
-    /// Whether `TRADE_SKILL_UPDATE` fires (`0x5de0d5`): not with no rows or a product record in
-    /// flight.
+    /// player: with `full`, the sub-classes refiled from the recipes, each one's shown and folded
+    /// flags restored by key; then the slot filter pass (`0x5dcc40`) with `passes` as the text
+    /// filter (`0x5dc110`). Whether `TRADE_SKILL_UPDATE` fires (`0x5de0d5`): not with no rows or a
+    /// product record in flight.
     pub fn refresh(
         &mut self,
         full: bool,
         rows: Option<Vec<TradeSkillRow>>,
         passes: &dyn Fn(u32) -> bool,
     ) -> bool {
+        // A whole rebuild saves the flags, then drops the sub-classes and opens both masks
+        // (`0x5dd638`, `0x5dd63e`, `0x5dd644`).
+        let saved: Vec<((i32, i32), bool, bool)> = if full {
+            let saved = self
+                .sub_classes
+                .iter()
+                .map(|c| (c.key, c.shown, c.collapsed))
+                .collect();
+            self.sub_classes.clear();
+            self.sub_class_filter = ALL;
+            self.collapse_filter = ALL;
+            saved
+        } else {
+            Vec::new()
+        };
         let Some(rows) = rows else {
             self.display.clear();
-            if full {
-                self.sub_classes.clear();
-                self.sub_class_filter = ALL;
-                self.collapse_filter = ALL;
-            }
             return false;
         };
-        if rows.iter().any(|r| r.group.is_none()) {
-            // In flight (`0x5ddeb7`): the recipes are filed and counted (`0x5dd889`), no header,
-            // filter pass or sort runs, and the filtered count stands.
+        let first_miss = rows.iter().position(|r| r.group.is_none());
+        for (i, r) in rows.iter().enumerate() {
+            let before_miss = first_miss.is_none_or(|m| i < m);
+            // Past a miss a product recipe is skipped (`0x5ddb08`); one without a product still
+            // adds its slot bits (`0x5ddcfc`).
+            if !before_miss && !matches!(r.group, Some(super::TradeSkillGroup::Verb)) {
+                continue;
+            }
+            self.inv_slots |= r.inv_slots;
+            // Sub-classes file only on a whole rebuild with nothing in flight (`0x5ddd02`), a new
+            // one shown and unfolded (`0x5dde6e`).
+            if !(before_miss && full) {
+                continue;
+            }
+            let group = r.group.as_ref().expect("filed before any miss");
+            let key = group.key();
+            match self.sub_classes.iter_mut().find(|c| c.key == key) {
+                Some(c) => c.inv_slots |= r.inv_slots,
+                None => self.sub_classes.push(SubClass {
+                    key,
+                    name: match group {
+                        super::TradeSkillGroup::Verb => None,
+                        super::TradeSkillGroup::SubClass { name, .. } => name.clone(),
+                    },
+                    shown: true,
+                    collapsed: false,
+                    inv_slots: r.inv_slots,
+                }),
+            }
+        }
+        if first_miss.is_some() {
+            // In flight (`0x5ddeb7`): the recipes are filed and counted (`0x5dd889`); the saved
+            // flags, headers, filter pass and sort never run, and the filtered count stands.
             let old = std::mem::take(&mut self.display);
             self.rows = rows;
             self.display = self
@@ -230,48 +270,20 @@ impl TradeSkillList {
             return false;
         }
         self.rows = rows;
-        for r in &self.rows {
-            self.inv_slots |= r.inv_slots;
-        }
         if !full {
             // The entries refiled in place: the sub-classes and their flags stand.
             self.display = self.entries(&self.sub_classes);
             self.apply(false, passes);
             return true;
         }
-        let saved: Vec<((i32, i32), bool, bool)> = self
-            .sub_classes
-            .iter()
-            .map(|c| (c.key, c.shown, c.collapsed))
-            .collect();
-        let mut sub_classes: Vec<SubClass> = Vec::new();
-        for r in &self.rows {
-            let group = r.group.as_ref().expect("checked above");
-            let key = group.key();
-            match sub_classes.iter_mut().find(|c| c.key == key) {
-                Some(c) => c.inv_slots |= r.inv_slots,
-                None => sub_classes.push(SubClass {
-                    key,
-                    name: match group {
-                        super::TradeSkillGroup::Verb => None,
-                        super::TradeSkillGroup::SubClass { name, .. } => name.clone(),
-                    },
-                    shown: true,
-                    collapsed: false,
-                    inv_slots: r.inv_slots,
-                }),
-            }
-        }
-        for c in &mut sub_classes {
+        // The saved flags back on the sub-classes that remain (`0x5ddec4`).
+        for c in &mut self.sub_classes {
             if let Some(&(_, shown, collapsed)) = saved.iter().find(|(k, _, _)| *k == c.key) {
                 c.shown = shown;
                 c.collapsed = collapsed;
             }
         }
-        self.display = self.entries(&sub_classes);
-        self.sub_classes = sub_classes;
-        self.sub_class_filter = ALL;
-        self.collapse_filter = ALL;
+        self.display = self.entries(&self.sub_classes);
         self.apply(false, passes);
         for (i, c) in self.sub_classes.iter().enumerate() {
             let b = 1u32.wrapping_shl(i as u32);
@@ -283,6 +295,15 @@ impl TradeSkillList {
             }
         }
         true
+    }
+
+    /// Each sub-class's key, shown and folded flags, in list order.
+    #[cfg(test)]
+    pub(super) fn sub_class_flags(&self) -> Vec<((i32, i32), bool, bool)> {
+        self.sub_classes
+            .iter()
+            .map(|c| (c.key, c.shown, c.collapsed))
+            .collect()
     }
 
     /// The recipes' entries in row order, then one header per sub-class.
