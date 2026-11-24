@@ -619,6 +619,7 @@ pub(crate) struct TradeSkillLive<'w, 's> {
     items: Option<Res<'w, Items>>,
     commands: Option<Res<'w, NetCommands>>,
     self_guid: Option<Res<'w, SelfGuid>>,
+    names: Option<Res<'w, crate::names::NameCache>>,
     /// Absent in an app without the net plugin, whose bags hold nothing.
     objects: Option<Objects<'w, 's>>,
     index: Option<Res<'w, GuidIndex>>,
@@ -667,11 +668,20 @@ impl TradeSkillLive<'_, '_> {
     /// array in add order (`0x5dd910`); a create-item recipe whose product record misses joins
     /// `pending`, asked (`0x5ddaf1`). `None` with no player.
     fn rows(&self, line: u32, array: &[u32], pending: &mut Vec<u32>) -> Option<Vec<TradeSkillRow>> {
+        // The list's owner is our guid, as benilla opens no linked list (#1021).
+        let owner = self.self_guid.as_deref()?.0?;
+        let names = self.names.as_deref()?;
+        // The owner's name record, looked up without an ask; a miss exits (`0x5dd696`, `0x5dd6a0`).
+        names.peek(owner)?;
         let store = self.store()?;
         let spells = self.spells.as_deref()?;
         let skill_lines = self.skill_lines.as_deref()?;
         let rank = raw_rank(store, line);
-        let (race, class) = crate::spell::race_class(Some(store));
+        // The ability lookup's race and class are the record's (`0x5dd916`, `0x5dd91c`); our own
+        // name is seeded at world entry with none filed, and our descriptor carries the same pair.
+        let (race, class) = names
+            .player_traits(owner)
+            .map_or_else(|| crate::spell::race_class(Some(store)), |(r, c, _)| (r, c));
         let mut rows = Vec::new();
         for &spell_id in array {
             let Some(d) = spells.catalog.get(spell_id) else {
@@ -1394,6 +1404,11 @@ mod tests {
             .id();
         world.resource_mut::<SelfGuid>().0 = Some(0x10);
         world.resource_mut::<GuidIndex>().0.insert(0x10, me);
+        // Our own name record, which the login seeds and the rebuild reads (`0x5dd696`).
+        world.init_resource::<crate::names::NameCache>();
+        world
+            .resource_mut::<crate::names::NameCache>()
+            .insert_player(0x10, "Me".into(), None);
         world.insert_non_send_resource(benilla_ui::script::UiScript::new().expect("a VM"));
         {
             let mut open = world.resource_mut::<TradeSkillOpen>();

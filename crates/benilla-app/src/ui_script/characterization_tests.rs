@@ -12480,6 +12480,80 @@ fn a_worldport_with_the_line_open_rebuilds_it_at_each_recipe_our_init_adds() {
     );
 }
 
+/// The rebuild reads the list owner's name record without an ask and exits on a miss (`0x5dd696`,
+/// `0x5dd6a0`): with our own record invalidated, the open files nothing, fires no update, and its
+/// count test shows nothing (`0x5de2d1`); once the record is back the open rebuilds and shows.
+#[test]
+fn the_open_rebuilds_nothing_while_our_name_record_is_missing() {
+    use benilla_protocol::field::{FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_UNIT_BYTES_0};
+    const FIRST_AID: u32 = 3273;
+    const LINEN_BANDAGE: u32 = 3275;
+    let pair = |lo: u32, hi: u32| lo | hi << 16;
+    let mut t = crate::items::test_template("Linen Bandage");
+    t.class = 0;
+    t.subclass = 7;
+    // A human paladin with First Aid (129) at 1 of 75 and Linen Bandage known; its record cached.
+    let Some(mut rig) = Rig::login_after(
+        vec![
+            SessionEvent::ItemTemplate {
+                entry: 1251,
+                info: Some(Box::new(t)),
+            },
+            book(&[FIRST_AID, LINEN_BANDAGE]),
+        ],
+        &[
+            OBJECT_TYPE_PLAYER,
+            (FIELD_UNIT_BYTES_0, 1 | 2 << 8 | 1 << 24),
+            (SKILL, 129),
+            (SKILL + 1, pair(1, 75)),
+        ],
+    ) else {
+        return;
+    };
+    rig.packets(vec![SessionEvent::InvalidatePlayer { guid: ME }], 1);
+    rig.take();
+    let open = |rig: &mut Rig| {
+        super::live::with_live_world(rig.app.world_mut(), |s| {
+            s.run("CastSpellByName('First Aid')")
+        })
+        .expect("a VM")
+        .expect("the cast runs");
+        rig.run(1);
+        pin(
+            &rig.take(),
+            &["TRADE_SKILL_UPDATE", "TRADE_SKILL_SHOW"],
+            &["tsnum"],
+        )
+    };
+    assert_eq!(open(&mut rig), Vec::<String>::new());
+    assert_eq!(
+        super::live::with_live_world(rig.app.world_mut(), |s| s
+            .eval::<i64>("return GetNumTradeSkills()"))
+        .expect("a VM")
+        .expect("the count"),
+        0
+    );
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::names::NameCache>()
+        .insert_player(ME, "Benilla".into(), None);
+    // The same opener closes the line it opened; the next opens it afresh.
+    super::live::with_live_world(rig.app.world_mut(), |s| s.run("CloseTradeSkill()"))
+        .expect("a VM")
+        .expect("the close runs");
+    rig.take();
+    // The first show loads the stock frame, whose dropdowns' OnLoads set two filters, each rebuilding.
+    assert_eq!(
+        open(&mut rig),
+        vec![
+            "TRADE_SKILL_UPDATE | tsnum=2",
+            "TRADE_SKILL_UPDATE | tsnum=2",
+            "TRADE_SKILL_UPDATE | tsnum=2",
+            "TRADE_SKILL_SHOW | tsnum=2",
+        ]
+    );
+}
+
 /// Two minor glyphs off the install, by `GlyphProperties.dbc` id, and the first one's spell.
 fn two_minor_glyphs() -> (u32, u32, u32) {
     let data = benilla_formats::wow_data().expect("install");
