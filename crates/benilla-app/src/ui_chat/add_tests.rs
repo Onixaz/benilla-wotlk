@@ -325,10 +325,17 @@ fn player_line(chat_type: u8, sender: u64, language: u32, text: &str) -> ChatLin
             text: text.into(),
             chat_tag: 0,
             achievement: 0,
-            wire_type: 0,
+            wire_type: wotlk_type(chat_type),
             sender_word: 0,
         },
     }
+}
+
+/// The 3.3.5a type the decoder reads for a shared `chat_type`.
+fn wotlk_type(chat_type: u8) -> u8 {
+    (0..=0x34)
+        .find(|&w| benilla_protocol::messages::wotlk_chat_type_shared(w) == Some(chat_type))
+        .expect("a 3.3.5a lane")
 }
 
 /// Record each `event`'s first three arguments in `Heard`.
@@ -676,7 +683,6 @@ fn a_spam_filtered_whisper_is_reported_and_a_system_line_never_filtered() {
         let ChatLine::Wire { msg } = &mut line else {
             unreachable!()
         };
-        msg.wire_type = benilla_protocol::messages::wotlk_chat_type::WHISPER;
         msg.sender_name = name.map(Into::into);
         line
     };
@@ -699,4 +705,77 @@ fn a_spam_filtered_whisper_is_reported_and_a_system_line_never_filtered() {
         sent.len()
     );
     assert_eq!(heard(&world), ["CHAT_MSG_SYSTEM:cheap gold::"]);
+}
+
+/// A line the client composes takes the add's text passes too, as every caller hands it over with
+/// `[ebp+0x40]` 0 (`0x50d8cf`): a system line's quest link takes the level-10 player's difficulty
+/// colour (`0x50a2ec`-`0x50a393`) and its profanity is masked, the system type being in the mask
+/// table (`0x50a621`); a loot line, not type 0, goes through the spam filter
+/// (`0x50a6a7`), and a system line never does.
+#[test]
+fn a_composed_line_takes_the_quest_colour_the_spam_filter_and_the_mask() {
+    use benilla_protocol::field::{FIELD_OBJECT_TYPE, FIELD_UNIT_LEVEL};
+    let (mut world, sent) = world();
+    hear(&world, &["CHAT_MSG_SYSTEM", "CHAT_MSG_LOOT"]);
+    let me = world
+        .spawn(crate::net::ObjectStore(
+            benilla_protocol::ObjectFields::from_pairs(&[
+                (FIELD_OBJECT_TYPE, 0x19),
+                (FIELD_UNIT_LEVEL, 10),
+            ])
+            .into_created(benilla_protocol::messages::ObjectType::Player),
+        ))
+        .id();
+    world.resource_mut::<crate::net::SelfGuid>().0 = Some(ANN);
+    world
+        .resource_mut::<crate::net::GuidIndex>()
+        .0
+        .insert(ANN, me);
+    world.insert_resource(crate::text_filter::TextFilter::new(
+        &[benilla_formats::FilterPattern {
+            id: 1,
+            pattern: "darn".into(),
+        }],
+        &[],
+    ));
+    world
+        .resource_mut::<crate::text_filter::TextFilter>()
+        .set_server_spam(&["gold".to_string()]);
+    enter_world(&mut world);
+    add(
+        &mut world,
+        system_line("|cffffff00|Hquest:1:80|h[X]|h|r darn"),
+    );
+    add(
+        &mut world,
+        ChatEvent::text_only(ChatEventKind::Loot, "cheap gold".into()).into(),
+    );
+    add(&mut world, system_line("cheap gold"));
+    add(
+        &mut world,
+        ChatEvent::text_only(ChatEventKind::Loot, "a darn ring".into()).into(),
+    );
+    assert_eq!(
+        heard(&world),
+        [
+            "CHAT_MSG_SYSTEM:|cffff2020|Hquest:1:80|h[X]|h|r !@#$::",
+            "CHAT_MSG_SYSTEM:cheap gold::",
+            "CHAT_MSG_LOOT:a darn ring::",
+        ],
+        "the loot line's spam is dropped, and a loot line is not masked"
+    );
+    assert!(sent.try_iter().next().is_none(), "no report off a whisper");
+}
+
+/// A composed line's kind hands the add its 3.3.5a type: system 0 (`0x50d8f3`), loot `0x1b`
+/// (`0x523b52`), a whisper 7, never the foreign 8 (`0x50bfc7`), arena points `0x32` (`0x6d0ff4`).
+#[test]
+fn a_composed_kind_hands_the_add_its_3_3_5a_type() {
+    use super::event::wotlk_type_of_kind as of;
+    use benilla_protocol::messages::wotlk_chat_type as w;
+    assert_eq!(of(ChatEventKind::System), Some(w::SYSTEM));
+    assert_eq!(of(ChatEventKind::Loot), Some(w::LOOT));
+    assert_eq!(of(ChatEventKind::Whisper), Some(w::WHISPER));
+    assert_eq!(of(ChatEventKind::ArenaPoints), Some(w::ARENA_POINTS));
+    assert_eq!(of(ChatEventKind::CombatXpGain), Some(0x21));
 }

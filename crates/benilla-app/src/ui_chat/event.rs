@@ -443,6 +443,18 @@ pub(crate) fn kind_of_wire(chat_type: u8) -> Option<ChatEventKind> {
     })
 }
 
+/// The 3.3.5a type a composed line of `kind` hands the add (`0x509dd0`'s second argument): the lane
+/// whose event is the kind's, the arena-points line its unnamed `0x32` (`0x6d0ff4`); a whisper is 7,
+/// ahead of the foreign whisper's 8 the handler rewrites to it (`0x50bfc7`).
+pub(crate) fn wotlk_type_of_kind(kind: ChatEventKind) -> Option<u8> {
+    use benilla_protocol::messages::{wotlk_chat_type as w, wotlk_chat_type_shared};
+    if kind == ChatEventKind::ArenaPoints {
+        return Some(w::ARENA_POINTS);
+    }
+    (w::SYSTEM..=w::TARGETICONS)
+        .find(|&t| wotlk_chat_type_shared(t).and_then(kind_of_wire) == Some(kind))
+}
+
 /// The arg6 flag token for a wire chat-tag byte (vmangos `Player::GetChatTag`), read as
 /// `CHAT_FLAG_<flag>`.
 pub(crate) fn flag_of_tag(chat_tag: u8) -> &'static str {

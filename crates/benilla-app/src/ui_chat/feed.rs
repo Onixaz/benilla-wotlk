@@ -1038,9 +1038,11 @@ fn unit_name(
 }
 
 /// Build one line through the add (`0x509dd0`): its names resolved, asked when missing, its text
-/// composed; the VM is read and its autocomplete written, nothing raised.
+/// composed; the VM is read and its autocomplete written, nothing raised. With `passes` a composed
+/// line also takes the add's text passes ([`composed_passes`]); a line composed to be queued does
+/// not, as 12340 queues it ahead of them (`0x509f48`) and runs them when the queue adds it again.
 #[allow(clippy::too_many_lines)] // one add, every line type's arm
-fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Built {
+fn build(In((item, mut script, passes)): In<(ChatLine, UiScript, bool)>, p: AddParams) -> Built {
     let AddParams {
         mut log,
         channels,
@@ -1060,6 +1062,13 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
         factions,
     } = p;
     let mut steps = Vec::new();
+    // The active player's level, which each quest link's colour reads (`0x50a342`-`0x50a356`).
+    let player_level = self_guid
+        .0
+        .and_then(|g| guids.0.get(&g))
+        .and_then(|e| stores.get(*e).ok())
+        .and_then(|s| s.0.unit_level())
+        .map(|l| l as i32);
     match item {
         ChatLine::Event(event) => {
             steps.push(Step::Deliver(event));
@@ -1216,12 +1225,6 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
                     None => (msg.chat_type, msg.wire_type, kind, plain),
                 };
             // Each quest link takes the player's difficulty colour (`0x50a2ec`-`0x50a393`).
-            let player_level = self_guid
-                .0
-                .and_then(|g| guids.0.get(&g))
-                .and_then(|e| stores.get(*e).ok())
-                .and_then(|s| s.0.unit_level())
-                .map(|l| l as i32);
             let plain = recolor_quest_links(plain, player_level);
             // The language gate: the garble writes the one buffer the line, `arg1` and the
             // bubble read, as the reference fills `[ebp-0xd0c]` once and never reads the wire
@@ -1230,7 +1233,7 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
 
             // The text filters, on the garbled buffer as in the reference: spam first, then the
             // mask, so a dropped line consumes no mask indices (the phase is global).
-            if text_filter.should_drop(chat_type, msg.chat_tag, langs.is_gm(), &text) {
+            if text_filter.should_drop(wire_type, flag_of_tag(msg.chat_tag), langs.is_gm(), &text) {
                 // Nothing shows in its place; a line the add took as type 7, a foreign whisper
                 // included (`0x50bfc7`), from a set guid is reported (`0x50a6c4`-`0x50a718`).
                 if wire_type == benilla_protocol::messages::wotlk_chat_type::WHISPER
@@ -1243,7 +1246,7 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
                 debug!("chat: spam filter dropped [{chat_type:#04x}] {text:?}");
                 return Built::Steps(steps);
             }
-            text_filter.mask_chat(chat_type, &mut text);
+            text_filter.mask_chat(wire_type, &mut text);
             let text = text;
             let mut event = ChatEvent {
                 kind,
@@ -1549,14 +1552,59 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
             }
         }
     }
+    if passes {
+        steps.retain_mut(|step| match step {
+            Step::Route(event) | Step::Deliver(event) => composed_passes(
+                event,
+                player_level,
+                &mut text_filter,
+                langs.is_gm(),
+                &commands,
+            ),
+            Step::Fire(..) | Step::Speech { .. } => true,
+        });
+    }
     Built::Steps(steps)
+}
+
+/// The add's text passes on a line its caller composed, every one handed over with no conversation
+/// (`[ebp+0x40]` 0, as at `0x50d8cf`): each quest link recoloured (`0x50a2e2` -> `0x50a2ec`-
+/// `0x50a393`), the spam filter on its 3.3.5a type, a dropped whisper with a sender reported
+/// (`0x50a6b8`-`0x50a718`), then the mask (`0x50a732`). False when the filter drops the line.
+fn composed_passes(
+    event: &mut ChatEvent,
+    player_level: Option<i32>,
+    text_filter: &mut crate::text_filter::ChatTextFilter,
+    viewer_is_gm: bool,
+    commands: &NetCommands,
+) -> bool {
+    let Some(add_type) = event.kind.and_then(super::event::wotlk_type_of_kind) else {
+        return true;
+    };
+    event.text = recolor_quest_links(std::mem::take(&mut event.text), player_level);
+    if text_filter.should_drop(add_type, &event.flag, viewer_is_gm, &event.text) {
+        if add_type == benilla_protocol::messages::wotlk_chat_type::WHISPER
+            && event.sender_guid != 0
+        {
+            let _ = commands.0.send(crate::net::ClientCommand::ChatFiltered {
+                guid: event.sender_guid,
+            });
+        }
+        debug!(
+            "chat: spam filter dropped [{add_type:#04x}] {:?}",
+            event.text
+        );
+        return false;
+    }
+    text_filter.mask_chat(add_type, &mut event.text);
+    true
 }
 
 /// One line through the add (`0x509dd0`): built with the parameters fetched, then each step run
 /// with no borrow held across its raise; the line back when a name it needs is not cached yet.
 fn add_one(world: &mut World, line: ChatLine) -> Option<ChatLine> {
     let mut script = world.get_non_send_resource::<UiScript>()?.share();
-    let built = match world.run_system_cached_with(build, (line, script.share())) {
+    let built = match world.run_system_cached_with(build, (line, script.share(), true)) {
         Ok(built) => built,
         Err(e) => {
             warn!("chat: the add did not run: {e}");
@@ -1727,7 +1775,7 @@ fn queue_composed(world: &mut World, line: ChatLine) {
         world.resource_mut::<ChatLog>().pending.push((line, true));
         return;
     };
-    let built = match world.run_system_cached_with(build, (line, script.share())) {
+    let built = match world.run_system_cached_with(build, (line, script.share(), false)) {
         Ok(built) => built,
         Err(e) => {
             warn!("chat: the add did not run: {e}");
