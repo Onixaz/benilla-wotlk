@@ -183,7 +183,7 @@ fn a_new_lines_first_row_steps_in() {
 }
 
 /// Word wrap off draws the first line alone, cut at its last fitting character, not at a word,
-/// and measures one line tall.
+/// and measures one line tall, as wide as its widest line.
 #[test]
 fn word_wrap_off_draws_one_line_cut_at_the_width() {
     let Some(mut e) = test_engine(1.0) else {
@@ -222,11 +222,13 @@ fn word_wrap_off_draws_one_line_cut_at_the_width() {
         .len(),
         1
     );
-    // The measure is one line tall, wide as the first line.
-    let (w1, h1) = measure_text(&mut e, "ab\ncd", None, spec(one_line(false)));
-    let (_, h0) = measure_text(&mut e, "ab", None, spec(TextWrap::default()));
-    let (w0, _) = measure_text(&mut e, "ab", None, spec(TextWrap::default()));
-    assert_eq!((w1, h1), (w0, h0));
+    // The measure is one line tall and, unpinned, as wide as the widest line, not the drawn one:
+    // the extent walk spans every newline whatever the wrap bits (`0x483f1b`, `0x6bce60`).
+    let (w1, h1) = measure_text(&mut e, "ab\ncdefghijkl", None, spec(one_line(false)));
+    let (wa, h0) = measure_text(&mut e, "ab", None, spec(TextWrap::default()));
+    let (wide, _) = measure_text(&mut e, "cdefghijkl", None, spec(TextWrap::default()));
+    assert!(wide > wa + 20.0, "the lines differ clearly: {wa} vs {wide}");
+    assert_eq!((w1, h1), (wide, h0));
     let (_, hw) = measure_text(&mut e, LINE, Some(WIDTH), spec(one_line(false)));
     assert_eq!(hw, h0, "one line at a pinned width too");
 }
@@ -317,7 +319,7 @@ fn word_wrap_off_draws_the_first_line_past_leading_blank_lines() {
         assert_eq!(
             (w, h),
             measure_text(&mut e, "ab", None, spec(TextWrap::default())),
-            "{text:?} measures one row, the drawn line's width"
+            "{text:?} measures one row, as wide as its widest line"
         );
     }
     // A blank string still has its one row and draws nothing.

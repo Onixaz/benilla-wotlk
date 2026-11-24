@@ -249,17 +249,18 @@ pub(crate) fn measure_text(
             (width_of(&rows), rows)
         }
         None => {
-            // An unpinned string is as wide as its widest line (the extent, `+0xfc`), and its
-            // height walks the rows laid out at that width, where an indented continuation line
-            // wraps again; the draw lays it out in the same box.
-            if font.wrap.indented && font.wrap.word_wrap {
-                let natural = width_of(&lines);
-                let rows = layout_rows(e, r, lines, natural.ceil() + 1.0, font.wrap, &icons);
-                (natural, rows)
+            // An unpinned string is as wide as its widest line under any wrap bits: the extent
+            // walk (`0x6bce60`, called at `0x483f1b`) spans every newline. Its height walks the
+            // rows laid out at that width, where an indented continuation line wraps again; the
+            // draw lays them out in the same box (`0x486be4`).
+            let natural = width_of(&lines);
+            let w = if font.wrap.indented && font.wrap.word_wrap {
+                natural.ceil() + 1.0
             } else {
-                let rows = layout_rows(e, r, lines, 0.0, font.wrap, &icons);
-                (width_of(&rows), rows)
-            }
+                0.0
+            };
+            let rows = layout_rows(e, r, lines, w, font.wrap, &icons);
+            (natural, rows)
         }
     };
     // Deviation: one pixel of headroom over the reference's measured width, kept because dropping
