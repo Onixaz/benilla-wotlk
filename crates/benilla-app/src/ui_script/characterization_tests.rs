@@ -7689,10 +7689,11 @@ const FROSTBOLT_1: u32 = 116;
 
 /// The book update (`0x53ca70`) runs where 12340 runs it, each ending in `SPELLS_CHANGED` with the
 /// book rebuilt: our create's init (`0x6e7fdb`); a live learn, its tab flash after it (`0x542cd4`,
-/// `0x542d16`); a supersede, the removal's update then the learn's (`0x5401b8`, `0x542cd4`); a
+/// `0x542d16`); a supersede, the swap's removal's update, the learn's, then our player's removal's
+/// (`0x5401b8`, `0x542cd4`, `0x6e7361` -> `0x5401b8`); a
 /// removal (`0x5401b8`); and our level watch, which re-sorts nothing (`0x6d66fd`). Fireball and
 /// Frostbolt sit on two skill lines, so the learn flashes the second tab. A handler's events fire
-/// once its changes apply, so both of the supersede's read the new rank in the book. A hover of the
+/// once its changes apply, so all three of the supersede's read the new rank in the book. A hover of the
 /// new slot inside the learn's own events shows its whole tooltip: the builder runs at the call.
 #[test]
 fn book_updates_fire_from_their_handlers_in_wire_order() {
@@ -7728,6 +7729,7 @@ fn book_updates_fire_from_their_handlers_in_wire_order() {
             "SPELLS_CHANGED | tabs=2 book1=Fireball book2=Frostbolt tip2=4:Launches a bolt of frost at the enemy, causing 18 to 20 Frost damage and slowing movement speed by 40% for 5 sec.",
             "SPELLS_CHANGED | tabs=2 book1=Fireball book2=Frostbolt tip2=4:Launches a bolt of frost at the enemy, causing 18 to 20 Frost damage and slowing movement speed by 40% for 5 sec.",
             "LEARNED_SPELL_IN_TAB 1 | tabs=2 book1=Fireball book2=Frostbolt tip2=4:Launches a bolt of frost at the enemy, causing 18 to 20 Frost damage and slowing movement speed by 40% for 5 sec.",
+            "SPELLS_CHANGED | tabs=2 book1=Fireball book2=Frostbolt tip2=4:Launches a bolt of frost at the enemy, causing 18 to 20 Frost damage and slowing movement speed by 40% for 5 sec.",
             "SPELLS_CHANGED | tabs=1 book1=Fireball book2=nil tip2=nil",
             "SPELLS_CHANGED | tabs=1 book1=Fireball book2=nil tip2=nil",
         ]
@@ -11615,9 +11617,11 @@ fn the_trade_skill_list_reads_the_line_in_the_order_its_recipes_were_added() {
     );
 }
 
-/// A superseded recipe pair with the list open: the removal (`0x6e7e81`) rebuilds without the old
-/// recipe and before the new one is in the line's array, which only the learn (`0x6e7e92`) appends
-/// (`0x6e7c11`) and rebuilds again (`0x6e7c1a`).
+/// A superseded recipe pair with the list open: the swap's removal updates the book (`0x542eba` ->
+/// `0x5401b8`) and its registrar returns at the recipe line before its own (`0x542692`); our
+/// player's removal (`0x6e7e81`) rebuilds without the old recipe, before the new one is in the
+/// line's array, then its book removal updates the book again (`0x6e7361` -> `0x5401b8`); only the
+/// learn (`0x6e7e92`) appends the new one (`0x6e7c11`) and rebuilds (`0x6e7c1a`).
 #[test]
 fn a_superseded_recipe_leaves_the_list_before_its_successor_joins() {
     use benilla_protocol::field::{FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_UNIT_BYTES_0};
@@ -11665,9 +11669,19 @@ fn a_superseded_recipe_leaves_the_list_before_its_successor_joins() {
         2,
     );
     assert_eq!(
-        pin(&seen, &["TRADE_SKILL_UPDATE"], &["tsnum", "ts2"]),
+        pin(
+            &seen,
+            &[
+                "TRADE_SKILL_UPDATE",
+                "SPELLS_CHANGED",
+                "LEARNED_SPELL_IN_TAB"
+            ],
+            &["tsnum", "ts2"]
+        ),
         vec![
+            "SPELLS_CHANGED | tsnum=2 ts2=Linen Bandage:optimal:0",
             "TRADE_SKILL_UPDATE | tsnum=0 ts2=nil",
+            "SPELLS_CHANGED | tsnum=0 ts2=nil",
             "TRADE_SKILL_UPDATE | tsnum=2 ts2=Heavy Linen Bandage:optimal:0",
         ]
     );

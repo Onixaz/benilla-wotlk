@@ -516,10 +516,25 @@ fn on_spell_superceded(
                 spell: new_spell_id,
                 replaces: Some(old_spell_id),
             }));
-            l.update_book(&flash, true);
-            // Then our player's removal and add (`0x6e7e81`, `0x6e7e92`): a recipe leaves and joins
-            // its line's array, each rebuilding the list whole (`0x6e72e6`, `0x6e7c1a`).
+            // The registrar returns before its book update for a hidden spell or a recipe (`0x54265c`, `0x542692`).
+            let hidden_or_recipe = l
+                .spells
+                .as_deref()
+                .and_then(|s| s.catalog.get(new_spell_id))
+                .is_some_and(|d| {
+                    d.attributes & (ATTR_DO_NOT_DISPLAY | benilla_formats::SPELL_ATTR_IS_TRADESKILL)
+                        != 0
+                });
+            if !hidden_or_recipe {
+                l.update_book(&flash, true);
+            }
+            // Then our player's removal (`0x6e7e81`): a recipe leaves its line's array and the list
+            // rebuilds whole (`0x6e72e6`), then the book removal of the old rank, which the swap
+            // already made, ends in its book update (`0x6e7361` -> `0x5401b8`). Its bar and cursor
+            // legs (`0x6e7367`, `0x6e738d`) are #1351's.
             l.ui.world(move |w| crate::ui_tradeskill::recipe_removed(w, old_spell_id));
+            l.update_book(&LearnedInTab::default(), false);
+            // Then our player's add (`0x6e7e92`): a recipe joins its array and rebuilds (`0x6e7c1a`).
             l.ui.world(move |w| crate::ui_tradeskill::recipe_learned(w, new_spell_id));
         }
     }
