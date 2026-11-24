@@ -66,7 +66,7 @@ pub(crate) use feed::{
 };
 /// The chat windows and the message display's in-call add, for the verbs' live view.
 pub(crate) use frames::{
-    add_chat_line_in_call, add_chat_line_now, add_combat_line_now, kind_of_type, ChatWindows,
+    add_chat_line_in_call, add_chat_line_now, add_combat_line_now, ChatWindows,
 };
 /// The per-character chat cache's restore, called from the world-entry UI load: its two events
 /// must precede the session's first chat line and `PLAYER_LOGIN`.

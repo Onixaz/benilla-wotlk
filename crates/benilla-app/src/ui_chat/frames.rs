@@ -84,7 +84,7 @@ pub(crate) fn add_combat_line_now(world: &mut World, line: super::combat::Pendin
 }
 
 /// A line's chat type as the event kind: 26 a skill line, 27 a loot line, any other a system line.
-pub(crate) fn kind_of_type(chat_type: u8) -> ChatEventKind {
+fn kind_of_type(chat_type: u8) -> ChatEventKind {
     match chat_type {
         26 => ChatEventKind::Skill,
         27 => ChatEventKind::Loot,

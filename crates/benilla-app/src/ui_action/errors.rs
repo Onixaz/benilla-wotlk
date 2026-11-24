@@ -561,6 +561,41 @@ mod shown_tests {
     use benilla_ui::script::UiScript;
     use bevy::prelude::*;
 
+    /// The chat lines added through the lent chat log, by chat type.
+    #[derive(Default)]
+    struct ChatAdds(Vec<(u8, String)>);
+
+    impl benilla_ui::script::LiveState for ChatAdds {
+        fn add_chat_line(
+            &mut self,
+            chat_type: u8,
+            text: &str,
+        ) -> Option<(&'static str, Vec<benilla_ui::script::ScriptValue>)> {
+            self.0.push((chat_type, text.to_string()));
+            None
+        }
+
+        fn unit_flags(&self, _: u64) -> Option<u32> {
+            None
+        }
+
+        fn unit_health(&self, _: u64) -> Option<u32> {
+            None
+        }
+
+        fn active_player(&self) -> Option<u64> {
+            None
+        }
+
+        fn has_control(&self) -> bool {
+            true
+        }
+
+        fn far_sight(&self) -> bool {
+            false
+        }
+    }
+
     /// Through [`super::show_messages`]: a keyed line queues its catalog row; an unkeyed line and
     /// an unknown key queue nothing.
     #[test]
@@ -571,23 +606,29 @@ mod shown_tests {
         let mut state = bevy::ecs::system::SystemState::<MessageSink>::new(&mut world);
         let mut script = UiScript::new().expect("VM");
 
+        // The chat row is added inside the call through the lent chat log (`0x509dd0`).
+        let mut log = ChatAdds::default();
+        let lua = script.lua().clone();
         {
             let mut sink = state.get_mut(&mut world);
-            super::show_messages(
-                &mut script,
-                &mut sink,
-                "test",
-                [
-                    // A voiced refusal, a named cue, a chat row and a silent row.
-                    Shown::keyed("ERR_OUT_OF_MANA", "Not enough mana".into()),
-                    Shown::keyed("ERR_NEWTAXIPATH", "New flight path discovered!".into()),
-                    Shown::keyed("ERR_ALREADY_IN_GROUP_S", "Bob is already in a group".into()),
-                    Shown::keyed("ERR_CANT_STACK", "That item cannot stack".into()),
-                    Shown::unkeyed(MsgKind::Error, "the server said so".into()),
-                    Shown::keyed("ERR_NOT_A_REAL_MESSAGE", "invented".into()),
-                ],
-            );
+            benilla_ui::script::world_loan::lend_live(&lua, &mut log, || {
+                super::show_messages(
+                    &mut script,
+                    &mut sink,
+                    "test",
+                    [
+                        // A voiced refusal, a named cue, a chat row and a silent row.
+                        Shown::keyed("ERR_OUT_OF_MANA", "Not enough mana".into()),
+                        Shown::keyed("ERR_NEWTAXIPATH", "New flight path discovered!".into()),
+                        Shown::keyed("ERR_ALREADY_IN_GROUP_S", "Bob is already in a group".into()),
+                        Shown::keyed("ERR_CANT_STACK", "That item cannot stack".into()),
+                        Shown::unkeyed(MsgKind::Error, "the server said so".into()),
+                        Shown::keyed("ERR_NOT_A_REAL_MESSAGE", "invented".into()),
+                    ],
+                );
+            });
         }
+        assert_eq!(log.0, [(0, "Bob is already in a group".to_string())]);
         state.apply(&mut world);
 
         let queued = world.resource::<MessageSounds>().queued().to_vec();

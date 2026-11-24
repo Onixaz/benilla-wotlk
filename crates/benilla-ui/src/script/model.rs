@@ -663,8 +663,6 @@ pub(crate) struct Model {
     pub(crate) vehicle_requests: Vec<super::vehicle::VehicleRequest>,
     /// `s_vehicleAimNormPower`, 0..1.
     pub(crate) vehicle_aim_power: f32,
-    /// Chat-kind lines [`super::UiScript::show_text`] showed with no chat log lent, their chat type and text, which the app adds to the chat log.
-    pub(crate) chat_lines: Vec<(u8, String)>,
 
     /// `PetAbandon()` and `PetDismiss()` calls, counted apart though both end at one opcode.
     pub(crate) pet_abandons: u32,
@@ -1673,7 +1671,6 @@ impl Model {
             power_displays: Default::default(),
             vehicle_requests: Vec::new(),
             vehicle_aim_power: 0.0,
-            chat_lines: Vec::new(),
             pet_abandons: 0,
             pet_dismisses: 0,
             pet_renames: Vec::new(),
