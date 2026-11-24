@@ -325,7 +325,10 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             .flatten();
             // The clock is read inside the call (`0x5daa17`) and subtracted from the end (`0x5daa24`).
             let now = crate::script::clock::now(lua);
+            // Any answer of the history counts (`0x5daa13`): an on-hold record reads as started now
+            // and 1 ms long (`0x807ad4`, `0x807af2`), so 1 ms is left.
             Ok(match cooldown {
+                Some((_, _, false)) => Value::Number(0.001),
                 Some((start_ms, duration_ms, true)) => {
                     let end = (start_ms + i64::from(duration_ms)) as f64 / 1000.0;
                     if end > now {

@@ -26,6 +26,7 @@ fn recipe(
         min_made: 1,
         max_made: 1,
         cooldown_end: None,
+        cooldown_on_hold: false,
         description: None,
         search_text: vec![name.to_lowercase()],
         reagents: vec![TradeSkillReagent {
@@ -753,6 +754,24 @@ fn the_game_shutdown_keeps_the_skill_ups_flag_and_the_picked_sub_class() {
         2,
         "the slot menu still lists the first sub-class's slots"
     );
+}
+
+/// An on-hold cooldown still answers: the verb tests only the history's answer (`0x5daa13`), which
+/// reads an on-hold record as started now and 1 ms long (`0x807ad4`, `0x807af2`).
+#[test]
+fn an_on_hold_cooldown_answers_one_millisecond_left() {
+    let mut s = UiScript::new().unwrap();
+    let mut st = enchanting();
+    for r in &mut st.recipes {
+        r.cooldown_end = Some(100.0);
+        r.cooldown_on_hold = true;
+    }
+    s.set_trade_skill(Some(st));
+    s.set_now(90.0);
+    let left = s
+        .eval::<Option<f64>>("return GetTradeSkillCooldown(2)")
+        .unwrap();
+    assert_eq!(left, Some(0.001));
 }
 
 /// `GetTradeSkillCooldown` reads the OS clock inside the call (`0x5daa17`) and answers the end

@@ -34,6 +34,7 @@ fn recipe(spell_id: u32, name: &str, group: TradeSkillGroup, slots: u32) -> Trad
         min_made: 1,
         max_made: 1,
         cooldown_end: None,
+        cooldown_on_hold: false,
         description: (!creates_item).then(|| format!("Permanently enchant: {name}.")),
         search_text: vec![name.to_lowercase()],
         reagents: vec![TradeSkillReagent {

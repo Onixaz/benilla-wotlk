@@ -38,6 +38,8 @@ pub struct TradeSkillRecipe {
     pub max_made: u32,
     /// When the cooldown ends on the `GetTime()` clock; `None` when ready.
     pub cooldown_end: Option<f64>,
+    /// The cooldown is parked on hold (enable 0) rather than running.
+    pub cooldown_on_hold: bool,
     pub description: Option<String>,
     /// The case-folded texts the name filter searches.
     pub search_text: Vec<String>,
@@ -211,8 +213,9 @@ impl LiveState for TradeSkillFixture {
         _anchor: std::time::Instant,
         _ui_now: f64,
     ) -> Option<(i64, u32, bool)> {
-        let end = self.recipe(spell_id)?.cooldown_end?;
-        Some(((end * 1000.0) as i64, 0, true))
+        let r = self.recipe(spell_id)?;
+        let end = r.cooldown_end?;
+        Some(((end * 1000.0) as i64, 0, !r.cooldown_on_hold))
     }
 
     fn trade_skill_list_link(&self) -> Option<String> {

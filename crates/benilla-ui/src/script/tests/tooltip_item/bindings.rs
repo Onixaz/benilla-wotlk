@@ -462,6 +462,7 @@ fn ts_recipe(spell_id: u32, name: &str, group: (u32, u32, &str)) -> TradeSkillRe
         min_made: 1,
         max_made: 1,
         cooldown_end: None,
+        cooldown_on_hold: false,
         description: None,
         search_text: Vec::new(),
         reagents: vec![TradeSkillReagent {
