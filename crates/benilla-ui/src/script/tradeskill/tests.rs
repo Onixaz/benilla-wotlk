@@ -712,3 +712,44 @@ fn an_in_place_rebuild_in_flight_keeps_the_sub_classes() {
     assert_eq!(before, after);
     assert_eq!(l.collapse_filter, !1);
 }
+
+/// The game shutdown (`0x5dcaf0`) clears the line, the list and the repeat but writes neither the
+/// skill-ups flag (`0xc235cc`, set only at `0x5dd43d`) nor the picked sub-class (`0xad0e04`): the
+/// next login's list still shows skill-ups only and the slot menu still narrows.
+#[test]
+fn the_game_shutdown_keeps_the_skill_ups_flag_and_the_picked_sub_class() {
+    let mut s = open();
+    s.run(
+        r#"HEADSLOT = "Head" WRISTSLOT = "Wrist" CHESTSLOT = "Chest"
+           NONEQUIPSLOT = "Created Items"
+           TradeSkillOnlyShowSkillUps(1) SetTradeSkillSubClassFilter(1, 1, 1)"#,
+    )
+    .unwrap();
+    s.trade_skill_list_mut(|t| {
+        t.set_recast(7443, 2);
+        t.commit_pending_recast(7443);
+        t.shutdown();
+    });
+    assert_eq!(
+        s.eval::<i64>("return GetNumTradeSkills()").unwrap(),
+        0,
+        "no list"
+    );
+    assert_eq!(
+        s.eval::<i64>("return GetTradeskillRepeatCount()").unwrap(),
+        1,
+        "no repeat"
+    );
+    s.set_trade_skill(Some(enchanting()));
+    let n = names(&mut s);
+    assert!(
+        !n.contains(&"Runed Copper Rod".to_string()),
+        "the gray rod is still filtered: {n:?}"
+    );
+    assert_eq!(
+        s.eval::<i64>("return select('#', GetTradeSkillInvSlots())")
+            .unwrap(),
+        2,
+        "the slot menu still lists the first sub-class's slots"
+    );
+}

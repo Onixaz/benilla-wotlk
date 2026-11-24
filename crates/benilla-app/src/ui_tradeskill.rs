@@ -287,8 +287,8 @@ impl Plugin for UiTradeSkillPlugin {
     }
 }
 
-/// The game shutdown resets every static (`0x5dcaf0`): a logout replaces the VM without running
-/// the old `OnHide`.
+/// The game shutdown's trade-skill reset (`0x5dcaf0`), which keeps the filters it does not write:
+/// a logout replaces the VM without running the old `OnHide`.
 fn on_session_end(In(_): In<SessionEvent>, mut open: ResMut<TradeSkillOpen>) {
     open.list.shutdown();
 }

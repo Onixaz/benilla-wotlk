@@ -186,9 +186,21 @@ impl TradeSkillList {
         self.stop_recast()
     }
 
-    /// The game shutdown (`0x5dcaf0`): every static back to its start.
+    /// The game shutdown (`0x5dcaf0`, writes `0x5dcb5d`-`0x5dcc2a`): no line or opener, no
+    /// entries, sub-classes, name filter or last line, no repeat. The masks, level range, makeable
+    /// and skill-ups flags (`0xc235cc`, written only at `0x5dd43d`), the picked sub-class
+    /// (`0xad0e04`), the selection and the slot bits stay.
     pub fn shutdown(&mut self) {
-        *self = Self::default();
+        self.line = 0;
+        self.opener = 0;
+        self.rows.clear();
+        self.display.clear();
+        self.filtered = 0;
+        self.sub_classes.clear();
+        self.name_filter = None;
+        self.last_line = 0;
+        self.recast.spell = 0;
+        self.recast.pending_spell = 0;
     }
 
     /// The list refresh (`0x5dd5a0`) over the recipes `rows` the app filed, `None` with no line or
