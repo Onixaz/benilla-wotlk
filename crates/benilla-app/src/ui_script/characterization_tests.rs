@@ -65,6 +65,7 @@ local VERBS = {
     { "tsnum", function() return GetNumTradeSkills() end },
     { "ts2", function() local n, t, a = GetTradeSkillInfo(2) return n and (n .. ":" .. t .. ":" .. a) end },
     { "ts1", function() local n, t, a = GetTradeSkillInfo(1) return n and (n .. ":" .. t .. ":" .. (a or "")) end },
+    { "tsr2", function() local n, _, _, h = GetTradeSkillReagentInfo(2, 1) return h and ((n or "nil") .. ":" .. h) end },
     { "rating6", function() return GetCombatRating(6) end },
     { "spdmg", function() return GetSpellBonusDamage(2) end },
     { "mainatk", function() return (UnitAttackBothHands("player")) end },
@@ -11523,6 +11524,162 @@ fn the_trade_skill_window_shows_with_a_product_record_in_flight() {
     assert_eq!(
         pin(&learned, EVENTS, &["tsnum"]),
         vec!["TRADE_SKILL_UPDATE | tsnum=3"]
+    );
+}
+
+/// The item-driven rebuilds in place, each a step of its handler: a reagent's record landing
+/// (`0x5de100` -> `0x5de10b`); our item's post-init (`0x70ade4`); a pack slot's watch on a move
+/// (`0x5d9859`), one per slot; a stack count's (`0x7077db`) after its unlock and before the bar
+/// update and `BAG_UPDATE` (`0x7077e7`, `0x707805`); the skill max watch's (`0x6cddb7`); a
+/// removed recipe's whole rebuild
+/// (`0x6e72e6`). `GetTradeSkillInfo`'s count available and `GetTradeSkillReagentInfo`'s count
+/// held read the bags at each event.
+#[test]
+fn the_trade_skill_list_rebuilds_on_the_reagents_items_and_a_removed_recipe() {
+    use benilla_protocol::field::{
+        FIELD_ITEM_CONTAINED, FIELD_ITEM_OWNER, FIELD_ITEM_STACK_COUNT, FIELD_OBJECT_ENTRY,
+        FIELD_PLAYER_PACK_SLOT_1 as PACK, FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_UNIT_BYTES_0,
+    };
+    const FIRST_AID: u32 = 3273;
+    const LINEN_BANDAGE: u32 = 3275;
+    const HEAVY_LINEN_BANDAGE: u32 = 3276;
+    const LINEN_CLOTH: u32 = 2589;
+    const CLOTH: u64 = 0x4000_0000_0000_0400;
+    let pair = |lo: u32, hi: u32| lo | hi << 16;
+    let bandage = |entry: u32, name: &str| {
+        let mut t = crate::items::test_template(name);
+        t.class = 0;
+        t.subclass = 7;
+        SessionEvent::ItemTemplate {
+            entry,
+            info: Some(Box::new(t)),
+        }
+    };
+    // A human paladin with First Aid (129) at 1 of 75; the products cached, the cloth's record not.
+    let Some(mut rig) = Rig::login_after(
+        vec![
+            bandage(1251, "Linen Bandage"),
+            bandage(2581, "Heavy Linen Bandage"),
+            book(&[FIRST_AID, LINEN_BANDAGE, HEAVY_LINEN_BANDAGE]),
+        ],
+        &[
+            OBJECT_TYPE_PLAYER,
+            (FIELD_UNIT_BYTES_0, 1 | 2 << 8 | 1 << 24),
+            (SKILL, 129),
+            (SKILL + 1, pair(1, 75)),
+        ],
+    ) else {
+        return;
+    };
+    const EVENTS: &[&str] = &["TRADE_SKILL_UPDATE", "BAG_UPDATE"];
+    const VERBS: &[&str] = &["tsnum", "ts2", "tsr2"];
+    rig.take();
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("CastSpellByName('First Aid')")
+    })
+    .expect("a VM")
+    .expect("the cast runs");
+    rig.run(1);
+    let opened = rig.take();
+    assert_eq!(
+        pin(&opened, &["TRADE_SKILL_SHOW"], VERBS),
+        vec!["TRADE_SKILL_SHOW | tsnum=3 ts2=Heavy Linen Bandage:optimal:0 tsr2=nil:0"],
+        "the reagent's record is asked at the call"
+    );
+    let mut cloth = crate::items::test_template("Linen Cloth");
+    cloth.class = 7;
+    cloth.stackable = 20;
+    let landed = rig.packets(
+        vec![SessionEvent::ItemTemplate {
+            entry: LINEN_CLOTH,
+            info: Some(Box::new(cloth)),
+        }],
+        2,
+    );
+    // One callback per call that asked, as the ask is not unique (`0x5de4ea`): the observer's
+    // verb asked at each of the open's six events.
+    assert_eq!(
+        pin(&landed, EVENTS, VERBS),
+        vec![
+            "TRADE_SKILL_UPDATE | tsnum=3 ts2=Heavy Linen Bandage:optimal:0 tsr2=Linen Cloth:0";
+            6
+        ]
+    );
+    let slot = |i: u16, guid: u64| {
+        [
+            (PACK + 2 * i, guid as u32),
+            (PACK + 2 * i + 1, (guid >> 32) as u32),
+        ]
+    };
+    let made = rig.packets(
+        vec![
+            SessionEvent::ItemCreate {
+                guid: CLOTH,
+                container: false,
+                fields: ObjectFields::from_pairs(&[
+                    (FIELD_OBJECT_ENTRY, LINEN_CLOTH),
+                    (FIELD_ITEM_OWNER, ME as u32),
+                    (FIELD_ITEM_OWNER + 1, (ME >> 32) as u32),
+                    (FIELD_ITEM_CONTAINED, ME as u32),
+                    (FIELD_ITEM_CONTAINED + 1, (ME >> 32) as u32),
+                    (FIELD_ITEM_STACK_COUNT, 2),
+                ])
+                .into_created(ObjectType::Item),
+            },
+            self_values(&slot(0, CLOTH)),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&made, &["TRADE_SKILL_UPDATE"], VERBS),
+        vec![
+            "TRADE_SKILL_UPDATE | tsnum=3 ts2=Heavy Linen Bandage:optimal:0 tsr2=Linen Cloth:0",
+            "TRADE_SKILL_UPDATE | tsnum=3 ts2=Heavy Linen Bandage:optimal:1 tsr2=Linen Cloth:2",
+        ],
+        "the post-init's rebuild before the slot holds it, the slot watch's after"
+    );
+    let stacked = rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: CLOTH,
+            fields: ObjectFields::from_pairs(&[(FIELD_ITEM_STACK_COUNT, 5)]),
+        }],
+        2,
+    );
+    assert_eq!(
+        pin(&stacked, EVENTS, VERBS),
+        vec![
+            "TRADE_SKILL_UPDATE | tsnum=3 ts2=Heavy Linen Bandage:optimal:2 tsr2=Linen Cloth:5",
+            "BAG_UPDATE 0 | tsnum=3 ts2=Heavy Linen Bandage:optimal:2 tsr2=Linen Cloth:5",
+            "BAG_UPDATE -2 | tsnum=3 ts2=Heavy Linen Bandage:optimal:2 tsr2=Linen Cloth:5",
+            "BAG_UPDATE -4 | tsnum=3 ts2=Heavy Linen Bandage:optimal:2 tsr2=Linen Cloth:5",
+        ]
+    );
+    let mut words = slot(0, 0).to_vec();
+    words.extend(slot(1, CLOTH));
+    let moved = rig.packets(vec![self_values(&words)], 2);
+    assert_eq!(
+        pin(&moved, &["TRADE_SKILL_UPDATE"], VERBS),
+        vec![
+            "TRADE_SKILL_UPDATE | tsnum=3 ts2=Heavy Linen Bandage:optimal:2 tsr2=Linen Cloth:5",
+            "TRADE_SKILL_UPDATE | tsnum=3 ts2=Heavy Linen Bandage:optimal:2 tsr2=Linen Cloth:5",
+        ],
+        "one rebuild per moved slot"
+    );
+    // The max half's watch rebuilds in place (`0x6cddb7`), reading the new max at the call.
+    let maxed = rig.packets(vec![self_values(&[(SKILL + 1, pair(1, 150))])], 2);
+    assert_eq!(
+        pin(&maxed, &["TRADE_SKILL_UPDATE"], &["tsline"]),
+        vec!["TRADE_SKILL_UPDATE | tsline=First Aid:1:150"]
+    );
+    let removed = rig.packets(
+        vec![SessionEvent::SpellRemoved {
+            spell_id: HEAVY_LINEN_BANDAGE,
+        }],
+        2,
+    );
+    assert_eq!(
+        pin(&removed, &["TRADE_SKILL_UPDATE"], &["tsnum"]),
+        vec!["TRADE_SKILL_UPDATE | tsnum=2"]
     );
 }
 
