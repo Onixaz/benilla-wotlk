@@ -201,7 +201,7 @@ fn the_log_line_is_the_add_s_own_composition() {
         "CHAT_SAY_GET" => Some("%s says: ".to_string()),
         "CHAT_CHANNEL_GET" => Some("%s: ".to_string()),
         "CHAT_MONSTER_SAY_GET" => Some("%s says: ".to_string()),
-        "CHAT_YOU_JOINED_NOTICE" => Some("Joined Channel: [%s]".to_string()),
+        "CHAT_YOU_JOINED_NOTICE" => Some("Joined Channel: %d [%s]".to_string()),
         _ => None,
     };
     let say = ChatEvent {
@@ -251,11 +251,12 @@ fn the_log_line_is_the_add_s_own_composition() {
         kind: Some(ChatEventKind::ChannelNotice),
         text: "YOU_JOINED".into(),
         channel: "1. General".into(),
+        channel_number: 1,
         ..Default::default()
     };
     assert_eq!(
         super::frames::log_line(&joined, ChatEventKind::ChannelNotice, Some(7), &strings).unwrap(),
-        "Joined Channel: [1. General]"
+        "Joined Channel: 1 [1. General]"
     );
 }
 

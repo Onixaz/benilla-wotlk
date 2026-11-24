@@ -1139,6 +1139,31 @@ fn the_invite_notice_reorders_its_two_names() {
     );
 }
 
+/// The log's `CHAT_<TOKEN>_NOTICE` takes the window's fill, arg8 for `%d` and arg4 for `[%s]`:
+/// 12340's log arm (`0x50aa65`-`0x50aaa9`) passes a buffer's address and the sender (DEVIATIONS.md).
+#[test]
+fn the_log_writes_a_join_and_a_leave_notice_as_the_window_fills_them() {
+    let _data = benilla_formats::wow_data_or_skip!();
+    use benilla_protocol::messages::channel_notice as n;
+    for (byte, expected) in [
+        (
+            n::YOU_JOINED,
+            "Joined Channel: |Hchannel:1|h[1. General - Stormwind City]|h",
+        ),
+        (
+            n::YOU_LEFT,
+            "Left Channel: |Hchannel:1|h[1. General - Stormwind City]|h",
+        ),
+    ] {
+        let mut e = ChatEvent::text_only(K::ChannelNotice, String::new());
+        e.channel = "1. General - Stormwind City".into();
+        e.channel_number = 1;
+        e.notice = byte.to_string();
+        let log = with_strings(|get| super::frames::log_line(&e, K::ChannelNotice, Some(7), get));
+        assert_eq!(log.as_deref(), Some(expected), "notice {byte:#04x}");
+    }
+}
+
 /// A new kind breaks [`super::event::event_name`]'s exhaustive match; this makes it join `ALL`.
 #[test]
 fn every_kind_is_in_all() {

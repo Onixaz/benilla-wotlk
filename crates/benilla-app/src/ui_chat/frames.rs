@@ -238,7 +238,7 @@ pub(crate) fn compose(
 
 /// The chat log's line for one added line, composed C-side after its event while logging is on
 /// (`0x50a975`): the channel list's prefix (`0x50a9fc`), a notice's `CHAT_<TOKEN>_NOTICE` filled
-/// with the numbered channel, the sender and the target (`0x50aa65`), the IGNORED, FILTERED and
+/// as the window fills it (`0x50aa65`, see docs/DEVIATIONS.md), the IGNORED, FILTERED and
 /// RESTRICTED texts (`0x50a998`, `0x50a9c1`, `0x50a9e9`), else the speech line (`0x50ab09`): a
 /// `[channel] ` prefix cut at its zone, `CHAT_<TYPE>_GET` filled with the sender, the language
 /// header, then the text with its links collapsed to their bracketed name and `%` doubled outside
@@ -274,9 +274,11 @@ pub(crate) fn log_line(
                 Some(byte) => super::event::notice_token(byte, event.slot_state, event.suspended)?,
                 None => event.text.as_str(),
             };
+            // 12340 fills this with the "%d. %s" buffer's address and the sender (`0x50aa65`),
+            // printing a stack address and an empty bracket; benilla fills it as the window does.
             fill(
                 &get(&format!("CHAT_{token}_NOTICE"))?,
-                &[Arg::S(channel), Arg::S(sender), Arg::S(&event.target)],
+                &notice_args(event, kind, token),
             )
         }
         K::Ignored => fill(&get("CHAT_IGNORED")?, &[Arg::S(sender)]),
@@ -418,10 +420,17 @@ pub(crate) fn compose_notice(
     };
     let template =
         get(&format!("CHAT_{token}_NOTICE_BN")).or_else(|| get(&format!("CHAT_{token}_NOTICE")))?;
+    let line = fill(&template, &notice_args(event, kind, token));
+    (!line.is_empty()).then_some(line)
+}
+
+/// The window's fill for a `CHAT_<TOKEN>_NOTICE` (`ChatFrame.lua:2778-2802`): arg8 and arg4, then
+/// for CHANNEL_NOTICE_USER arg2 and any arg5; INVITE takes arg4 and arg2 alone.
+fn notice_args<'a>(event: &'a ChatEvent, kind: ChatEventKind, token: &str) -> Vec<Arg<'a>> {
     let number = Arg::D(i64::from(event.channel_number));
     let channel = Arg::S(event.channel.as_str());
     let sender = Arg::S(event.sender.as_str());
-    let args = if kind == ChatEventKind::ChannelNotice {
+    if kind == ChatEventKind::ChannelNotice {
         vec![number, channel]
     } else if !event.target.is_empty() {
         vec![number, channel, sender, Arg::S(event.target.as_str())]
@@ -429,7 +438,5 @@ pub(crate) fn compose_notice(
         vec![channel, sender]
     } else {
         vec![number, channel, sender]
-    };
-    let line = fill(&template, &args);
-    (!line.is_empty()).then_some(line)
+    }
 }
