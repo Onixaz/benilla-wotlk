@@ -204,6 +204,9 @@ local VERBS = {
     { "itabs", function() return GetNumTalentTabs(true) end },
     { "iunspent", function() return GetUnspentTalentPoints(true) end },
     { "irank11", function() return (select(5, GetTalentInfo(1, 1, true))) end },
+    { "glyen2", function() return (GetGlyphSocketInfo(2)) end },
+    { "glyspell2", function() return (select(3, GetGlyphSocketInfo(2))) end },
+    { "glyen6", function() return (GetGlyphSocketInfo(6)) end },
     { "boot", function() return GetInstanceBootTimeRemaining() end },
     { "spirittime", function() return GetAreaSpiritHealerTime() end },
     { "gbtabs", function() return GetNumGuildBankTabs() end },
@@ -10779,4 +10782,176 @@ fn the_inspect_talent_packet_raises_inspect_talent_ready_for_the_target_alone() 
         "NOW | irank11=2",
         "another guid's packet keeps the groups"
     );
+}
+
+/// Two minor glyphs off the install, by `GlyphProperties.dbc` id, and the first one's spell.
+fn two_minor_glyphs() -> (u32, u32, u32) {
+    let data = benilla_formats::wow_data().expect("install");
+    let mut chain = benilla_formats::open_chain(&data).unwrap();
+    let glyphs = benilla_formats::load_glyph_catalog(&mut chain).unwrap();
+    let spells = benilla_formats::load_spell_catalog(&mut chain).unwrap();
+    let mut minors: Vec<u32> = glyphs
+        .glyphs()
+        .filter(|g| g.slot_type == 1 && spells.get(g.spell).is_some())
+        .map(|g| g.id)
+        .collect();
+    minors.sort();
+    (minors[0], minors[1], glyphs.glyph(minors[0]).unwrap().spell)
+}
+
+/// A one-group player talent body whose glyph slots are `glyphs`.
+fn glyph_talents(glyphs: [u16; 6]) -> SessionEvent {
+    use benilla_protocol::messages::{TalentGroupInfo, TalentsInfo};
+    SessionEvent::TalentsInfo(TalentsInfo::Player {
+        unspent: 0,
+        active_group: 0,
+        groups: vec![TalentGroupInfo {
+            talents: Vec::new(),
+            glyphs: glyphs.to_vec(),
+        }],
+    })
+}
+
+/// A level 80 character's glyph sockets as AzerothCore opens them: `GlyphSlot.dbc` 21-26 in
+/// `PLAYER_FIELD_GLYPH_SLOTS_1..6`, the first five unlocked.
+fn glyph_login_fields() -> Vec<(u16, u32)> {
+    use benilla_protocol::field::{FIELD_PLAYER_GLYPHS_ENABLED, FIELD_PLAYER_GLYPH_SLOTS_1};
+    let mut fields = vec![OBJECT_TYPE_PLAYER, (FIELD_PLAYER_GLYPHS_ENABLED, 0x1f)];
+    fields.extend((0..6).map(|i| (FIELD_PLAYER_GLYPH_SLOTS_1 + i, 21 + u32::from(i))));
+    fields
+}
+
+const GLYPH_EVENTS: &[&str] = &[
+    "GLYPH_ADDED",
+    "GLYPH_REMOVED",
+    "GLYPH_UPDATED",
+    "GLYPH_ENABLED",
+    "GLYPH_DISABLED",
+    "PLAYER_TALENT_UPDATE",
+];
+
+/// The glyph watch (`0x6daa80`) and the enabled-mask watch (`0x6dab80`) fire from the values
+/// handler at its step, the glyph's rows tested on the old and the new value; `GetGlyphSocketInfo`
+/// (`0x5b7260`) reads the mask from our fields and the glyph from the talent group, which only
+/// `SMSG_TALENTS_INFO` writes, so a listener sees whichever of the two packets came first.
+#[test]
+fn glyph_watches_fire_at_the_values_step_with_the_fields_and_the_group_read_at_the_call() {
+    use benilla_protocol::field::{FIELD_PLAYER_GLYPHS_1, FIELD_PLAYER_GLYPHS_ENABLED};
+    let Some(mut rig) = Rig::login(&glyph_login_fields()) else {
+        return;
+    };
+    let (minor, other, spell) = two_minor_glyphs();
+    let verbs = &["glyen2", "glyspell2", "glyen6"];
+    let lines = |seen: &[Seen]| pin(seen, GLYPH_EVENTS, verbs);
+    assert_eq!(
+        rig.live_now().line(verbs),
+        "NOW | glyen2=nil glyspell2=nil glyen6=nil",
+        "no talent group before the packet: the verbs answer nothing"
+    );
+    rig.packets(vec![glyph_talents([0; 6])], 2);
+    assert_eq!(
+        rig.live_now().line(verbs),
+        "NOW | glyen2=1 glyspell2=nil glyen6=nil"
+    );
+    // The group's glyph lands ahead of the field: the watch reads it.
+    let group_first = rig.packets(
+        vec![
+            glyph_talents([0, minor as u16, 0, 0, 0, 0]),
+            self_values(&[(FIELD_PLAYER_GLYPHS_1 + 1, minor)]),
+        ],
+        2,
+    );
+    assert_eq!(
+        lines(&group_first),
+        vec![
+            format!("PLAYER_TALENT_UPDATE | glyen2=1 glyspell2={spell} glyen6=nil"),
+            format!("GLYPH_ADDED 2 | glyen2=1 glyspell2={spell} glyen6=nil"),
+        ]
+    );
+    // The field empties ahead of the group: the watch still reads the group's glyph.
+    let field_first = rig.packets(
+        vec![
+            self_values(&[(FIELD_PLAYER_GLYPHS_1 + 1, 0)]),
+            glyph_talents([0; 6]),
+        ],
+        2,
+    );
+    assert_eq!(
+        lines(&field_first),
+        vec![
+            format!("GLYPH_REMOVED 2 | glyen2=1 glyspell2={spell} glyen6=nil"),
+            "PLAYER_TALENT_UPDATE | glyen2=1 glyspell2=nil glyen6=nil".to_string(),
+        ]
+    );
+    // A glyph over a glyph is an update; an id with no row is no glyph.
+    let replaced = rig.packets(
+        vec![
+            self_values(&[(FIELD_PLAYER_GLYPHS_1 + 1, minor)]),
+            self_values(&[(FIELD_PLAYER_GLYPHS_1 + 1, other)]),
+            self_values(&[(FIELD_PLAYER_GLYPHS_1 + 2, 0xffff)]),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&replaced, GLYPH_EVENTS, &[]),
+        vec!["GLYPH_ADDED 2", "GLYPH_UPDATED 2"]
+    );
+    // The mask: each bit in socket order, the mask read at the event; then a glyph and the mask in
+    // one update, the watches in field order.
+    let mask = rig.packets(
+        vec![
+            self_values(&[(FIELD_PLAYER_GLYPHS_ENABLED, 0x3f)]),
+            self_values(&[(FIELD_PLAYER_GLYPHS_ENABLED, 0x1e)]),
+            self_values(&[
+                (FIELD_PLAYER_GLYPHS_1 + 1, 0),
+                (FIELD_PLAYER_GLYPHS_ENABLED, 0x3e),
+            ]),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&mask, GLYPH_EVENTS, &["glyen6"]),
+        vec![
+            "GLYPH_ENABLED 6 | glyen6=1",
+            "GLYPH_DISABLED 1 | glyen6=nil",
+            "GLYPH_DISABLED 6 | glyen6=nil",
+            "GLYPH_REMOVED 2 | glyen6=1",
+            "GLYPH_ENABLED 6 | glyen6=1",
+        ]
+    );
+}
+
+/// `RemoveGlyphFromSocket` (`0x5b7660`) sends `CMSG_REMOVE_GLYPH` with the 0-based socket inside the
+/// call (`0x5b76ea`), for a socket our fields name, before the calling chunk goes on; the glyph
+/// stays until the server's field update lands.
+#[test]
+fn remove_glyph_from_socket_sends_inside_the_call() {
+    let Some(mut rig) = Rig::login(&glyph_login_fields()) else {
+        return;
+    };
+    let (minor, _, spell) = two_minor_glyphs();
+    rig.packets(vec![glyph_talents([0, minor as u16, 0, 0, 0, 0])], 2);
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let left = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval::<i64>(
+            "RemoveGlyphFromSocket(2) RemoveGlyphFromSocket(7) RemoveGlyphFromSocket(0) \
+             return (select(3, GetGlyphSocketInfo(2)))",
+        )
+    })
+    .expect("a VM")
+    .unwrap();
+    let sent: Vec<u32> = rx
+        .try_iter()
+        .filter_map(|c| match c {
+            crate::net::ClientCommand::RemoveGlyph { socket } => Some(socket),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        sent,
+        vec![1],
+        "socket 2 alone, sent before the chunk returned"
+    );
+    assert_eq!(left, i64::from(spell), "the glyph waits for the server");
 }

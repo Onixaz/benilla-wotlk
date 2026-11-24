@@ -89,6 +89,8 @@ pub(crate) struct LiveView<'w, 's> {
     talents: Option<Res<'w, crate::ui_talent::Talents>>,
     /// The talent state the talent verbs read and write, and the pet reads they make.
     talent: crate::ui_talent::TalentLive<'w>,
+    /// `GlyphProperties.dbc` and `GlyphSlot.dbc`, the glyph verbs' rows.
+    glyphs: Option<Res<'w, crate::ui_glyph::Glyphs>>,
     /// The bind point and subclass names a spell tooltip reads.
     tooltip: crate::ui_tooltip::spell_view::TooltipTables<'w>,
     /// Our auto-attack lock (`[player+0xa20]`) and auras, the current-spell test's reads.
@@ -2156,6 +2158,38 @@ impl LiveState for LiveView<'_, '_> {
             fields.player_talent_points().unwrap_or(0),
             fields.player_free_professions().unwrap_or(0),
         ))
+    }
+
+    fn glyph(&self, id: u32) -> Option<benilla_ui::script::GlyphView> {
+        let spells = self.spells.as_deref().map(|s| &s.catalog);
+        crate::ui_glyph::glyph_view(&self.glyphs.as_deref()?.catalog, spells, id)
+    }
+
+    fn glyph_slot(&self, id: u32) -> Option<benilla_ui::script::GlyphSlotView> {
+        crate::ui_glyph::slot_view(&self.glyphs.as_deref()?.catalog, id)
+    }
+
+    fn glyph_sockets(&self) -> Option<benilla_ui::script::GlyphSockets> {
+        let entity = self.player_entity(self.active_player()?)?;
+        Some(crate::ui_glyph::sockets_of(
+            &self.stores.get(entity).ok()?.0,
+        ))
+    }
+
+    fn glyph_targeting(&self) -> Option<benilla_ui::script::GlyphTargeting> {
+        crate::ui_glyph::targeting_of(
+            self.cast.targeting.as_deref()?,
+            &self.spells.as_deref()?.catalog,
+        )
+    }
+
+    fn send_remove_glyph(&mut self, socket: u32) {
+        debug!("ui_glyph: remove glyph from socket {socket}");
+        if let Some(commands) = self.commands.as_deref() {
+            let _ = commands
+                .0
+                .send(crate::net::ClientCommand::RemoveGlyph { socket });
+        }
     }
 
     fn send_set_title(&mut self, mask: i32) {
