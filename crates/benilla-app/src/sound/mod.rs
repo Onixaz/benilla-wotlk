@@ -36,6 +36,7 @@ pub(crate) mod mixer;
 mod money;
 mod mount;
 mod net;
+mod object_effect;
 // Crate-visible for the dev stall watchdog, which asks `output::device_open`.
 pub(crate) mod output;
 mod probe;
@@ -484,6 +485,7 @@ impl Plugin for SoundPlugin {
         spell::plugin(app);
         missile::plugin(app);
         creature::plugin(app);
+        object_effect::plugin(app);
         combat::plugin(app);
         footsteps::plugin(app);
         death_thud::plugin(app);
