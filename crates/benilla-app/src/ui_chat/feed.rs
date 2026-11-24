@@ -230,6 +230,12 @@ impl ChatLog {
         self.queue_chat = true;
     }
 
+    /// Whether the add queues every line (`[0xac7a38]`).
+    #[cfg(test)]
+    pub(crate) fn queues(&self) -> bool {
+        self.queue_chat
+    }
+
     /// Drop every held line on disconnect.
     pub(crate) fn clear_session(&mut self) {
         self.pending.clear();

@@ -297,9 +297,11 @@ fn on_random_roll(
     }
 }
 
-/// Clear the chat log's session state when the session ends.
+/// The session's end drops the held lines and leaves the world as the UI's world exit does
+/// (`0x528cc9` -> `0x4fb190`): a same-character reconnect queues every line until its world entry.
 fn on_session_end(In(_): In<SessionEvent>, mut chat_log: ResMut<ChatLog>) {
     chat_log.clear_session();
+    chat_log.leave_world();
 }
 
 /// A spoken line (`SMSG_MESSAGECHAT`): the line the handler adds, `None` for one it drops. System
@@ -765,6 +767,25 @@ mod tests {
             .unwrap();
         crate::ui_script::live::fire_handler_events(&mut world);
         assert!(owner(&mut world), "our row carries the owner bit");
+    }
+
+    /// A dropped session leaves the world (`0x528cc9` -> `0x4fb190`): a line the reconnect brings
+    /// before its world entry is queued, not added.
+    #[test]
+    fn a_dropped_session_queues_the_chat_until_the_next_entry() {
+        let mut world = World::new();
+        world.insert_resource(ChatLog::default());
+        super::super::feed::enter_world(&mut world);
+        assert!(!world.resource::<ChatLog>().queues());
+        let lost = SessionEvent::Disconnected {
+            reason: String::new(),
+            end: benilla_protocol::SessionEnd::Lost,
+        };
+        world.run_system_once_with(on_session_end, lost).unwrap();
+        assert!(
+            world.resource::<ChatLog>().queues(),
+            "the add queues until the reconnect's world entry"
+        );
     }
 
     /// The answer seeds the active player's clock alone (`0x4013c6`-`0x4013f1`): with no active
