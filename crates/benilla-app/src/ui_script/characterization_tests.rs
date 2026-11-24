@@ -11078,6 +11078,85 @@ fn a_server_message_adds_its_line_in_its_handler() {
     assert!(line.contains("charz"), "{line}");
 }
 
+/// The two defense broadcasts (`0x50c3c0`, `0x50c850`) add their `CHAT_MSG_CHANNEL` lines in their
+/// handlers, against the slots and zone as they stand at the packet: a joined LocalDefense hears
+/// each between the answers around it, and a renamed or suspended one (`0x50c45e`, `0x50c8d6`)
+/// hears nothing.
+#[test]
+fn a_defense_broadcast_adds_its_channel_line_in_its_handler() {
+    use crate::ui_chat::edit::{ChannelSlot, ChannelState, SlotState};
+    const ELWYNN: u32 = 12;
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let played = |n| SessionEvent::PlayedTime {
+        total: n,
+        level: n,
+        show: true,
+    };
+    let order = |seen: &[Seen]| -> Vec<String> {
+        seen.iter()
+            .filter(|s| s.event == "TIME_PLAYED_MSG" || s.event == "CHAT_MSG_CHANNEL")
+            .map(|s| s.event.clone())
+            .collect()
+    };
+    let slot = |rig: &mut Rig, state: SlotState| {
+        let w = rig.app.world_mut();
+        w.insert_resource(benilla_world::terrain_stream::CurrentArea(Some(ELWYNN)));
+        let mut channels = w.resource_mut::<ChannelState>();
+        let mut s = ChannelSlot::joined("LocalDefense - Elwynn Forest");
+        s.state = state;
+        channels.joined = vec![Some(s)];
+    };
+    let burst = || {
+        vec![
+            played(1),
+            SessionEvent::DefenseMessage {
+                zone_id: ELWYNN,
+                text: "charz defense".into(),
+            },
+            played(2),
+            SessionEvent::ZoneUnderAttack { area_id: ELWYNN },
+            played(3),
+        ]
+    };
+
+    slot(&mut rig, SlotState::Joined);
+    let seen = rig.packets(burst(), 1);
+    assert_eq!(
+        order(&seen),
+        [
+            "TIME_PLAYED_MSG",
+            "CHAT_MSG_CHANNEL",
+            "TIME_PLAYED_MSG",
+            "CHAT_MSG_CHANNEL",
+            "TIME_PLAYED_MSG"
+        ],
+        "each broadcast's line between the answers around it"
+    );
+    let lines: Vec<String> = seen
+        .iter()
+        .filter(|s| s.event == "CHAT_MSG_CHANNEL")
+        .map(|s| s.args.clone())
+        .collect();
+    assert!(lines[0].contains("charz defense"), "{lines:?}");
+    assert!(lines[1].contains("Elwynn Forest"), "{lines:?}");
+    assert!(
+        lines.iter().all(|l| l.contains("LocalDefense")),
+        "{lines:?}"
+    );
+
+    for state in [SlotState::Renamed, SlotState::Suspended] {
+        slot(&mut rig, state);
+        let seen = rig.packets(burst(), 1);
+        assert_eq!(
+            order(&seen),
+            ["TIME_PLAYED_MSG", "TIME_PLAYED_MSG", "TIME_PLAYED_MSG"],
+            "a {state:?} slot hears neither broadcast"
+        );
+    }
+}
+
 /// A reload keeps the skill list: the UI shutdown leaves it (`0x52b03e` -> `0x528f00`) and only the
 /// game shutdown frees it (`0x5291c2` -> `0x5cd3a0`), so the reloaded files read the folded list at
 /// `VARIABLES_LOADED`, `PLAYER_LOGIN` and `PLAYER_ENTERING_WORLD` (`0x5281a6`), and the world
