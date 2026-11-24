@@ -48,6 +48,9 @@ pub(crate) struct ZoomLimit {
 pub(crate) struct VehicleSeatZoom {
     pub(crate) range: Option<(Option<f32>, Option<f32>)>,
     pub(crate) ask: Option<(u32, VehicleZoom)>,
+    /// The seat turns the vehicle zoom on (`flags & 0x1000000`): the default max is 50 yd, not
+    /// the CVars' limit (`0x6000e0`).
+    pub(crate) vehicle: bool,
 }
 
 /// A zoom a vehicle seat asks of the rig.
@@ -98,9 +101,10 @@ impl ZoomLimit {
     /// The orbit's bounds, a vehicle seat's range over the defaults.
     pub(crate) fn bounds(&self, seat: &VehicleSeatZoom) -> (f32, f32) {
         let (min, max) = seat.range.unwrap_or_default();
+        let default_max = if seat.vehicle { CAM_DIST_MAX } else { self.max };
         (
             min.map_or(CAM_DIST_MIN, |m| m.max(CAM_DIST_MIN)),
-            max.map_or(self.max, |m| m.min(CAM_DIST_MAX)),
+            max.map_or(default_max, |m| m.min(CAM_DIST_MAX)),
         )
     }
 
@@ -130,6 +134,44 @@ fn orbit_limit(distance_max: f32, factor: f32) -> f32 {
     }
 }
 
+/// `cameraSavedVehicleDistance`, the distance the vehicle zoom opens at; below 0 it is 50 yd.
+pub(crate) const CVAR_VEHICLE_DISTANCE: &str = "cameraSavedVehicleDistance";
+/// The shortest glide a vehicle zoom toggle takes, seconds (`0x600590`).
+const VEHICLE_ZOOM_MIN_DURATION: f32 = 0.5;
+
+/// Turn the vehicle zoom on or off (`0x600590`): the camera's settings are saved first, into
+/// the vehicle's row while the zoom is on, then the distance glides over `duration` (at least
+/// 0.5 s) to `cameraSavedVehicleDistance` (50 when below 0) on the enable, or to
+/// `cameraSavedDistance` within 0..50 on the disable, if `animate`. `cam`'s pitch goes into the
+/// save.
+pub(crate) fn set_vehicle_zoom(
+    rig: &mut CameraControl,
+    (enabled, duration, animate): (bool, f32, bool),
+    cam: Option<&super::camera::FlyCam>,
+    cvars: &mut crate::cvars::Cvars,
+) {
+    if rig.vehicle_zoom == enabled {
+        return;
+    }
+    let duration = duration.max(VEHICLE_ZOOM_MIN_DURATION);
+    super::camera_saved::save_settings(rig, cam.map(|c| c.pitch), cvars);
+    let saved = |name: &str| cvars.num(name).filter(|v| v.is_finite());
+    let distance = if enabled {
+        saved(CVAR_VEHICLE_DISTANCE)
+            .filter(|&d| d >= 0.0)
+            .unwrap_or(CAM_DIST_MAX)
+    } else {
+        saved(super::camera_saved::CVAR_DISTANCE)
+            .unwrap_or(CAM_DIST_DEFAULT)
+            .clamp(CAM_DIST_MIN, CAM_DIST_MAX)
+    };
+    if animate && (distance - rig.distance).abs() >= 0.001 {
+        rig.target_distance = distance;
+        rig.zoom_glide = Some((distance - rig.distance).abs() / duration);
+    }
+    rig.vehicle_zoom = enabled;
+}
+
 /// Wheel zoom, run every frame: `CAMERAZOOMIN`/`OUT` move the target, and the distance glides to it
 /// at a constant `cameraDistanceMoveSpeed`, as the reference's does. `scroll` is this frame's net
 /// zoom-in in notches (positive is closer). `max` is [`ZoomLimit::max`], CVar-fed, so it bounds by
@@ -148,11 +190,16 @@ pub(super) fn apply_zoom_scroll(
     };
     if scroll != 0.0 {
         rig.target_distance = (rig.target_distance - scroll * step).max(min).min(max);
+        rig.zoom_glide = None;
     }
     // Re-clamp every frame, so lowering the max-distance slider pulls the camera in.
     rig.target_distance = rig.target_distance.max(min).min(max);
-    let max_step = CAM_MOVE_SPEED * dt;
+    // A vehicle zoom toggle glides at its own speed, which spans its duration, until it lands.
+    let max_step = rig.zoom_glide.unwrap_or(CAM_MOVE_SPEED) * dt;
     rig.distance += (rig.target_distance - rig.distance).clamp(-max_step, max_step);
+    if rig.distance == rig.target_distance {
+        rig.zoom_glide = None;
+    }
 }
 
 #[cfg(test)]
@@ -246,6 +293,75 @@ mod tests {
         rig.target_distance = 0.0;
         apply_zoom_scroll(0.0, 0.1, &mut rig, (CAM_DIST_MIN, 15.0), Some(1.5));
         assert_eq!(rig.target_distance, 1.5);
+    }
+
+    #[test]
+    fn the_vehicle_zoom_glides_out_to_its_saved_distance_and_back() {
+        let mut cvars = crate::cvars::Cvars::default();
+        let mut rig = CameraControl {
+            target_distance: 12.0,
+            distance: 12.0,
+            ..default()
+        };
+        // Unset (-1), the vehicle distance is 50; the 12 yd before is saved for the way back.
+        set_vehicle_zoom(&mut rig, (true, 0.0, true), None, &mut cvars);
+        assert_eq!(
+            cvars.num(super::super::camera_saved::CVAR_DISTANCE),
+            Some(12.0)
+        );
+        assert_eq!(rig.target_distance, CAM_DIST_MAX);
+        // The glide spans the 0.5 s floor, not the wheel's 8.33 yd/s.
+        let seat = VehicleSeatZoom {
+            vehicle: true,
+            ..default()
+        };
+        let bounds = ZoomLimit::default().bounds(&seat);
+        assert_eq!(
+            bounds,
+            (CAM_DIST_MIN, CAM_DIST_MAX),
+            "the max is 50, not 15"
+        );
+        for _ in 0..6 {
+            apply_zoom_scroll(0.0, 0.1, &mut rig, bounds, None);
+        }
+        assert!(
+            (rig.distance - CAM_DIST_MAX).abs() < 1e-3,
+            "{}",
+            rig.distance
+        );
+        assert_eq!(rig.zoom_glide, None, "landed");
+        // The wheel picks 40 in the vehicle; leaving saves it and glides back to the 12.
+        rig.target_distance = 40.0;
+        rig.distance = 40.0;
+        set_vehicle_zoom(&mut rig, (false, 2.0, true), None, &mut cvars);
+        assert_eq!(cvars.num(CVAR_VEHICLE_DISTANCE), Some(40.0));
+        assert_eq!(rig.target_distance, 12.0);
+        assert!(
+            (rig.zoom_glide.unwrap() - 14.0).abs() < 1e-4,
+            "28 yd over 2 s"
+        );
+        rig.distance = 12.0;
+        // The next vehicle opens at the 40 the wheel left.
+        set_vehicle_zoom(&mut rig, (true, 0.0, true), None, &mut cvars);
+        assert_eq!(rig.target_distance, 40.0);
+        // A second enable is no change.
+        rig.target_distance = 30.0;
+        set_vehicle_zoom(&mut rig, (true, 0.0, true), None, &mut cvars);
+        assert_eq!(rig.target_distance, 30.0);
+    }
+
+    #[test]
+    fn an_unanimated_toggle_saves_and_keeps_the_distance() {
+        let mut cvars = crate::cvars::Cvars::default();
+        let mut rig = CameraControl {
+            target_distance: 20.0,
+            distance: 20.0,
+            vehicle_zoom: true,
+            ..default()
+        };
+        set_vehicle_zoom(&mut rig, (false, 0.0, false), None, &mut cvars);
+        assert_eq!(cvars.num(CVAR_VEHICLE_DISTANCE), Some(20.0));
+        assert_eq!((rig.target_distance, rig.vehicle_zoom), (20.0, false));
     }
 
     #[test]
