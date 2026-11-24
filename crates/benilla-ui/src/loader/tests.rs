@@ -14,6 +14,49 @@ mod loader_tests {
         framexml::parse(text).expect("valid FrameXML")
     }
 
+    /// The cooldown's XML load (`0x5eb0c0`): `reverse` and `drawEdge` reach the sweep, through a
+    /// template as `TargetFrame.xml`'s aura cooldowns declare them; a bare one keeps both off.
+    #[test]
+    fn the_cooldown_xml_attributes_set_reverse_and_draw_edge() {
+        let mut s = UiScript::new().unwrap();
+        s.set_screen_size(800.0, 600.0);
+        let doc = parse(
+            r#"<Ui>
+                <Cooldown name="AuraCooldownTemplate" reverse="true" drawEdge="true" virtual="true">
+                    <Size><AbsDimension x="21" y="21"/></Size>
+                </Cooldown>
+                <Frame name="AuraHost">
+                    <Size><AbsDimension x="21" y="21"/></Size>
+                    <Anchors><Anchor point="CENTER"/></Anchors>
+                    <Frames>
+                        <Cooldown name="$parentCooldown" inherits="AuraCooldownTemplate"/>
+                        <Cooldown name="$parentForward" inherits="AuraCooldownTemplate"
+                                  reverse="false"/>
+                        <Cooldown name="$parentBare"/>
+                        <Cooldown name="$parentYes" reverse="Yes" drawEdge="0"/>
+                    </Frames>
+                </Frame>
+            </Ui>"#,
+        );
+        let report = load(&s, &doc, &no_files);
+        assert!(report.errors.is_empty(), "errors: {:?}", report.errors);
+        let flags: (bool, bool, bool, bool, bool, bool, bool, bool) = s
+            .eval(
+                r#"
+            return AuraHostCooldown:GetReverse(), AuraHostCooldown:GetDrawEdge(),
+                   AuraHostForward:GetReverse(), AuraHostForward:GetDrawEdge(),
+                   AuraHostBare:GetReverse(), AuraHostBare:GetDrawEdge(),
+                   AuraHostYes:GetReverse(), AuraHostYes:GetDrawEdge()
+        "#,
+            )
+            .unwrap();
+        assert_eq!(
+            flags,
+            (true, true, false, true, false, false, true, false),
+            "inherited, overridden, bare, first-character parse"
+        );
+    }
+
     /// The minimap's XML load: `minimapArrowModel` goes to engine children 1-8,
     /// `minimapPlayerModel` to child 9 alone (`[Minimap+0x338]`); without the attributes the
     /// engine's default models stand. `Minimap.xml:97` sets both.
