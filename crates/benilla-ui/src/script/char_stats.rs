@@ -312,8 +312,9 @@ pub(super) fn last_slot_id_by_name(model: &Model, name: &str) -> Option<i64> {
         .map(|r| i64::from(r.slot))
 }
 
-/// The slot reader (`0x5e7c00`), 0-based: a number less one, a slot name's row number as it
-/// stands (`0x5e7c9e`), anything else the callers' 0; `None` off the whitelist.
+/// The slot reader (`0x5e7c00`), 0-based: a number less one (`0x5e7c2c`), a slot name's row
+/// number less one too, where 12340 keeps it a slot higher (`0x5e7c9e`, docs/DEVIATIONS.md),
+/// anything else the callers' 0; `None` off the whitelist.
 pub(super) fn inventory_slot_arg(lua: &Lua, v: &Value) -> mlua::Result<Option<i32>> {
     let slot0 = match lua.coerce_number(v.clone())? {
         Some(n) => (n as i64 as i32).wrapping_sub(1),
@@ -322,7 +323,7 @@ pub(super) fn inventory_slot_arg(lua: &Lua, v: &Value) -> mlua::Result<Option<i3
                 let model = lua
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
-                slot_info_by_name(&model, &name.to_string_lossy()).map_or(0, |r| r.slot)
+                slot_info_by_name(&model, &name.to_string_lossy()).map_or(0, |r| r.slot - 1)
             }
             _ => 0,
         },
@@ -2047,10 +2048,10 @@ mod tests {
             .is_err());
     }
 
-    /// The slot reader's name leg uses the row number 0-based, so a name answers for the slot
-    /// after its own; an unknown name and a non-number read as slot 1.
+    /// The slot reader reads a name as its own slot, as its number (12340 reads the slot after,
+    /// `0x5e7c9e`, docs/DEVIATIONS.md); an unknown name and a non-number read as slot 1.
     #[test]
-    fn a_slot_name_reads_as_its_row_number_zero_based() {
+    fn a_slot_name_reads_as_the_slot_it_names() {
         let mut s = UiScript::new().unwrap();
         s.set_paperdoll_item_frame(crate::script::tests::common::paperdoll_rows());
         let mut slots: crate::script::InventorySlots = Default::default();
@@ -2069,8 +2070,9 @@ mod tests {
         };
         assert_eq!(id("1"), Some(100));
         assert_eq!(id("'1'"), Some(100), "a numeric string is a number");
-        assert_eq!(id("'HeadSlot'"), Some(200));
-        assert_eq!(id("'headslot'"), Some(200));
+        assert_eq!(id("'HeadSlot'"), Some(100));
+        assert_eq!(id("'headslot'"), Some(100));
+        assert_eq!(id("2"), Some(200));
         assert_eq!(id("'NoSuchSlot'"), Some(100));
         assert_eq!(id("{}"), Some(100));
         assert_eq!(id("'Bag12'"), None, "row 75 is off the whitelist");
