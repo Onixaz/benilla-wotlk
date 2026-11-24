@@ -154,9 +154,9 @@ impl TradeSkillList {
         self.filtered
     }
 
-    /// The open's line switch (`0x5de1f0`-`0x5de2bb`): a line other than the last resets the name,
-    /// level and makeable filters, the sub-class, slot and fold masks, the slot bits and the
-    /// selection.
+    /// The open's line switch (`0x5de1f7`): a line other than the last resets the name, level and
+    /// makeable filters, the sub-class, slot and fold masks, the slot bits and the selection
+    /// (`0x5de264`-`0x5de2bb`).
     pub fn open_line(&mut self, line: u32, opener: u32) {
         self.line = line;
         self.opener = opener;
