@@ -314,15 +314,17 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetTradeSkillCooldown",
         lua.create_function(|lua, index: Value| {
             let index = index_arg(lua, index, "Usage: GetTradeSkillCooldown(index)")?;
-            let (anchor, now) = {
+            let (anchor, ui_now) = {
                 let model = lua.app_data_ref::<ModelCell>().expect("model");
                 (model.clock_wall.get(), model.now)
             };
             let cooldown = with_live(lua, |l| {
                 let spell = l.trade_skill()?.recipe_at(index)?.spell_id;
-                l.trade_skill_cooldown(spell, anchor, now)
+                l.trade_skill_cooldown(spell, anchor, ui_now)
             })
             .flatten();
+            // The clock is read inside the call (`0x5daa17`) and subtracted from the end (`0x5daa24`).
+            let now = crate::script::clock::now(lua);
             Ok(match cooldown {
                 Some((start_ms, duration_ms, true)) => {
                     let end = (start_ms + i64::from(duration_ms)) as f64 / 1000.0;

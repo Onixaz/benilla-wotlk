@@ -753,3 +753,27 @@ fn the_game_shutdown_keeps_the_skill_ups_flag_and_the_picked_sub_class() {
         "the slot menu still lists the first sub-class's slots"
     );
 }
+
+/// `GetTradeSkillCooldown` reads the OS clock inside the call (`0x5daa17`) and answers the end
+/// less that (`0x5daa24`): with the clock run on past the last tick, the answer plus `GetTime()`
+/// read next in the same handler is the end, not the end plus the time since the tick.
+#[test]
+fn the_cooldown_left_is_read_against_the_clock_at_the_call() {
+    let mut s = UiScript::new().unwrap();
+    let mut st = enchanting();
+    for r in &mut st.recipes {
+        r.cooldown_end = Some(100.0);
+    }
+    s.set_trade_skill(Some(st));
+    s.set_now(90.0);
+    s.set_live_clock(true);
+    std::thread::sleep(std::time::Duration::from_millis(60));
+    let (left, now) = s
+        .eval::<(f64, f64)>("local c = GetTradeSkillCooldown(2) return c, GetTime()")
+        .unwrap();
+    assert!(now >= 90.05, "the clock ran on past the tick: {now}");
+    assert!(
+        (left + now - 100.0).abs() < 0.01,
+        "left {left} at {now} misses the end"
+    );
+}
