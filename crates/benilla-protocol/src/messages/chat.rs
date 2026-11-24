@@ -122,7 +122,8 @@ pub struct ChatMessage {
     pub chat_tag: u8,
     /// The achievement a `$a` names, on the two achievement lanes (0 elsewhere).
     pub achievement: u32,
-    /// The 3.3.5a type byte as it came, 0 on a line built client-side.
+    /// The 3.3.5a type byte the add takes, 0 on a line built client-side: as it came, but a
+    /// foreign whisper is passed on as `WHISPER` (`0x50bfc7`).
     pub wire_type: u8,
     /// The `u32` after the sender guid, which a chat complaint echoes (`0x50dfd0`).
     pub sender_word: u32,
@@ -226,7 +227,7 @@ pub fn wotlk_chat_type_shared(wire: u8) -> Option<u8> {
         w::GUILD => CHAT_MSG_GUILD,
         w::OFFICER => CHAT_MSG_OFFICER,
         w::YELL => CHAT_MSG_YELL,
-        // A foreign whisper fires the plain whisper's event (`0x9fbe80` slots 7 and 8).
+        // The handler passes a foreign whisper on as a whisper (`0x50bfc7`).
         w::WHISPER | w::WHISPER_FOREIGN => CHAT_MSG_WHISPER,
         w::WHISPER_INFORM => CHAT_MSG_WHISPER_INFORM,
         w::EMOTE => CHAT_MSG_EMOTE,
@@ -363,7 +364,12 @@ pub(super) fn read_message_chat_wotlk(r: &mut &[u8], gm: bool) -> io::Result<Opt
         text,
         chat_tag,
         achievement,
-        wire_type,
+        // After its middle is read, a foreign whisper goes on as a whisper (`0x50bfc7`).
+        wire_type: if wire_type == w::WHISPER_FOREIGN {
+            w::WHISPER
+        } else {
+            wire_type
+        },
         sender_word,
     }))
 }
@@ -517,5 +523,28 @@ mod tests {
         assert_eq!(msg.chat_type, CHAT_MSG_BATTLENET);
         assert_eq!(msg.text, "A\tsync");
         assert_eq!(read(0), None);
+    }
+
+    #[test]
+    fn a_foreign_whisper_reaches_the_add_as_a_whisper() {
+        let mut body = vec![wotlk_chat_type::WHISPER_FOREIGN];
+        body.extend_from_slice(&0u32.to_le_bytes());
+        body.extend_from_slice(&0x77u64.to_le_bytes());
+        body.extend_from_slice(&0u32.to_le_bytes());
+        body.extend_from_slice(&4u32.to_le_bytes());
+        body.extend_from_slice(b"Ann ");
+        body.extend_from_slice(&0x55u64.to_le_bytes());
+        body.extend_from_slice(&3u32.to_le_bytes());
+        body.extend_from_slice(b"hi ");
+        body.push(0);
+        let msg = read_message_chat_wotlk(&mut body.as_slice(), false)
+            .expect("parses")
+            .expect("a line");
+        assert_eq!(msg.chat_type, CHAT_MSG_WHISPER);
+        assert_eq!(msg.wire_type, wotlk_chat_type::WHISPER);
+        assert_eq!(msg.sender_guid, 0x77);
+        assert_eq!(msg.sender_name.as_deref(), Some("Ann"));
+        assert_eq!(msg.target_guid, 0x55);
+        assert_eq!(msg.text, "hi");
     }
 }

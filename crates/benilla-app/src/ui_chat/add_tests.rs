@@ -656,8 +656,9 @@ fn the_session_end_zeroes_the_logging_flags_at_a_reconnects_re_entry() {
     );
 }
 
-/// A whisper the spam filter drops is reported with its sender's guid (`0x50a6c4`-`0x50a718`);
-/// another type's drop sends nothing, and a system line is never filtered (`0x50a6a7`).
+/// A whisper the spam filter drops is reported with its sender's guid (`0x50a6c4`-`0x50a718`), a
+/// foreign whisper too, since the add takes it as type 7 (`0x50bfc7`); another type's drop sends
+/// nothing, and a system line is never filtered (`0x50a6a7`).
 #[test]
 fn a_spam_filtered_whisper_is_reported_and_a_system_line_never_filtered() {
     use benilla_protocol::messages::{CHAT_MSG_SAY, CHAT_MSG_SYSTEM, CHAT_MSG_WHISPER};
@@ -670,17 +671,29 @@ fn a_spam_filtered_whisper_is_reported_and_a_system_line_never_filtered() {
         .resource_mut::<crate::names::NameCache>()
         .insert_player(ANN, "Ann".into(), None);
     enter_world(&mut world);
-    add(
-        &mut world,
-        player_line(CHAT_MSG_WHISPER, ANN, 0, "cheap gold"),
-    );
+    let whisper = |sender: u64, name: Option<&str>| {
+        let mut line = player_line(CHAT_MSG_WHISPER, sender, 0, "cheap gold");
+        let ChatLine::Wire { msg } = &mut line else {
+            unreachable!()
+        };
+        msg.wire_type = benilla_protocol::messages::wotlk_chat_type::WHISPER;
+        msg.sender_name = name.map(Into::into);
+        line
+    };
+    add(&mut world, whisper(ANN, None));
+    // A foreign whisper, as the decoder hands it on: its sender's name inline, type 7.
+    add(&mut world, whisper(0x22, Some("Bob-Other")));
+    add(&mut world, whisper(0, None));
     add(&mut world, player_line(CHAT_MSG_SAY, ANN, 0, "cheap gold"));
     add(&mut world, player_line(CHAT_MSG_SYSTEM, 0, 0, "cheap gold"));
     let sent: Vec<_> = sent.try_iter().collect();
     assert!(
         matches!(
             sent.as_slice(),
-            [crate::net::ClientCommand::ChatFiltered { guid: ANN }]
+            [
+                crate::net::ClientCommand::ChatFiltered { guid: ANN },
+                crate::net::ClientCommand::ChatFiltered { guid: 0x22 }
+            ]
         ),
         "{}",
         sent.len()

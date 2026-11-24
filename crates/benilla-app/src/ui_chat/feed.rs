@@ -1231,9 +1231,10 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
             // The text filters, on the garbled buffer as in the reference: spam first, then the
             // mask, so a dropped line consumes no mask indices (the phase is global).
             if text_filter.should_drop(chat_type, msg.chat_tag, langs.is_gm(), &text) {
-                // Nothing shows in its place; a whisper from a set guid is reported to the server
-                // (`0x50a6c4`-`0x50a718`).
-                if chat_type == benilla_protocol::messages::CHAT_MSG_WHISPER && msg.sender_guid != 0
+                // Nothing shows in its place; a line the add took as type 7, a foreign whisper
+                // included (`0x50bfc7`), from a set guid is reported (`0x50a6c4`-`0x50a718`).
+                if wire_type == benilla_protocol::messages::wotlk_chat_type::WHISPER
+                    && msg.sender_guid != 0
                 {
                     let _ = commands.0.send(crate::net::ClientCommand::ChatFiltered {
                         guid: msg.sender_guid,
