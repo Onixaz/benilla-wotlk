@@ -352,6 +352,9 @@ pub struct FontObject {
     /// `SetIndentedWordWrap`, the style bit `0x20000` (`0x4a4a50`), off from the constructor's
     /// `0x212`; an inheriting FontString answers it until it sets its own.
     pub indented_word_wrap: bool,
+    /// The style bit `0x1000`, XML `nonspacewrap` alone (`0x497307`), off from the constructor's
+    /// `0x212`; an inheriting FontString answers it until it sets its own.
+    pub non_space_wrap: bool,
 }
 
 /// One entry of [`UiScript::extract`](super::UiScript::extract)'s render list, in the client's

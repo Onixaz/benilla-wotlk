@@ -1052,6 +1052,8 @@ pub(super) fn font_object_from_element(el: &Element) -> FontObject {
             .and_then(|v| v.trim().parse::<f32>().ok()),
         // `indented`, read by the font's XML load (`0x497070`).
         indented_word_wrap: regions::xml_flag(el, "indented").unwrap_or(false),
+        // `nonspacewrap`, read just before it (`0x497307`).
+        non_space_wrap: regions::xml_flag(el, "nonspacewrap").unwrap_or(false),
     }
 }
 

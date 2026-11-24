@@ -1157,19 +1157,19 @@ impl Model {
 
 impl Model {
     /// A named font object, matched case-insensitively (ASCII) as the client's compare does.
-    /// The wrap style bits FontString data `d` lays out by: its own, the indent falling back to its
-    /// font object's, which a dependent inherits until it sets its own (`0x48e600`).
+    /// The wrap style bits FontString data `d` lays out by: its own, the indent and the non-space
+    /// wrap falling back to its font object's, which a dependent inherits until it sets its own
+    /// (inherit mask `0x2107f`, `0x485317`, merged at `0x487090`).
     pub(crate) fn text_wrap(&self, d: &super::RegionData) -> super::TextWrap {
-        let indented = d.indented_word_wrap.unwrap_or_else(|| {
-            d.font_object
-                .as_deref()
-                .and_then(|n| self.font_object(n))
-                .is_some_and(|fo| fo.indented_word_wrap)
-        });
+        let font = || d.font_object.as_deref().and_then(|n| self.font_object(n));
         super::TextWrap {
             word_wrap: !d.no_word_wrap,
-            non_space_wrap: d.non_space_wrap.unwrap_or(false),
-            indented,
+            non_space_wrap: d
+                .non_space_wrap
+                .unwrap_or_else(|| font().is_some_and(|fo| fo.non_space_wrap)),
+            indented: d
+                .indented_word_wrap
+                .unwrap_or_else(|| font().is_some_and(|fo| fo.indented_word_wrap)),
         }
     }
 

@@ -295,7 +295,8 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     )?;
 
     // SetNonSpaceWrap/CanNonSpaceWrap, FontString only: the getter (`0x48e010`) answers 1 or nil,
-    // nil from the constructor's `0x212` (`0x48530d`), and a call with no argument enables.
+    // nil from the constructor's `0x212` (`0x48530d`) or the font's bit until set, and a call with
+    // no argument enables.
     m.set(
         "SetNonSpaceWrap",
         lua.create_function(|lua, (this, enable): (Table, Value)| {
@@ -320,8 +321,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let on = model
                 .region_data
                 .get(&rh)
-                .and_then(|d| d.non_space_wrap)
-                .unwrap_or(false);
+                .is_some_and(|d| model.text_wrap(d).non_space_wrap);
             Ok(if on { Some(1i64) } else { None })
         })?,
     )?;
