@@ -129,6 +129,9 @@ pub struct ChatMessage {
     pub wire_type: u8,
     /// The `u32` after the sender guid, which a chat complaint echoes (`0x50dfd0`).
     pub sender_word: u32,
+    /// Read off `SMSG_GM_MESSAGECHAT`: the add's arg14 (set at `0x50ebc6`), which keeps the passed
+    /// name when the world-entry walk adds the line again (`0x50af8e`).
+    pub gm: bool,
 }
 
 impl ChatMessage {
@@ -368,6 +371,7 @@ pub(super) fn read_message_chat_wotlk(r: &mut &[u8], gm: bool) -> io::Result<Opt
         achievement,
         wire_type,
         sender_word,
+        gm,
     }))
 }
 
@@ -448,6 +452,29 @@ mod tests {
         assert_eq!(msg.chat_type, CHAT_MSG_PARTY_LEADER);
         assert_eq!(msg.sender_guid, 0x77);
         assert_eq!(msg.text, "pull!");
+        assert!(!msg.gm);
+    }
+
+    /// `SMSG_GM_MESSAGECHAT` carries the sender's name ahead of the receiver and marks the line
+    /// as the add's arg14 (`0x50ebc6`).
+    #[test]
+    fn a_gm_line_reads_its_name_and_is_marked() {
+        let mut body = vec![wotlk_chat_type::SAY];
+        body.extend_from_slice(&0u32.to_le_bytes());
+        body.extend_from_slice(&0x77u64.to_le_bytes());
+        body.extend_from_slice(&0u32.to_le_bytes());
+        body.extend_from_slice(&4u32.to_le_bytes());
+        body.extend_from_slice(b"Ann\0");
+        body.extend_from_slice(&0x77u64.to_le_bytes());
+        body.extend_from_slice(&3u32.to_le_bytes());
+        body.extend_from_slice(b"hi\0");
+        body.push(4);
+        let msg = read_message_chat_wotlk(&mut body.as_slice(), true)
+            .expect("parses")
+            .expect("a lane");
+        assert_eq!(msg.sender_name.as_deref(), Some("Ann"));
+        assert_eq!(msg.text, "hi");
+        assert!(msg.gm);
     }
 
     fn line(wire: u8) -> Vec<u8> {

@@ -423,6 +423,7 @@ pub(crate) fn addon_line(text: &str, chat_type: u8, guid: u64) -> ChatLine {
             achievement: 0,
             wire_type: 0,
             sender_word: 0,
+            gm: false,
         },
     }
 }
@@ -2034,6 +2035,13 @@ pub(crate) fn enter_world(world: &mut World) {
             kept.push((line, false));
             continue;
         }
+        let mut line = line;
+        if let ChatLine::Wire { msg } = &mut line {
+            if !walk_names(world, msg) {
+                kept.push((line, false));
+                continue;
+            }
+        }
         // The walk calls the add again on each queued line (`0x50afdc`).
         if let ChatLine::Wire { msg } = &line {
             note_whisper(world, msg);
@@ -2043,6 +2051,39 @@ pub(crate) fn enter_world(world: &mut World) {
         }
     }
     restore(world, kept);
+}
+
+/// The world-entry walk's names for a queued wire line (`0x50ae80`-`0x50af9a`): a player or pet
+/// sender and receiver are read off their records again, asked with the answer's callback; false on
+/// a miss, which unmarks the line for that callback (`0x50ae86`, `0x50aef9`, `0x50af7e`). The add
+/// then gets the records' bare names, the stored sender name only on a GM line (`0x50af8e`).
+fn walk_names(world: &World, msg: &mut benilla_protocol::messages::ChatMessage) -> bool {
+    let (Some(names), Some(commands)) = (
+        world.get_resource::<NameCache>(),
+        world.get_resource::<NetCommands>(),
+    ) else {
+        return true;
+    };
+    let sender = msg.sender_guid;
+    let sender_record = if is_player_guid(sender) || is_pet_guid(sender) {
+        match names.chat_record(sender, commands) {
+            Some(name) => Some(name.to_string()),
+            None => return false,
+        }
+    } else {
+        None
+    };
+    let target = msg.target_guid;
+    if is_player_guid(target) || is_pet_guid(target) {
+        match names.chat_record(target, commands) {
+            Some(name) => msg.receiver_name = Some(name.to_string()),
+            None => return false,
+        }
+    }
+    if let Some(name) = sender_record.filter(|_| !msg.gm) {
+        msg.sender_name = Some(name);
+    }
+    true
 }
 
 /// The UI's entry, then the queued chat lines added and the held ones retried, as the handlers and

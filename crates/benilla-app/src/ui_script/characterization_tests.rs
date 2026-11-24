@@ -10912,6 +10912,7 @@ fn say_from(guid: u64, text: &str) -> SessionEvent {
         achievement: 0,
         wire_type: 0,
         sender_word: 0,
+        gm: false,
     })
 }
 

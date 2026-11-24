@@ -271,6 +271,7 @@ fn monster_say(target: u64, receiver: Option<&str>, text: &str) -> ChatLine {
             achievement: 0,
             wire_type: 0x0C,
             sender_word: 0,
+            gm: false,
         },
     }
 }
@@ -327,6 +328,7 @@ fn player_line(chat_type: u8, sender: u64, language: u32, text: &str) -> ChatLin
             achievement: 0,
             wire_type: wotlk_type(chat_type),
             sender_word: 0,
+            gm: false,
         },
     }
 }
@@ -821,6 +823,53 @@ fn a_whisper_enters_autocomplete_once_with_the_name_the_add_read() {
     }
     name_landed(&mut world);
     assert_eq!(offered(&world), ["Ann-Icecrown", "Bob", "Cy-Lordaeron"]);
+}
+
+/// The world-entry walk reads a player sender's record again and hands the add its bare name
+/// (`0x50aeab`-`0x50aeff`, `0x50af87` -> `0x50afdc`), whether the line was queued with the
+/// cached full name or marked queued by its answer's callback; only a GM line keeps the name it
+/// came with (`0x50af8e`).
+#[test]
+fn the_world_entry_walk_passes_the_senders_bare_name() {
+    use benilla_protocol::messages::{CHAT_MSG_SAY, CHAT_MSG_WHISPER};
+    const BOB: u64 = 0x22;
+    const CY: u64 = 0x33;
+    let (mut world, sent) = world();
+    hear(&world, &["CHAT_MSG_WHISPER", "CHAT_MSG_SAY"]);
+    {
+        let mut names = world.resource_mut::<crate::names::NameCache>();
+        names.insert_player(ANN, "Ann".into(), None);
+        names.set_player_realm(ANN, "Icecrown".into());
+        names.insert_player(CY, "Cy".into(), None);
+        names.set_player_realm(CY, "Lordaeron".into());
+    }
+    add(&mut world, player_line(CHAT_MSG_WHISPER, CY, 0, "early"));
+    add(&mut world, player_line(CHAT_MSG_SAY, BOB, 0, "late"));
+    let mut gm = player_line(CHAT_MSG_SAY, ANN, 0, "gm");
+    if let ChatLine::Wire { msg } = &mut gm {
+        msg.sender_name = Some("Ann-Icecrown".into());
+        msg.gm = true;
+    }
+    add(&mut world, gm);
+    {
+        let mut names = world.resource_mut::<crate::names::NameCache>();
+        names.insert_player(BOB, "Bob".into(), None);
+        names.set_player_realm(BOB, "Icecrown".into());
+    }
+    // Outside the world the answer marks Bob's line queued (`0x503e78`).
+    name_landed(&mut world);
+    assert!(heard(&world).is_empty());
+    while sent.try_recv().is_ok() {}
+    enter_world(&mut world);
+    assert_eq!(
+        heard(&world),
+        [
+            "CHAT_MSG_WHISPER:early:Cy:",
+            "CHAT_MSG_SAY:late:Bob:",
+            "CHAT_MSG_SAY:gm:Ann-Icecrown:"
+        ]
+    );
+    assert!(sent.try_recv().is_err(), "every record was cached");
 }
 
 const ME: u64 = 0x22;

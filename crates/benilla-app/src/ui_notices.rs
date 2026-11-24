@@ -454,6 +454,7 @@ fn server_first_line(
         // The add takes the line as type `0x30` (`0x50b0cd`).
         wire_type: benilla_protocol::messages::wotlk_chat_type::ACHIEVEMENT,
         sender_word: 0,
+        gm: false,
     })
 }
 
