@@ -41,6 +41,8 @@ pub(crate) struct LiveView<'w, 's> {
     achievements: crate::ui_achievement::AchievementLive<'w>,
     /// `CharTitles.dbc`, the title verbs' rows (`0x719900`).
     char_titles: Option<Res<'w, crate::ui_quest::rewards::QuestRewardTablesRes>>,
+    /// The held objects and gt tables the sheet verbs read (`0x610300`).
+    char_sheet: Option<crate::ui_char::CharLive<'w, 's>>,
     /// The trade's network cells (`0xca0b68`-`0xca0ff8`), the trade verbs' wire reads.
     trade_cells: Option<Res<'w, crate::ui_trade::TradeSession>>,
     item_tables: Option<Res<'w, crate::ui_items::feed::ItemTablesLive>>,
@@ -130,6 +132,8 @@ pub(crate) struct LiveView<'w, 's> {
     /// The player's book, which the book update builds (`0x53ca70`), and the rank chains.
     book: Option<Res<'w, crate::ui_spellbook::SpellBook>>,
     skill_lines: Option<Res<'w, crate::ui_spellbook::SkillLines>>,
+    /// The client's skill list (`0xc22ae8`-`0xc22b18`), which the skill verbs read and write in their call.
+    skills: Option<ResMut<'w, crate::ui_char::SkillInfo>>,
     /// The totem table and the tool search's inputs.
     totems: crate::ui_totem::TotemLive<'w, 's>,
     /// The targeting cursor's unit and range checks, `SpellCanTargetUnit`'s (`0x804190`).
@@ -2199,6 +2203,113 @@ impl LiveState for LiveView<'_, '_> {
                 .0
                 .send(crate::net::ClientCommand::SetTitle { mask_id: mask });
         }
+    }
+
+    fn player_combat_stats(&self) -> Option<benilla_ui::script::UnitCombatStats> {
+        let entity = self.player_entity(self.active_player()?)?;
+        let store = self.stores.get(entity).ok()?;
+        let (sheet, items, commands) = (
+            self.char_sheet.as_ref()?,
+            self.items.as_deref()?,
+            self.commands.as_deref()?,
+        );
+        Some(sheet.combat_stats(
+            store,
+            items,
+            commands,
+            self.classes.as_deref().map(|t| &t.0),
+        ))
+    }
+
+    fn inventory_slot(&self, slot: usize) -> Option<Option<benilla_ui::script::InvSlotView>> {
+        let entity = self.player_entity(self.active_player()?)?;
+        let store = self.stores.get(entity).ok()?;
+        Some(self.char_sheet.as_ref()?.inventory_slot(
+            store,
+            self.items.as_deref()?,
+            self.enchants.as_deref(),
+            self.commands.as_deref()?,
+            self.pending.as_deref()?,
+            self.classes.as_deref().map(|t| &t.0),
+            slot,
+        ))
+    }
+
+    fn bank_bag_slot(&self, i: usize) -> Option<Option<benilla_ui::script::InvSlotView>> {
+        let entity = self.player_entity(self.active_player()?)?;
+        let store = self.stores.get(entity).ok()?;
+        Some(self.char_sheet.as_ref()?.bank_bag_slot(
+            store,
+            self.items.as_deref()?,
+            self.enchants.as_deref(),
+            self.commands.as_deref()?,
+            self.pending.as_deref()?,
+            i,
+        ))
+    }
+
+    fn weapon_enchants(&self) -> Option<[Option<benilla_ui::script::WeaponEnchant>; 2]> {
+        let entity = self.player_entity(self.active_player()?)?;
+        let store = self.stores.get(entity).ok()?;
+        Some(self.char_sheet.as_ref()?.weapon_enchants(store))
+    }
+
+    fn skill_slot(&self, skill_id: u32) -> Option<benilla_ui::script::SkillLive> {
+        let entity = self.player_entity(self.active_player()?)?;
+        let fields = &self.stores.get(entity).ok()?.0;
+        let catalog = self.skill_lines.as_deref().map(|l| &*l.catalog);
+        Some(crate::ui_char::skill_slot(fields, catalog, skill_id))
+    }
+
+    fn skill_link_ranks(&self, skill_id: u32) -> Option<(u32, u32)> {
+        let entity = self.player_entity(self.active_player()?)?;
+        Some(crate::ui_char::link_ranks(
+            &self.stores.get(entity).ok()?.0,
+            skill_id,
+        ))
+    }
+
+    fn skill_list(&self) -> Option<&benilla_ui::script::SkillList> {
+        self.skills.as_deref().map(|l| &l.0)
+    }
+
+    fn skill_list_mut(&mut self) -> Option<&mut benilla_ui::script::SkillList> {
+        self.skills.as_deref_mut().map(|l| &mut l.0)
+    }
+
+    fn skill_points(&self) -> Option<u32> {
+        let entity = self.player_entity(self.active_player()?)?;
+        Some(
+            self.stores
+                .get(entity)
+                .ok()?
+                .0
+                .player_free_professions()
+                .unwrap_or(0),
+        )
+    }
+
+    fn send_unlearn_skill(&mut self, skill_id: u32) {
+        debug!("ui_char: abandon skill line {skill_id}");
+        if let Some(commands) = self.commands.as_deref() {
+            let _ = commands
+                .0
+                .send(crate::net::ClientCommand::UnlearnSkill { skill_id });
+        }
+    }
+
+    fn send_skill_request(&mut self, request: benilla_ui::script::SkillRequest) {
+        let Some(commands) = self.commands.as_deref() else {
+            return;
+        };
+        let _ = commands.0.send(match request {
+            benilla_ui::script::SkillRequest::BuyRanks(lines) => {
+                crate::net::ClientCommand::SkillBuyRank { lines }
+            }
+            benilla_ui::script::SkillRequest::BuyTier(line) => {
+                crate::net::ClientCommand::SkillBuyStep { line }
+            }
+        });
     }
 
     fn mail_inbox_counts(&self) -> Option<(usize, u32)> {

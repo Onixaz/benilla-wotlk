@@ -105,11 +105,11 @@ pub trait SpellInfoSource {
     }
 
     /// `GetSpellLink`'s reads (`0x5408e0`): the name, and the `|Htrade:` link of a linkable
-    /// trade-skill opener; `skill` answers a line's rank and max. `None` for a row with no link.
+    /// trade-skill opener; `skill` answers a line's rank and max, `None` with no active player. `None` for a row with no link.
     fn spell_link(
         &self,
         _spell_id: u32,
-        _skill: &dyn Fn(u32) -> (u32, u32),
+        _skill: &dyn Fn(u32) -> Option<(u32, u32)>,
     ) -> Option<(String, Option<String>)> {
         None
     }
@@ -316,19 +316,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some((spell_id, _)) = spell else {
                 return Ok(MultiValue::new());
             };
-            let skills = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data")
-                .skills
-                .entries
-                .clone();
-            let skill = |line: u32| {
-                skills
-                    .iter()
-                    .find(|e| e.skill_id == line)
-                    .map_or((0, 0), |e| (e.value, e.max))
+            // The trade link's ranks read the active player at the call (`0x5db120`-`0x5db134`); with no view lent there is none, and no trade link (`0x5db08f`).
+            let mut link = None;
+            super::read_live(|v| {
+                let ranks = |line: u32| v.skill_link_ranks(line);
+                v.with_spell_source(&mut |s| link = Some(s.spell_link(spell_id, &ranks)));
+            });
+            let link = match link {
+                Some(link) => link,
+                None => with_spell_source(lua, |s| s.spell_link(spell_id, &|_| None)).flatten(),
             };
-            let link = with_spell_source(lua, |s| s.spell_link(spell_id, &skill)).flatten();
             let Some((name, trade)) = link else {
                 return Ok(MultiValue::from_vec(vec![Value::Nil, Value::Nil]));
             };

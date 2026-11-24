@@ -76,10 +76,10 @@ pub(super) fn bound_trade_left(model: &Model, item: u64) -> Option<i64> {
 }
 
 /// The item `(bag, slot[, isEquipped])` names: with `isEquipped`, `slot` is an inventory slot.
-fn held_at<'a>(model: &'a Model, bag: i64, slot: u32, equipped: bool) -> Option<Held<'a>> {
+fn held_at(model: &Model, bag: i64, slot: u32, equipped: bool) -> Option<Held> {
     if equipped {
-        let s = model.inventory_slots.get(slot as usize)?.as_ref()?;
-        return Some(Held::Worn(slot, s));
+        let s = model.worn_slot(slot as usize)?;
+        return Some(Held::Worn(slot, Box::new(s)));
     }
     let s = super::container::index_slot(model, bag, slot)?;
     Some(Held::Bag(bag, slot, Box::new(s)))
@@ -87,7 +87,7 @@ fn held_at<'a>(model: &'a Model, bag: i64, slot: u32, equipped: bool) -> Option<
 
 /// The record a purchase verb reads: present, enchant-free and in its window, on an item no open
 /// loot window takes from (`0x5d8d80`).
-fn open_record(model: &Model, held: &Held<'_>) -> Option<(RefundView, i64)> {
+fn open_record(model: &Model, held: &Held) -> Option<(RefundView, i64)> {
     if socket::has_enchantments(held) || held.guid() == super::loot::source(model) {
         return None;
     }

@@ -10,7 +10,7 @@ use crate::script::socket::{find, Held, MAX_SOCKETS};
 use crate::script::tooltip::{clear_content, fire_cleared, show_or_hide_empty};
 
 /// A held item's instance block, as `SetBagItem` and `SetInventoryItem` build theirs.
-fn instance_of(held: &Held<'_>) -> (ItemInstance, u32) {
+fn instance_of(held: &Held) -> (ItemInstance, u32) {
     match held {
         Held::Bag(_, _, s) => (
             ItemInstance {
@@ -80,7 +80,7 @@ fn render(
 }
 
 /// An item object's money block: the stack, no repair, worn below inventory slot 23.
-fn sell_of(held: &Held<'_>, stack: u32) -> Sell {
+fn sell_of(held: &Held, stack: u32) -> Sell {
     Sell::Object {
         stack,
         repair_cost: 0,

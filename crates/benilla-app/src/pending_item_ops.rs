@@ -6,8 +6,6 @@ use bevy::prelude::Resource;
 #[derive(Clone, Debug, Default, Resource)]
 pub(crate) struct PendingItemOps {
     locked: Vec<u64>,
-    /// Steps on every change, so a feed notices a lock clearing the frame the set empties.
-    epoch: u64,
 }
 
 impl PendingItemOps {
@@ -17,7 +15,6 @@ impl PendingItemOps {
             return false;
         }
         self.locked.push(guid);
-        self.epoch += 1;
         true
     }
 
@@ -27,7 +24,6 @@ impl PendingItemOps {
             return false;
         };
         self.locked.swap_remove(at);
-        self.epoch += 1;
         true
     }
 
@@ -36,26 +32,22 @@ impl PendingItemOps {
         guid != 0 && self.locked.contains(&guid)
     }
 
+    /// Whether no item is locked.
+    #[cfg(test)]
     pub(crate) fn is_empty(&self) -> bool {
         self.locked.is_empty()
-    }
-
-    pub(crate) fn epoch(&self) -> u64 {
-        self.epoch
     }
 
     /// The item's destroy: its lock goes with the object, no event.
     pub(crate) fn forget(&mut self, guid: u64) {
         if let Some(at) = self.locked.iter().position(|&g| g == guid) {
             self.locked.swap_remove(at);
-            self.epoch += 1;
         }
     }
 
     /// The session end: the item objects, and their locks, do not outlive it.
     pub(crate) fn clear_session(&mut self) {
         self.locked.clear();
-        self.epoch += 1;
     }
 }
 
@@ -71,9 +63,7 @@ mod tests {
         assert!(!p.lock(100), "already locked: no second event");
         assert!(p.is_locked(100) && !p.is_locked(200));
         assert!(!p.unlock(200), "an unlocked item fires nothing");
-        let epoch = p.epoch();
         assert!(p.unlock(100));
-        assert!(p.epoch() > epoch, "the feed's gate sees the set move");
         assert!(!p.unlock(100) && p.is_empty());
     }
 

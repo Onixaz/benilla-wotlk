@@ -573,6 +573,8 @@ pub enum ItemRecordWait {
     Swap(super::container::ContainerMove),
     /// A trade slot's read, one per `GetTradeTargetItemInfo` or `GetTradePlayerItemInfo` miss (`0x587ce4`, `0x587fe0`).
     Trade,
+    /// The ammo slot's texture or quality read, one per miss (`0x5e9c69`, `0x5ea0ca`).
+    Inventory,
 }
 
 impl ItemRecordWait {
@@ -612,6 +614,11 @@ impl super::UiScript {
             ItemRecordWait::QuestItem if landed => self.fire_event("QUEST_ITEM_UPDATE", vec![]),
             // `0x586080`: a found record signals `TRADE_UPDATE`.
             ItemRecordWait::Trade if landed => self.fire_event("TRADE_UPDATE", vec![]),
+            // `0x5e7660`: a found record fires `UNIT_INVENTORY_CHANGED` with `"player"` (`0x5e7678`).
+            ItemRecordWait::Inventory if landed => self.fire_event(
+                "UNIT_INVENTORY_CHANGED",
+                vec![super::ScriptValue::Str("player".into())],
+            ),
             ItemRecordWait::QuestTooltip(h) if landed => self.quest_tooltip_callback(h),
             ItemRecordWait::Swap(mv) if landed => self.swap_record_landed(mv),
             ItemRecordWait::AutoEquip if landed => {

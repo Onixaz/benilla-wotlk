@@ -57,6 +57,22 @@ local VERBS = {
     { "known1", function() return IsTitleKnown(1) end },
     { "known70", function() return IsTitleKnown(70) end },
     { "known40", function() return IsTitleKnown(40) end },
+    { "skills", function() return GetNumSkillLines() end },
+    { "skill2", function() return (select(4, GetSkillLineInfo(2))) end },
+    { "tailor", function() local _, t = GetSpellLink(3908) return t and t:match("Htrade:%d+:(%d+:%d+)") end },
+    { "alch", function() local _, t = GetSpellLink(2259) return t and t:match("Htrade:%d+:(%d+:%d+)") end },
+    { "rating6", function() return GetCombatRating(6) end },
+    { "spdmg", function() return GetSpellBonusDamage(2) end },
+    { "mainatk", function() return (UnitAttackBothHands("player")) end },
+    { "offatk", function() return (select(3, UnitAttackBothHands("player"))) end },
+    { "wand", function() return HasWandEquipped() end },
+    { "regen", function() return math.floor(GetManaRegen()) end },
+    { "str", function() return (UnitStat("player", 1)) end },
+    { "ap", function() return (UnitAttackPower("player")) end },
+    { "link16", function() return GetInventoryItemLink("player", 16) ~= nil end },
+    { "dur16", function() local c, m = GetInventoryItemDurability(16) return c and (c .. "/" .. m) end },
+    { "ammo", function() return GetInventoryItemQuality("player", 0) ~= nil end },
+    { "skillpts", function() return GetAdjustedSkillPoints() end },
     { "titlename", function() return GetTitleName(1) end },
     { "rep5", function() return (GetFactionInfo(5)) end },
     { "control", function() return HasFullControl() end },
@@ -9930,6 +9946,630 @@ fn a_mailbox_fires_from_its_handlers_with_the_inbox_read_at_the_call() {
     );
 }
 
+/// The character sheet's watches (`0x6e5180`): a skill value fires the three stat events, rebuilds the list and fires `SKILL_LINES_CHANGED` (`0x6da509`, `0x6da531`); a bonus word's two halves run permanent then temporary, in registration order (`0x6e546a`, `0x6e548c`); a rating fires `COMBAT_RATING_UPDATE` then the rebuild (`0x6cddf0`); the damage mods `PLAYER_DAMAGE_DONE_MODS` (`0x6cddd0`); each verb reads the fields at the call, so a packet behind in the same frame is not yet seen.
+#[test]
+fn sheet_watches_fire_in_the_values_handler_with_the_fields_read_at_the_call() {
+    use benilla_protocol::field::{
+        FIELD_PLAYER_COMBAT_RATING_1, FIELD_PLAYER_MOD_DAMAGE_DONE_POS,
+        FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_UNIT_BYTES_0,
+    };
+    let pair = |lo: u32, hi: u32| lo | hi << 16;
+    // A human warrior with Swords (43) at 100 of 400.
+    let Some(mut rig) = Rig::login(&[
+        OBJECT_TYPE_PLAYER,
+        (FIELD_UNIT_BYTES_0, 1 | 1 << 8 | 1 << 24),
+        (SKILL, 43),
+        (SKILL + 1, pair(100, 400)),
+    ]) else {
+        return;
+    };
+    const EVENTS: &[&str] = &[
+        "UNIT_ATTACK",
+        "UNIT_DEFENSE",
+        "UNIT_RANGED_ATTACK_POWER",
+        "SKILL_LINES_CHANGED",
+        "COMBAT_RATING_UPDATE",
+        "PLAYER_DAMAGE_DONE_MODS",
+    ];
+    const VERBS: &[&str] = &["skills", "skill2", "rating6", "spdmg"];
+    assert_eq!(
+        rig.live_now().line(VERBS),
+        "NOW | skills=2 skill2=100 rating6=0 spdmg=0",
+        "the world entry's rebuild listed the line (`0x528226`)"
+    );
+    let value = rig.packets(vec![self_values(&[(SKILL + 1, pair(101, 400))])], 2);
+    assert_eq!(
+        pin(&value, EVENTS, VERBS),
+        vec![
+            "UNIT_ATTACK player | skills=2 skill2=101 rating6=0 spdmg=0",
+            "UNIT_DEFENSE player | skills=2 skill2=101 rating6=0 spdmg=0",
+            "UNIT_RANGED_ATTACK_POWER player | skills=2 skill2=101 rating6=0 spdmg=0",
+            "SKILL_LINES_CHANGED | skills=2 skill2=101 rating6=0 spdmg=0",
+        ]
+    );
+    // The max half alone: the rebuild, no stat event (`0x6cddb0`).
+    let max = rig.packets(vec![self_values(&[(SKILL + 1, pair(101, 405))])], 2);
+    assert_eq!(
+        pin(&max, EVENTS, &["skill2"]),
+        vec!["SKILL_LINES_CHANGED | skill2=101"]
+    );
+    // The temporary bonus: the three events, then the rebuild (`0x6d1bc0`).
+    let temp = rig.packets(vec![self_values(&[(SKILL + 2, pair(5, 0))])], 2);
+    assert_eq!(
+        pin(&temp, EVENTS, &[]),
+        vec![
+            "UNIT_ATTACK player",
+            "UNIT_DEFENSE player",
+            "UNIT_RANGED_ATTACK_POWER player",
+            "SKILL_LINES_CHANGED",
+        ]
+    );
+    // Both halves of the third word in one packet: the watches run in registration order, the
+    // permanent half's (`0x6e546a` -> `0x6cddb0`, the rebuild) before the temporary half's
+    // (`0x6e548c` -> `0x6d1bc0`), each reading the written word.
+    let both = rig.packets(vec![self_values(&[(SKILL + 2, pair(6, 3))])], 2);
+    assert_eq!(
+        pin(&both, EVENTS, &["skill2"]),
+        vec![
+            "SKILL_LINES_CHANGED | skill2=104",
+            "UNIT_ATTACK player | skill2=104",
+            "UNIT_DEFENSE player | skill2=104",
+            "UNIT_RANGED_ATTACK_POWER player | skill2=104",
+            "SKILL_LINES_CHANGED | skill2=104",
+        ]
+    );
+    let cleared = rig.packets(vec![self_values(&[(SKILL + 2, 0)])], 2);
+    assert_eq!(
+        pin(&cleared, EVENTS, &["skill2"]),
+        vec![
+            "SKILL_LINES_CHANGED | skill2=101",
+            "UNIT_ATTACK player | skill2=101",
+            "UNIT_DEFENSE player | skill2=101",
+            "UNIT_RANGED_ATTACK_POWER player | skill2=101",
+            "SKILL_LINES_CHANGED | skill2=101",
+        ]
+    );
+    // A rating ahead of a skill value in one frame reads the old value; behind it, the new.
+    let rating_first = rig.packets(
+        vec![
+            self_values(&[(FIELD_PLAYER_COMBAT_RATING_1 + 5, 20)]),
+            self_values(&[(SKILL + 1, pair(102, 405))]),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&rating_first, &["COMBAT_RATING_UPDATE"], VERBS),
+        vec!["COMBAT_RATING_UPDATE | skills=2 skill2=101 rating6=20 spdmg=0"]
+    );
+    let value_first = rig.packets(
+        vec![
+            self_values(&[(SKILL + 1, pair(103, 405))]),
+            self_values(&[(FIELD_PLAYER_COMBAT_RATING_1 + 5, 30)]),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&value_first, &["COMBAT_RATING_UPDATE"], VERBS),
+        vec!["COMBAT_RATING_UPDATE | skills=2 skill2=103 rating6=30 spdmg=0"]
+    );
+    // Two moved words of one range fire once; two ranges once each.
+    let mods = rig.packets(
+        vec![self_values(&[
+            (FIELD_PLAYER_MOD_DAMAGE_DONE_POS + 1, 50),
+            (FIELD_PLAYER_MOD_DAMAGE_DONE_POS + 2, 50),
+            (FIELD_PLAYER_MOD_DAMAGE_DONE_POS + 7, 0xffff_fff6),
+        ])],
+        2,
+    );
+    assert_eq!(
+        pin(&mods, EVENTS, &["spdmg"]),
+        vec![
+            "PLAYER_DAMAGE_DONE_MODS player | spdmg=50",
+            "PLAYER_DAMAGE_DONE_MODS player | spdmg=50",
+        ]
+    );
+}
+
+/// The value watch compares and announces the skill value reader's figure (`0x6da4fa`, `0x6da5cd` -> `0x51a250`): the value half plus the permanent bonus when positive, against the old raw half. With a +15 bonus a move from 100 to 101 announces 116 after the rebuild; a move from 100 to 85 reads 100, the old raw value, and fires nothing.
+#[test]
+fn skill_value_watch_reads_the_permanent_bonus() {
+    use benilla_protocol::field::{FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_UNIT_BYTES_0};
+    let pair = |lo: u32, hi: u32| lo | hi << 16;
+    // A human warrior with Swords (43) at 100 of 400 and a +15 permanent bonus.
+    let Some(mut rig) = Rig::login(&[
+        OBJECT_TYPE_PLAYER,
+        (FIELD_UNIT_BYTES_0, 1 | 1 << 8 | 1 << 24),
+        (SKILL, 43),
+        (SKILL + 1, pair(100, 400)),
+        (SKILL + 2, pair(0, 15)),
+    ]) else {
+        return;
+    };
+    const EVENTS: &[&str] = &["UNIT_ATTACK", "SKILL_LINES_CHANGED", "CHAT_MSG_SKILL"];
+    let up = rig.packets(vec![self_values(&[(SKILL + 1, pair(101, 400))])], 2);
+    assert_eq!(
+        pin(&up, EVENTS, &["skill2"]),
+        vec![
+            "UNIT_ATTACK player | skill2=116",
+            "SKILL_LINES_CHANGED | skill2=116",
+            "CHAT_MSG_SKILL Your skill in Swords has increased to 116.      0 0  0 1  0 | skill2=116",
+        ],
+        "the rank reads the bonus too (`0x5cdff4`)"
+    );
+    // Back to 100, then down to 85: the read 85 + 15 equals the old raw 100, so the watch stops at `0x6da501`.
+    let _ = rig.packets(vec![self_values(&[(SKILL + 1, pair(100, 400))])], 2);
+    let down = rig.packets(vec![self_values(&[(SKILL + 1, pair(85, 400))])], 2);
+    assert!(pin(&down, EVENTS, &[]).is_empty(), "{down:?}");
+    assert_eq!(rig.live_now().line(&["skill2"]), "NOW | skill2=100");
+}
+
+/// Each visible weapon's entry watch (`0x6e1e10`) in field order, after the unit block's power regen watch (`0x6e57f0` -> `0x6cddd0`): the main hand fires `UNIT_ATTACK` then `SPELLS_CHANGED` (`0x6e1f2c`, `0x6e1f37`), the off hand `UNIT_ATTACK` alone (`0x6e1f21`), the ranged slot `UNIT_RANGED_ATTACK_POWER` then `SPELLS_CHANGED` (`0x6e1f08`, `0x6e1f13`); the regen range fires `PLAYER_DAMAGE_DONE_MODS` once however many words move. Each verb reads the fields at the call, so a sheet packet behind in the same frame is not yet seen and one ahead is.
+#[test]
+fn weapon_and_regen_watches_fire_in_the_values_handler_with_the_fields_read_at_the_call() {
+    use benilla_protocol::field::{
+        player_visible_item_entry_field as visible, FIELD_ITEM_CONTAINED, FIELD_ITEM_OWNER,
+        FIELD_ITEM_STACK_COUNT, FIELD_OBJECT_ENTRY, FIELD_PLAYER_SKILL_INFO_1_1 as SKILL,
+        FIELD_UNIT_BYTES_0, FIELD_UNIT_POWER_REGEN_FLAT_MODIFIER as REGEN,
+    };
+    const SWORD: u64 = 0x4000_0000_0000_0700;
+    const DAGGER: u64 = 0x4000_0000_0000_0701;
+    const WAND: u64 = 0x4000_0000_0000_0702;
+    // Item class 2 (weapon), subclasses sword 7, dagger 15, wand 19.
+    const WEAPONS: [(u64, u32, u32); 3] = [(SWORD, 25, 7), (DAGGER, 2092, 15), (WAND, 5240, 19)];
+    let pair = |lo: u32, hi: u32| lo | hi << 16;
+    // A human warrior on mana with Swords (43) at 100 and Daggers (173) at 50, of 400.
+    let Some(mut rig) = Rig::login(&[
+        OBJECT_TYPE_PLAYER,
+        (FIELD_UNIT_BYTES_0, 1 | 1 << 8),
+        (SKILL, 43),
+        (SKILL + 1, pair(100, 400)),
+        (SKILL + 3, 173),
+        (SKILL + 4, pair(50, 400)),
+    ]) else {
+        return;
+    };
+    rig.packets(
+        WEAPONS
+            .iter()
+            .map(|&(_, entry, subclass)| {
+                let mut info = crate::items::test_template("Weapon");
+                info.class = 2;
+                info.subclass = subclass;
+                SessionEvent::ItemTemplate {
+                    entry,
+                    info: Some(Box::new(info)),
+                }
+            })
+            .collect(),
+        2,
+    );
+    let guid_pair =
+        |field: u16, guid: u64| [(field, guid as u32), (field + 1, (guid >> 32) as u32)];
+    rig.packets(
+        WEAPONS
+            .iter()
+            .map(|&(guid, entry, _)| {
+                let mut pairs = vec![(FIELD_OBJECT_ENTRY, entry), (FIELD_ITEM_STACK_COUNT, 1)];
+                pairs.extend(guid_pair(FIELD_ITEM_OWNER, ME));
+                pairs.extend(guid_pair(FIELD_ITEM_CONTAINED, ME));
+                SessionEvent::ItemCreate {
+                    guid,
+                    container: false,
+                    fields: ObjectFields::from_pairs(&pairs).into_created(ObjectType::Item),
+                }
+            })
+            .collect(),
+        2,
+    );
+    // A weapon into (or out of) its slot: the slot's guid and its visible entry, as the server sends them.
+    let wear = |slot: u8, weapon: Option<(u64, u32)>| {
+        let (guid, entry) = weapon.unwrap_or((0, 0));
+        let mut words = guid_pair(FIELD_PLAYER_INV_SLOT_HEAD + 2 * u16::from(slot), guid).to_vec();
+        words.push((visible(slot), entry));
+        self_values(&words)
+    };
+    let skill = |value: u32| self_values(&[(SKILL + 1, pair(value, 400))]);
+    let regen = |value: f32| self_values(&[(REGEN, value.to_bits())]);
+    const EVENTS: &[&str] = &[
+        "UNIT_ATTACK",
+        "UNIT_RANGED_ATTACK_POWER",
+        "SPELLS_CHANGED",
+        "SKILL_LINES_CHANGED",
+        "PLAYER_DAMAGE_DONE_MODS",
+    ];
+    const VERBS: &[&str] = &["mainatk", "offatk", "wand", "regen"];
+    assert_eq!(
+        rig.live_now().line(VERBS),
+        "NOW | mainatk=0 offatk=0 wand=nil regen=0",
+        "empty hands read Unarmed, which the line list does not hold"
+    );
+    // The main hand ahead of a Swords value in one frame: its watch reads the old value.
+    let main_first = rig.packets(vec![wear(15, Some((SWORD, 25))), skill(101)], 2);
+    assert_eq!(
+        pin(&main_first, EVENTS, VERBS),
+        vec![
+            "UNIT_ATTACK player | mainatk=100 offatk=0 wand=nil regen=0",
+            "SPELLS_CHANGED | mainatk=100 offatk=0 wand=nil regen=0",
+            "UNIT_ATTACK player | mainatk=101 offatk=0 wand=nil regen=0",
+            "UNIT_RANGED_ATTACK_POWER player | mainatk=101 offatk=0 wand=nil regen=0",
+            "SKILL_LINES_CHANGED | mainatk=101 offatk=0 wand=nil regen=0",
+        ]
+    );
+    // A Swords value ahead of the main hand's removal: the value's events read the sword, the watch the bare hand.
+    let main_behind = rig.packets(vec![skill(102), wear(15, None)], 2);
+    assert_eq!(
+        pin(&main_behind, EVENTS, &["mainatk"]),
+        vec![
+            "UNIT_ATTACK player | mainatk=102",
+            "UNIT_RANGED_ATTACK_POWER player | mainatk=102",
+            "SKILL_LINES_CHANGED | mainatk=102",
+            "UNIT_ATTACK player | mainatk=0",
+            "SPELLS_CHANGED | mainatk=0",
+        ]
+    );
+    // The off hand: `UNIT_ATTACK` alone, no book update, ahead of and behind a regen packet.
+    let off_first = rig.packets(vec![wear(16, Some((DAGGER, 2092))), regen(4.0)], 2);
+    assert_eq!(
+        pin(&off_first, EVENTS, VERBS),
+        vec![
+            "UNIT_ATTACK player | mainatk=0 offatk=50 wand=nil regen=0",
+            "PLAYER_DAMAGE_DONE_MODS player | mainatk=0 offatk=50 wand=nil regen=4",
+        ]
+    );
+    let off_behind = rig.packets(vec![regen(6.0), wear(16, None)], 2);
+    assert_eq!(
+        pin(&off_behind, EVENTS, &["offatk", "regen"]),
+        vec![
+            "PLAYER_DAMAGE_DONE_MODS player | offatk=50 regen=6",
+            "UNIT_ATTACK player | offatk=0 regen=6",
+        ]
+    );
+    // The ranged slot ahead of and behind a regen packet.
+    let ranged_first = rig.packets(vec![wear(17, Some((WAND, 5240))), regen(8.0)], 2);
+    assert_eq!(
+        pin(&ranged_first, EVENTS, &["wand", "regen"]),
+        vec![
+            "UNIT_RANGED_ATTACK_POWER player | wand=1 regen=6",
+            "SPELLS_CHANGED | wand=1 regen=6",
+            "PLAYER_DAMAGE_DONE_MODS player | wand=1 regen=8",
+        ]
+    );
+    let ranged_behind = rig.packets(vec![regen(10.0), wear(17, None)], 2);
+    assert_eq!(
+        pin(&ranged_behind, EVENTS, &["wand", "regen"]),
+        vec![
+            "PLAYER_DAMAGE_DONE_MODS player | wand=1 regen=10",
+            "UNIT_RANGED_ATTACK_POWER player | wand=nil regen=10",
+            "SPELLS_CHANGED | wand=nil regen=10",
+        ]
+    );
+    // One packet: the regen range first in field order, once for two words, then each weapon slot in slot order.
+    let all = rig.packets(
+        vec![self_values(&[
+            (REGEN, 12.0f32.to_bits()),
+            (REGEN + 7, 1.0f32.to_bits()),
+            (visible(15), 25),
+            (visible(16), 2092),
+            (visible(17), 5240),
+        ])],
+        2,
+    );
+    assert_eq!(
+        pin(&all, EVENTS, &["regen"]),
+        vec![
+            "PLAYER_DAMAGE_DONE_MODS player | regen=12",
+            "UNIT_ATTACK player | regen=12",
+            "SPELLS_CHANGED | regen=12",
+            "UNIT_ATTACK player | regen=12",
+            "UNIT_RANGED_ATTACK_POWER player | regen=12",
+            "SPELLS_CHANGED | regen=12",
+        ]
+    );
+}
+
+/// Our unit watches (`0x614190` -> `0x60c240`) fire each moved stat field's event to every token naming us (`0x60bf10`) in field order, one per moved field, with the verbs reading the packet's figures at each: two stat words fire `UNIT_STATS` twice, then the attack power's `UNIT_ATTACK_POWER`.
+#[test]
+fn stat_watches_fire_per_moved_field_with_the_figures_read_at_the_call() {
+    use benilla_protocol::field::{
+        FIELD_UNIT_ATTACK_POWER as AP, FIELD_UNIT_BYTES_0, FIELD_UNIT_STAT0 as STAT0,
+    };
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER, (FIELD_UNIT_BYTES_0, 1 | 1 << 8)]) else {
+        return;
+    };
+    const EVENTS: &[&str] = &["UNIT_STATS", "UNIT_ATTACK_POWER", "UNIT_RESISTANCES"];
+    let seen = rig.packets(
+        vec![self_values(&[(STAT0, 40), (STAT0 + 1, 30), (AP, 120)])],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, EVENTS, &["str", "ap"]),
+        vec![
+            "UNIT_STATS player | str=40 ap=120",
+            "UNIT_STATS player | str=40 ap=120",
+            "UNIT_ATTACK_POWER player | str=40 ap=120",
+        ]
+    );
+    // A word re-sent unchanged runs no watch.
+    let same = rig.packets(vec![self_values(&[(STAT0, 40), (AP, 121)])], 2);
+    assert_eq!(
+        pin(&same, EVENTS, &["ap"]),
+        vec!["UNIT_ATTACK_POWER player | ap=121"]
+    );
+}
+
+/// An equip in both packet orders. The slot and its visible entry in one update: the visible entry watch (`0x6e1e10`) runs the alert recompute (`0x6e1ea4`) and the main hand's `UNIT_ATTACK` and book update, then our unit's inventory watch on the range's first moved word (`0x60c260`) `UNIT_INVENTORY_CHANGED`, then the slot field's `PLAYER_EQUIPMENT_CHANGED` (`0x6dee81`). With the item created behind the slot, the slot verbs read nothing until it lands, and its post-init fires `UNIT_INVENTORY_CHANGED` again (`0x70ae6b`). A durability loss runs the durability watch's recompute (`0x707c08`): `UPDATE_INVENTORY_ALERTS` on the broken status, then `UPDATE_INVENTORY_DURABILITY`. The ammo field's watch fires `UNIT_INVENTORY_CHANGED` with `"player"` (`0x5e8427`).
+#[test]
+fn inventory_watches_fire_in_the_values_handler_with_the_slots_read_at_the_call() {
+    use benilla_protocol::field::{
+        player_visible_item_entry_field as visible, FIELD_ITEM_CONTAINED, FIELD_ITEM_DURABILITY,
+        FIELD_ITEM_MAXDURABILITY, FIELD_ITEM_OWNER, FIELD_ITEM_STACK_COUNT, FIELD_OBJECT_ENTRY,
+        FIELD_PLAYER_AMMO_ID, FIELD_UNIT_BYTES_0,
+    };
+    const SWORD: u64 = 0x4000_0000_0000_0710;
+    const AXE: u64 = 0x4000_0000_0000_0711;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER, (FIELD_UNIT_BYTES_0, 1 | 1 << 8)]) else {
+        return;
+    };
+    let mut weapon = crate::items::test_template("Weapon");
+    weapon.class = 2;
+    weapon.subclass = 7;
+    weapon.inventory_type = 13;
+    let mut arrow = crate::items::test_template("Arrow");
+    arrow.class = 6;
+    arrow.inventory_type = 24;
+    rig.packets(
+        [(25, weapon.clone()), (26, weapon), (2512, arrow)]
+            .into_iter()
+            .map(|(entry, info)| SessionEvent::ItemTemplate {
+                entry,
+                info: Some(Box::new(info)),
+            })
+            .collect(),
+        2,
+    );
+    let guid_pair =
+        |field: u16, guid: u64| [(field, guid as u32), (field + 1, (guid >> 32) as u32)];
+    let create = |guid: u64, entry: u32| {
+        let mut pairs = vec![
+            (FIELD_OBJECT_ENTRY, entry),
+            (FIELD_ITEM_STACK_COUNT, 1),
+            (FIELD_ITEM_DURABILITY, 50),
+            (FIELD_ITEM_MAXDURABILITY, 50),
+        ];
+        pairs.extend(guid_pair(FIELD_ITEM_OWNER, ME));
+        pairs.extend(guid_pair(FIELD_ITEM_CONTAINED, ME));
+        SessionEvent::ItemCreate {
+            guid,
+            container: false,
+            fields: ObjectFields::from_pairs(&pairs).into_created(ObjectType::Item),
+        }
+    };
+    let wear = |guid: u64, entry: u32| {
+        let mut words = guid_pair(FIELD_PLAYER_INV_SLOT_HEAD + 30, guid).to_vec();
+        words.push((visible(15), entry));
+        self_values(&words)
+    };
+    const EVENTS: &[&str] = &[
+        "UNIT_INVENTORY_CHANGED",
+        "PLAYER_EQUIPMENT_CHANGED",
+        "UPDATE_INVENTORY_ALERTS",
+        "UPDATE_INVENTORY_DURABILITY",
+        "UNIT_ATTACK",
+        "SPELLS_CHANGED",
+    ];
+    // The item first, then the slot.
+    rig.packets(vec![create(SWORD, 25)], 2);
+    let equip = rig.packets(vec![wear(SWORD, 25)], 2);
+    assert_eq!(
+        pin(&equip, EVENTS, &["link16"]),
+        vec![
+            "UPDATE_INVENTORY_DURABILITY | link16=true",
+            "UNIT_ATTACK player | link16=true",
+            "SPELLS_CHANGED | link16=true",
+            "UNIT_INVENTORY_CHANGED player | link16=true",
+            "PLAYER_EQUIPMENT_CHANGED 16 1 | link16=true",
+        ]
+    );
+    // The durability loss on the worn item.
+    let broke = rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: SWORD,
+            fields: ObjectFields::from_pairs(&[(FIELD_ITEM_DURABILITY, 0)]),
+        }],
+        2,
+    );
+    assert_eq!(
+        pin(&broke, EVENTS, &["dur16"]),
+        vec![
+            "UPDATE_INVENTORY_ALERTS | dur16=0/50",
+            "UPDATE_INVENTORY_DURABILITY | dur16=0/50",
+        ]
+    );
+    // The slot first, then the item: nothing to read until the create lands, the broken status gone with the sword; a fresh object runs no field watch, only its post-init's event.
+    let swap = rig.packets(vec![wear(AXE, 26), create(AXE, 26)], 2);
+    assert_eq!(
+        pin(&swap, EVENTS, &["link16", "dur16"]),
+        vec![
+            "UPDATE_INVENTORY_ALERTS | link16=false dur16=nil",
+            "UPDATE_INVENTORY_DURABILITY | link16=false dur16=nil",
+            "UNIT_ATTACK player | link16=false dur16=nil",
+            "SPELLS_CHANGED | link16=false dur16=nil",
+            "UNIT_INVENTORY_CHANGED player | link16=false dur16=nil",
+            "PLAYER_EQUIPMENT_CHANGED 16 1 | link16=false dur16=nil",
+            "UNIT_INVENTORY_CHANGED player | link16=true dur16=50/50",
+        ]
+    );
+    // The ammo field's watch.
+    let ammo = rig.packets(vec![self_values(&[(FIELD_PLAYER_AMMO_ID, 2512)])], 2);
+    assert_eq!(
+        pin(&ammo, EVENTS, &["ammo"]),
+        vec!["UNIT_INVENTORY_CHANGED player | ammo=true"]
+    );
+    let unammo = rig.packets(vec![self_values(&[(FIELD_PLAYER_AMMO_ID, 0)])], 2);
+    assert_eq!(
+        pin(&unammo, EVENTS, &["ammo"]),
+        vec!["UNIT_INVENTORY_CHANGED player | ammo=false"]
+    );
+}
+
+/// The visible entry watch updates the bar for the old entry then the new (`0x6e1ed2` on the watch's old value, `0x6e1ee2` on the live field), each signalling the slots holding it (`0x5aa5c0`); the enchant watch runs the bar's update (`0x707fc6`) and the character page's `UNIT_INVENTORY_CHANGED` (`0x707ff3`) ahead of the alert recompute (`0x707ff8`).
+#[test]
+fn the_entry_and_enchant_watches_update_the_bar_ahead_of_their_slot_events() {
+    use benilla_protocol::field::{
+        player_visible_item_entry_field as visible, FIELD_ITEM_CONTAINED, FIELD_ITEM_DURABILITY,
+        FIELD_ITEM_ENCHANTMENT_1_1, FIELD_ITEM_MAXDURABILITY, FIELD_ITEM_OWNER,
+        FIELD_ITEM_STACK_COUNT, FIELD_OBJECT_ENTRY, FIELD_UNIT_BYTES_0,
+    };
+    use benilla_protocol::messages::{ActionButton, ACTION_BUTTONS_SET, ACTION_KIND_ITEM};
+    const SWORD: u64 = 0x4000_0000_0000_0720;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER, (FIELD_UNIT_BYTES_0, 1 | 1 << 8)]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let mut weapon = crate::items::test_template("Weapon");
+    weapon.class = 2;
+    weapon.subclass = 7;
+    weapon.inventory_type = 13;
+    rig.packets(
+        [25, 26]
+            .into_iter()
+            .map(|entry| SessionEvent::ItemTemplate {
+                entry,
+                info: Some(Box::new(weapon.clone())),
+            })
+            .collect(),
+        2,
+    );
+    // The new entry on slot 1, the old on slot 2, so the order is not the slot walk's.
+    let item = |slot: u8, action: u32| ActionButton {
+        slot,
+        action,
+        kind: ACTION_KIND_ITEM,
+    };
+    rig.packets(
+        vec![SessionEvent::ActionButtons {
+            state: ACTION_BUTTONS_SET,
+            buttons: vec![item(0, 26), item(1, 25)],
+        }],
+        2,
+    );
+    let guid_pair =
+        |field: u16, guid: u64| [(field, guid as u32), (field + 1, (guid >> 32) as u32)];
+    let mut pairs = vec![
+        (FIELD_OBJECT_ENTRY, 25),
+        (FIELD_ITEM_STACK_COUNT, 1),
+        (FIELD_ITEM_DURABILITY, 50),
+        (FIELD_ITEM_MAXDURABILITY, 50),
+    ];
+    pairs.extend(guid_pair(FIELD_ITEM_OWNER, ME));
+    pairs.extend(guid_pair(FIELD_ITEM_CONTAINED, ME));
+    let mut words = guid_pair(FIELD_PLAYER_INV_SLOT_HEAD + 30, SWORD).to_vec();
+    words.push((visible(15), 25));
+    rig.packets(
+        vec![
+            SessionEvent::ItemCreate {
+                guid: SWORD,
+                container: false,
+                fields: ObjectFields::from_pairs(&pairs).into_created(ObjectType::Item),
+            },
+            self_values(&words),
+        ],
+        2,
+    );
+    const EVENTS: &[&str] = &[
+        "ACTIONBAR_SLOT_CHANGED",
+        "UNIT_INVENTORY_CHANGED",
+        "UPDATE_INVENTORY_ALERTS",
+        "UPDATE_INVENTORY_DURABILITY",
+    ];
+    // The visible entry 25 -> 26: slot 2 (the old entry) signals, then slot 1 (the new).
+    let swap = rig.packets(vec![self_values(&[(visible(15), 26)])], 2);
+    assert_eq!(
+        pin(&swap, EVENTS, &[]),
+        vec![
+            "UPDATE_INVENTORY_DURABILITY",
+            "ACTIONBAR_SLOT_CHANGED 2",
+            "ACTIONBAR_SLOT_CHANGED 1",
+            "UNIT_INVENTORY_CHANGED player",
+        ]
+    );
+    // An enchant on the worn sword: the bar's update and the page's slot event, then the recompute.
+    let enchant = rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: SWORD,
+            fields: ObjectFields::from_pairs(&[(FIELD_ITEM_ENCHANTMENT_1_1, 1)]),
+        }],
+        2,
+    );
+    assert_eq!(
+        pin(&enchant, EVENTS, &[]),
+        vec![
+            "ACTIONBAR_SLOT_CHANGED 2",
+            "UNIT_INVENTORY_CHANGED player",
+            "UPDATE_INVENTORY_DURABILITY",
+        ]
+    );
+}
+
+/// The world entry runs the bar's part (`0x5281b8` -> `0x5ac0e0`) ahead of the character page's alert recompute (`0x5281bd` -> `0x5eaf30` -> `0x5e90d0`), then the skill rebuild (`0x528226`).
+#[test]
+fn the_world_entry_runs_the_bar_ahead_of_the_inventory_alerts() {
+    use benilla_protocol::field::FIELD_UNIT_BYTES_2;
+    // Created in Battle Stance: no field watch runs, so the entry's bonus update finds the bar's offset moved.
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER, (FIELD_UNIT_BYTES_2, 17 << 24)]) else {
+        return;
+    };
+    let seen = rig.take();
+    assert_eq!(
+        pin(
+            &seen,
+            &[
+                "UPDATE_BONUS_ACTIONBAR",
+                "UPDATE_INVENTORY_ALERTS",
+                "UPDATE_INVENTORY_DURABILITY",
+                "SKILL_LINES_CHANGED",
+            ],
+            &[]
+        ),
+        vec![
+            "UPDATE_BONUS_ACTIONBAR",
+            "UPDATE_INVENTORY_DURABILITY",
+            "SKILL_LINES_CHANGED",
+        ]
+    );
+}
+
+/// `AbandonSkill` sends `CMSG_UNLEARN_SKILL` inside the call (`0x5ce368`); the line stays until the skill fields move.
+#[test]
+fn abandon_skill_sends_inside_the_call() {
+    use benilla_protocol::field::{FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_UNIT_BYTES_0};
+    let Some(mut rig) = Rig::login(&[
+        OBJECT_TYPE_PLAYER,
+        (FIELD_UNIT_BYTES_0, 1 | 1 << 8 | 1 << 24),
+        (SKILL, 43),
+        (SKILL + 1, 100 | 400 << 16),
+    ]) else {
+        return;
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let lines = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval::<i64>("AbandonSkill(2) AbandonSkill(1) return GetNumSkillLines()")
+    })
+    .expect("a VM")
+    .unwrap();
+    let sent: Vec<u32> = rx
+        .try_iter()
+        .filter_map(|c| match c {
+            crate::net::ClientCommand::UnlearnSkill { skill_id } => Some(skill_id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sent, vec![43, 0], "both sent before the chunk returned");
+    assert_eq!(lines, 2, "the line waits for the server");
+}
+
 /// An auction house from the hello to its close, each event with the list verbs' answers at it and
 /// each send at the call or frame that made it:
 /// - the hello sets the auctioneer and fires `AUCTION_HOUSE_SHOW` (`0x59f142`); the stock window's
@@ -10435,6 +11075,97 @@ fn a_server_message_adds_its_line_in_its_handler() {
         .map(|s| s.args.clone())
         .unwrap_or_default();
     assert!(line.contains("charz"), "{line}");
+}
+
+/// A reload keeps the skill list: the UI shutdown leaves it (`0x52b03e` -> `0x528f00`) and only the
+/// game shutdown frees it (`0x5291c2` -> `0x5cd3a0`), so the reloaded files read the folded list at
+/// `VARIABLES_LOADED`, `PLAYER_LOGIN` and `PLAYER_ENTERING_WORLD` (`0x5281a6`), and the world
+/// entry's rebuild after it (`0x528226` -> `0x5cd9b0`) re-expands every group (`0x5cd9e1`).
+#[test]
+fn a_reload_reads_the_skill_list_until_the_world_entrys_rebuild() {
+    use benilla_protocol::field::{FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_UNIT_BYTES_0};
+    // A human warrior with Swords (43) at 100 of 400.
+    let Some(mut rig) = Rig::login(&[
+        OBJECT_TYPE_PLAYER,
+        (FIELD_UNIT_BYTES_0, 1 | 1 << 8 | 1 << 24),
+        (SKILL, 43),
+        (SKILL + 1, 100 | 400 << 16),
+    ]) else {
+        return;
+    };
+    const VERBS: &[&str] = &["skills", "skill2"];
+    super::live::with_live_world(rig.app.world_mut(), |s| s.run("CollapseSkillHeader(1)"))
+        .expect("a VM")
+        .unwrap();
+    rig.run(1);
+    rig.take();
+    assert_eq!(
+        rig.live_now().line(VERBS),
+        "NOW | skills=1 skill2=100",
+        "the fold hides Swords"
+    );
+    rig.app
+        .world()
+        .non_send_resource::<benilla_ui::script::UiScript>()
+        .run("ReloadUI()")
+        .unwrap();
+    rig.run(4);
+    let reload = rig.take();
+    assert_eq!(
+        pin(
+            &reload,
+            &[
+                "VARIABLES_LOADED",
+                "PLAYER_LOGIN",
+                "PLAYER_ENTERING_WORLD",
+                "SKILL_LINES_CHANGED"
+            ],
+            VERBS
+        ),
+        vec![
+            "VARIABLES_LOADED | skills=1 skill2=100",
+            "PLAYER_LOGIN | skills=1 skill2=100",
+            "PLAYER_ENTERING_WORLD | skills=1 skill2=100",
+            "SKILL_LINES_CHANGED | skills=2 skill2=100",
+        ]
+    );
+}
+
+/// `GetSpellLink`'s trade link reads the active player at the call (`0x5db120`-`0x5db134`): a stat listener ahead of the rebuild (`0x6da509` before `0x6da531`) reads the new rank, and a line the player lacks reads slot -1 (`0x6dc222`): `PLAYER_XP`'s halves, plus `PLAYER_NEXT_LEVEL_XP`'s high half when positive.
+#[test]
+fn the_trade_link_reads_the_rank_at_the_call() {
+    use benilla_protocol::field::{
+        FIELD_PLAYER_CHARACTER_POINTS2, FIELD_PLAYER_NEXT_LEVEL_XP,
+        FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_PLAYER_XP, FIELD_UNIT_BYTES_0,
+    };
+    let pair = |lo: u32, hi: u32| lo | hi << 16;
+    // A human warrior with Tailoring (197) at 100 of 150, +5 permanent, two free professions (slot 128,
+    // never read), and slot -1's words: 1234 | 3 << 16 experience, 4 << 16 to the next level.
+    let Some(mut rig) = Rig::login(&[
+        OBJECT_TYPE_PLAYER,
+        (FIELD_UNIT_BYTES_0, 1 | 1 << 8 | 1 << 24),
+        (SKILL, 197),
+        (SKILL + 1, pair(100, 150)),
+        (SKILL + 2, pair(0, 5)),
+        (FIELD_PLAYER_CHARACTER_POINTS2, 2),
+        (FIELD_PLAYER_XP, pair(1234, 3)),
+        (FIELD_PLAYER_NEXT_LEVEL_XP, pair(0, 4)),
+    ]) else {
+        return;
+    };
+    const VERBS: &[&str] = &["tailor", "alch"];
+    assert_eq!(
+        rig.live_now().line(VERBS),
+        "NOW | tailor=105:155 alch=1238:7"
+    );
+    let value = rig.packets(vec![self_values(&[(SKILL + 1, pair(101, 150))])], 2);
+    assert_eq!(
+        pin(&value, &["UNIT_ATTACK", "SKILL_LINES_CHANGED"], &["tailor"]),
+        vec![
+            "UNIT_ATTACK player | tailor=106:155",
+            "SKILL_LINES_CHANGED | tailor=106:155",
+        ]
+    );
 }
 
 /// Our character's first talent tab's first talent, as the install's tabs order them for `race`

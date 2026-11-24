@@ -1052,20 +1052,8 @@ pub(crate) struct Model {
     /// Per live-unit guid, reach for `CanInspect`/`CheckInteractDistance`; absent: nil.
     pub(crate) unit_reach: HashMap<u64, super::UnitReach>,
 
-    /// The skills pane's snapshot and the display tree built from it.
-    pub(crate) skills: skills::SkillsState,
-    pub(crate) skills_groups: Vec<skills::SkillGroup>,
-    /// Collapsed skill categories by id, kept across a re-push.
-    pub(crate) skills_collapsed: HashSet<u32>,
-    /// The selection as a skill id, not a row.
-    pub(crate) skills_selected: Option<u32>,
-    /// `AbandonSkill` ids for `CMSG_UNLEARN_SKILL`; nothing changes until the server's update.
-    pub(crate) skill_abandons: Vec<u32>,
-    /// `AddSkillUp`'s pending points by skill line.
-    pub(crate) skill_ups: HashMap<u32, u32>,
-    /// The cost of the pending points (`[0xc22b00]`).
-    pub(crate) skill_up_points: i32,
-    pub(crate) skill_requests: Vec<super::skills::SkillRequest>,
+    /// The skill list the verbs read where no view lends the game's, a test's rebuild.
+    pub(crate) skill_list: skills::SkillList,
 
     /// Lines for the app's slash-command parser: a probe's, or a host `SlashCmdList` row's.
     pub(crate) chat_input: Vec<String>,
@@ -1902,14 +1890,7 @@ impl Model {
             world_frame_made: false,
             unit_reach: HashMap::new(),
             chat_input: Vec::new(),
-            skills: skills::SkillsState::default(),
-            skills_groups: Vec::new(),
-            skills_collapsed: HashSet::new(),
-            skills_selected: None,
-            skill_abandons: Vec::new(),
-            skill_ups: HashMap::new(),
-            skill_up_points: 0,
-            skill_requests: Vec::new(),
+            skill_list: skills::SkillList::default(),
         }
     }
 

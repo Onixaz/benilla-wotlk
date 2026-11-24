@@ -277,6 +277,11 @@ const CALLS_NO_LUA: &[(&str, &str, &str)] = &[
         "takes the answers `ConfirmSummon` and `CancelSummon` queued, a field drain",
     ),
     (
+        "ui_char.rs",
+        "sync_char_booth",
+        "reads the character pane's facing off the model",
+    ),
+    (
         "ui_tabard.rs",
         "sync_tabard_booth",
         "reads the designer's shown flag and the pane's facing off the model",
