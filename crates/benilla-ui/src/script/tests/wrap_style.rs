@@ -168,3 +168,27 @@ fn a_message_frames_indent_reaches_its_rows_and_lines() {
     assert!(quad_wrap(&s, "two").indented, "the line draws indented");
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
+
+/// A font found by a mixed-case name of any length gives its dependents its indent: the lookup
+/// lowercases short names on the stack and a name past the buffer the long way.
+#[test]
+fn a_mixed_case_font_name_of_any_length_reaches_its_indent() {
+    for name in ["IndentFont", &format!("Long{}Font", "X".repeat(140))] {
+        let mut s = script();
+        s.set_screen_size(800.0, 600.0);
+        s.run(&format!(
+            r#"
+            local f = CreateFont("{name}")
+            f:SetFont('Fonts/FRIZQT__.TTF', 12) f:SetIndentedWordWrap(true)
+            local w = CreateFrame("Frame", "Win")
+            w:SetPoint("TOPLEFT", 0, -100); w:SetWidth(400); w:SetHeight(300)
+            local t = w:CreateFontString("Dep", "ARTWORK") t:SetFontObject("{name}")
+            t:SetText("dependent"); t:SetWidth(120); t:SetPoint("TOPLEFT", 10, -10)
+        "#
+        ))
+        .unwrap();
+        s.resolve();
+        assert!(quad_wrap(&s, "dependent").indented, "{} bytes", name.len());
+        assert!(s.errors().is_empty(), "{:?}", s.errors());
+    }
+}
