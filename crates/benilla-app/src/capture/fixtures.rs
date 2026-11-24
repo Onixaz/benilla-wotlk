@@ -1349,27 +1349,41 @@ pub(super) fn seed_ui_fixture(
             let Some(script) = script.as_mut() else {
                 return;
             };
-            // Say and yell lines behind the open edit box, opened through the live path;
-            // `chat_edit_live` then drives the header and the `15 + headerWidth` insets as in-game.
+            // Say and yell lines behind the open edit box, the last long enough to wrap, so the
+            // chat font's indented continuation row (`ChatFrame.xml`'s `indented`) is in the shot.
             for (text, r, g, b) in [
                 ("[One] says: testing the box", 1.0, 1.0, 1.0),
                 ("[One] says: a second line to stack", 1.0, 1.0, 1.0),
                 ("[One] yells: FUU", 1.0, 64.0 / 255.0, 64.0 / 255.0),
+                (
+                    concat!(
+                        "[One] says: a long line that runs past the width of the window, so it ",
+                        "wraps and its second row steps in"
+                    ),
+                    1.0,
+                    1.0,
+                    1.0,
+                ),
             ] {
                 script.add_chat_message("ChatFrame1", text, r, g, b);
             }
-            script.focus_editbox("ChatFrameEditBox");
-            // A draft with "northshire" selected: the gray selection highlight (`0xFF606060`)
-            // under the glyphs and the caret at its end. The tab and window tint follow the
-            // cursor in `FCF_OnUpdate`, so a fixed-reveal OnUpdate pins them; it calls
-            // `PanelTemplates_TabResize` every frame until the label's measure lands.
+            // The stock activation the OPENCHAT binding takes: `ChatFrame_OpenChat` picks
+            // `ChatFrame1EditBox`, shows and focuses it, and its OnUpdate sets the draft a frame
+            // later. Then "northshire" is selected, the gray highlight (`0xFF606060`) under the
+            // glyphs and the caret at its end. The tab and window tint follow the cursor in
+            // `FCF_OnUpdate`, so a fixed-reveal OnUpdate pins them; it calls
+            // `PanelTemplates_TabResize(tab, padding)` every frame until the label's measure lands.
             chunks.run(
-                "ChatFrameEditBox:SetText(\"hello northshire\")\n\
-                 ChatFrameEditBox:HighlightText(6, 16)\n\
-                 ChatFrame1:SetScript('OnUpdate', function()\n\
-                     PanelTemplates_TabResize(10, ChatFrame1Tab)\n\
-                     ChatFrame1Tab:SetAlpha(1.0)\n\
-                     FCF_SetWindowAlpha(ChatFrame1, 0.25, 1)\n\
+                "ChatFrame_OpenChat(\"hello northshire\", ChatFrame1)
+                 ChatFrame1:SetScript('OnUpdate', function()
+                     local box = ChatFrame1EditBox
+                     if not box.probeLit and box:GetText() == \"hello northshire\" then
+                         box:HighlightText(6, 16)
+                         box.probeLit = true
+                     end
+                     PanelTemplates_TabResize(ChatFrame1Tab, ChatFrame1Tab.sizePadding or 0)
+                     ChatFrame1Tab:SetAlpha(1.0)
+                     FCF_SetWindowAlpha(ChatFrame1, 0.25, 1)
                  end)",
                 move |_, e| {
                     warn!("capture: ui-chatedit seed failed: {e}");
