@@ -11800,6 +11800,11 @@ fn the_trade_skill_list_rebuilds_on_the_reagents_items_and_a_removed_recipe() {
             "BAG_UPDATE -4 | tsnum=3 ts2=Heavy Linen Bandage:optimal:2 tsr2=Linen Cloth:5",
         ]
     );
+    // The cloth moves locked, as a pickup leaves it.
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::pending_item_ops::PendingItemOps>()
+        .lock(CLOTH);
     let mut words = slot(0, 0).to_vec();
     words.extend(slot(1, CLOTH));
     let moved = rig.packets(vec![self_values(&words)], 2);
@@ -11810,6 +11815,25 @@ fn the_trade_skill_list_rebuilds_on_the_reagents_items_and_a_removed_recipe() {
             "TRADE_SKILL_UPDATE | tsnum=3 ts2=Heavy Linen Bandage:optimal:2 tsr2=Linen Cloth:5",
         ],
         "one rebuild per moved slot"
+    );
+    // The new slot's rebuild (`0x5d9859`) fires before its unlock (`0x5d9863`) writes the lock.
+    assert_eq!(
+        pin(
+            &moved,
+            &["TRADE_SKILL_UPDATE", "ITEM_LOCK_CHANGED", "BAG_UPDATE"],
+            &["lock02"]
+        ),
+        vec![
+            "TRADE_SKILL_UPDATE | lock02=1",
+            "BAG_UPDATE 0 | lock02=1",
+            "BAG_UPDATE -2 | lock02=1",
+            "BAG_UPDATE -4 | lock02=1",
+            "TRADE_SKILL_UPDATE | lock02=1",
+            "ITEM_LOCK_CHANGED 0 2 | lock02=nil",
+            "BAG_UPDATE 0 | lock02=nil",
+            "BAG_UPDATE -2 | lock02=nil",
+            "BAG_UPDATE -4 | lock02=nil",
+        ]
     );
     // The max half's watch rebuilds in place (`0x6cddb7`), reading the new max at the call.
     let maxed = rig.packets(vec![self_values(&[(SKILL + 1, pair(1, 150))])], 2);
@@ -11940,7 +11964,13 @@ fn the_trade_skill_list_rebuilds_on_the_bags_a_bag_slot_a_disabled_item_and_a_vi
         pin(&worn, &["TRADE_SKILL_UPDATE"], VERBS),
         vec!["TRADE_SKILL_UPDATE | tsnum=3 tsr2=Linen Cloth:4"]
     );
-    // A watched bag's slot watch: one rebuild per moved slot, each before its slot's `BAG_UPDATE`.
+    // A watched bag's slot watch: one rebuild per moved slot, each before its slot's `BAG_UPDATE`;
+    // the cloth moves locked, and the new slot's rebuild (`0x5d96bc`) fires before its unlock
+    // (`0x5d96c6`) writes the lock.
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::pending_item_ops::PendingItemOps>()
+        .lock(CLOTH);
     let mut swap = guid_pair(FIELD_CONTAINER_SLOT_1, 0).to_vec();
     swap.extend(guid_pair(FIELD_CONTAINER_SLOT_1 + 2, CLOTH));
     let moved = rig.packets(
@@ -11957,6 +11987,20 @@ fn the_trade_skill_list_rebuilds_on_the_bags_a_bag_slot_a_disabled_item_and_a_vi
             "BAG_UPDATE 1 | tsnum=3 tsr2=Linen Cloth:4",
             "TRADE_SKILL_UPDATE | tsnum=3 tsr2=Linen Cloth:4",
             "BAG_UPDATE 1 | tsnum=3 tsr2=Linen Cloth:4",
+        ]
+    );
+    assert_eq!(
+        pin(
+            &moved,
+            &["TRADE_SKILL_UPDATE", "ITEM_LOCK_CHANGED", "BAG_UPDATE"],
+            &["lock12"]
+        ),
+        vec![
+            "TRADE_SKILL_UPDATE | lock12=1",
+            "BAG_UPDATE 1 | lock12=1",
+            "TRADE_SKILL_UPDATE | lock12=1",
+            "ITEM_LOCK_CHANGED 1 2 | lock12=nil",
+            "BAG_UPDATE 1 | lock12=nil",
         ]
     );
     // An owned item's disable on its destroy.
