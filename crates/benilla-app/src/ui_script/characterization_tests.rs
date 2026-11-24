@@ -11653,7 +11653,7 @@ fn the_trade_skill_list_reads_the_line_in_the_order_its_recipes_were_added() {
     assert_eq!(pin(&learned, EVENTS, VERBS), Vec::<String>::new());
     let read = super::live::with_live_world(rig.app.world_mut(), |s| {
         s.eval::<String>(
-            "local t = {} for i = 1, 3 do t[i] = (GetTradeSkillInfo(i)) end              return table.concat(t, ',')",
+            "local t = {} for i = 1, 3 do t[i] = (GetTradeSkillInfo(i)) end return table.concat(t, ',')",
         )
     })
     .expect("a VM")
@@ -12235,9 +12235,13 @@ fn a_logout_closes_the_trade_skill_list_before_the_game_shutdown_resets_it() {
         .list
         .set_recast(LINEN_BANDAGE, 2);
     super::live::with_live_world(rig.app.world_mut(), |s| {
-        s.run(
-            "RegisterCVar('charzTsLogout', '')              local f = CreateFrame('Frame')              for _, e in ipairs({ 'UPDATE_TRADESKILL_RECAST', 'TRADE_SKILL_CLOSE',                'PLAYER_LEAVING_WORLD', 'PLAYER_LOGOUT' }) do f:RegisterEvent(e) end              f:SetScript('OnEvent', function(_, e)                SetCVar('charzTsLogout', GetCVar('charzTsLogout') .. e .. ':'                  .. GetNumTradeSkills() .. ',') end)",
-        )
+        s.run(concat!(
+            "RegisterCVar('charzTsLogout', '') local f = CreateFrame('Frame') ",
+            "for _, e in ipairs({ 'UPDATE_TRADESKILL_RECAST', 'TRADE_SKILL_CLOSE', ",
+            "'PLAYER_LEAVING_WORLD', 'PLAYER_LOGOUT' }) do f:RegisterEvent(e) end ",
+            "f:SetScript('OnEvent', function(_, e) SetCVar('charzTsLogout', ",
+            "GetCVar('charzTsLogout') .. e .. ':' .. GetNumTradeSkills() .. ',') end)",
+        ))
     })
     .expect("a VM")
     .unwrap();
@@ -12586,7 +12590,7 @@ fn the_open_rebuilds_nothing_while_our_name_record_is_missing() {
     // No line was switched to: `GetTradeSkillLine` answers the unknown line (`0x5db810`).
     assert_eq!(
         super::live::with_live_world(rig.app.world_mut(), |s| s.eval::<String>(
-            "local n, r, m = GetTradeSkillLine() return n .. ',' .. r .. ',' .. m              .. ',' .. GetNumTradeSkills()"
+            "local n, r, m = GetTradeSkillLine() return n .. ',' .. r .. ',' .. m .. ',' .. GetNumTradeSkills()"
         ))
         .expect("a VM")
         .expect("the line"),
@@ -12612,9 +12616,11 @@ fn the_open_rebuilds_nothing_while_our_name_record_is_missing() {
     // opener's trade link are nil (`0x5db0eb`).
     let links = |rig: &mut Rig| {
         super::live::with_live_world(rig.app.world_mut(), |s| {
-            s.eval::<String>(
-                "local i = GetFirstTradeSkill() return GetTradeSkillRecipeLink(i) .. ','                  .. tostring(GetTradeSkillListLink() ~= nil) .. ','                  .. tostring(select(2, GetSpellLink(3273)) ~= nil)",
-            )
+            s.eval::<String>(concat!(
+                "local i = GetFirstTradeSkill() return GetTradeSkillRecipeLink(i) .. ',' ",
+                ".. tostring(GetTradeSkillListLink() ~= nil) .. ',' ",
+                ".. tostring(select(2, GetSpellLink(3273)) ~= nil)",
+            ))
         })
         .expect("a VM")
         .expect("the links")

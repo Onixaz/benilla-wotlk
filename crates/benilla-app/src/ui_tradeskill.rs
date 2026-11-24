@@ -531,8 +531,7 @@ pub(crate) fn refresh(world: &mut World, full: bool) {
         return;
     }
     clear_item_callbacks(world);
-    // The name filter's stat lines read the VM's global strings (`0x5dc110`); the VM stays in the
-    // `World` while a call lends it, so a nested rebuild reads them too.
+    // The name filter's stat lines read the VM's global strings (`0x5dc110`), lent with the `World`.
     let lua = world
         .get_non_send_resource::<benilla_ui::script::UiScript>()
         .map(|s| s.lua().clone());
@@ -696,8 +695,7 @@ impl TradeSkillLive<'_, '_> {
         let spells = self.spells.as_deref()?;
         let skill_lines = self.skill_lines.as_deref()?;
         let rank = raw_rank(store, line);
-        // The ability lookup's race and class are the record's (`0x5dd916`, `0x5dd91c`); our own
-        // name is seeded at world entry with none filed, and our descriptor carries the same pair.
+        // The ability lookup's race and class are the record's (`0x5dd916`, `0x5dd91c`), else our descriptor's.
         let (race, class) = names
             .player_traits(owner)
             .map_or_else(|| crate::spell::race_class(Some(store)), |(r, c, _)| (r, c));
@@ -1100,7 +1098,7 @@ pub(crate) fn list_link(
     ))
 }
 
-/// Run the repeat on our cast edges (start, go, failure), each recast its own press so the next reads the GCD it armed (`0x80b583`).
+/// Run the repeat on our cast edges (start, go, failure), each recast its own press so the next reads the GCD it armed (`0x80b583`); the edges land a pass late (#1462).
 pub(crate) fn drain_trade_skill(world: &mut World) {
     let edges = world.run_system_cached(own_cast_edges).unwrap_or_default();
     for (kind, spell_id) in edges {

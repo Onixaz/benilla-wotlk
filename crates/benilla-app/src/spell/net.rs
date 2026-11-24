@@ -535,10 +535,7 @@ fn on_spell_superceded(
             if !hidden_or_recipe {
                 l.update_book(&flash, true);
             }
-            // Then our player's removal (`0x6e7e81`): a recipe leaves its line's array and the list
-            // rebuilds whole (`0x6e72e6`), then the book removal of the old rank, which the swap
-            // already made, ends in its book update (`0x6e7361` -> `0x5401b8`). Its bar and cursor
-            // legs (`0x6e7367`, `0x6e738d`) are #1351's.
+            // Then our player's removal (`0x6e7e81`): the list rebuilds (`0x6e72e6`), then the book update (`0x6e7361`; bar and cursor legs #1351).
             l.ui.world(move |w| crate::ui_tradeskill::recipe_removed(w, old_spell_id));
             l.update_book(&LearnedInTab::default(), false);
             // Then our player's add (`0x6e7e92`): a recipe joins its array and rebuilds (`0x6e7c1a`).
