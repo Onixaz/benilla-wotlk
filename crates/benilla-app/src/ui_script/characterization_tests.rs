@@ -12413,8 +12413,8 @@ fn our_objects_init_rebuilds_the_open_line_at_each_recipe_it_adds() {
 
 /// A worldport with the line open purges our player and creates it afresh; its init finds us by
 /// the active player's guid (`0x5dd656` -> `0x4d3790`, `0x5dd669` -> `0x4d4db0`) and files each
-/// recipe by our race and class (`0x6e7b90`), so each add rebuilds the open line before the UI's
-/// entry closes it.
+/// recipe by our race and class (`0x6e7b90`), so each add rebuilds the open line, which the engine
+/// leaves open: only the UI shutdown and the same opener close it (`0x528f96`, `0x5de1eb`).
 #[test]
 fn a_worldport_with_the_line_open_rebuilds_it_at_each_recipe_our_init_adds() {
     use benilla_protocol::field::{FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_UNIT_BYTES_0};
