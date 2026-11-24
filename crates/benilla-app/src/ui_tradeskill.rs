@@ -369,19 +369,11 @@ pub(crate) fn recipe_removed(world: &mut World, spell_id: u32) {
     }
 }
 
-/// Our object's init (`0x6e7f50`): a fresh hash, then each buffered spell added (`0x6e7fc5`).
-pub(crate) fn player_init(world: &mut World) {
-    let Some(buffer) = world
-        .get_resource::<crate::ui_companion::KnownSpellBuffer>()
-        .map(|b| b.0.clone())
-    else {
-        return;
-    };
+/// Our object's init (`0x6e7f50`): a fresh recipe hash ahead of its adds, each of which files its
+/// recipe through `recipe_learned` (`0x6e7fc5`).
+pub(crate) fn clear_recipes(world: &mut World) {
     if let Some(mut recipes) = world.get_resource_mut::<TradeSkillRecipes>() {
         recipes.0.clear();
-    }
-    for spell_id in buffer {
-        recipe_learned(world, spell_id);
     }
 }
 

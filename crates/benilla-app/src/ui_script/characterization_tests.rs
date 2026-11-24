@@ -12336,6 +12336,67 @@ fn a_close_inside_the_opens_update_leaves_no_last_line() {
     );
 }
 
+/// Our object's init adds each buffered spell in turn (`0x6e7fb0`-`0x6e7fd3` -> `0x6e7fc5`), each
+/// recipe's whole rebuild signalling inside its add (`0x6e7c1a` -> `0x5de0d5`), before the next
+/// recipe joins and before the book update (`0x6e7fdb`): with the line open across a re-create,
+/// each `TRADE_SKILL_UPDATE` reads the list as of its add, ahead of `SPELLS_CHANGED`.
+#[test]
+fn our_objects_init_rebuilds_the_open_line_at_each_recipe_it_adds() {
+    use benilla_protocol::field::{FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_UNIT_BYTES_0};
+    const FIRST_AID: u32 = 3273;
+    const LINEN_BANDAGE: u32 = 3275;
+    const HEAVY_LINEN_BANDAGE: u32 = 3276;
+    let pair = |lo: u32, hi: u32| lo | hi << 16;
+    let bandage = |entry: u32, name: &str| {
+        let mut t = crate::items::test_template(name);
+        t.class = 0;
+        t.subclass = 7;
+        SessionEvent::ItemTemplate {
+            entry,
+            info: Some(Box::new(t)),
+        }
+    };
+    let fields = [
+        OBJECT_TYPE_PLAYER,
+        (FIELD_UNIT_BYTES_0, 1 | 2 << 8 | 1 << 24),
+        (SKILL, 129),
+        (SKILL + 1, pair(1, 75)),
+    ];
+    let Some(mut rig) = Rig::login_after(
+        vec![
+            bandage(1251, "Linen Bandage"),
+            bandage(2581, "Heavy Linen Bandage"),
+            book(&[FIRST_AID, LINEN_BANDAGE, HEAVY_LINEN_BANDAGE]),
+        ],
+        &fields,
+    ) else {
+        return;
+    };
+    rig.take();
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("CastSpellByName('First Aid')")
+    })
+    .expect("a VM")
+    .expect("the cast runs");
+    rig.run(1);
+    assert_eq!(
+        fired(&rig.take(), &["TRADE_SKILL_SHOW"]),
+        ["TRADE_SKILL_SHOW"]
+    );
+    let seen = rig.packets(
+        vec![SessionEvent::ObjectDestroyed(ME), self_create(&fields)],
+        3,
+    );
+    assert_eq!(
+        pin(&seen, &["TRADE_SKILL_UPDATE", "SPELLS_CHANGED"], &["tsnum"]),
+        vec![
+            "TRADE_SKILL_UPDATE | tsnum=2",
+            "TRADE_SKILL_UPDATE | tsnum=3",
+            "SPELLS_CHANGED | tsnum=3",
+        ]
+    );
+}
+
 /// Two minor glyphs off the install, by `GlyphProperties.dbc` id, and the first one's spell.
 fn two_minor_glyphs() -> (u32, u32, u32) {
     let data = benilla_formats::wow_data().expect("install");

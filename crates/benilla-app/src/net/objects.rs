@@ -209,7 +209,6 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
                 {
                     warn!("companions: the active player's init did not run: {e}");
                 }
-                crate::ui_tradeskill::player_init(world);
             });
         }
         // Our own create gives us control (`0x6e80b6`), firing `PLAYER_CONTROL_GAINED` on the flag's
