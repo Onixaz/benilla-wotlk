@@ -141,6 +141,8 @@ pub(crate) struct Scene<'w, 's> {
     icons: Option<Res<'w, crate::entities::ItemDisplays>>,
     /// The refund records the post-init asks (`0x70ae34`).
     refunds: Option<NonSendMut<'w, crate::ui_socket::RefundRecords>>,
+    /// `GlyphProperties.dbc`, which the glyph watch tests both values against (`0x6daadb`).
+    glyphs: Option<Res<'w, crate::ui_glyph::Glyphs>>,
     /// The possess spell our pet and far-sight watches look up (`0x6d1ab1`, `0x6e5034`).
     possess: (
         ResMut<'w, crate::ui_pet::possess::PossessSpell>,
@@ -2301,6 +2303,17 @@ fn own_player_watches(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
             }
             continue;
         }
+        // The glyph watches, one per glyph field and one on the enabled mask (`0x6e58ea`, `0x6e591b`): each its events, the glyph's rows read as the update stands (`0x6daa80`, `0x6dab80`).
+        if crate::ui_glyph::is_glyph_watch(index) {
+            // With no rows loaded a glyph edge finds none, but the mask watch reads no row (`0x6dab80`).
+            let empty = benilla_formats::GlyphCatalog::default();
+            let catalog = sc.glyphs.as_deref().map_or(&empty, |g| &g.catalog);
+            for (event, socket) in crate::ui_glyph::watcher_events(catalog, index, old, new) {
+                sc.ui
+                    .fire(event, vec![benilla_ui::script::ScriptValue::Int(socket)]);
+            }
+            continue;
+        }
         // The watched faction's watch (`0x6cddd0`): `UPDATE_FACTION` with `"player"` (`0x6cdde1`).
         if index == benilla_protocol::field::FIELD_PLAYER_WATCHED_FACTION_INDEX {
             sc.ui.fire(
@@ -2554,6 +2567,7 @@ fn merge_fields(
                     || e.unit_field(benilla_protocol::field::FIELD_PLAYER_WATCHED_FACTION_INDEX)
                     || crate::ui_title::known_titles_watch(e.index).is_some()
                     || crate::ui_talent::is_character_points_watch(e.index)
+                    || crate::ui_glyph::is_glyph_watch(e.index)
                     || is_currency_watch(e.index)
                     || is_slot_watch(e.index)
                     || e.unit_field(benilla_protocol::field::FIELD_PLAYER_FIELD_COINAGE)

@@ -93,13 +93,7 @@ fn push_model(s: &mut UiScript) -> (Model, TalentTestView) {
     );
     let pages = crate::ui_talent::player_pages(&talents, &spells, DWARF, HUNTER);
     info.enter_world(|| Some(pages));
-    s.set_glyph_catalog(crate::ui_glyph::catalog_view(&glyphs, &spells));
     s.set_spell_info_source(std::rc::Rc::new(Names(spells.clone())));
-    s.set_glyph_sockets(GlyphSockets {
-        slots: [21, 22, 23, 24, 25, 26],
-        glyphs: [major, 0, 0, 0, 0, 0],
-        enabled: 0x3f,
-    });
     s.set_spell_tooltip(
         major_spell,
         SpellTooltipView {
@@ -111,6 +105,12 @@ fn push_model(s: &mut UiScript) -> (Model, TalentTestView) {
     let view = TalentTestView {
         info,
         units: (Some(0x10), None),
+        glyph_catalog: crate::ui_glyph::catalog_view(&glyphs, &spells),
+        glyph_sockets: Some(GlyphSockets {
+            slots: [21, 22, 23, 24, 25, 26],
+            glyphs: [major, 0, 0, 0, 0, 0],
+            enabled: 0x3f,
+        }),
         ..Default::default()
     };
     (model, view)
@@ -213,8 +213,8 @@ fn the_glyphs_tab_shows_the_inscribed_glyph_and_the_open_sockets() {
 }
 
 /// Shift-right-click on the inscribed socket asks `CONFIRM_REMOVE_GLYPH` with the glyph's name,
-/// and Accept queues `CMSG_REMOVE_GLYPH` for socket 0; the field edge's `GLYPH_REMOVED` then
-/// empties the socket.
+/// and Accept sends `CMSG_REMOVE_GLYPH` for socket 0 inside the click (`0x5b76ea`); the field
+/// edge's `GLYPH_REMOVED` then empties the socket.
 #[test]
 fn a_shift_right_click_removes_the_glyph_after_the_confirm() {
     benilla_formats::wow_data_or_skip!();
@@ -227,7 +227,8 @@ fn a_shift_right_click_removes_the_glyph_after_the_confirm() {
     let (m, mut v) = push_model(&mut s);
     lending(&mut v, || {
         open_glyph_tab(&mut s);
-        let _ = s.take_glyph_removes();
+        let removes = || lent_view::<TalentTestView, _>(|v| std::mem::take(&mut v.glyph_removes));
+        let _ = removes();
 
         s.set_modifiers(true, false, false);
         s.run(r#"GlyphFrameGlyph1:Click("RightButton")"#).unwrap();
@@ -237,9 +238,9 @@ fn a_shift_right_click_removes_the_glyph_after_the_confirm() {
             text.contains(&m.major_name),
             "the confirm names the glyph: {text}"
         );
-        assert!(s.take_glyph_removes().is_empty(), "nothing before Accept");
+        assert!(removes().is_empty(), "nothing before Accept");
         s.run("StaticPopup1Button1:Click()").unwrap();
-        assert_eq!(s.take_glyph_removes(), vec![0]);
+        assert_eq!(removes(), vec![0]);
 
         // An unmodified right-click asks nothing.
         s.run(r#"GlyphFrameGlyph1:Click("RightButton")"#).unwrap();
@@ -281,10 +282,12 @@ fn a_targeting_glyph_matches_its_sockets_and_a_click_places_it() {
 
         let arm = |s: &mut UiScript, glyph: u32| {
             s.set_spell_targeting(true);
-            s.set_glyph_targeting(Some(GlyphTargeting {
-                glyphs: [Some(glyph), None, None],
-                wants_socket: true,
-            }));
+            lent_view::<TalentTestView, _>(|v| {
+                v.glyph_targeting = Some(GlyphTargeting {
+                    glyphs: [Some(glyph), None, None],
+                    wants_socket: true,
+                })
+            });
         };
         arm(&mut s, m.spare_major);
         s.run(
@@ -308,10 +311,12 @@ fn a_targeting_glyph_matches_its_sockets_and_a_click_places_it() {
         s.run("PlaceGlyphInSocket(6)").unwrap();
         arm(&mut s, m.major);
         s.run("PlaceGlyphInSocket(4)").unwrap();
-        s.set_glyph_sockets(GlyphSockets {
-            slots: [21, 22, 23, 24, 25, 26],
-            glyphs: [m.major, 0, 0, 0, 0, 0],
-            enabled: 0x07,
+        lent_view::<TalentTestView, _>(|v| {
+            v.glyph_sockets = Some(GlyphSockets {
+                slots: [21, 22, 23, 24, 25, 26],
+                glyphs: [m.major, 0, 0, 0, 0, 0],
+                enabled: 0x07,
+            })
         });
         arm(&mut s, m.spare_major);
         s.run("PlaceGlyphInSocket(6)").unwrap();
