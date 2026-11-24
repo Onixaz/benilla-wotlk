@@ -563,8 +563,8 @@ fn every_scheduled_holder_of_the_vm_lends_the_world() {
             }
         });
     }
-    // A floor that proves the census reads the schedule; the #1245 parts shrink the count.
-    assert!(holders > 150, "the census found only {holders} holders");
+    // A floor that proves the census reads the schedule; it falls as the #1245 parts convert holders.
+    assert!(holders > 100, "the census found only {holders} holders");
     assert!(
         offenders.is_empty(),
         "these scheduled systems hold the VM and lend nothing:\n{}",
