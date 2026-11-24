@@ -902,10 +902,10 @@ mod tests {
         });
     }
 
-    /// An unheld token builds by id with a zero requester (`0x630750`), which equals the loot
-    /// source `[0xbfa8d8]` only while no loot is open (`0x627efd`); neither binding prices it.
+    /// An unheld token builds by id with a zero requester (`0x630750`) and shows its bind line with
+    /// a loot window open too, where 12340 drops it (`0x627f02`, docs/DEVIATIONS.md).
     #[test]
-    fn an_unheld_token_shows_the_bind_line_only_with_no_loot_open() {
+    fn an_unheld_token_shows_the_bind_line_whether_or_not_loot_is_open() {
         let (mut s, mut loan_v) = script();
         crate::script::live::lending(&mut loan_v, || {
             with_token_tip(&mut s);
@@ -924,8 +924,8 @@ mod tests {
             s.set_loot_source(0xF130_0000_0000_0001);
             assert_eq!(
                 token_tip(&s, "SetCurrencyToken(2)").0,
-                "Badge of Justice",
-                "a zero requester is not an open loot's source"
+                "Badge of Justice|[BOP]",
+                "a zero requester passes with a loot window open"
             );
         });
     }

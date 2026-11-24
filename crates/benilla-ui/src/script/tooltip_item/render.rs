@@ -68,13 +68,13 @@ pub(super) struct ItemInstance {
 }
 
 /// The builder's p3, the requester guid, as far as the class 10 bind gate reads it: the gate
-/// compares it with the loot source `[0xbfa8d8]`, 0 with no loot open (`0x627efd`).
+/// compares it with the loot source `[0xbfa8d8]` (`0x627efd`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum Requester {
     /// A unit or object that is never the loot source: the player, a merchant, a quest giver.
     #[default]
     Object,
-    /// A zero guid, which matches while no loot is open.
+    /// A zero guid: a tooltip built from an id or a link.
     Zero,
     /// The loot source itself, `SetLootItem`'s (`0x62e638`).
     LootSource,
@@ -83,12 +83,12 @@ pub(super) enum Requester {
 }
 
 impl Requester {
-    /// Whether the requester equals the loot source `loot_source`.
-    fn is_loot_source(self, loot_source: u64) -> bool {
+    /// Whether a token prints its bind line: for the loot source, and for a zero requester at any
+    /// time, where 12340's zero passes only while no loot is open (`0x627f02`, docs/DEVIATIONS.md).
+    fn passes_token_bind_gate(self) -> bool {
         match self {
             Self::Object | Self::Merchant { .. } => false,
-            Self::Zero => loot_source == 0,
-            Self::LootSource => true,
+            Self::Zero | Self::LootSource => true,
         }
     }
 }
@@ -508,8 +508,7 @@ fn render_lines(
             keyed("ITEM_CONJURED", &[], WHITE, false)?;
         }
         let bound = inst.is_some_and(|i| i.already_bound);
-        let loot_source = crate::script::loot::source(&crate::script::model_mut_of(lua));
-        if let Some(key) = bind_key(v, bound, flags.requester.is_loot_source(loot_source)) {
+        if let Some(key) = bind_key(v, bound, flags.requester.passes_token_bind_gate()) {
             keyed(key, &[], WHITE, false)?;
         }
         if let Some((key, args)) = uniqueness_line(v) {

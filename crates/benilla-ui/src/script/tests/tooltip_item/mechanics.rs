@@ -827,10 +827,10 @@ fn a_token_binds_only_for_the_loot_source_and_a_non_token_always() {
     );
 }
 
-/// A chat link builds with a zero requester (`0x62dbbc`), which equals the loot source only while
-/// no loot is open, so a token's link shows its bind line then and not beside an open loot window.
+/// A chat link builds with a zero requester (`0x62dbbc`), and a token's link shows its bind line
+/// beside an open loot window too, where 12340 drops it (`0x627f02`, docs/DEVIATIONS.md).
 #[test]
-fn a_linked_token_binds_only_while_no_loot_is_open() {
+fn a_linked_token_binds_whether_or_not_loot_is_open() {
     let mut s = script();
     s.set_item_template(
         49426,
@@ -861,7 +861,11 @@ fn a_linked_token_binds_only_while_no_loot_is_open() {
     s.set_loot_source(0xF130_0000_0000_0001);
     s.run("TT:Hide() TT:SetOwner(Slot, 'ANCHOR_RIGHT')")
         .unwrap();
-    assert_eq!(texts(&mut s), ["Emblem of Frost"], "a loot window open");
+    assert_eq!(
+        texts(&mut s),
+        ["Emblem of Frost", "[ITEM_BIND_ON_PICKUP]"],
+        "a loot window open"
+    );
 }
 
 /// A loot row with no roll shows neither enchant lines nor the placeholder, though the template can
