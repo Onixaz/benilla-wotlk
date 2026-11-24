@@ -734,60 +734,101 @@ fn the_rig_free_hook_clears_a_dead_units_tint() {
 
 // ── The freeze (proc 11) ─────────────────────────────────────────────────────────────────────────
 
+const FREEZE_STEP: std::time::Duration = std::time::Duration::from_millis(50);
+
 fn app_with_freeze() -> App {
     let mut app = app_with_chains();
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(FREEZE_STEP));
+    app.add_plugins((AssetPlugin::default(), bevy::animation::AnimationPlugin));
     app.add_systems(Update, apply_aura_anim_rate.after(drain_aura_procs));
+    app.add_systems(
+        PostUpdate,
+        (
+            hold_frozen_clocks
+                .after(bevy::animation::transition::advance_transitions)
+                .before(bevy::animation::advance_animations),
+            release_frozen_clocks.after(bevy::animation::transition::expire_completed_transitions),
+        )
+            .in_set(bevy::app::AnimationSystems),
+    );
     app
 }
 
-fn rig_playing(speeds: &[(u32, f32)]) -> AnimationPlayer {
+/// Build an `AnimationGraph` with `count` 10-second clips and return `(graph_handle, nodes)`.
+fn freeze_graph(app: &mut App, count: usize) -> (AnimationGraphHandle, Vec<AnimationNodeIndex>) {
+    let clip_handles: Vec<Handle<AnimationClip>> = {
+        let mut clips = app.world_mut().resource_mut::<Assets<AnimationClip>>();
+        (0..count)
+            .map(|_| {
+                let mut c = AnimationClip::default();
+                c.set_duration(10.0);
+                clips.add(c)
+            })
+            .collect()
+    };
+    let mut graph = AnimationGraph::new();
+    let nodes: Vec<AnimationNodeIndex> = clip_handles
+        .into_iter()
+        .map(|h| graph.add_clip(h, 1.0, graph.root))
+        .collect();
+    let handle = app
+        .world_mut()
+        .resource_mut::<Assets<AnimationGraph>>()
+        .add(graph);
+    (AnimationGraphHandle(handle), nodes)
+}
+
+fn rig_playing(nodes: &[(AnimationNodeIndex, f32)]) -> AnimationPlayer {
     let mut player = AnimationPlayer::default();
-    for (node, speed) in speeds {
-        player
-            .play(AnimationNodeIndex::new(*node as usize))
-            .set_speed(*speed);
+    for &(node, speed) in nodes {
+        player.play(node).set_speed(speed);
     }
     player
 }
 
-/// `(paused, speed)` of one armed clip: the freeze holds the clock and leaves the speed.
-fn clip(app: &App, rig: Entity, node: u32) -> (bool, f32) {
+/// `(seek_time, speed)` of one armed clip: the freeze holds the clock and leaves the speed.
+fn clip(app: &App, rig: Entity, node: AnimationNodeIndex) -> (f32, f32) {
     let a = app
         .world()
         .entity(rig)
         .get::<AnimationPlayer>()
         .expect("the rig kept its player")
-        .animation(AnimationNodeIndex::new(node as usize))
+        .animation(node)
         .expect("the clip is still armed");
-    (a.is_paused(), a.speed())
+    (a.seek_time(), a.speed())
 }
 
 /// Ice Block's proc 11 at rate 0 holds the gait and the cast one-shot; the aura's end frees them.
 #[test]
 fn ice_block_holds_the_clocks_and_the_drop_lets_them_go() {
     let mut app = app_with_freeze();
+    let (graph, nodes) = freeze_graph(&mut app, 2);
+    let (gait, cast) = (nodes[0], nodes[1]);
     let unit = app
         .world_mut()
         .spawn((
             crate::unit_auras::aura_unit_for_test(&[ICE_BLOCK]),
             // A built model: a proc-11 kit waits for one.
             crate::entities::VisualAttached,
-            rig_playing(&[(4, 1.35), (54, 1.0)]),
+            graph,
+            rig_playing(&[(gait, 1.35), (cast, 1.0)]),
         ))
         .id();
+    app.update();
     app.update();
 
     let n = app.world().entity(unit).get::<AuraNodes>().unwrap();
     assert_eq!(n.head_anim_rate(), Some(0.0), "kit 3709's proc 11 is 0");
     // 9074175 is 0x8A75FF, the same kit's ice-blue tint.
     assert_eq!(n.head_tint(), Some([0x8A, 0x75, 0xFF]), "kit 3709's proc 1");
-    assert!(clip(&app, unit, 4).0, "the gait stops mid-stride");
-    assert!(clip(&app, unit, 54).0, "so does the cast one-shot");
+    assert_eq!(clip(&app, unit, gait).0, 0.0, "the gait stops mid-stride");
+    assert_eq!(clip(&app, unit, cast).0, 0.0, "so does the cast one-shot");
     // The speeds are untouched, so `transplant_up`, copying a clip's rate, never inherits a freeze.
-    assert_eq!(clip(&app, unit, 4).1, 1.35);
-    assert_eq!(clip(&app, unit, 54).1, 1.0);
+    assert_eq!(clip(&app, unit, gait).1, 1.35);
+    assert_eq!(clip(&app, unit, cast).1, 1.0);
 
     app.update(); // idempotent
+    assert_eq!(clip(&app, unit, gait).0, 0.0, "still held");
 
     crate::unit_auras::set_auras_for_test(app.world_mut(), unit, &[]);
     app.update();
@@ -798,9 +839,9 @@ fn ice_block_holds_the_clocks_and_the_drop_lets_them_go() {
         .unwrap()
         .rate
         .is_empty());
-    assert!(!clip(&app, unit, 4).0, "running again");
-    assert!(!clip(&app, unit, 54).0);
-    assert_eq!(clip(&app, unit, 4).1, 1.35, "at its own rate");
+    assert!(clip(&app, unit, gait).0 > 0.0, "running again");
+    assert!(clip(&app, unit, cast).0 > 0.0);
+    assert_eq!(clip(&app, unit, gait).1, 1.35, "at its own rate");
     assert!(
         app.world().entity(unit).get::<AnimRateFreeze>().is_none(),
         "the release drops the marker with it"
@@ -808,60 +849,61 @@ fn ice_block_holds_the_clocks_and_the_drop_lets_them_go() {
 }
 
 /// A one-shot moved to the torso overlay under the freeze copies its source's speed, which the
-/// pause leaves real, so the thaw runs it out; a copied 0 would never finish or free the overlay.
+/// freeze leaves real, so the thaw runs it out; a copied 0 would never finish or free the overlay.
 #[test]
 fn a_clip_armed_under_the_freeze_comes_back_at_its_own_speed() {
     let mut app = app_with_freeze();
+    let (graph, nodes) = freeze_graph(&mut app, 3);
+    let (gait, cast, torso) = (nodes[0], nodes[1], nodes[2]);
     let unit = app
         .world_mut()
         .spawn((
             crate::unit_auras::aura_unit_for_test(&[ICE_BLOCK]),
             // A built model: a proc-11 kit waits for one.
             crate::entities::VisualAttached,
-            rig_playing(&[(4, 1.35), (54, 1.0)]),
+            graph,
+            rig_playing(&[(gait, 1.35), (cast, 1.0)]),
         ))
         .id();
     app.update();
 
     // `transplant_up`'s own shape: read the frozen source clip, arm the torso twin from it.
-    let speed = clip(&app, unit, 54).1;
+    let (seek, speed) = clip(&app, unit, cast);
     assert_eq!(speed, 1.0, "the source's speed is not the freeze");
-    let seek = app
-        .world()
-        .entity(unit)
-        .get::<AnimationPlayer>()
-        .unwrap()
-        .animation(AnimationNodeIndex::new(54))
-        .unwrap()
-        .seek_time();
     {
         let mut ent = app.world_mut().entity_mut(unit);
         let mut player = ent.get_mut::<AnimationPlayer>().unwrap();
-        let upper = player.play(AnimationNodeIndex::new(156));
+        let upper = player.play(torso);
         upper.seek_to(seek);
         upper.set_speed(speed);
     }
     app.update();
-    assert!(clip(&app, unit, 156).0, "held on arrival");
+    app.update();
+    assert_eq!(clip(&app, unit, torso).0, seek, "held on arrival");
 
     crate::unit_auras::set_auras_for_test(app.world_mut(), unit, &[]);
     app.update();
-    assert!(!clip(&app, unit, 156).0);
+    assert!(clip(&app, unit, torso).0 > seek);
     assert_eq!(
-        clip(&app, unit, 156).1,
+        clip(&app, unit, torso).1,
         1.0,
         "the overlay runs out and releases instead of welding a cast pose on"
     );
 }
 
-/// The reference's freeze writes the mount `[unit+0xdc]` before the body `[unit+0xd8]`: the mount
-/// freezes too.
+/// The reference's freeze writes the mount (`unit+0x98c`) before the body (`unit+0xb4`,
+/// `0x6f80b0`): the mount freezes too.
 #[test]
 fn the_freeze_reaches_the_mount_body() {
     let mut app = app_with_freeze();
+    let (mount_graph, mount_nodes) = freeze_graph(&mut app, 2);
+    let (rider_graph, rider_nodes) = freeze_graph(&mut app, 2);
     let mount = app
         .world_mut()
-        .spawn(rig_playing(&[(5, 2.0), (91, 1.0)]))
+        .spawn((
+            mount_graph,
+            rig_playing(&[(mount_nodes[0], 2.0), (mount_nodes[1], 1.0)]),
+        ))
         .id();
     let unit = app
         .world_mut()
@@ -869,34 +911,43 @@ fn the_freeze_reaches_the_mount_body() {
             crate::unit_auras::aura_unit_for_test(&[ICE_BLOCK]),
             // A built model: a proc-11 kit waits for one.
             crate::entities::VisualAttached,
-            rig_playing(&[(91, 1.0), (54, 1.0)]),
+            rider_graph,
+            rig_playing(&[(rider_nodes[0], 1.0), (rider_nodes[1], 1.0)]),
             crate::entities::mount::MountChild(mount),
         ))
         .id();
     app.update();
+    app.update();
 
-    assert!(clip(&app, unit, 91).0, "the rider");
-    assert!(clip(&app, mount, 5).0, "and the mount under them");
+    assert_eq!(clip(&app, unit, rider_nodes[0]).0, 0.0, "the rider");
+    assert_eq!(
+        clip(&app, mount, mount_nodes[0]).0,
+        0.0,
+        "and the mount under them"
+    );
 
     crate::unit_auras::set_auras_for_test(app.world_mut(), unit, &[]);
     app.update();
-    assert!(!clip(&app, mount, 5).0);
-    assert_eq!(clip(&app, mount, 5).1, 2.0);
+    assert!(clip(&app, mount, mount_nodes[0]).0 > 0.0);
+    assert_eq!(clip(&app, mount, mount_nodes[0]).1, 2.0);
 }
 
 /// The freeze is proc 11's alone, never any aura's and never the stun flag's (`0x40000`).
 #[test]
 fn an_aura_without_the_proc_never_touches_a_clock() {
     let mut app = app_with_freeze();
+    let (graph, nodes) = freeze_graph(&mut app, 2);
     let unit = app
         .world_mut()
         .spawn((
             crate::unit_auras::aura_unit_for_test(&[STEALTH]),
-            rig_playing(&[(4, 1.35), (54, 1.0)]),
+            graph,
+            rig_playing(&[(nodes[0], 1.35), (nodes[1], 1.0)]),
         ))
         .id();
     app.update();
-    assert!(!clip(&app, unit, 4).0);
+    app.update();
+    assert!(clip(&app, unit, nodes[0]).0 > 0.0);
     assert!(app.world().entity(unit).get::<AnimRateFreeze>().is_none());
 }
 
@@ -909,11 +960,320 @@ fn a_non_zero_rate_installs_a_node_and_holds_nothing() {
     assert_eq!(n.head_anim_rate(), Some(8_947_848.0));
 
     let mut app = app_with_freeze();
-    let unit = app.world_mut().spawn(rig_playing(&[(4, 1.35)])).id();
+    let (graph, nodes) = freeze_graph(&mut app, 1);
+    let unit = app
+        .world_mut()
+        .spawn((graph, rig_playing(&[(nodes[0], 1.35)])))
+        .id();
     app.world_mut().entity_mut(unit).insert(n);
     app.update();
-    assert!(!clip(&app, unit, 4).0);
-    assert_eq!(clip(&app, unit, 4).1, 1.35);
+    app.update();
+    assert!(clip(&app, unit, nodes[0]).0 > 0.0);
+    assert_eq!(clip(&app, unit, nodes[0]).1, 1.35);
+}
+
+/// A base switched under the freeze fades the old main out, so only the new base is left at thaw.
+#[test]
+fn base_switch_under_freeze_does_not_orphan_previous_clip() {
+    use bevy::animation::transition::AnimationTransitions;
+    use std::time::Duration;
+
+    let mut app = app_with_freeze();
+    let (graph, nodes) = freeze_graph(&mut app, 2);
+    let (cast, stand) = (nodes[0], nodes[1]);
+
+    let mut player = AnimationPlayer::default();
+    let mut tr = AnimationTransitions::new();
+    tr.play(&mut player, cast, Duration::ZERO);
+
+    let unit = app
+        .world_mut()
+        .spawn((
+            crate::unit_auras::aura_unit_for_test(&[ICE_BLOCK]),
+            crate::entities::VisualAttached,
+            graph,
+            player,
+            tr,
+        ))
+        .id();
+    app.update();
+    app.update();
+    assert_eq!(clip(&app, unit, cast).0, 0.0, "cast clip is frozen");
+
+    // Arm a new base under the freeze (as Ice Block's root flag edge re-arms Stand).
+    {
+        let mut ent = app.world_mut().entity_mut(unit);
+        let (mut player, mut tr) = ent
+            .get_components_mut::<(&mut AnimationPlayer, &mut AnimationTransitions)>()
+            .unwrap();
+        tr.play(&mut player, stand, Duration::from_millis(150))
+            .repeat();
+    }
+    // Run past the 150 ms cross-fade while still frozen: the blend expires, clocks stay held.
+    for _ in 0..4 {
+        app.update();
+    }
+    assert_eq!(
+        clip(&app, unit, stand).0,
+        0.0,
+        "new base clock stays frozen until thaw"
+    );
+
+    // Thaw: only the new base remains, at full weight, and its clock resumes.
+    crate::unit_auras::set_auras_for_test(app.world_mut(), unit, &[]);
+    app.update();
+    let player = app.world().entity(unit).get::<AnimationPlayer>().unwrap();
+    let playing: Vec<_> = player.playing_animations().collect();
+    assert_eq!(
+        playing.len(),
+        1,
+        "only the new base clip remains after thaw (got {playing:?})"
+    );
+    assert_eq!(playing[0].0, &stand);
+    assert!(
+        (playing[0].1.weight() - 1.0).abs() < 1e-6,
+        "new base holds full weight (got {})",
+        playing[0].1.weight()
+    );
+    assert!(playing[0].1.seek_time() > 0.0, "new base clock resumed");
+}
+
+/// Two base switches under the freeze leave only the final base at full weight after thaw.
+#[test]
+fn arming_twice_under_freeze_leaves_only_the_final_base() {
+    use bevy::animation::transition::AnimationTransitions;
+    use std::time::Duration;
+
+    let mut app = app_with_freeze();
+    let (graph, nodes) = freeze_graph(&mut app, 3);
+    let (cast, stand, run) = (nodes[0], nodes[1], nodes[2]);
+
+    let mut player = AnimationPlayer::default();
+    let mut tr = AnimationTransitions::new();
+    tr.play(&mut player, cast, Duration::ZERO);
+
+    let unit = app
+        .world_mut()
+        .spawn((
+            crate::unit_auras::aura_unit_for_test(&[ICE_BLOCK]),
+            crate::entities::VisualAttached,
+            graph,
+            player,
+            tr,
+        ))
+        .id();
+    app.update();
+
+    let arm = |app: &mut App, node: AnimationNodeIndex| {
+        let mut ent = app.world_mut().entity_mut(unit);
+        let (mut player, mut tr) = ent
+            .get_components_mut::<(&mut AnimationPlayer, &mut AnimationTransitions)>()
+            .unwrap();
+        tr.play(&mut player, node, Duration::from_millis(100))
+            .repeat();
+    };
+
+    arm(&mut app, stand);
+    app.update(); // mid-transition from cast to stand
+    arm(&mut app, run);
+    for _ in 0..3 {
+        app.update(); // let both 100 ms transitions expire while still frozen
+    }
+
+    crate::unit_auras::set_auras_for_test(app.world_mut(), unit, &[]);
+    app.update();
+    let player = app.world().entity(unit).get::<AnimationPlayer>().unwrap();
+    let playing: Vec<_> = player.playing_animations().collect();
+    assert_eq!(
+        playing.len(),
+        1,
+        "only the final base clip remains after thaw (got {playing:?})"
+    );
+    assert_eq!(playing[0].0, &run);
+    assert!(
+        (playing[0].1.weight() - 1.0).abs() < 1e-6,
+        "final base holds full weight (got {})",
+        playing[0].1.weight()
+    );
+    assert!(playing[0].1.seek_time() > 0.0, "final base clock resumed");
+}
+
+/// A held clip stays paused through the event passes, so an event behind its clock never refires.
+#[test]
+fn a_held_clip_fires_no_event_while_frozen() {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
+
+    let mut app = app_with_freeze();
+    let fired = Arc::new(AtomicU32::new(0));
+    let clip_handle = {
+        let mut c = AnimationClip::default();
+        c.set_duration(10.0);
+        // An event every 10 ms, so any held clock's last step has some behind it.
+        for i in 0..1000 {
+            let count = fired.clone();
+            c.add_event_fn(i as f32 * 0.01, move |_, _, _, _| {
+                count.fetch_add(1, Ordering::Relaxed);
+            });
+        }
+        app.world_mut()
+            .resource_mut::<Assets<AnimationClip>>()
+            .add(c)
+    };
+    let mut graph = AnimationGraph::new();
+    let node = graph.add_clip(clip_handle, 1.0, graph.root);
+    let graph = app
+        .world_mut()
+        .resource_mut::<Assets<AnimationGraph>>()
+        .add(graph);
+    let unit = app
+        .world_mut()
+        .spawn((
+            crate::unit_auras::aura_unit_for_test(&[]),
+            crate::entities::VisualAttached,
+            AnimationGraphHandle(graph),
+            rig_playing(&[(node, 1.0)]),
+        ))
+        .id();
+    for _ in 0..3 {
+        app.update();
+    }
+    assert!(
+        fired.load(Ordering::Relaxed) > 0,
+        "events fire while running"
+    );
+
+    crate::unit_auras::set_auras_for_test(app.world_mut(), unit, &[ICE_BLOCK]);
+    for _ in 0..4 {
+        if app.world().entity(unit).get::<AnimRateFreeze>().is_some() {
+            break;
+        }
+        app.update();
+    }
+    assert!(app.world().entity(unit).get::<AnimRateFreeze>().is_some());
+    let held_at = fired.load(Ordering::Relaxed);
+    for _ in 0..4 {
+        app.update();
+    }
+    assert_eq!(
+        fired.load(Ordering::Relaxed),
+        held_at,
+        "no replay while held"
+    );
+}
+
+/// The freeze resumes only what it paused: a clip paused by anyone else stays paused after thaw.
+#[test]
+fn the_thaw_leaves_an_outside_pause_alone() {
+    let mut app = app_with_freeze();
+    let (graph, nodes) = freeze_graph(&mut app, 2);
+    let (gait, posed) = (nodes[0], nodes[1]);
+    let mut player = rig_playing(&[(gait, 1.0), (posed, 1.0)]);
+    player.animation_mut(posed).unwrap().pause();
+    let unit = app
+        .world_mut()
+        .spawn((
+            crate::unit_auras::aura_unit_for_test(&[ICE_BLOCK]),
+            crate::entities::VisualAttached,
+            graph,
+            player,
+        ))
+        .id();
+    app.update();
+    app.update();
+    let paused = |app: &App, node| {
+        app.world()
+            .entity(unit)
+            .get::<AnimationPlayer>()
+            .unwrap()
+            .animation(node)
+            .unwrap()
+            .is_paused()
+    };
+    assert!(
+        !paused(&app, gait),
+        "the hold is invisible outside the chain"
+    );
+    assert!(paused(&app, posed), "the outside pause survives the freeze");
+
+    crate::unit_auras::set_auras_for_test(app.world_mut(), unit, &[]);
+    app.update();
+    assert!(clip(&app, unit, gait).0 > 0.0, "the gait runs again");
+    assert!(paused(&app, posed), "and the outside pause still holds");
+    assert_eq!(clip(&app, unit, posed).0, 0.0);
+}
+
+/// The freeze takes the models loaded at its start (`0x6f80b0`): a mount summoned later runs.
+#[test]
+fn a_mount_summoned_under_the_freeze_runs() {
+    let mut app = app_with_freeze();
+    let (mount_graph, mount_nodes) = freeze_graph(&mut app, 1);
+    let (rider_graph, rider_nodes) = freeze_graph(&mut app, 1);
+    let unit = app
+        .world_mut()
+        .spawn((
+            crate::unit_auras::aura_unit_for_test(&[ICE_BLOCK]),
+            crate::entities::VisualAttached,
+            rider_graph,
+            rig_playing(&[(rider_nodes[0], 1.0)]),
+        ))
+        .id();
+    app.update();
+    app.update();
+    assert!(app.world().entity(unit).get::<AnimRateFreeze>().is_some());
+
+    let mount = app
+        .world_mut()
+        .spawn((mount_graph, rig_playing(&[(mount_nodes[0], 1.0)])))
+        .id();
+    app.world_mut()
+        .entity_mut(unit)
+        .insert(crate::entities::mount::MountChild(mount));
+    app.update();
+    app.update();
+    assert!(
+        app.world().entity(mount).get::<AnimRateFreeze>().is_none(),
+        "the new mount is not held"
+    );
+    assert!(clip(&app, mount, mount_nodes[0]).0 > 0.0, "and runs");
+    assert_eq!(
+        clip(&app, unit, rider_nodes[0]).0,
+        0.0,
+        "the rider stays held"
+    );
+}
+
+/// A rig whose freezing unit is gone thaws, though the aura never ended.
+#[test]
+fn a_rig_outliving_its_frozen_unit_thaws() {
+    let mut app = app_with_freeze();
+    let (mount_graph, mount_nodes) = freeze_graph(&mut app, 1);
+    let (rider_graph, rider_nodes) = freeze_graph(&mut app, 1);
+    let mount = app
+        .world_mut()
+        .spawn((mount_graph, rig_playing(&[(mount_nodes[0], 1.0)])))
+        .id();
+    let unit = app
+        .world_mut()
+        .spawn((
+            crate::unit_auras::aura_unit_for_test(&[ICE_BLOCK]),
+            crate::entities::VisualAttached,
+            rider_graph,
+            rig_playing(&[(rider_nodes[0], 1.0)]),
+            crate::entities::mount::MountChild(mount),
+        ))
+        .id();
+    app.update();
+    app.update();
+    assert!(app.world().entity(mount).get::<AnimRateFreeze>().is_some());
+
+    app.world_mut().entity_mut(unit).despawn();
+    app.update();
+    assert!(
+        app.world().entity(mount).get::<AnimRateFreeze>().is_none(),
+        "the orphaned mount drops the marker"
+    );
+    assert!(clip(&app, mount, mount_nodes[0]).0 > 0.0, "and runs again");
 }
 
 // ── The fade time and the one-shot body procs ────────────────────────────────────────────────────

@@ -270,16 +270,18 @@ fn tint_probe() -> Option<[u8; 3]> {
     })
 }
 
-/// Marker: a proc-11 aura holds this rig's clocks. It saves no speeds, unlike the reference's
-/// per-bone save and restore: here a rate belongs to a clip, and `transplant_up` arms clips under
-/// the freeze with speeds copied from frozen ones, so a saved speed restores as 0.
+/// A proc-11 aura holds this rig's clocks (`0x6f80b0`); `held` is what this frame paused.
 #[derive(Component, Default, Debug)]
-pub(crate) struct AnimRateFreeze;
+pub(crate) struct AnimRateFreeze {
+    held: Vec<AnimationNodeIndex>,
+}
 
-/// Pause the clocks of every unit whose head proc-11 rate is 0, its own rig and its mount's, and
-/// resume them when the aura goes; effect models and global sequences keep running. The pause is
-/// reasserted every frame, since the reference's rate lives on the bone (`+0xb0`) and arming leaves
-/// it alone, and after the animation driver, so a cast armed this frame freezes too.
+/// The rigs a unit's proc-11 freeze took at its start, the attach flags of `0x6f80b0`.
+#[derive(Component, Debug)]
+pub(crate) struct AnimRateFrozeRigs(Vec<Entity>);
+
+/// Freeze a unit's loaded rig and mount at the proc-11 rate-0 edge only (`0x6f80b0`); thaw them
+/// at its end (`0x6f87c0`), and any rig no frozen unit owns.
 ///
 /// Deviation: a non-zero rate is ignored, because the only one shipped (`8947848.0` on kit 1744, a
 /// packed grey in the rate column) is noise on the reference's integer-ms clock and has no faithful
@@ -289,35 +291,74 @@ pub(crate) fn apply_aura_anim_rate(
         Entity,
         &AuraNodes,
         Option<&crate::entities::mount::MountChild>,
+        Option<&AnimRateFrozeRigs>,
     )>,
-    mut rigs: Query<(&mut AnimationPlayer, Has<AnimRateFreeze>)>,
+    orphans: Query<Entity, (With<AnimRateFrozeRigs>, Without<AuraNodes>)>,
+    rigs: Query<(&AnimationPlayer, Has<AnimRateFreeze>)>,
+    marked: Query<(Entity, Option<&AnimationPlayer>), With<AnimRateFreeze>>,
+    mut owned: Local<Vec<Entity>>,
     mut commands: Commands,
 ) {
-    for (entity, nodes, mount) in &units {
+    owned.clear();
+    for (entity, nodes, mount, froze) in &units {
         let frozen = nodes.head_anim_rate() == Some(0.0);
-        for rig in [Some(entity), mount.map(|m| m.0)].into_iter().flatten() {
-            let Ok((mut player, held)) = rigs.get_mut(rig) else {
-                continue;
-            };
-            match (frozen, held) {
-                (true, _) => {
-                    for (_, anim) in player.playing_animations_mut() {
-                        anim.pause();
-                    }
+        match (frozen, froze) {
+            (true, Some(froze)) => owned.extend_from_slice(&froze.0),
+            (true, None) => {
+                // Only a model loaded now freezes: a mount summoned later is a fresh, running one.
+                let mut took = Vec::new();
+                for rig in [Some(entity), mount.map(|m| m.0)].into_iter().flatten() {
+                    let Ok((player, held)) = rigs.get(rig) else {
+                        continue;
+                    };
                     if !held {
-                        trace_clock_edge("freeze", rig, &player);
-                        commands.entity(rig).try_insert(AnimRateFreeze);
+                        trace_clock_edge("freeze", rig, player);
+                        commands.entity(rig).try_insert(AnimRateFreeze::default());
                     }
+                    took.push(rig);
                 }
-                (false, true) => {
-                    // Resume every clip: nothing else pauses an animation on a unit rig.
-                    for (_, anim) in player.playing_animations_mut() {
-                        anim.resume();
-                    }
-                    trace_clock_edge("thaw", rig, &player);
-                    commands.entity(rig).try_remove::<AnimRateFreeze>();
-                }
-                (false, false) => {}
+                owned.extend_from_slice(&took);
+                commands.entity(entity).try_insert(AnimRateFrozeRigs(took));
+            }
+            (false, Some(_)) => {
+                commands.entity(entity).try_remove::<AnimRateFrozeRigs>();
+            }
+            (false, None) => {}
+        }
+    }
+    for unit in &orphans {
+        commands.entity(unit).try_remove::<AnimRateFrozeRigs>();
+    }
+    // A rig no frozen unit owns thaws: the aura ended, or its unit lost its auras or despawned.
+    for (rig, player) in &marked {
+        if !owned.contains(&rig) {
+            if let Some(player) = player {
+                trace_clock_edge("thaw", rig, player);
+            }
+            commands.entity(rig).try_remove::<AnimRateFreeze>();
+        }
+    }
+}
+
+/// Pause a frozen rig's running clips; blends still expire on scene time (`0x82f0f0`).
+pub(crate) fn hold_frozen_clocks(mut rigs: Query<(&mut AnimationPlayer, &mut AnimRateFreeze)>) {
+    for (mut player, mut freeze) in &mut rigs {
+        freeze.held.clear();
+        for (node, anim) in player.playing_animations_mut() {
+            if !anim.is_paused() {
+                anim.pause();
+                freeze.held.push(*node);
+            }
+        }
+    }
+}
+
+/// Resume only what [`hold_frozen_clocks`] paused, after the event passes, unseen by `Update`.
+pub(crate) fn release_frozen_clocks(mut rigs: Query<(&mut AnimationPlayer, &mut AnimRateFreeze)>) {
+    for (mut player, mut freeze) in &mut rigs {
+        for node in freeze.held.drain(..) {
+            if let Some(anim) = player.animation_mut(node) {
+                anim.resume();
             }
         }
     }

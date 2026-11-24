@@ -1320,13 +1320,23 @@ impl Plugin for CreatureAnimPlugin {
                     // change double-swaps the weapon placement for a frame.
                     .before(crate::entities::EntityVisualsSet),
             )
-            // The CharProc 11 freeze, after the driver so this frame's arms are in when it holds
-            // the clocks: Ice Block's cast one-shot is armed, then never advances.
+            // The CharProc 11 freeze marks after the driver; clocks hold only inside the chain.
             .add_systems(
                 Update,
                 crate::aura_visual::apply_aura_anim_rate
                     .after(drive_animations)
                     .after(crate::aura_visual::tick_body_procs),
+            )
+            .add_systems(
+                PostUpdate,
+                (
+                    crate::aura_visual::hold_frozen_clocks
+                        .after(bevy::animation::transition::advance_transitions)
+                        .before(bevy::animation::advance_animations),
+                    crate::aura_visual::release_frozen_clocks
+                        .after(bevy::animation::transition::expire_completed_transitions),
+                )
+                    .in_set(bevy::app::AnimationSystems),
             );
     }
 }
