@@ -12480,9 +12480,10 @@ fn a_worldport_with_the_line_open_rebuilds_it_at_each_recipe_our_init_adds() {
     );
 }
 
-/// The rebuild reads the list owner's name record without an ask and exits on a miss (`0x5dd696`,
-/// `0x5dd6a0`): with our own record invalidated, the open files nothing, fires no update, and its
-/// count test shows nothing (`0x5de2d1`); once the record is back the open rebuilds and shows.
+/// The opener's line and the rebuild read our name record without an ask (`0x5da61d`, `0x5dd696`):
+/// with our own record invalidated, the open finds no line and exits before it writes anything
+/// (`0x5de13f`), so the line stays unknown and nothing fires; once the record is back the same
+/// opener opens the list, rebuilt and shown.
 #[test]
 fn the_open_rebuilds_nothing_while_our_name_record_is_missing() {
     use benilla_protocol::field::{FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_UNIT_BYTES_0};
@@ -12526,21 +12527,19 @@ fn the_open_rebuilds_nothing_while_our_name_record_is_missing() {
         )
     };
     assert_eq!(open(&mut rig), Vec::<String>::new());
+    // No line was switched to: `GetTradeSkillLine` answers the unknown line (`0x5db810`).
     assert_eq!(
-        super::live::with_live_world(rig.app.world_mut(), |s| s
-            .eval::<i64>("return GetNumTradeSkills()"))
+        super::live::with_live_world(rig.app.world_mut(), |s| s.eval::<String>(
+            "local n, r, m = GetTradeSkillLine() return n .. ',' .. r .. ',' .. m              .. ',' .. GetNumTradeSkills()"
+        ))
         .expect("a VM")
-        .expect("the count"),
-        0
+        .expect("the line"),
+        "UNKNOWN,0,0,0"
     );
     rig.app
         .world_mut()
         .resource_mut::<crate::names::NameCache>()
         .insert_player(ME, "Benilla".into(), None);
-    // The same opener closes the line it opened; the next opens it afresh.
-    super::live::with_live_world(rig.app.world_mut(), |s| s.run("CloseTradeSkill()"))
-        .expect("a VM")
-        .expect("the close runs");
     rig.take();
     // The first show loads the stock frame, whose dropdowns' OnLoads set two filters, each rebuilding.
     assert_eq!(
@@ -12551,6 +12550,27 @@ fn the_open_rebuilds_nothing_while_our_name_record_is_missing() {
             "TRADE_SKILL_UPDATE | tsnum=2",
             "TRADE_SKILL_SHOW | tsnum=2",
         ]
+    );
+    // The links read the line through the same record at the call (`0x5db9c8`, `0x5db0df`): with
+    // it gone the recipe link drops its line prefix (`0x5dba01`), and the list link and the
+    // opener's trade link are nil (`0x5db0eb`).
+    let links = |rig: &mut Rig| {
+        super::live::with_live_world(rig.app.world_mut(), |s| {
+            s.eval::<String>(
+                "local i = GetFirstTradeSkill() return GetTradeSkillRecipeLink(i) .. ','                  .. tostring(GetTradeSkillListLink() ~= nil) .. ','                  .. tostring(select(2, GetSpellLink(3273)) ~= nil)",
+            )
+        })
+        .expect("a VM")
+        .expect("the links")
+    };
+    assert_eq!(
+        links(&mut rig),
+        "|cffffd000|Henchant:3275|h[First Aid: Linen Bandage]|h|r,true,true"
+    );
+    rig.packets(vec![SessionEvent::InvalidatePlayer { guid: ME }], 1);
+    assert_eq!(
+        links(&mut rig),
+        "|cffffd000|Henchant:3275|h[Linen Bandage]|h|r,false,false"
     );
 }
 

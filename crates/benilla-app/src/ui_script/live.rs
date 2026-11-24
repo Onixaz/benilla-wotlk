@@ -392,6 +392,10 @@ impl crate::ui_spell_info::CallReads for LiveView<'_, '_> {
     fn unit_facts(&self, guid: u64) -> Option<crate::spell::RangeFacts> {
         self.item_range.facts().facts(guid)
     }
+
+    fn link_line(&self, spell_id: u32) -> Option<u32> {
+        self.trade_live.link_line(spell_id)
+    }
 }
 
 impl LiveState for LiveView<'_, '_> {
@@ -2832,7 +2836,7 @@ impl LiveState for LiveView<'_, '_> {
         let list = &self.trade.as_deref()?.list;
         let empty = std::collections::BTreeSet::new();
         let known = self.actions.as_deref().map_or(&empty, |a| &a.spells);
-        self.trade_live.list_link(list.opener, list.line, known)
+        self.trade_live.list_link(list.opener, known)
     }
 
     fn trade_skill_filter_spell(

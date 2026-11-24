@@ -399,18 +399,40 @@ fn load_spell_focus(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
     }
 }
 
+/// A spell's line for `guid`'s name record (`0x5da5f0`): the record looked up without an ask, a
+/// miss answering none (`0x5da61d`, `0x5da624`); the ability for the record's race and class
+/// (`0x5da629`-`0x5da638`); its line's `SkillLine.dbc` row, none without one (`0x5da647`-`0x5da661`).
+fn line_rec(
+    names: &crate::names::NameCache,
+    guid: u64,
+    store: Option<&ObjectStore>,
+    catalog: &benilla_formats::SkillLineCatalog,
+    spell_id: u32,
+) -> Option<u32> {
+    names.peek(guid)?;
+    // Our own name is seeded at world entry with no traits filed; our descriptor carries the pair.
+    let (race, class) = names
+        .player_traits(guid)
+        .map_or_else(|| crate::spell::race_class(store), |(r, c, _)| (r, c));
+    let line = catalog.ability(spell_id, race, class)?.skill_id;
+    catalog.line(line).map(|_| line)
+}
+
+/// The opener's line (`0x5de131` -> `0x5da5f0`) for its caster, our player: benilla takes the
+/// opener branch (`0x80d08c`) for our own press alone.
+fn opener_line(world: &World, spell_id: u32) -> Option<u32> {
+    let caster = world.get_resource::<SelfGuid>()?.0?;
+    let names = world.get_resource::<crate::names::NameCache>()?;
+    let catalog = &world.get_resource::<SkillLines>()?.catalog;
+    line_rec(names, caster, own_store(world), catalog, spell_id)
+}
+
 /// The open (`0x5de120`) for opener `spell_id`, a step of the press whose cast attempt took the
-/// opener branch (`0x80d0ab`): the opener's line (`0x5de131` -> `0x5da5f0`), else nothing; a
-/// running repeat stops and signals (`0x5de1c4`), then the rest at its own step.
+/// opener branch (`0x80d0ab`): the opener's line (`0x5de131` -> `0x5da5f0`), else nothing at all
+/// (`0x5de13f`); a running repeat stops and signals (`0x5de1c4`), then the rest at its own step.
 pub(crate) fn set_trade_skill(world: &mut World, spell_id: u32) {
-    let line = {
-        let (race, class) = crate::spell::race_class(own_store(world));
-        world
-            .get_resource::<SkillLines>()
-            .and_then(|l| l.catalog.spell_to_line(spell_id, race, class))
-    };
-    let Some(line) = line else {
-        warn!("ui_tradeskill: opener {spell_id} has no SkillLineAbility row — dropped");
+    let Some(line) = opener_line(world, spell_id) else {
+        debug!("ui_tradeskill: opener {spell_id} has no line for our name record — no open");
         return;
     };
     let stopped = world
@@ -779,10 +801,10 @@ impl TradeSkillLive<'_, '_> {
             d.icon.clone()
         };
         let (min_made, max_made) = num_made(d);
-        let (race, class) = crate::spell::race_class(self.store());
-        let line_name = self.skill_lines.as_deref().and_then(|s| {
-            let line = s.catalog.spell_to_line(spell_id, race, class)?;
-            Some(s.catalog.line(line)?.name.clone())
+        // The line for the active player's name record (`0x5db9b6`, `0x5db9c8` -> `0x5da5f0`).
+        let line_name = self.link_line(spell_id).and_then(|line| {
+            let catalog = &self.skill_lines.as_deref()?.catalog;
+            Some(catalog.line(line)?.name.clone())
         });
         Some(TradeSkillRecipeView {
             name: d.name.clone(),
@@ -1020,16 +1042,24 @@ impl TradeSkillLive<'_, '_> {
         spell_text(spell_id).is_some_and(|t| hit(&t))
     }
 
-    /// The open line's list link (`0x5dc0b0` -> `0x5db060`) for its opener.
+    /// `spell_id`'s line for our name record, a trade link's (`0x5db0df` -> `0x5da5f0`).
+    pub(crate) fn link_line(&self, spell_id: u32) -> Option<u32> {
+        let me = self.self_guid.as_deref()?.0?;
+        let catalog = &self.skill_lines.as_deref()?.catalog;
+        line_rec(self.names.as_deref()?, me, self.store(), catalog, spell_id)
+    }
+
+    /// The open opener's list link (`0x5dc0b0` -> `0x5db060`), its line the opener's for our name
+    /// record (`0x5db0cc`, `0x5db0df` -> `0x5da5f0`), none without one (`0x5db0eb`).
     pub(crate) fn list_link(
         &self,
         opener: u32,
-        line: u32,
         known: &std::collections::BTreeSet<u32>,
     ) -> Option<String> {
         let store = self.store()?;
-        let opener = self.spells.as_deref()?.catalog.get(opener)?;
         let skill_lines = self.skill_lines.as_deref()?;
+        let line = self.link_line(opener)?;
+        let opener = self.spells.as_deref()?.catalog.get(opener)?;
         let who = (
             store.0.unit_race().unwrap_or(0),
             store.0.unit_class().unwrap_or(0),
