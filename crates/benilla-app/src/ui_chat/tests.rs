@@ -1162,6 +1162,14 @@ fn the_log_writes_a_join_and_a_leave_notice_as_the_window_fills_them() {
         let log = with_strings(|get| super::frames::log_line(&e, K::ChannelNotice, Some(7), get));
         assert_eq!(log.as_deref(), Some(expected), "notice {byte:#04x}");
     }
+    // A token with no string (NOT_IN_LFG has none) still writes its line, the lookup's empty
+    // default (`0x819d4c`) filled, as the log write stamps whatever it is handed (`0x775ade`).
+    let mut e = ChatEvent::text_only(K::ChannelNotice, String::new());
+    e.channel = "6. LookingForGroup".into();
+    e.channel_number = 6;
+    e.notice = n::NOT_IN_LFG.to_string();
+    let log = with_strings(|get| super::frames::log_line(&e, K::ChannelNotice, Some(7), get));
+    assert_eq!(log.as_deref(), Some(""));
 }
 
 /// A new kind breaks [`super::event::event_name`]'s exhaustive match; this makes it join `ALL`.

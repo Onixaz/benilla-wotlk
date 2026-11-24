@@ -277,13 +277,14 @@ pub(crate) fn log_line(
             // 12340 fills this with the "%d. %s" buffer's address and the sender (`0x50aa65`),
             // printing a stack address and an empty bracket; benilla fills it as the window does.
             fill(
-                &get(&format!("CHAT_{token}_NOTICE"))?,
+                &get(&format!("CHAT_{token}_NOTICE")).unwrap_or_default(),
                 &notice_args(event, kind, token),
             )
         }
-        K::Ignored => fill(&get("CHAT_IGNORED")?, &[Arg::S(sender)]),
-        K::Filtered => fill(&get("CHAT_FILTERED")?, &[Arg::S(sender)]),
-        K::Restricted => fill(&get("CHAT_RESTRICTED")?, &[]),
+        // A missing string reads as the lookup's empty default (`0x819d4c`), still written.
+        K::Ignored => fill(&get("CHAT_IGNORED").unwrap_or_default(), &[Arg::S(sender)]),
+        K::Filtered => fill(&get("CHAT_FILTERED").unwrap_or_default(), &[Arg::S(sender)]),
+        K::Restricted => fill(&get("CHAT_RESTRICTED").unwrap_or_default(), &[]),
         _ => {
             // `"[%s] "`, its first `" - "` replaced by `"] "` and the rest cut (`0x50ab19`-`0x50ab52`).
             let prefix = if channel.is_empty() {
