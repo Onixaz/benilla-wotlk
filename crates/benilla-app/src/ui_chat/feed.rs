@@ -114,14 +114,9 @@ impl ChatLine {
     }
 
     /// Every name the line waits on is cached (`0x503e19`-`0x503e25`).
-    fn names_ready(&self, names: &NameCache, self_guid: Option<u64>) -> bool {
-        let own = match self {
-            ChatLine::TextEmote { .. } => self_guid.unwrap_or(0),
-            _ => 0,
-        };
+    fn names_ready(&self, names: &NameCache) -> bool {
         self.player_guids()
             .into_iter()
-            .chain([own])
             .all(|g| g == 0 || names.peek(g).is_some())
     }
 
@@ -1004,6 +999,9 @@ enum Step {
     Route(ChatEvent),
     /// A channel notice: its channel writes around the line ([`deliver`]).
     Deliver(ChatEvent),
+    /// A text emote's line, outside the add (`0x503660`): its event with line id 0 and no chat
+    /// record (`0x5038f3`, `0x503922`), then the sentence written raw to the log (`0x503945`).
+    TextEmote(ChatEvent),
     /// A spoken line: its chat record, the line, then its bubble (`0x50a970`).
     Speech {
         event: ChatEvent,
@@ -1445,43 +1443,57 @@ fn build(In((item, script, passes)): In<(ChatLine, UiScript, bool)>, p: AddParam
             text_id,
             target,
         } => {
-            // Both names ask-once: the performer's, and ours for the "is the target me?" test.
-            let performer_name = names.chat_record(performer, &commands).map(str::to_string);
-            let your_name = self_guid
+            // The text emote's own line (`0x503660`), never the add's: no active player, no line
+            // (`0x5036cb`); the performer's name record read with no callback, the handler having
+            // queued the emote on a miss (`0x5040ef`-`0x504107`).
+            let Some(me) = self_guid
                 .0
-                .and_then(|g| names.resolve(g, &commands).map(str::to_string));
-            if performer_name.is_none() || your_name.is_none() {
+                .filter(|g| guids.0.get(g).is_some_and(|e| stores.get(*e).is_ok()))
+            else {
+                return Built::Steps(steps);
+            };
+            let Some(performer_name) = names.chat_record(performer, &commands).map(str::to_string)
+            else {
                 return Built::Held(ChatLine::TextEmote {
                     performer,
                     text_id,
                     target,
                 });
-            }
-            // No performer name, no line (not "Unknown"): the reference bails when its
-            // player-only name cache misses; the animation rode `EmoteMessage`.
-            let (Some(performer_name), Some(cat)) = (performer_name, emote_texts.as_deref()) else {
+            };
+            let Some(cat) = emote_texts.as_deref() else {
                 debug!("chat: text emote {text_id} from {performer:#x} has no sentence source");
                 return Built::Steps(steps);
             };
+            // Our unit's name for the "at you" test (`0x503753`), never waited on.
+            let store = guids.0.get(&me).and_then(|e| stores.get(*e).ok());
+            let your_name = unit_name(&script, me, store, &names, &commands);
             let event = text_emote_event(
                 &cat.0,
                 text_id,
                 &EmoteLine {
                     performer: &performer_name,
-                    performer_is_you: self_guid.0 == Some(performer),
-                    // Sex 1 is female, where the reference reads it (`record+0x13c`).
+                    performer_is_you: me == performer,
+                    // Sex 1 is female, where the reference reads it (`record+0x144`, `0x50377a`).
                     performer_female: names
                         .player_traits(performer)
                         .is_some_and(|(_, _, sex)| sex == 1),
                     target: &target,
-                    your_name: your_name.as_deref().unwrap_or_default(),
+                    your_name: &your_name,
                 },
             );
-            // No sentence is a real outcome: `/sit` prints nothing.
-            let Some(event) = event else {
+            // No sentence is a real outcome: `/sit` prints nothing (`0x5037fb` -> `0x50394f`).
+            let Some(mut event) = event else {
                 return Built::Steps(steps);
             };
-            steps.push(Step::Route(event));
+            // arg3 the language record 0's name, empty with none (`0x503876`-`0x5038a6`); arg12 the
+            // performer's guid (`0x5038e2`).
+            event.language = languages
+                .as_deref()
+                .and_then(|l| l.0.name(0))
+                .unwrap_or_default()
+                .to_string();
+            event.sender_guid = performer;
+            steps.push(Step::TextEmote(event));
         }
         ChatLine::Combat(mut line) => {
             // The unit names are read in the call (`0x50be09`, `0x50bce3`, `0x50de48`), never held;
@@ -1550,7 +1562,7 @@ fn build(In((item, script, passes)): In<(ChatLine, UiScript, bool)>, p: AddParam
                 langs.is_gm(),
                 &commands,
             ),
-            Step::Fire(..) | Step::Speech { .. } => true,
+            Step::Fire(..) | Step::Speech { .. } | Step::TextEmote(_) => true,
         });
     }
     Built::Steps(steps)
@@ -1616,6 +1628,21 @@ fn run_step(world: &mut World, script: &mut UiScript, step: Step) {
     match step {
         Step::Fire(event, args) => crate::ui_script::safe_world::raise(world, event, args),
         Step::Route(event) => route_in_world(world, script, &event, None),
+        Step::TextEmote(event) => {
+            crate::ui_script::safe_world::raise(
+                world,
+                "CHAT_MSG_TEXT_EMOTE",
+                event.script_args_with_line(0),
+            );
+            // The log flag as the listeners left it (`0x50392a`).
+            if script.logging_flags().0 {
+                if let Some(mut windows) = world.get_resource_mut::<ChatWindows>() {
+                    if windows.logs.0.is_open() {
+                        windows.logs.0.record(event.text.as_bytes());
+                    }
+                }
+            }
+        }
         Step::Speech {
             event,
             record,
@@ -1739,6 +1766,18 @@ pub(crate) fn add_now(world: &mut World, line: ChatLine) {
     }
     let queue_chat = log.queue_chat;
     ask_names(world, &line);
+    // A text emote outside the world: a named one is queued marked (`0x50368c` -> `0x502ea0`) on a
+    // list nothing walks again (`0x503fea` skips it), so it never shows; one waiting on its
+    // performer's name is held unmarked (`0x504107`) for the answer's callback.
+    if queue_chat && matches!(line, ChatLine::TextEmote { .. }) {
+        let ready = world
+            .get_resource::<NameCache>()
+            .is_some_and(|names| line.names_ready(names));
+        if !ready {
+            world.resource_mut::<ChatLog>().pending.push((line, false));
+        }
+        return;
+    }
     if queue_chat {
         if line.composed_by_caller() {
             queue_composed(world, line);
@@ -1850,7 +1889,6 @@ pub(crate) fn name_landed(world: &mut World) {
     let queue_chat = log.queue_chat;
     let held = std::mem::take(&mut log.pending);
     let mut kept = Vec::new();
-    let self_guid = world.get_resource::<SelfGuid>().and_then(|g| g.0);
     for (line, queued) in held {
         if queued {
             kept.push((line, true));
@@ -1859,15 +1897,17 @@ pub(crate) fn name_landed(world: &mut World) {
         let (missing, ready) = world
             .get_resource::<NameCache>()
             .map_or((false, false), |names| {
-                (
-                    line.names_missing(names),
-                    line.names_ready(names, self_guid),
-                )
+                (line.names_missing(names), line.names_ready(names))
             });
         if missing {
             if matches!(line, ChatLine::Notice { notice, .. } if notice == channel_notice::INVITE) {
                 world.resource_mut::<ChatLog>().invite_waiting = false;
             }
+            continue;
+        }
+        // Outside the world a named text emote is marked queued (`0x504026`) on a list nothing
+        // walks again (`0x503fea` skips it), so it never shows.
+        if queue_chat && ready && matches!(line, ChatLine::TextEmote { .. }) {
             continue;
         }
         // Outside the world a ready line is marked queued for the entry's walk (`0x503e78`).

@@ -823,3 +823,163 @@ fn a_whisper_enters_autocomplete_once_with_the_name_the_add_read() {
     name_landed(&mut world);
     assert_eq!(offered(&world), ["Ann-Icecrown", "Bob", "Cy-Lordaeron"]);
 }
+
+const ME: u64 = 0x22;
+
+/// A world past its entry with our player in view (`0x5036c3`), WAVE's sentences, the language
+/// record 0 and Ann named; a spy keeps a1, a2, a3, a11 and a12 of each line it hears.
+fn emote_world() -> World {
+    use benilla_formats::EmoteTextCatalog;
+    let (mut world, _sent) = world();
+    let s = world.non_send_resource::<UiScript>();
+    s.run(
+        r#"
+        Lines = {}
+        local f = CreateFrame("Frame")
+        f:RegisterEvent("CHAT_MSG_TEXT_EMOTE")
+        f:RegisterEvent("CHAT_MSG_SAY")
+        f:SetScript("OnEvent", function(_, e, a1, a2, a3, _, _, _, _, _, _, _, a11, a12)
+            Lines[#Lines + 1] = table.concat({ e, a1, a2, a3, tostring(a11), a12 }, "|")
+        end)
+    "#,
+    )
+    .unwrap();
+    world.insert_resource(super::feed::EmoteTexts(EmoteTextCatalog::from_rows(
+        101,
+        &[
+            (0, "%s waves at %s."),
+            (1, "%s waves at you."),
+            (4, "%s waves."),
+        ],
+    )));
+    world.insert_resource(crate::ui_unit::LanguagesRes(
+        benilla_formats::Languages::from_rows(&[(0, "Universal"), (7, "Common")]),
+    ));
+    let me = world.spawn(crate::net::ObjectStore::default()).id();
+    world
+        .resource_mut::<crate::net::GuidIndex>()
+        .0
+        .insert(ME, me);
+    world.resource_mut::<crate::net::SelfGuid>().0 = Some(ME);
+    world
+        .resource_mut::<crate::names::NameCache>()
+        .insert_player(ANN, "Ann".into(), None);
+    world
+}
+
+fn lines(world: &World) -> Vec<String> {
+    world
+        .non_send_resource::<UiScript>()
+        .eval::<Vec<String>>("return Lines")
+        .unwrap()
+}
+
+fn wave(target: &str) -> ChatLine {
+    ChatLine::TextEmote {
+        performer: ANN,
+        text_id: 101,
+        target: target.into(),
+    }
+}
+
+/// A text emote is its own line (`0x503660`), never the add's: it fires with arg11 0
+/// (`0x5038f3`), arg3 the language record 0's name (`0x503876`-`0x5038a6`) and arg12 the
+/// performer's guid (`0x5038e2`), and takes no line id, which only the add counts (`0x50a884`), so
+/// the next say is line 1.
+#[test]
+fn a_text_emote_fires_outside_the_add_with_no_line_id() {
+    use benilla_protocol::messages::CHAT_MSG_SAY;
+    let mut world = emote_world();
+    world
+        .resource_mut::<crate::names::NameCache>()
+        .insert_player(ME, "Me".into(), None);
+    enter_world(&mut world);
+    add(&mut world, wave("Me"));
+    add(&mut world, player_line(CHAT_MSG_SAY, ANN, 0, "hi"));
+    assert_eq!(
+        lines(&world),
+        [
+            "CHAT_MSG_TEXT_EMOTE|Ann waves at you.|Ann|Universal|0|0x0000000000000011",
+            "CHAT_MSG_SAY|hi|Ann|Universal|1|0x0000000000000011",
+        ]
+    );
+    assert_eq!(world.resource::<super::ChatWindows>().line_id, 1);
+}
+
+/// The "at you" test reads our unit's name at the call (`0x503753`) and never waits on it: with our
+/// name not cached the emote still shows, at someone else.
+#[test]
+fn a_text_emote_never_waits_on_our_own_name() {
+    let mut world = emote_world();
+    enter_world(&mut world);
+    add(&mut world, wave("Me"));
+    assert_eq!(
+        lines(&world),
+        ["CHAT_MSG_TEXT_EMOTE|Ann waves at Me.|Ann|Universal|0|0x0000000000000011"]
+    );
+}
+
+/// With no active player the emote shows nothing (`0x5036cb`).
+#[test]
+fn a_text_emote_with_no_active_player_shows_nothing() {
+    let mut world = emote_world();
+    world.resource_mut::<crate::net::GuidIndex>().0.clear();
+    enter_world(&mut world);
+    add(&mut world, wave(""));
+    assert!(lines(&world).is_empty());
+}
+
+/// The log takes the sentence raw (`0x503945`), not the add's `CHAT_<TYPE>_GET` composition.
+#[test]
+fn a_text_emote_is_logged_raw() {
+    let mut world = emote_world();
+    let dir = std::env::temp_dir().join(format!("benilla-emote-log-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("chat.txt");
+    let _ = std::fs::remove_file(&path);
+    let s = world.non_send_resource::<UiScript>();
+    s.run(r#"CHAT_TEXT_EMOTE_GET = "%s: ""#).unwrap();
+    world
+        .non_send_resource_mut::<UiScript>()
+        .set_logging_flags(true, false);
+    world.resource_mut::<super::ChatWindows>().logs =
+        super::logging::ChatLogFile(super::logging::LogFile::at(&path));
+    enter_world(&mut world);
+    add(&mut world, wave(""));
+    let log = std::fs::read_to_string(&path).unwrap();
+    let logged: Vec<&str> = log
+        .lines()
+        .map(|l| l.split_once("  ").map_or(l, |(_, rest)| rest))
+        .collect();
+    assert_eq!(logged, ["Ann waves."]);
+}
+
+/// Outside the world a named text emote is queued marked (`0x50368c` -> `0x502ea0`) on a list
+/// nothing walks again (`0x503fea`), so the entry shows nothing; one waiting on its performer's
+/// name is held, and its name landing while still outside marks it the same way (`0x504026`).
+#[test]
+fn a_text_emote_outside_the_world_never_shows() {
+    let mut world = emote_world();
+    add(&mut world, wave(""));
+    assert_eq!(world.resource::<super::ChatLog>().pending_count(), 0);
+    const BOB: u64 = 0x33;
+    add(
+        &mut world,
+        ChatLine::TextEmote {
+            performer: BOB,
+            text_id: 101,
+            target: String::new(),
+        },
+    );
+    assert_eq!(world.resource::<super::ChatLog>().pending_count(), 1);
+    world
+        .resource_mut::<crate::names::NameCache>()
+        .insert_player(BOB, "Bob".into(), None);
+    name_landed(&mut world);
+    assert_eq!(world.resource::<super::ChatLog>().pending_count(), 0);
+    enter_world(&mut world);
+    assert!(lines(&world).is_empty());
+    // Past the entry the same emote shows at once.
+    add(&mut world, wave(""));
+    assert_eq!(lines(&world).len(), 1);
+}
