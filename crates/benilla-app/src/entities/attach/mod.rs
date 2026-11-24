@@ -588,7 +588,7 @@ pub(super) fn attach_entity_visuals(
                 }
             }
             // The attachment points and event markers that held items and other riders hang from.
-            if let (Some(_), Some(d)) = (&skin, dm) {
+            if let (Some(rb), Some(d)) = (&skin, dm) {
                 // The first marker of an ident wins, as the reference's scan returns it: character
                 // models carry six `$CSD` records.
                 let mut markers = std::collections::HashMap::new();
@@ -615,6 +615,14 @@ pub(super) fn attach_entity_visuals(
                     commands
                         .entity(entity)
                         .insert(crate::creature_anim::BodyTwist::new(spine, head));
+                }
+                // The wheel mask (`0x715fd0`): the wheel key-bones this model carries, each at its
+                // bind pivot; a model with none gets no wheels.
+                let wheels = d.skeleton.wheel_bones.iter().flatten().filter_map(|&b| {
+                    in_range(Some(b)).and_then(|b| Some((b, rb.pose.bind_pivot(b)?)))
+                });
+                if let Some(wheels) = crate::creature_anim::Wheels::new(wheels) {
+                    commands.entity(entity).insert(wheels);
                 }
             }
             // The worn geoset selectors, the helm's hide-mask rows included.
@@ -995,6 +1003,7 @@ mod tests {
                 }],
                 spine_bone: None,
                 head_bone: None,
+                wheel_bones: [None; 8],
             },
             inverse_bindposes: Some(
                 ibps.add(SkinnedMeshInverseBindposes::from(vec![Mat4::IDENTITY])),
