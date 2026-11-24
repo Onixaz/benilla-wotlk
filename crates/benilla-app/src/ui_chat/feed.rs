@@ -1692,7 +1692,10 @@ fn add_one(world: &mut World, line: ChatLine) -> Option<ChatLine> {
 fn run_step(world: &mut World, script: &mut UiScript, step: Step) {
     match step {
         Step::Fire(event, args) => crate::ui_script::safe_world::raise(world, event, args),
-        Step::Route(event) => route_in_world(world, script, &event, None),
+        Step::Route(event) => {
+            let record = composed_record(&event);
+            route_in_world(world, script, &event, record);
+        }
         Step::TextEmote(event) => {
             crate::ui_script::safe_world::raise(
                 world,
@@ -1738,7 +1741,8 @@ fn run_step(world: &mut World, script: &mut UiScript, step: Step) {
                 );
             }
             let after = deliver_mid(&mut world.resource_mut::<ChannelState>(), &mut event);
-            route_in_world(world, script, &event, None);
+            let record = composed_record(&event);
+            route_in_world(world, script, &event, record);
             deliver_after(
                 script,
                 &mut world.resource_mut::<ChannelState>(),
@@ -1747,6 +1751,30 @@ fn run_step(world: &mut World, script: &mut UiScript, step: Step) {
             );
         }
     }
+}
+
+/// The chat record the add writes for a line its caller composed (`0x50a8a5` -> `0x4fdd80`): the
+/// caller's type, name, channel and guid, with no sender word (a defense line pushes 0 for each but
+/// the channel, `0x50c4a3`-`0x50c4c6`); the record keeps only its listed types (`0x4fb1a0`).
+fn composed_record(event: &ChatEvent) -> Option<benilla_ui::script::ChatRecord> {
+    let chat_type = event.kind.and_then(super::event::wotlk_type_of_kind)?;
+    Some(benilla_ui::script::ChatRecord {
+        chat_type: u32::from(chat_type),
+        sender_guid: event.sender_guid,
+        sender_word: 0,
+        sender_name: event.sender.clone(),
+        channel: if event.channel_base.is_empty() {
+            event.channel.clone()
+        } else {
+            event.channel_base.clone()
+        },
+        zone_channel: event.zone_channel_id,
+        text: event.text.clone(),
+        line_id: 0,
+        time: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as u32),
+    })
 }
 
 /// The add's tail for a built line: the next line id and the chat record under it (`0x4fdd80`),
@@ -1777,12 +1805,22 @@ fn route_raise(
         warn!("chat: unroutable event (no kind): {:?}", event.text);
         return None;
     };
+    // The active player the add read at its call (`0x50a3ad`), 0 with none in view.
+    let player = world
+        .get_resource::<SelfGuid>()
+        .and_then(|s| s.0)
+        .filter(|g| {
+            world
+                .get_resource::<GuidIndex>()
+                .is_some_and(|i| i.0.contains_key(g))
+        })
+        .unwrap_or(0);
     let mut windows = world.get_resource_mut::<ChatWindows>()?;
     windows.line_id = windows.line_id.wrapping_add(1);
     let line_id = windows.line_id;
     if let Some(mut record) = record {
         record.line_id = line_id;
-        script.record_chat(record);
+        script.record_chat(record, player);
     }
     let name = super::event::event_name(kind);
     if !name.is_empty() {

@@ -872,6 +872,63 @@ fn the_world_entry_walk_passes_the_senders_bare_name() {
     assert!(sent.try_recv().is_err(), "every record was cached");
 }
 
+/// A composed line of a recorded type is written to the chat record under its line id like a
+/// wire line (`0x50a8a5` -> `0x4fdd80`, kept by `0x4fb1a0`): a defense line on its channel (0x11)
+/// is found by `CanComplainChat(lineID)`; a system line (type 0) is not recorded.
+#[test]
+fn a_composed_channel_line_is_recorded_under_its_line_id() {
+    let (mut world, _sent) = world();
+    world
+        .non_send_resource::<UiScript>()
+        .run(
+            r#"
+            Ids = {}
+            local f = CreateFrame("Frame")
+            f:RegisterEvent("CHAT_MSG_CHANNEL")
+            f:RegisterEvent("CHAT_MSG_SYSTEM")
+            f:SetScript("OnEvent", function(_, e, ...) Ids[#Ids + 1] = select(11, ...) end)
+        "#,
+        )
+        .unwrap();
+    {
+        let mut s = world.non_send_resource_mut::<UiScript>();
+        s.set_unit(
+            "player",
+            Some(benilla_ui::script::UnitState {
+                exists: true,
+                guid: ME,
+                ..Default::default()
+            }),
+        );
+        s.set_complaint_status(1);
+    }
+    enter_world(&mut world);
+    add(
+        &mut world,
+        ChatEvent {
+            kind: Some(ChatEventKind::Channel),
+            text: "Westfall is under attack!".into(),
+            channel: "LocalDefense - Westfall".into(),
+            ..Default::default()
+        }
+        .into(),
+    );
+    add(&mut world, system_line("hello"));
+    let ids: Vec<u32> = world
+        .non_send_resource::<UiScript>()
+        .eval("return Ids")
+        .unwrap();
+    assert_eq!(ids.len(), 2);
+    let can = |id: u32| {
+        world
+            .non_send_resource::<UiScript>()
+            .eval::<Option<i32>>(&format!("return CanComplainChat({id})"))
+            .unwrap()
+    };
+    assert_eq!(can(ids[0]), Some(1), "the defense line is recorded");
+    assert_eq!(can(ids[1]), None, "a system line is not");
+}
+
 const ME: u64 = 0x22;
 
 /// A world past its entry with our player in view (`0x5036c3`), WAVE's sentences, the language
