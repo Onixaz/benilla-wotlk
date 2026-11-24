@@ -708,7 +708,7 @@ fn a_spam_filtered_whisper_is_reported_and_a_system_line_never_filtered() {
 }
 
 /// A line the client composes takes the add's text passes too, as every caller hands it over with
-/// `[ebp+0x40]` 0 (`0x50d8cf`): a system line's quest link takes the level-10 player's difficulty
+/// `[ebp+0x40]` 0 (`0x50d8c9`): a system line's quest link takes the level-10 player's difficulty
 /// colour (`0x50a2ec`-`0x50a393`) and its profanity is masked, the system type being in the mask
 /// table (`0x50a621`); a loot line, not type 0, goes through the spam filter
 /// (`0x50a6a7`), and a system line never does.

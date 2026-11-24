@@ -1557,7 +1557,7 @@ fn build(In((item, script, passes)): In<(ChatLine, UiScript, bool)>, p: AddParam
 }
 
 /// The add's text passes on a line its caller composed, every one handed over with no conversation
-/// (`[ebp+0x40]` 0, as at `0x50d8cf`): each quest link recoloured (`0x50a2e2` -> `0x50a2ec`-
+/// (`[ebp+0x40]` 0, as at `0x50d8c9`): each quest link recoloured (`0x50a2e2` -> `0x50a2ec`-
 /// `0x50a393`), the spam filter on its 3.3.5a type, a dropped whisper with a sender reported
 /// (`0x50a6b8`-`0x50a718`), then the mask (`0x50a732`). False when the filter drops the line.
 fn composed_passes(
