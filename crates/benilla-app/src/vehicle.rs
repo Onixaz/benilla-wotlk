@@ -722,6 +722,7 @@ fn drive_vehicle_aim(
         r.hold_pitch_for_aim = false;
         r.vehicle_facing = None;
         r.vehicle_pitch = None;
+        r.vehicle_fixed_facing = false;
         std::mem::take(&mut r.aim_pitch_delta)
     });
     if let Some(power) = script
@@ -753,6 +754,7 @@ fn drive_vehicle_aim(
         rig.vehicle_facing = vehicle
             .and_then(|v| facing::legal_range(rec, v.raw_facing))
             .map(|(min, max)| (min + deck, max + deck));
+        rig.vehicle_fixed_facing = facing::fixed_render_facing(rec);
         let upright = store.is_some_and(|s| {
             !s.0.unit_is_dead()
                 && s.0.unit_flags() & targeting::UNIT_FLAG_STUNNED == 0

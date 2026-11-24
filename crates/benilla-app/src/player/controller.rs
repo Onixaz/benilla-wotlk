@@ -866,11 +866,15 @@ pub(super) fn control(
             now,
             launch_y,
         );
+        // `0x73dab0` runs the facing chase only for a model with a twist bone, and never for a
+        // vehicle whose record fixes its facing.
+        let twists = body.single().is_ok_and(|q| q.8.is_some());
         let anim_flags = gait::drive_body_heading(
             &mut player,
             pose_flags,
             dt,
             afloat,
+            rig.vehicle_fixed_facing || !twists,
             moving,
             airborne,
             turning || mouselook,
