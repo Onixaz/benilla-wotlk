@@ -300,8 +300,9 @@ pub(crate) fn log_line(
                 &get(&format!("CHAT_{ty}_GET")).unwrap_or_default(),
                 &[Arg::S(sender)],
             );
-            // The language's name when it is set, a player is active and it is not that player's
-            // default read now (`0x50abb7`-`0x50ac06`).
+            // The language record's name (`0x50abd6`) when it is set, a player is active and it
+            // is not that player's default read now (`0x50abb7`-`0x50ac06`).
+            // An id with no record faults 12340 at `0x50abd6` (a null record); benilla writes `[] `.
             if event.language_id != 0 && default_language.is_some_and(|d| d != event.language_id) {
                 header.push_str(&format!("[{}] ", event.language));
             }

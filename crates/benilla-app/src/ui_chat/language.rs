@@ -46,6 +46,15 @@ impl ChatLanguages {
         self.skill.get(&language).copied().unwrap_or(0)
     }
 
+    /// A player with no skill in any language, for a test that reads a line's language.
+    #[cfg(test)]
+    pub(crate) fn with_player() -> Self {
+        Self {
+            have_player: true,
+            ..Self::default()
+        }
+    }
+
     /// Whether the viewer is a GM; the spam filter reads the same bit.
     pub(crate) fn is_gm(&self) -> bool {
         self.gm

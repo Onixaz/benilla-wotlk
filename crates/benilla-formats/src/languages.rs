@@ -85,6 +85,12 @@ impl Languages {
             .filter_map(move |(id, names)| Some((*id, names.get(locale)?.as_deref()?)))
     }
 
+    /// The running locale's name on language `id`'s record (its `+4`), `None` with no record.
+    pub fn name(&self, id: u32) -> Option<&str> {
+        let (_, names) = self.0.iter().find(|(row, _)| *row == id)?;
+        Some(names[0].as_deref().unwrap_or(""))
+    }
+
     pub fn len(&self) -> usize {
         self.0.len()
     }
@@ -291,6 +297,26 @@ mod tests {
         assert_eq!(langs.id(99), 0);
         // An enUS install fills only column 0; another is empty, not a panic.
         assert_eq!(langs.name(1, 5), None);
+    }
+
+    /// The chat add names a line's language off its record (`0x4fdbfd`, `0x50abd6`), so every
+    /// 3.3.5a language past the 1.12 set has its name, and an id with no record has none.
+    #[test]
+    fn every_shipped_language_record_names_its_language() {
+        let data = crate::wow_data_or_skip!();
+        let mut chain = Chain::open(&data).expect("open patch chain");
+        let langs = load_languages(&mut chain).expect("load");
+        for (id, name) in [
+            (1, "Orcish"),
+            (7, "Common"),
+            (35, "Draenei"),
+            (36, "Zombie"),
+            (37, "Gnomish Binary"),
+            (38, "Goblin Binary"),
+        ] {
+            assert_eq!(langs.name(id), Some(name), "language {id}");
+        }
+        assert_eq!(langs.name(4), None, "no record");
     }
 
     #[test]

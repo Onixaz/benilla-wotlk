@@ -440,29 +440,6 @@ pub(crate) fn flag_of_tag(chat_tag: u8) -> &'static str {
     }
 }
 
-/// The language names by wire id, in the running locale, for the `[Language]` header. Language 0
-/// has no `Languages.dbc` row, so the stock `arg3 ~= "Universal"` test never fires: an empty arg3
-/// is what suppresses the header (`ChatFrame.lua:1442`).
-pub(crate) fn language_name(id: u32) -> &'static str {
-    let english = match id {
-        1 => "Orcish",
-        2 => "Darnassian",
-        3 => "Taurahe",
-        6 => "Dwarvish",
-        7 => "Common",
-        8 => "Demonic",
-        9 => "Titan",
-        10 => "Thalassian",
-        11 => "Draconic",
-        12 => "Kalimag",
-        13 => "Gnomish",
-        14 => "Troll",
-        33 => "Gutterspeak",
-        _ => return "", // 0, Universal, and unknown ids: no header
-    };
-    crate::locale_names::language(id).unwrap_or(english)
-}
-
 #[cfg(test)]
 mod line_args_tests {
     use super::*;

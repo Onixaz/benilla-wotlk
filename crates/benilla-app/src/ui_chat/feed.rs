@@ -15,7 +15,7 @@ use crate::names::NameCache;
 use crate::net::{GuidIndex, NetCommands, ObjectStore, SelfGuid};
 
 use super::edit::ChannelState;
-use super::event::{flag_of_tag, kind_of_wire, language_name, ChatEvent, ChatEventKind};
+use super::event::{flag_of_tag, kind_of_wire, ChatEvent, ChatEventKind};
 #[cfg(test)]
 use super::frames::route;
 use super::frames::ChatWindows;
@@ -962,6 +962,8 @@ pub(super) struct AddParams<'w, 's> {
     ),
     /// The language gate: the word pool, this character's fluency and the GM bit.
     langs: Res<'w, super::language::ChatLanguages>,
+    /// `Languages.dbc`, whose record names arg3 and the log's header (`0x4fdbfd`, `0x50abd6`).
+    languages: Option<Res<'w, crate::ui_unit::LanguagesRes>>,
     /// Item names for `TRADESKILL_LOG`, `FEEDPET_LOG`, `ITEMENCHANTMENT*`, `SPELLDURABILITYDAMAGE`.
     items: Res<'w, crate::items::Items>,
     /// The spam and profanity filters, which run in the reference's display function.
@@ -1035,6 +1037,7 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
         states,
         award: (award_db, award_time),
         langs,
+        languages,
         items,
         mut text_filter,
         factions,
@@ -1157,9 +1160,12 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
                 text: text.clone(),
                 // A player line got here named: an unnamed one is held above (`0x509f92`).
                 sender: name.unwrap_or_default(),
-                // The effective language, not the wire's: narration types and GM mode force
-                // 0, which also drops the `[Language]` header.
-                language: language_name(language).to_string(),
+                // The effective language's record name, empty with no record (`0x4fdbd5`-`0x4fdc00`).
+                language: languages
+                    .as_deref()
+                    .and_then(|l| l.0.name(language))
+                    .unwrap_or_default()
+                    .to_string(),
                 language_id: language,
                 channel: channel_base,
                 flag: flag_of_tag(msg.chat_tag).to_string(),

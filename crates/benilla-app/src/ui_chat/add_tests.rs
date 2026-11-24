@@ -392,3 +392,40 @@ fn a_wire_line_waits_on_a_player_sender_whatever_its_type() {
     assert_eq!(heard(&world)[1], "CHAT_MSG_PARTY_LEADER:pull:Ann:");
     assert_eq!(world.resource::<super::ChatLog>().pending_len(), 0);
 }
+
+/// arg3 is the effective language's `Languages.dbc` record name (`0x4fdbd5`-`0x4fdc00`), the
+/// same record the log's header reads (`0x50abd6`), so a 3.3.5a language such as Draenei (35)
+/// is named, and an id with no record is empty.
+#[test]
+fn a_line_names_its_language_off_its_record() {
+    use benilla_protocol::messages::CHAT_MSG_SAY;
+    let (mut world, _sent) = world();
+    hear(&world, &["CHAT_MSG_SAY"]);
+    world.insert_resource(super::language::ChatLanguages::with_player());
+    world.insert_resource(crate::ui_unit::LanguagesRes(
+        benilla_formats::Languages::from_rows(&[(7, "Common"), (35, "Draenei")]),
+    ));
+    world
+        .resource_mut::<crate::names::NameCache>()
+        .insert_player(ANN, "Ann".into(), None);
+    enter_world(&mut world);
+    add(&mut world, player_line(CHAT_MSG_SAY, ANN, 35, "hi"));
+    add(&mut world, player_line(CHAT_MSG_SAY, ANN, 99, "hi"));
+    assert_eq!(
+        heard(&world),
+        ["CHAT_MSG_SAY:hi:Ann:Draenei", "CHAT_MSG_SAY:hi:Ann:"]
+    );
+    let strings = |key: &str| (key == "CHAT_SAY_GET").then(|| "%s says: ".to_string());
+    let event = ChatEvent {
+        kind: Some(ChatEventKind::Say),
+        text: "hi".into(),
+        sender: "Ann".into(),
+        language: "Draenei".into(),
+        language_id: 35,
+        ..Default::default()
+    };
+    assert_eq!(
+        super::frames::log_line(&event, ChatEventKind::Say, Some(7), &strings).unwrap(),
+        "Ann says: [Draenei] hi"
+    );
+}
