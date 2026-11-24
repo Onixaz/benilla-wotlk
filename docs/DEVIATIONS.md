@@ -205,6 +205,12 @@ means and records the difference here.
   works each coordinate out in SSE single precision (`0x628f38`–`0x628f65`) and compares the
   clamped value with it as floats (`0x629485` for x, `0x6295ff` for y), so the cell read at
   `0x62960e` is reached.
+- **`GetTradeSkillCooldown` across a clock tick.** The cooldown history keeps a record whose
+  time left, read against the OS clock (`0x807a7f`), is not negative (`0x807ae5`); the verb then
+  reads the clock again (`0x5daa17`) and pushes the end less it as an unsigned count of
+  milliseconds (`0x5daa24`-`0x5daa36`). When the clock ticks past the end between the two reads,
+  the difference is -1 and the verb answers about 4294967 seconds. benilla answers nil for a
+  cooldown already past its end at the call, and 0 at its end's millisecond.
 
 ## The Mac build
 

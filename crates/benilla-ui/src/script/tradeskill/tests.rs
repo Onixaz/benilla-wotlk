@@ -774,6 +774,28 @@ fn an_on_hold_cooldown_answers_one_millisecond_left() {
     assert_eq!(left, Some(0.001));
 }
 
+/// A cooldown at its end's millisecond still answers: the history skips only a record with negative
+/// time left (`0x807ae5`), and the verb pushes the end less the clock (`0x5daa24`), 0.
+#[test]
+fn a_cooldown_at_its_end_answers_zero() {
+    let mut s = UiScript::new().unwrap();
+    let mut st = enchanting();
+    for r in &mut st.recipes {
+        r.cooldown_end = Some(100.0);
+    }
+    s.set_trade_skill(Some(st));
+    s.set_now(100.0);
+    let left = s
+        .eval::<Option<f64>>("return GetTradeSkillCooldown(2)")
+        .unwrap();
+    assert_eq!(left, Some(0.0));
+    s.set_now(100.001);
+    let past = s
+        .eval::<Option<f64>>("return GetTradeSkillCooldown(2)")
+        .unwrap();
+    assert_eq!(past, None, "a record past its end is skipped");
+}
+
 /// `GetTradeSkillCooldown` reads the OS clock inside the call (`0x5daa17`) and answers the end
 /// less that (`0x5daa24`): with the clock run on past the last tick, the answer plus `GetTime()`
 /// read next in the same handler is the end, not the end plus the time since the tick.

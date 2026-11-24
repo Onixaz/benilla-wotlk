@@ -331,7 +331,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 Some((_, _, false)) => Value::Number(0.001),
                 Some((start_ms, duration_ms, true)) => {
                     let end = (start_ms + i64::from(duration_ms)) as f64 / 1000.0;
-                    if end > now {
+                    // The history keeps a record with no time left (`0x807ae5` skips only a negative one), so 0 at the end's millisecond.
+                    if end >= now {
                         Value::Number(end - now)
                     } else {
                         Value::Nil
