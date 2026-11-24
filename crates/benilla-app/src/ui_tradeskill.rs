@@ -320,18 +320,17 @@ fn own_store(world: &World) -> Option<&ObjectStore> {
 }
 
 /// The line a recipe files under for our race and class (`0x6e7b90`, `0x6e7250`); `None` for a
-/// spell without `SPELL_ATTR_IS_TRADESKILL` (`0x6e7bdb`, `0x6e7230`) or without a line.
+/// spell without `SPELL_ATTR_IS_TRADESKILL` (`0x6e7bdb`, `0x6e7230`), without an ability row, or
+/// whose row names a line `SkillLine.dbc` lacks (`0x6e7b9f`-`0x6e7bbe`, `0x6e7264`-`0x6e7270`).
 fn recipe_line(world: &mut World, spell_id: u32) -> Option<u32> {
     let d = world.get_resource::<Spells>()?.catalog.get(spell_id)?;
     if d.attributes & SPELL_ATTR_IS_TRADESKILL == 0 {
         return None;
     }
     let (race, class) = crate::spell::race_class(own_store(world));
-    let sla = world
-        .get_resource::<SkillLines>()?
-        .catalog
-        .ability(spell_id, race, class)?;
-    Some(sla.skill_id)
+    let catalog = &world.get_resource::<SkillLines>()?.catalog;
+    let line = catalog.ability(spell_id, race, class)?.skill_id;
+    catalog.line(line).map(|_| line)
 }
 
 /// A known spell's add to our player (`0x6e7b00`): a recipe joins its line's array, the node made
@@ -1309,6 +1308,72 @@ mod tests {
 
     const ROD: u32 = 7421;
 
+    /// Enchanting's `SkillLine.dbc` display.
+    fn enchanting_line() -> benilla_formats::SkillLineInfo {
+        benilla_formats::SkillLineInfo {
+            name: "Enchanting".into(),
+            category_id: 11,
+            icon: None,
+            description: String::new(),
+            alternate_verb: String::new(),
+            can_link: true,
+            costs_id: 0,
+        }
+    }
+
+    /// The add and the removal look the ability's line up in `SkillLine.dbc`: a line it lacks files
+    /// no node (`0x6e7b9f`-`0x6e7bbe`) and its removal neither leaves an array nor rebuilds
+    /// (`0x6e7264`-`0x6e7270`).
+    #[test]
+    fn a_recipe_whose_line_skill_line_lacks_files_nowhere() {
+        let (mut app, _rx, _me) = craft_world();
+        let world = app.world_mut();
+        world.init_resource::<UiEvents>();
+        let mut spells = crate::ui_action::Spells::empty_for_tests();
+        spells.catalog = benilla_formats::SpellCatalog::from_displays(
+            [(
+                ROD,
+                SpellDisplay {
+                    name: "Runed Copper Rod".into(),
+                    attributes: SPELL_ATTR_IS_TRADESKILL,
+                    ..Default::default()
+                },
+            )]
+            .into(),
+        );
+        world.insert_resource(spells);
+        let lines = |with_line: bool| {
+            let c = benilla_formats::SkillLineCatalog::from_spell_lines([(ROD, 333)]);
+            SkillLines {
+                catalog: std::sync::Arc::new(if with_line {
+                    c.with_lines([(333, enchanting_line())])
+                } else {
+                    c
+                }),
+            }
+        };
+        world.insert_resource(lines(false));
+        recipe_learned(world, ROD);
+        assert_eq!(world.resource::<TradeSkillRecipes>().line(333), None);
+        // Filed while the line was known, the removal then finds no line and keeps the array.
+        world.insert_resource(lines(true));
+        recipe_learned(world, ROD);
+        assert_eq!(
+            world.resource::<TradeSkillRecipes>().line(333),
+            Some(&[ROD][..])
+        );
+        // The first add rebuilt with no array, which fires nothing (`0x5dd7b6`); the second fired.
+        assert_eq!(world.resource::<UiEvents>().names(), ["TRADE_SKILL_UPDATE"]);
+        world.insert_resource(lines(false));
+        world.insert_resource(UiEvents::default());
+        recipe_removed(world, ROD);
+        assert_eq!(
+            world.resource::<TradeSkillRecipes>().line(333),
+            Some(&[ROD][..])
+        );
+        assert!(world.resource::<UiEvents>().is_empty(), "no rebuild fired");
+    }
+
     /// The whole client headless with us, the Enchanting list holding Runed Copper Rod on the
     /// standard GCD, and a VM in the world.
     fn craft_world() -> (
@@ -1523,10 +1588,10 @@ mod tests {
         world.init_resource::<UiEvents>();
         world.resource_mut::<PlayerActions>().spells.insert(ROD);
         world.insert_resource(SkillLines {
-            catalog: std::sync::Arc::new(benilla_formats::SkillLineCatalog::from_spell_lines([
-                (7411, 333),
-                (ROD, 333),
-            ])),
+            catalog: std::sync::Arc::new(
+                benilla_formats::SkillLineCatalog::from_spell_lines([(7411, 333), (ROD, 333)])
+                    .with_lines([(333, enchanting_line())]),
+            ),
         });
         let mut spells = crate::ui_action::Spells::empty_for_tests();
         spells.catalog = benilla_formats::SpellCatalog::from_displays(
