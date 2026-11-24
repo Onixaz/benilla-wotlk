@@ -433,8 +433,8 @@ pub(crate) fn set_trade_skill(world: &mut World, spell_id: u32) {
 }
 
 /// The open after its repeat stop: the item callbacks cleared (`0x5de1cc`); the opener of the line
-/// already open closes it (`0x5de1eb`); else the line switch, the rebuild with its update
-/// (`0x5de2c3`), the last line, and `TRADE_SKILL_SHOW` with any entry (`0x5de2e5`).
+/// already open closes it (`0x5de1eb`); else the line switch and the rebuild with its update
+/// (`0x5de2c3`), then the show at its own step.
 fn open_rest(world: &mut World, spell_id: u32, line: u32) {
     clear_item_callbacks(world);
     let Some(mut open) = world.get_resource_mut::<TradeSkillOpen>() else {
@@ -448,7 +448,16 @@ fn open_rest(world: &mut World, spell_id: u32, line: u32) {
     debug!("ui_tradeskill: opener {spell_id} opens skill line {line}");
     open.list.open_line(line, spell_id);
     refresh(world, true);
-    let mut open = world.resource_mut::<TradeSkillOpen>();
+    crate::ui_script::live::in_turn(world, open_show);
+}
+
+/// The open's tail, after the rebuild's update ran its listeners: the line as it now stands kept as
+/// the last (`0x5de2c8`, `0x5de2d7`), and `TRADE_SKILL_SHOW` with any entry (`0x5de2d1`,
+/// `0x5de2e5`).
+fn open_show(world: &mut World) {
+    let Some(mut open) = world.get_resource_mut::<TradeSkillOpen>() else {
+        return;
+    };
     open.list.opened();
     if open.list.entry_count() != 0 {
         if let Some(mut ui) = world.get_resource_mut::<UiEvents>() {

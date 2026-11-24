@@ -12256,6 +12256,86 @@ fn the_trade_skill_list_rebuilds_a_line_only_once_it_has_held_a_recipe() {
     );
 }
 
+/// The open keeps its line as the last only after the rebuild returns (`0x5de2c3`, then
+/// `0x5de2c8`, `0x5de2d7`): a `TRADE_SKILL_UPDATE` listener that closes the list inside the open
+/// leaves the last line 0, so the next open of the line resets its filters (`0x5de269`).
+#[test]
+fn a_close_inside_the_opens_update_leaves_no_last_line() {
+    use benilla_protocol::field::{FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_UNIT_BYTES_0};
+    const FIRST_AID: u32 = 3273;
+    const LINEN_BANDAGE: u32 = 3275;
+    let pair = |lo: u32, hi: u32| lo | hi << 16;
+    let mut t = crate::items::test_template("Linen Bandage");
+    t.subclass = 7;
+    let Some(mut rig) = Rig::login_after(
+        vec![
+            SessionEvent::ItemTemplate {
+                entry: 1251,
+                info: Some(Box::new(t)),
+            },
+            book(&[FIRST_AID, LINEN_BANDAGE]),
+        ],
+        &[
+            OBJECT_TYPE_PLAYER,
+            (FIELD_UNIT_BYTES_0, 1 | 2 << 8 | 1 << 24),
+            (SKILL, 129),
+            (SKILL + 1, pair(1, 75)),
+        ],
+    ) else {
+        return;
+    };
+    let run = |rig: &mut Rig, lua: &str| {
+        super::live::with_live_world(rig.app.world_mut(), |s| s.run(lua))
+            .expect("a VM")
+            .expect("the chunk runs");
+        rig.run(1);
+    };
+    let levels = |rig: &mut Rig| {
+        run(
+            rig,
+            "local lo, hi = GetTradeSkillItemLevelFilter() \
+             SetCVar('charzTsLevels', tostring(lo) .. '-' .. tostring(hi))",
+        );
+        rig.app
+            .world()
+            .resource::<crate::cvars::Cvars>()
+            .get("charzTsLevels")
+            .unwrap_or_default()
+            .to_string()
+    };
+    run(
+        &mut rig,
+        "RegisterCVar('charzTsLevels', '') charzTsCloseOnce = false \
+         local f = CreateFrame('Frame') f:RegisterEvent('TRADE_SKILL_UPDATE') \
+         f:SetScript('OnEvent', function() \
+           if charzTsCloseOnce then charzTsCloseOnce = false CloseTradeSkill() end end)",
+    );
+    rig.take();
+    run(&mut rig, "CastSpellByName('First Aid')");
+    run(&mut rig, "SetTradeSkillItemLevelFilter(5, 10)");
+    assert_eq!(levels(&mut rig), "5-10");
+    // The opener again closes it; the last line stays First Aid.
+    run(&mut rig, "CastSpellByName('First Aid')");
+    // The same line again keeps the filters; the listener closes inside its rebuild.
+    run(
+        &mut rig,
+        "charzTsCloseOnce = true CastSpellByName('First Aid')",
+    );
+    assert_eq!(levels(&mut rig), "5-10");
+    let list = &rig
+        .app
+        .world()
+        .resource::<crate::ui_tradeskill::TradeSkillOpen>()
+        .list;
+    assert_eq!((list.line, list.opener), (0, 0));
+    run(&mut rig, "CastSpellByName('First Aid')");
+    assert_eq!(
+        levels(&mut rig),
+        "0-0",
+        "the close inside the update left no last line, so the line switch resets"
+    );
+}
+
 /// Two minor glyphs off the install, by `GlyphProperties.dbc` id, and the first one's spell.
 fn two_minor_glyphs() -> (u32, u32, u32) {
     let data = benilla_formats::wow_data().expect("install");
