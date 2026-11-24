@@ -496,6 +496,10 @@ fn on_spell_superceded(
                 replaces: Some(old_spell_id),
             }));
             l.update_book(&flash, true);
+            // Then our player's removal and add (`0x6e7e81`, `0x6e7e92`): a recipe leaves and joins
+            // its line's array, each rebuilding the list whole (`0x6e72e6`, `0x6e7c1a`).
+            l.ui.world(move |w| crate::ui_tradeskill::recipe_removed(w, old_spell_id));
+            l.ui.world(move |w| crate::ui_tradeskill::recipe_learned(w, new_spell_id));
         }
     }
 }
@@ -1426,13 +1430,13 @@ fn learned_spell(
         if d.attributes & ATTR_DO_NOT_DISPLAY != 0 {
             // A recipe joins its line's list after the registrar, which rebuilds whole (`0x6e7c1a`).
             if recipe {
-                errors.trade_list_refresh();
+                errors.trade_list_learned(spell_id);
             }
             return None;
         }
         if recipe {
             announce_learn(spell_id, spells, errors);
-            errors.trade_list_refresh();
+            errors.trade_list_learned(spell_id);
             return None;
         }
         if d.is_companion(summons) {
@@ -1452,8 +1456,10 @@ fn learned_spell(
 /// Where a learn's writes signal, in its order: a bar slot it wrote (`0x5aae80`) and its line.
 trait LearnOut: crate::ui_action::signals::SignalSink {
     fn slot_changed(&mut self, slot: u8);
-    /// The tradeskill list's whole rebuild, at this step (`0x5dd5a0`).
-    fn trade_list_refresh(&mut self);
+    /// A recipe filed under its line, then the tradeskill list's whole rebuild, at this step (`0x6e7c07`, `0x6e7c1a`).
+    fn trade_list_learned(&mut self, spell_id: u32);
+    /// A recipe out of its line's array, then the whole rebuild, at this step (`0x6e72df`, `0x6e72e6`).
+    fn trade_list_removed(&mut self, spell_id: u32);
 }
 
 impl LearnOut for crate::ui_script::live::UiEvents {
@@ -1461,8 +1467,12 @@ impl LearnOut for crate::ui_script::live::UiEvents {
         crate::ui_action::slots::changed_in_turn(self, slot);
     }
 
-    fn trade_list_refresh(&mut self) {
-        self.world(crate::ui_tradeskill::refresh_whole);
+    fn trade_list_learned(&mut self, spell_id: u32) {
+        self.world(move |w| crate::ui_tradeskill::recipe_learned(w, spell_id));
+    }
+
+    fn trade_list_removed(&mut self, spell_id: u32) {
+        self.world(move |w| crate::ui_tradeskill::recipe_removed(w, spell_id));
     }
 }
 
@@ -1471,7 +1481,9 @@ impl LearnOut for crate::ui_script::live::UiEvents {
 impl LearnOut for crate::ui_action::signals::LinesSeen {
     fn slot_changed(&mut self, _: u8) {}
 
-    fn trade_list_refresh(&mut self) {}
+    fn trade_list_learned(&mut self, _: u32) {}
+
+    fn trade_list_removed(&mut self, _: u32) {}
 }
 
 /// `Attributes & 0x80`: the registrar's first exit (`0x54265c`).
@@ -1521,12 +1533,12 @@ fn removed_spell(
     debug!("net: removed spell {spell_id}");
     if actions.spells.remove(&spell_id) {
         actions.dirty = true;
-        // A recipe leaves its line's list, which rebuilds whole (`0x6e72e6`).
+        // A recipe leaves its line's array, which rebuilds whole (`0x6e72df`, `0x6e72e6`).
         if spells
             .and_then(|s| s.catalog.get(spell_id))
             .is_some_and(|d| d.attributes & benilla_formats::SPELL_ATTR_IS_TRADESKILL != 0)
         {
-            errors.trade_list_refresh();
+            errors.trade_list_removed(spell_id);
         }
     }
     announce_unlearn(spell_id, spells, errors);
@@ -2673,7 +2685,11 @@ mod tests {
             self.0.push(format!("slot {slot}"));
         }
 
-        fn trade_list_refresh(&mut self) {
+        fn trade_list_learned(&mut self, _: u32) {
+            self.0.push("trade list".into());
+        }
+
+        fn trade_list_removed(&mut self, _: u32) {
             self.0.push("trade list".into());
         }
     }

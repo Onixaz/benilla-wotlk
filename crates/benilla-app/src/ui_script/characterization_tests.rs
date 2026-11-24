@@ -11772,6 +11772,144 @@ fn a_reload_closes_the_trade_skill_list_and_the_opener_opens_it_again() {
     );
 }
 
+/// A logout runs the UI shutdown before the game shutdown (`0x529163` -> `0x528f00`, then
+/// `0x5291a4` -> `0x5dcaf0`): the close stops a waiting repeat with `UPDATE_TRADESKILL_RECAST`
+/// (`0x5da5d1`), then `TRADE_SKILL_CLOSE` (`0x5da5df`), and every listener up to `PLAYER_LOGOUT`
+/// (`0x52902a`) reads the list whole; the reset empties it after.
+#[test]
+fn a_logout_closes_the_trade_skill_list_before_the_game_shutdown_resets_it() {
+    use benilla_protocol::field::{FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_UNIT_BYTES_0};
+    const FIRST_AID: u32 = 3273;
+    const LINEN_BANDAGE: u32 = 3275;
+    let pair = |lo: u32, hi: u32| lo | hi << 16;
+    let mut t = crate::items::test_template("Linen Bandage");
+    t.subclass = 7;
+    let Some(mut rig) = Rig::login_after(
+        vec![
+            SessionEvent::ItemTemplate {
+                entry: 1251,
+                info: Some(Box::new(t)),
+            },
+            book(&[FIRST_AID, LINEN_BANDAGE]),
+        ],
+        &[
+            OBJECT_TYPE_PLAYER,
+            (FIELD_UNIT_BYTES_0, 1 | 2 << 8 | 1 << 24),
+            (SKILL, 129),
+            (SKILL + 1, pair(1, 75)),
+        ],
+    ) else {
+        return;
+    };
+    rig.take();
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("CastSpellByName('First Aid')")
+    })
+    .expect("a VM")
+    .expect("the cast runs");
+    rig.run(1);
+    assert_eq!(
+        fired(&rig.take(), &["TRADE_SKILL_SHOW"]),
+        ["TRADE_SKILL_SHOW"]
+    );
+    // A repeat of two waiting for its cast start (`0x5d9fa0`).
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::ui_tradeskill::TradeSkillOpen>()
+        .list
+        .set_recast(LINEN_BANDAGE, 2);
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run(
+            "RegisterCVar('charzTsLogout', '')              local f = CreateFrame('Frame')              for _, e in ipairs({ 'UPDATE_TRADESKILL_RECAST', 'TRADE_SKILL_CLOSE',                'PLAYER_LEAVING_WORLD', 'PLAYER_LOGOUT' }) do f:RegisterEvent(e) end              f:SetScript('OnEvent', function(_, e)                SetCVar('charzTsLogout', GetCVar('charzTsLogout') .. e .. ':'                  .. GetNumTradeSkills() .. ',') end)",
+        )
+    })
+    .expect("a VM")
+    .unwrap();
+    rig.app
+        .world_mut()
+        .resource_mut::<NextState<crate::char_select::ClientState>>()
+        .set(crate::char_select::ClientState::CharSelect);
+    rig.run(2);
+    let order = rig
+        .app
+        .world()
+        .resource::<crate::cvars::Cvars>()
+        .get("charzTsLogout")
+        .unwrap_or_default();
+    assert_eq!(
+        order,
+        "UPDATE_TRADESKILL_RECAST:2,TRADE_SKILL_CLOSE:2,TRADE_SKILL_CLOSE:2,PLAYER_LEAVING_WORLD:2,PLAYER_LOGOUT:2,",
+        "the stock hide's CloseTradeSkill signals again (`0x5da8ef`)"
+    );
+    let list = &rig
+        .app
+        .world()
+        .resource::<crate::ui_tradeskill::TradeSkillOpen>()
+        .list;
+    assert_eq!((list.line, list.opener, list.filtered()), (0, 0, 0));
+}
+
+/// The rebuild finds the open line's recipes in our player's per-line array (`0x5dd7ac` ->
+/// `0x6e73b0`): a line no recipe was ever added to has none, so the rebuild exits with nothing
+/// filed and no `TRADE_SKILL_UPDATE` (`0x5dd7b6`), and the open no `TRADE_SKILL_SHOW` (`0x5de2d1`);
+/// the first recipe learned makes the array (`0x6e7c07`) and rebuilds (`0x6e7c1a`); its removal
+/// leaves the emptied array (`0x6e72df`), whose rebuild still fires (`0x6e72e6`).
+#[test]
+fn the_trade_skill_list_rebuilds_a_line_only_once_it_has_held_a_recipe() {
+    use benilla_protocol::field::{FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_UNIT_BYTES_0};
+    const FIRST_AID: u32 = 3273;
+    const LINEN_BANDAGE: u32 = 3275;
+    let pair = |lo: u32, hi: u32| lo | hi << 16;
+    let mut t = crate::items::test_template("Linen Bandage");
+    t.subclass = 7;
+    let Some(mut rig) = Rig::login_after(
+        vec![
+            SessionEvent::ItemTemplate {
+                entry: 1251,
+                info: Some(Box::new(t)),
+            },
+            book(&[FIRST_AID]),
+        ],
+        &[
+            OBJECT_TYPE_PLAYER,
+            (FIELD_UNIT_BYTES_0, 1 | 2 << 8 | 1 << 24),
+            (SKILL, 129),
+            (SKILL + 1, pair(1, 75)),
+        ],
+    ) else {
+        return;
+    };
+    const EVENTS: &[&str] = &["TRADE_SKILL_UPDATE", "TRADE_SKILL_SHOW"];
+    rig.take();
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("CastSpellByName('First Aid')")
+    })
+    .expect("a VM")
+    .expect("the cast runs");
+    rig.run(1);
+    assert_eq!(fired(&rig.take(), EVENTS), Vec::<String>::new());
+    let learned = rig.packets(
+        vec![SessionEvent::SpellLearned {
+            spell_id: LINEN_BANDAGE,
+        }],
+        2,
+    );
+    assert_eq!(
+        pin(&learned, EVENTS, &["tsnum"]),
+        vec!["TRADE_SKILL_UPDATE | tsnum=2"]
+    );
+    let removed = rig.packets(
+        vec![SessionEvent::SpellRemoved {
+            spell_id: LINEN_BANDAGE,
+        }],
+        2,
+    );
+    assert_eq!(
+        pin(&removed, EVENTS, &["tsnum"]),
+        vec!["TRADE_SKILL_UPDATE | tsnum=0"]
+    );
+}
+
 /// Two minor glyphs off the install, by `GlyphProperties.dbc` id, and the first one's spell.
 fn two_minor_glyphs() -> (u32, u32, u32) {
     let data = benilla_formats::wow_data().expect("install");

@@ -17,7 +17,6 @@ use bevy::prelude::*;
 
 use benilla_formats::{SpellDisplay, SPELL_ATTR_IS_TRADESKILL};
 use benilla_protocol::messages::ItemInfo;
-use benilla_protocol::{SessionEvent, SessionEventKind};
 use benilla_ui::script::{
     TradeSkillDifficulty, TradeSkillGroup, TradeSkillLineView, TradeSkillList,
     TradeSkillReagentView, TradeSkillRecipeView, TradeSkillRow,
@@ -27,7 +26,7 @@ use benilla_ui::strings::Arg;
 use crate::creature_anim::{CastEvent, CastEventKind};
 use crate::entities::ItemDisplays;
 use crate::items::{Items, RecordWait, RecordWaits};
-use crate::net::{NetCommands, NetHandlerApp, ObjectStore, Objects, SelfGuid, SelfPlayer};
+use crate::net::{NetCommands, ObjectStore, Objects, SelfGuid, SelfPlayer};
 use crate::spell::{cast_target, CastCommit, CastLadder};
 use crate::ui_action::{PlayerActions, Spells};
 use crate::ui_items::{count_of, item_icon, tool_categories, InventoryScope};
@@ -274,9 +273,15 @@ pub(crate) struct UiTradeSkillPlugin;
 
 impl Plugin for UiTradeSkillPlugin {
     fn build(&self, app: &mut App) {
-        app.net_handler(SessionEventKind::Disconnected, on_session_end);
         app.init_resource::<TradeSkillOpen>()
+            .init_resource::<TradeSkillRecipes>()
             .add_systems(Startup, load_spell_focus.after(AssetSet::Open))
+            // After the UI shutdown's close and `PLAYER_LOGOUT` (`0x529160`: `0x528f00` at
+            // `0x529163`, then `0x5dcaf0` at `0x5291a4`).
+            .add_systems(
+                OnExit(crate::char_select::ClientState::InWorld),
+                shutdown_game.after(crate::ui_script::end_ui_session),
+            )
             .add_systems(
                 Update,
                 // In the press pass after the clicks, so a recast's GCD reaches the frame's tick (`0x480410` before `0x495320`).
@@ -287,10 +292,96 @@ impl Plugin for UiTradeSkillPlugin {
     }
 }
 
-/// The game shutdown's trade-skill reset (`0x5dcaf0`), which keeps the filters it does not write:
-/// a logout replaces the VM without running the old `OnHide`.
-fn on_session_end(In(_): In<SessionEvent>, mut open: ResMut<TradeSkillOpen>) {
+/// The game shutdown's trade-skill reset (`0x5dcaf0`), which keeps the filters it does not write.
+fn shutdown_game(mut open: ResMut<TradeSkillOpen>) {
     open.list.shutdown();
+}
+
+/// Our player's recipe arrays, one per line, the hash the rebuild finds the open line's in
+/// (`player+0x185c`, `0x6e73b0`): a node is made by the first recipe of its line added
+/// (`0x6e7c07`) and stays when its removals empty it (`0x6e72df`); our object's init starts empty.
+#[derive(Resource, Default)]
+pub(crate) struct TradeSkillRecipes(std::collections::BTreeMap<u32, Vec<u32>>);
+
+impl TradeSkillRecipes {
+    /// Whether `line` has a node, the rebuild's exit with none (`0x5dd7b6`).
+    fn has_line(&self, line: u32) -> bool {
+        self.0.contains_key(&line)
+    }
+}
+
+/// The line a recipe files under for our race and class (`0x6e7b90`, `0x6e7250`); `None` for a
+/// spell without `SPELL_ATTR_IS_TRADESKILL` (`0x6e7bdb`, `0x6e7230`) or without a line.
+fn recipe_line(world: &mut World, spell_id: u32) -> Option<u32> {
+    let d = world.get_resource::<Spells>()?.catalog.get(spell_id)?;
+    if d.attributes & SPELL_ATTR_IS_TRADESKILL == 0 {
+        return None;
+    }
+    let (race, class) = {
+        let mut q = world.query_filtered::<&ObjectStore, With<SelfPlayer>>();
+        crate::spell::race_class(q.iter(world).next())
+    };
+    let sla = world
+        .get_resource::<SkillLines>()?
+        .catalog
+        .ability(spell_id, race, class)?;
+    Some(sla.skill_id)
+}
+
+/// A known spell's add to our player (`0x6e7b00`): a recipe joins its line's array, the node made
+/// at the first (`0x6e7c07`, `0x6e7c11`), then the list rebuilds whole (`0x6e7c1a`), with a line
+/// or without.
+pub(crate) fn recipe_learned(world: &mut World, spell_id: u32) {
+    let is_recipe = world
+        .get_resource::<Spells>()
+        .and_then(|s| s.catalog.get(spell_id))
+        .is_some_and(|d| d.attributes & SPELL_ATTR_IS_TRADESKILL != 0);
+    if !is_recipe {
+        return;
+    }
+    if let Some(line) = recipe_line(world, spell_id) {
+        if let Some(mut recipes) = world.get_resource_mut::<TradeSkillRecipes>() {
+            recipes.0.entry(line).or_default().push(spell_id);
+        }
+    }
+    refresh(world, true);
+}
+
+/// A known spell's removal from our player (`0x6e71d0`): a recipe in its line's array leaves it,
+/// the node kept (`0x6e72df`), and the list rebuilds whole (`0x6e72e6`); one in no array does not.
+pub(crate) fn recipe_removed(world: &mut World, spell_id: u32) {
+    let Some(line) = recipe_line(world, spell_id) else {
+        return;
+    };
+    let removed = world
+        .get_resource_mut::<TradeSkillRecipes>()
+        .and_then(|mut r| {
+            let list = r.0.get_mut(&line)?;
+            // The array is searched from its tail (`0x6e72a5`).
+            let at = list.iter().rposition(|&s| s == spell_id)?;
+            list.remove(at);
+            Some(())
+        })
+        .is_some();
+    if removed {
+        refresh(world, true);
+    }
+}
+
+/// Our object's init (`0x6e7f50`): a fresh hash, then each buffered spell added (`0x6e7fc5`).
+pub(crate) fn player_init(world: &mut World) {
+    let Some(buffer) = world
+        .get_resource::<crate::ui_companion::KnownSpellBuffer>()
+        .map(|b| b.0.clone())
+    else {
+        return;
+    };
+    if let Some(mut recipes) = world.get_resource_mut::<TradeSkillRecipes>() {
+        recipes.0.clear();
+    }
+    for spell_id in buffer {
+        recipe_learned(world, spell_id);
+    }
 }
 
 fn load_spell_focus(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
@@ -410,7 +501,7 @@ fn clear_item_callbacks(world: &mut World) {
 /// The list rebuild (`0x5dd5a0`), with `full` the sub-classes too: the item callbacks cleared,
 /// each known recipe of the open line filed against the rank and the bags as they stand, a product
 /// record in flight asked with the list's callback (`0x5d9f80`); with none in flight,
-/// `TRADE_SKILL_UPDATE` (`0x5de0d5`). Nothing with no line or player.
+/// `TRADE_SKILL_UPDATE` (`0x5de0d5`). Nothing with no line, player or recipe array for the line.
 pub(crate) fn refresh(world: &mut World, full: bool) {
     if world.get_resource::<TradeSkillOpen>().is_none() {
         return;
@@ -425,6 +516,7 @@ pub(crate) fn refresh(world: &mut World, full: bool) {
 fn refresh_system(
     In(full): In<bool>,
     mut open: ResMut<TradeSkillOpen>,
+    recipes: Res<TradeSkillRecipes>,
     live: TradeSkillLive,
     actions: Option<Res<PlayerActions>>,
     mut waits: Option<NonSendMut<RecordWaits>>,
@@ -435,7 +527,8 @@ fn refresh_system(
     let known = actions.as_deref().map_or(&empty, |a| &a.spells);
     let line = open.list.line;
     let mut pending = Vec::new();
-    let rows = (line != 0)
+    // No player, or no array for the line, exits with nothing filed (`0x5dd79e`, `0x5dd7b6`).
+    let rows = (line != 0 && recipes.has_line(line))
         .then(|| live.rows(line, known, &mut pending))
         .flatten();
     for &product in &pending {
@@ -493,11 +586,6 @@ pub(crate) fn item_record_callback(world: &mut World, landed: bool) {
 /// The list rebuild in place, a step of the watch that calls it.
 pub(crate) fn refresh_in_place(world: &mut World) {
     refresh(world, false);
-}
-
-/// The list rebuild whole, a step of the known-spell add or removal that calls it.
-pub(crate) fn refresh_whole(world: &mut World) {
-    refresh(world, true);
 }
 
 /// A line's raw rank half, the difficulty's rank; 0 for a line the player lacks.
@@ -1207,27 +1295,6 @@ mod tests {
         );
     }
 
-    /// Driven through the real handler registration.
-    #[test]
-    fn the_session_end_closes_the_book() {
-        let mut app = App::new();
-        app.add_plugins(UiTradeSkillPlugin);
-        app.world_mut()
-            .resource_mut::<TradeSkillOpen>()
-            .list
-            .open_line(197, 0);
-
-        crate::net::handlers::dispatch(
-            app.world_mut(),
-            vec![benilla_protocol::SessionEvent::Disconnected {
-                reason: "logged out".into(),
-                end: benilla_protocol::SessionEnd::LoggedOut,
-            }],
-        );
-
-        assert_eq!(app.world().resource::<TradeSkillOpen>().line(), None);
-    }
-
     const ROD: u32 = 7421;
 
     /// The whole client headless with us, the Enchanting list holding Runed Copper Rod on the
@@ -1462,6 +1529,8 @@ mod tests {
             .into(),
         );
         world.insert_resource(spells);
+        // Our player's add files the recipe under its line (`0x6e7c07`).
+        recipe_learned(world, ROD);
         crate::ui_script::safe_world::lend(world, |s| {
             s.run(
                 r#"SEEN = {}

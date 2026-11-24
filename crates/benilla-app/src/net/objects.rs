@@ -196,7 +196,7 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
         if sc.self_guid.0 == Some(guid) && kind == EntityKind::Player {
             sc.ui.fire("TABARD_CANSAVE_CHANGED", Vec::new());
         }
-        // Our own create's init replays the known-spell buffer into the companion lists and updates them (`0x6e8378` -> `0x6e7f50`), ahead of the control below.
+        // Our own create's init replays the known-spell buffer into the companion lists and updates them, and files the recipes by line (`0x6e8378` -> `0x6e7f50`), ahead of the control below.
         if sc.self_guid.0 == Some(guid) {
             let me = (
                 fields.unit_race().unwrap_or(0),
@@ -209,6 +209,7 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
                 {
                     warn!("companions: the active player's init did not run: {e}");
                 }
+                crate::ui_tradeskill::player_init(world);
             });
         }
         // Our own create gives us control (`0x6e80b6`), firing `PLAYER_CONTROL_GAINED` on the flag's
