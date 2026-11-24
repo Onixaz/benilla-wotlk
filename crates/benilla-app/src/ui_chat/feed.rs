@@ -1358,7 +1358,8 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
                 store.map(|store| unit_name(&script, victim, Some(store), &names, &commands));
             // The title's side is the victim's faction template group: Horde (`0x4`) side 0, else
             // Alliance (`0x2`) side 1 (`0x50b755`-`0x50b784`); its gender ours (the title lookup
-            // genders against the local player).
+            // genders against the local player). A side-less victim skips the title's write
+            // (`0x50b787`) and 12340 reads an uninitialized buffer; benilla keeps side 0 (a bug).
             let team = crate::target::ring::faction_group_mask(factions.as_deref(), store)
                 .map_or(0, |mask| u8::from(mask & 0x4 == 0 && mask & 0x2 != 0));
             let female = self_guid
