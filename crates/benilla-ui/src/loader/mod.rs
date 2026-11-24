@@ -764,6 +764,7 @@ impl Loader<'_> {
         self.apply_messageframe(el, wrapper, dbg_name);
         self.apply_simplehtml(el, wrapper, dbg_name);
         self.apply_minimap(el, wrapper, dbg_name);
+        self.apply_cooldown(el, wrapper, dbg_name);
         // 6 · <Scripts> handlers; OnLoad is captured to fire bottom-up below.
         let onload = self.apply_scripts(el, wrapper, dbg_name);
 
