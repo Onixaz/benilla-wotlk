@@ -143,7 +143,7 @@ impl ChatLine {
     fn player_guids(&self) -> [u64; 2] {
         match self {
             ChatLine::Wire { msg } => [
-                if needs_name(msg.chat_type) {
+                if sender_waits(msg) {
                     msg.sender_guid
                 } else {
                     0
@@ -1053,15 +1053,16 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
                 );
                 return Built::Steps(steps);
             }
-            // A monster line carries its name inline; a player line resolves its guid.
+            // A line sent without its sender's name, from a player or a pet guid of any type,
+            // reads it from the cache and waits on it (`0x509e51`, `0x509eb6`, `0x509f5d`-`0x509f92`).
             let name = match &msg.sender_name {
                 Some(n) => Some(n.clone()),
-                None if needs_name(msg.chat_type) && msg.sender_guid != 0 => names
+                None if sender_waits(&msg) => names
                     .resolve(msg.sender_guid, &commands)
                     .map(str::to_string),
                 _ => None,
             };
-            if name.is_none() && needs_name(msg.chat_type) && msg.sender_guid != 0 {
+            if name.is_none() && sender_waits(&msg) {
                 return Built::Held(ChatLine::Wire { msg });
             }
             // A player or pet receiver sent without its name waits on it (`0x509f98`-`0x509fd2`);
@@ -1685,7 +1686,7 @@ fn ask_names(world: &mut World, line: &ChatLine) {
     };
     let sender = match &msg.sender_name {
         Some(name) => Some(name.clone()),
-        None if needs_name(msg.chat_type) => names.peek(msg.sender_guid).map(str::to_string),
+        None if sender_waits(msg) => names.peek(msg.sender_guid).map(str::to_string),
         None => None,
     };
     let whisper = matches!(
@@ -1867,29 +1868,8 @@ fn macro_subject(
     })
 }
 
-/// Whether a wire chat type carries a player guid to name (not a monster's inline name).
-fn needs_name(chat_type: u8) -> bool {
-    use benilla_protocol::messages as m;
-    matches!(
-        chat_type,
-        m::CHAT_MSG_SAY
-            | m::CHAT_MSG_PARTY
-            | m::CHAT_MSG_RAID
-            | m::CHAT_MSG_GUILD
-            | m::CHAT_MSG_OFFICER
-            | m::CHAT_MSG_YELL
-            | m::CHAT_MSG_WHISPER
-            | m::CHAT_MSG_WHISPER_INFORM
-            | m::CHAT_MSG_EMOTE
-            | m::CHAT_MSG_CHANNEL
-            | m::CHAT_MSG_AFK
-            | m::CHAT_MSG_DND
-            | m::CHAT_MSG_IGNORED
-            | m::CHAT_MSG_RAID_LEADER
-            | m::CHAT_MSG_RAID_WARNING
-            | m::CHAT_MSG_BATTLEGROUND
-            | m::CHAT_MSG_BATTLEGROUND_LEADER
-            | m::CHAT_MSG_ACHIEVEMENT
-            | m::CHAT_MSG_GUILD_ACHIEVEMENT
-    )
+/// The add's sender test, on the guid and not the chat type: a line sent without its sender's
+/// name from a player or a pet guid reads the name and waits on it (`0x509f5d`-`0x509f92`).
+fn sender_waits(msg: &benilla_protocol::messages::ChatMessage) -> bool {
+    msg.sender_name.is_none() && (is_player_guid(msg.sender_guid) || is_pet_guid(msg.sender_guid))
 }

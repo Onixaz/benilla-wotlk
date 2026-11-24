@@ -315,3 +315,80 @@ fn a_monster_line_holds_only_on_an_unnamed_player_or_pet_receiver() {
     assert_eq!(seen(&world)[2], "CHAT_MSG_MONSTER_SAY:Ann, die!:");
     assert_eq!(world.resource::<super::ChatLog>().pending_len(), 0);
 }
+
+/// A player's wire line to nobody, `chat_type` from `sender` with its name not sent.
+fn player_line(chat_type: u8, sender: u64, language: u32, text: &str) -> ChatLine {
+    ChatLine::Wire {
+        msg: benilla_protocol::messages::ChatMessage {
+            chat_type,
+            language,
+            sender_guid: sender,
+            target_guid: 0,
+            sender_name: None,
+            receiver_name: None,
+            channel: None,
+            text: text.into(),
+            chat_tag: 0,
+            achievement: 0,
+            wire_type: 0,
+            sender_word: 0,
+        },
+    }
+}
+
+/// Record each `event`'s first three arguments in `Heard`.
+fn hear(world: &World, events: &[&str]) {
+    let s = world.non_send_resource::<UiScript>();
+    s.run("Heard = {}").unwrap();
+    for e in events {
+        s.run(&format!(
+            r#"
+            local f = CreateFrame("Frame")
+            f:RegisterEvent("{e}")
+            f:SetScript("OnEvent", function(_, e, a1, a2, a3)
+                Heard[#Heard + 1] = e .. ":" .. a1 .. ":" .. a2 .. ":" .. a3
+            end)
+        "#
+        ))
+        .unwrap();
+    }
+}
+
+fn heard(world: &World) -> Vec<String> {
+    world
+        .non_send_resource::<UiScript>()
+        .eval::<Vec<String>>("return Heard")
+        .unwrap()
+}
+
+/// The add waits on the sender's guid, not the line's type (`0x509f5d`-`0x509f92`): a party
+/// leader's line from a player not cached is asked with the answer's callback (`0x509e51`) and held
+/// until the answer adds it, and a creature guid on a player's type is added at once with no name.
+#[test]
+fn a_wire_line_waits_on_a_player_sender_whatever_its_type() {
+    use benilla_protocol::messages::{CHAT_MSG_PARTY_LEADER, CHAT_MSG_SAY};
+    let (mut world, sent) = world();
+    hear(&world, &["CHAT_MSG_PARTY_LEADER", "CHAT_MSG_SAY"]);
+    enter_world(&mut world);
+    add(
+        &mut world,
+        player_line(CHAT_MSG_PARTY_LEADER, ANN, 0, "pull"),
+    );
+    assert!(heard(&world).is_empty(), "held on Ann's name");
+    assert!(matches!(
+        sent.try_recv(),
+        Ok(crate::net::ClientCommand::NameQuery { guid: ANN })
+    ));
+    add(
+        &mut world,
+        player_line(CHAT_MSG_SAY, 0xF130_0000_0001_0001, 0, "grr"),
+    );
+    assert_eq!(heard(&world), ["CHAT_MSG_SAY:grr::"]);
+    assert!(sent.try_recv().is_err(), "a creature sender is never asked");
+    world
+        .resource_mut::<crate::names::NameCache>()
+        .insert_player(ANN, "Ann".into(), None);
+    name_landed(&mut world);
+    assert_eq!(heard(&world)[1], "CHAT_MSG_PARTY_LEADER:pull:Ann:");
+    assert_eq!(world.resource::<super::ChatLog>().pending_len(), 0);
+}
