@@ -26,7 +26,7 @@ use benilla_ui::strings::Arg;
 use crate::creature_anim::{CastEvent, CastEventKind};
 use crate::entities::ItemDisplays;
 use crate::items::{Items, RecordWait, RecordWaits};
-use crate::net::{NetCommands, ObjectStore, Objects, SelfGuid, SelfPlayer};
+use crate::net::{GuidIndex, NetCommands, ObjectStore, Objects, SelfGuid, SelfPlayer};
 use crate::spell::{cast_target, CastCommit, CastLadder};
 use crate::ui_action::{PlayerActions, Spells};
 use crate::ui_items::{count_of, item_icon, tool_categories, InventoryScope};
@@ -311,6 +311,14 @@ impl TradeSkillRecipes {
     }
 }
 
+/// Our player's store by the active player's guid through the object lookup (`0x4d3790`,
+/// `0x4d4db0`), found from our own create's init on, before the self tag lands.
+fn own_store(world: &World) -> Option<&ObjectStore> {
+    let guid = world.get_resource::<SelfGuid>()?.0?;
+    let entity = *world.get_resource::<GuidIndex>()?.0.get(&guid)?;
+    world.get::<ObjectStore>(entity)
+}
+
 /// The line a recipe files under for our race and class (`0x6e7b90`, `0x6e7250`); `None` for a
 /// spell without `SPELL_ATTR_IS_TRADESKILL` (`0x6e7bdb`, `0x6e7230`) or without a line.
 fn recipe_line(world: &mut World, spell_id: u32) -> Option<u32> {
@@ -318,10 +326,7 @@ fn recipe_line(world: &mut World, spell_id: u32) -> Option<u32> {
     if d.attributes & SPELL_ATTR_IS_TRADESKILL == 0 {
         return None;
     }
-    let (race, class) = {
-        let mut q = world.query_filtered::<&ObjectStore, With<SelfPlayer>>();
-        crate::spell::race_class(q.iter(world).next())
-    };
+    let (race, class) = crate::spell::race_class(own_store(world));
     let sla = world
         .get_resource::<SkillLines>()?
         .catalog
@@ -400,11 +405,7 @@ fn load_spell_focus(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
 /// running repeat stops and signals (`0x5de1c4`), then the rest at its own step.
 pub(crate) fn set_trade_skill(world: &mut World, spell_id: u32) {
     let line = {
-        let me = world
-            .query_filtered::<&ObjectStore, With<SelfPlayer>>()
-            .iter(world)
-            .next();
-        let (race, class) = crate::spell::race_class(me);
+        let (race, class) = crate::spell::race_class(own_store(world));
         world
             .get_resource::<SkillLines>()
             .and_then(|l| l.catalog.spell_to_line(spell_id, race, class))
@@ -621,13 +622,28 @@ pub(crate) struct TradeSkillLive<'w, 's> {
     self_guid: Option<Res<'w, SelfGuid>>,
     /// Absent in an app without the net plugin, whose bags hold nothing.
     objects: Option<Objects<'w, 's>>,
-    me: Query<'w, 's, &'static ObjectStore, With<SelfPlayer>>,
-    auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras, With<SelfPlayer>>,
+    index: Option<Res<'w, GuidIndex>>,
+    stores: Query<
+        'w,
+        's,
+        (
+            &'static ObjectStore,
+            Option<&'static crate::unit_auras::UnitAuras>,
+        ),
+    >,
 }
 
 impl TradeSkillLive<'_, '_> {
+    /// Our player as the rebuild finds it, by the active player's guid through the object lookup
+    /// (`0x5dd656` -> `0x4d3790`, `0x5dd669` -> `0x4d4db0`), so our own create's init finds it.
+    fn me(&self) -> Option<(&ObjectStore, Option<&crate::unit_auras::UnitAuras>)> {
+        let guid = self.self_guid.as_deref()?.0?;
+        let entity = *self.index.as_deref()?.0.get(&guid)?;
+        self.stores.get(entity).ok()
+    }
+
     fn store(&self) -> Option<&ObjectStore> {
-        self.me.iter().next()
+        self.me().map(|(store, _)| store)
     }
 
     /// How many of `entry` the bags hold (`0x754d00`).
@@ -899,7 +915,7 @@ impl TradeSkillLive<'_, '_> {
         let cost = |d: &SpellDisplay| crate::spell::usable::power_cost(d, store, mods) as i32;
         let caster = crate::spell::text_caster::untracked(
             store,
-            (known, self.auras.single().ok()),
+            (known, self.me().and_then(|(_, auras)| auras)),
             &operands,
             mods,
             &skill,
@@ -1312,6 +1328,7 @@ mod tests {
             ))
             .id();
         world.resource_mut::<SelfGuid>().0 = Some(0x10);
+        world.resource_mut::<GuidIndex>().0.insert(0x10, me);
         world.insert_non_send_resource(benilla_ui::script::UiScript::new().expect("a VM"));
         {
             let mut open = world.resource_mut::<TradeSkillOpen>();

@@ -12397,6 +12397,75 @@ fn our_objects_init_rebuilds_the_open_line_at_each_recipe_it_adds() {
     );
 }
 
+/// A worldport with the line open purges our player and creates it afresh; its init finds us by
+/// the active player's guid (`0x5dd656` -> `0x4d3790`, `0x5dd669` -> `0x4d4db0`) and files each
+/// recipe by our race and class (`0x6e7b90`), so each add rebuilds the open line before the UI's
+/// entry closes it.
+#[test]
+fn a_worldport_with_the_line_open_rebuilds_it_at_each_recipe_our_init_adds() {
+    use benilla_protocol::field::{FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_UNIT_BYTES_0};
+    const FIRST_AID: u32 = 3273;
+    const LINEN_BANDAGE: u32 = 3275;
+    const HEAVY_LINEN_BANDAGE: u32 = 3276;
+    let pair = |lo: u32, hi: u32| lo | hi << 16;
+    let bandage = |entry: u32, name: &str| {
+        let mut t = crate::items::test_template(name);
+        t.class = 0;
+        t.subclass = 7;
+        SessionEvent::ItemTemplate {
+            entry,
+            info: Some(Box::new(t)),
+        }
+    };
+    let fields = [
+        OBJECT_TYPE_PLAYER,
+        (FIELD_UNIT_BYTES_0, 1 | 2 << 8 | 1 << 24),
+        (SKILL, 129),
+        (SKILL + 1, pair(1, 75)),
+    ];
+    let known = [FIRST_AID, LINEN_BANDAGE, HEAVY_LINEN_BANDAGE];
+    let Some(mut rig) = Rig::login_after(
+        vec![
+            bandage(1251, "Linen Bandage"),
+            bandage(2581, "Heavy Linen Bandage"),
+            book(&known),
+        ],
+        &fields,
+    ) else {
+        return;
+    };
+    rig.take();
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("CastSpellByName('First Aid')")
+    })
+    .expect("a VM")
+    .expect("the cast runs");
+    rig.run(1);
+    assert_eq!(
+        fired(&rig.take(), &["TRADE_SKILL_SHOW"]),
+        ["TRADE_SKILL_SHOW"]
+    );
+    rig.packets(
+        vec![SessionEvent::Worldport {
+            map_id: 0,
+            position: [-8949.95, -132.493, 83.5312],
+            orientation: 0.0,
+            needs_ack: true,
+        }],
+        3,
+    );
+    // The server sends the book again ahead of our create, as after a port's ack.
+    let seen = rig.packets(vec![book(&known), self_create(&fields)], 4);
+    assert_eq!(
+        pin(&seen, &["TRADE_SKILL_UPDATE", "SPELLS_CHANGED"], &["tsnum"]),
+        vec![
+            "TRADE_SKILL_UPDATE | tsnum=2",
+            "TRADE_SKILL_UPDATE | tsnum=3",
+            "SPELLS_CHANGED | tsnum=3",
+        ]
+    );
+}
+
 /// Two minor glyphs off the install, by `GlyphProperties.dbc` id, and the first one's spell.
 fn two_minor_glyphs() -> (u32, u32, u32) {
     let data = benilla_formats::wow_data().expect("install");
