@@ -947,7 +947,7 @@ impl TradeSkillLive<'_, '_> {
         let Some(name) = name else {
             return true;
         };
-        // `CaseAccentInsensitiveParse` for enUS (locale 0) is a lowercase fold.
+        // The text filter (`0x5dc110`) folds each text for case and accents before its search (`0x5dc24f` -> `0x7e11d0`): a lowercase fold for enUS.
         let hit = |text: &str| text.to_lowercase().contains(name);
         let spell_text = |id: u32| self.description(id, known, global);
         if let Some(t) = product {
