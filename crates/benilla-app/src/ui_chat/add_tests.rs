@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use benilla_ui::script::UiScript;
 
 use super::event::{ChatEvent, ChatEventKind};
-use super::feed::{add, enter_world, name_landed, ChatLine};
+use super::feed::{add, enter_world, ChatLine};
 
 const ANN: u64 = 0x11;
 
@@ -86,7 +86,7 @@ fn lines_before_the_world_entry_are_added_at_it_and_an_unnamed_one_at_its_answer
     world
         .resource_mut::<crate::names::NameCache>()
         .insert_player(ANN, "Ann".into(), None);
-    name_landed(&mut world);
+    super::feed::land_cached(&mut world);
     assert_eq!(seen(&world)[2], "CHAT_MSG_ADDON:oRA:Ann");
     assert_eq!(world.resource::<super::ChatLog>().pending_addons(), []);
 }
@@ -110,7 +110,7 @@ fn a_name_answered_empty_drops_its_waiting_line() {
     world
         .resource_mut::<crate::names::NameCache>()
         .insert_player(ANN, String::new(), None);
-    name_landed(&mut world);
+    super::feed::land_cached(&mut world);
     assert!(seen(&world).is_empty());
     assert!(world
         .resource::<super::ChatLog>()
@@ -136,7 +136,7 @@ fn the_world_exit_queues_lines_until_the_next_entry() {
     world
         .resource_mut::<crate::names::NameCache>()
         .insert_player(ANN, "Ann".into(), None);
-    name_landed(&mut world);
+    super::feed::land_cached(&mut world);
     assert!(
         seen(&world).is_empty(),
         "nothing is added on the loading screen"
@@ -307,7 +307,7 @@ fn a_monster_line_holds_only_on_an_unnamed_player_or_pet_receiver() {
     world
         .resource_mut::<crate::names::NameCache>()
         .insert_player(ANN, "Ann".into(), None);
-    name_landed(&mut world);
+    super::feed::land_cached(&mut world);
     assert_eq!(seen(&world)[2], "CHAT_MSG_MONSTER_SAY:Ann, die!:");
     assert_eq!(world.resource::<super::ChatLog>().pending_len(), 0);
 }
@@ -392,7 +392,7 @@ fn a_wire_line_waits_on_a_player_sender_whatever_its_type() {
     world
         .resource_mut::<crate::names::NameCache>()
         .insert_player(ANN, "Ann".into(), None);
-    name_landed(&mut world);
+    super::feed::land_cached(&mut world);
     assert_eq!(heard(&world)[1], "CHAT_MSG_PARTY_LEADER:pull:Ann:");
     assert_eq!(world.resource::<super::ChatLog>().pending_len(), 0);
 }
@@ -492,7 +492,7 @@ fn a_line_from_a_denied_name_asks_again_and_drops_on_the_next_denial() {
     world
         .resource_mut::<crate::names::NameCache>()
         .insert_player(ANN, String::new(), None);
-    name_landed(&mut world);
+    super::feed::land_cached(&mut world);
     assert_eq!(world.resource::<super::ChatLog>().pending_count(), 0);
 
     add(&mut world, addon_line());
@@ -509,7 +509,7 @@ fn a_line_from_a_denied_name_asks_again_and_drops_on_the_next_denial() {
     world
         .resource_mut::<crate::names::NameCache>()
         .insert_player(0x22, "Bob".into(), None);
-    name_landed(&mut world);
+    super::feed::land_cached(&mut world);
     assert_eq!(
         world.resource::<super::ChatLog>().pending_count(),
         2,
@@ -518,7 +518,7 @@ fn a_line_from_a_denied_name_asks_again_and_drops_on_the_next_denial() {
     world
         .resource_mut::<crate::names::NameCache>()
         .insert_player(ANN, String::new(), None);
-    name_landed(&mut world);
+    super::feed::land_cached(&mut world);
     assert_eq!(world.resource::<super::ChatLog>().pending_count(), 0);
     assert!(seen(&world).is_empty());
 }
@@ -545,7 +545,7 @@ fn a_cached_sender_reads_its_full_name_and_a_held_one_its_bare_name() {
         names.insert_player(BOB, "Bob".into(), None);
         names.set_player_realm(BOB, "Icecrown".into());
     }
-    name_landed(&mut world);
+    super::feed::land_cached(&mut world);
     assert_eq!(
         heard(&world),
         ["CHAT_MSG_SAY:hi:Ann-Icecrown:", "CHAT_MSG_SAY:yo:Bob:"]
@@ -821,7 +821,7 @@ fn a_whisper_enters_autocomplete_once_with_the_name_the_add_read() {
         names.insert_player(BOB, "Bob".into(), None);
         names.set_player_realm(BOB, "Icecrown".into());
     }
-    name_landed(&mut world);
+    super::feed::land_cached(&mut world);
     assert_eq!(offered(&world), ["Ann-Icecrown", "Bob", "Cy-Lordaeron"]);
 }
 
@@ -857,7 +857,7 @@ fn the_world_entry_walk_passes_the_senders_bare_name() {
         names.set_player_realm(BOB, "Icecrown".into());
     }
     // Outside the world the answer marks Bob's line queued (`0x503e78`).
-    name_landed(&mut world);
+    super::feed::land_cached(&mut world);
     assert!(heard(&world).is_empty());
     while sent.try_recv().is_ok() {}
     enter_world(&mut world);
@@ -1080,7 +1080,7 @@ fn a_text_emote_outside_the_world_never_shows() {
     world
         .resource_mut::<crate::names::NameCache>()
         .insert_player(BOB, "Bob".into(), None);
-    name_landed(&mut world);
+    super::feed::land_cached(&mut world);
     assert_eq!(world.resource::<super::ChatLog>().pending_count(), 0);
     enter_world(&mut world);
     assert!(lines(&world).is_empty());
@@ -1251,4 +1251,110 @@ fn a_feed_pet_line_needs_its_casters_name_record() {
         crate::combat_log::chat::feed_pet(ui, Some(ANN), BOB, 7_004);
     });
     assert_eq!(seen(&world), ["CHAT_MSG_PET_INFO:Bob's pet eats Bread."]);
+}
+
+/// The name record runs its callbacks in registration order (`0x680d03`-`0x680d2c`), each over its
+/// own list: an unnamed sender's say, text emote, roll and say register the chat callback
+/// (`0x509f33`), the emotes' (`0x5040ef`) and the roll's (`0x6e3827`) on one record, so the answer
+/// adds both says first (`0x503edb`), then shows the emote (`0x50403f`), then composes the roll
+/// (`0x6cb990`).
+#[test]
+fn a_name_answer_runs_its_callbacks_in_registration_order() {
+    use benilla_protocol::messages::CHAT_MSG_SAY;
+    const BOB: u64 = 0x33;
+    let mut world = emote_world();
+    let s = world.non_send_resource::<UiScript>();
+    s.run(
+        r#"
+        RANDOM_ROLL_RESULT = "%s rolls %d (%d-%d)"
+        local g = CreateFrame("Frame")
+        g:RegisterEvent("CHAT_MSG_SYSTEM")
+        g:SetScript("OnEvent", function(_, e, a1) Lines[#Lines + 1] = e .. "|" .. a1 end)
+    "#,
+    )
+    .unwrap();
+    enter_world(&mut world);
+    add(&mut world, player_line(CHAT_MSG_SAY, BOB, 0, "one"));
+    add(
+        &mut world,
+        ChatLine::TextEmote {
+            performer: BOB,
+            text_id: 101,
+            target: String::new(),
+        },
+    );
+    add(
+        &mut world,
+        ChatLine::Roll {
+            min: 1,
+            max: 100,
+            roll: 42,
+            guid: BOB,
+        },
+    );
+    add(&mut world, player_line(CHAT_MSG_SAY, BOB, 0, "two"));
+    assert!(lines(&world).is_empty(), "all four wait on Bob's name");
+    world
+        .resource_mut::<crate::names::NameCache>()
+        .insert_player(BOB, "Bob".into(), None);
+    super::feed::name_landed(&mut world, crate::names::NameKey::Player(BOB));
+    let order: Vec<String> = lines(&world)
+        .iter()
+        .map(|l| l.split('|').take(2).collect::<Vec<_>>().join("|"))
+        .collect();
+    assert_eq!(
+        order,
+        [
+            "CHAT_MSG_SAY|one",
+            "CHAT_MSG_SAY|two",
+            "CHAT_MSG_TEXT_EMOTE|Bob waves.",
+            "CHAT_MSG_SYSTEM|Bob rolls 42 (1-100)",
+        ]
+    );
+}
+
+/// A roll is composed by its handler or its callback before the add (`0x6e3848`, `0x6cb990`), so
+/// outside the world an unnamed roller's roll is queued as text at its answer: a cached sender's
+/// say queued after the roll arrived still comes first at the entry (`0x50dfc3`).
+#[test]
+fn an_unnamed_roll_queues_at_its_answer_outside_the_world() {
+    use benilla_protocol::messages::CHAT_MSG_SAY;
+    const BOB: u64 = 0x33;
+    let (mut world, _sent) = world();
+    let s = world.non_send_resource::<UiScript>();
+    s.run(
+        r#"
+        RANDOM_ROLL_RESULT = "%s rolls %d (%d-%d)"
+        local g = CreateFrame("Frame")
+        g:RegisterEvent("CHAT_MSG_SAY")
+        g:SetScript("OnEvent", function(_, e, a1) Seen[#Seen + 1] = e .. ":" .. a1 end)
+    "#,
+    )
+    .unwrap();
+    world
+        .resource_mut::<crate::names::NameCache>()
+        .insert_player(ANN, "Ann".into(), None);
+    add(
+        &mut world,
+        ChatLine::Roll {
+            min: 1,
+            max: 100,
+            roll: 7,
+            guid: BOB,
+        },
+    );
+    add(&mut world, player_line(CHAT_MSG_SAY, ANN, 0, "hi"));
+    world
+        .resource_mut::<crate::names::NameCache>()
+        .insert_player(BOB, "Bob".into(), None);
+    super::feed::name_landed(&mut world, crate::names::NameKey::Player(BOB));
+    assert!(
+        seen(&world).is_empty(),
+        "nothing is added outside the world"
+    );
+    enter_world(&mut world);
+    assert_eq!(
+        seen(&world),
+        ["CHAT_MSG_SAY:hi", "CHAT_MSG_SYSTEM:Bob rolls 7 (1-100):"]
+    );
 }

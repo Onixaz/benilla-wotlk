@@ -11,7 +11,7 @@ use benilla_protocol::messages::{
 use benilla_assets::{LockRecover, WorldAssets};
 use benilla_formats::{EmoteLine, EmoteTextCatalog};
 
-use crate::names::NameCache;
+use crate::names::{NameCache, NameKey};
 use crate::net::{GuidIndex, NetCommands, ObjectStore, SelfGuid};
 
 use super::edit::ChannelState;
@@ -58,7 +58,8 @@ pub(crate) enum ChatLine {
         a_guid: u64,
         b_guid: u64,
     },
-    /// A `/random` broadcast awaiting the roller's name.
+    /// A `/random` broadcast (`0x6e37af`): composed by the handler when the roller's name is cached,
+    /// else by the name answer's callback (`0x6cb990`), the roll its callback's param.
     Roll {
         min: u32,
         max: u32,
@@ -70,8 +71,8 @@ pub(crate) enum ChatLine {
     /// An honor award, its victim's name read in the call (`0x50b7c0`); `rank` (0 none) becomes a
     /// title at the add, from the victim's faction template.
     HonorGain { victim: u64, honor: i32, rank: u8 },
-    /// A text emote waiting on its performer's name: the reference's pending-text-emote node,
-    /// queued when the emote handler finds no cached name and added when the name arrives.
+    /// A text emote (`0x504070`): shown at once when its performer's name is cached (`0x503660`),
+    /// else queued on the text emotes' own list (`0x504107`) for their callback (`0x503fb0`).
     /// `target` is the wire's name, empty when untargeted, used as sent.
     TextEmote {
         performer: u64,
@@ -94,6 +95,17 @@ pub(crate) enum ChatLine {
     },
 }
 
+/// One of this module's callbacks on a name record, run when the record's answer lands.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum NameWait {
+    /// The chat add's callback (`0x503c80`) over the held chat lines.
+    Chat,
+    /// The text emotes' callback (`0x503fb0`) over their own list.
+    TextEmote,
+    /// A roll's callback (`0x6cb990`), the roll its param (`0x6e3816`).
+    Roll { min: u32, max: u32, roll: u32 },
+}
+
 impl From<ChatEvent> for ChatLine {
     fn from(event: ChatEvent) -> Self {
         Self::Event(event)
@@ -102,7 +114,8 @@ impl From<ChatEvent> for ChatLine {
 
 impl ChatLine {
     /// A line whose text its caller composes before the add, so a queue holds it as text: the
-    /// XP, honor and combat lines and the discovery (`0x50b1d0`, `0x50b6d0`, `0x50bd90`).
+    /// XP, honor and combat lines, the discovery and the roll (`0x50b1d0`, `0x50b6d0`,
+    /// `0x50bd90`, `0x6e3848`, `0x6cb990`).
     fn composed_by_caller(&self) -> bool {
         matches!(
             self,
@@ -110,7 +123,15 @@ impl ChatLine {
                 | ChatLine::HonorGain { .. }
                 | ChatLine::Combat(_)
                 | ChatLine::Discovery { .. }
+                | ChatLine::Roll { .. }
         )
+    }
+
+    /// Whether the line names `key` as a sender or receiver it waits on (`0x503cc9`-`0x503cf4`).
+    fn names_key(&self, key: NameKey) -> bool {
+        self.player_guids()
+            .into_iter()
+            .any(|g| g != 0 && NameKey::of(g, None) == Some(key))
     }
 
     /// Every name the line waits on is cached (`0x503e19`-`0x503e25`).
@@ -120,11 +141,12 @@ impl ChatLine {
             .all(|g| g == 0 || names.peek(g).is_some())
     }
 
-    /// A guid this line waits on whose answer came back denied (`0x503e5c`): the line is dropped.
-    fn names_missing(&self, names: &NameCache) -> bool {
+    /// The answered `key`, named by this line, came back denied (`0x503e27`-`0x503e5c`): the line
+    /// is dropped.
+    fn names_missing(&self, key: NameKey, names: &NameCache) -> bool {
         self.player_guids()
             .into_iter()
-            .any(|g| g != 0 && names.chat_denied(g))
+            .any(|g| g != 0 && NameKey::of(g, None) == Some(key) && names.chat_denied(g))
     }
 
     /// The player and pet guids whose names the line waits on, 0 for none.
@@ -146,8 +168,6 @@ impl ChatLine {
                 },
             ],
             ChatLine::Notice { a_guid, b_guid, .. } => [*a_guid, *b_guid],
-            ChatLine::Roll { guid, .. } => [*guid, 0],
-            ChatLine::TextEmote { performer, .. } => [*performer, 0],
             ChatLine::Mode { guid, .. } => [*guid, 0],
             _ => [0, 0],
         }
@@ -194,6 +214,12 @@ pub(crate) struct ChatLog {
     /// The held lines in add order, each with its queued mark (`node+0x2c`): set while the UI is
     /// outside the world, cleared by the entry's walk.
     pending: Vec<(ChatLine, bool)>,
+    /// The text emotes waiting on their performer's name, in queue order: their own list
+    /// (`0x504107`), walked by their own callback (`0x503fb0`).
+    emotes: Vec<ChatLine>,
+    /// This module's callbacks on the name records still asked, in registration order: the
+    /// record runs them head to tail when its answer lands (`0x680d03`-`0x680d2c`, `0x67a2d0`).
+    waits: Vec<(NameKey, NameWait)>,
     /// The add queues every line (`[0xac7a38]`): set from the start and at the world exit
     /// (`0x4fb190`), cleared at the UI's world entry (`0x50dfbd`).
     queue_chat: bool,
@@ -209,6 +235,8 @@ impl Default for ChatLog {
     fn default() -> Self {
         Self {
             pending: Vec::new(),
+            emotes: Vec::new(),
+            waits: Vec::new(),
             queue_chat: true,
             invite_waiting: false,
             whisper_sources: Vec::new(),
@@ -264,6 +292,18 @@ impl ChatLog {
     /// Drop every held line on disconnect.
     pub(crate) fn clear_session(&mut self) {
         self.pending.clear();
+        self.emotes.clear();
+        self.waits.clear();
+    }
+
+    /// Register `wait` on `key`'s record, as a lookup that misses does (`0x67d880`): appended, so
+    /// the record runs it after those before it. A second chat callback on the same record is not
+    /// kept: the first already added every line naming it, so the second finds none.
+    fn register(&mut self, key: NameKey, wait: NameWait) {
+        if wait == NameWait::Chat && self.waits.contains(&(key, NameWait::Chat)) {
+            return;
+        }
+        self.waits.push((key, wait));
     }
 
     /// The held addon lines as `(prefix, message, distribution)`.
@@ -287,10 +327,10 @@ impl ChatLog {
             .count()
     }
 
-    /// Every held line, addon lines included.
+    /// Every held line, addon lines and text emotes included.
     #[cfg(test)]
     pub(crate) fn pending_count(&self) -> usize {
-        self.pending.len()
+        self.pending.len() + self.emotes.len()
     }
 
     /// The kind and text of every held event line, in order.
@@ -1402,13 +1442,9 @@ fn build(In((item, script, passes)): In<(ChatLine, UiScript, bool)>, p: AddParam
             roll,
             guid,
         } => {
-            let Some(name) = names.chat_record(guid, &commands).map(str::to_string) else {
-                return Built::Held(ChatLine::Roll {
-                    min,
-                    max,
-                    roll,
-                    guid,
-                });
+            // Composed with the record the handler or its callback found (`0x6e3848`, `0x6cb990`).
+            let Some(name) = names.peek(guid).map(str::to_string) else {
+                return Built::Steps(steps);
             };
             // `RANDOM_ROLL_RESULT`, "%s rolls %d (%d-%d)" (`GlobalStrings.lua:3290`).
             let line = {
@@ -1868,18 +1904,38 @@ pub(crate) fn add_now(world: &mut World, line: ChatLine) {
         return;
     }
     let queue_chat = log.queue_chat;
-    ask_names(world, &line);
-    // A text emote outside the world: a named one is queued marked (`0x50368c` -> `0x502ea0`) on a
-    // list nothing walks again (`0x503fea` skips it), so it never shows; one waiting on its
-    // performer's name is held unmarked (`0x504107`) for the answer's callback.
-    if queue_chat && matches!(line, ChatLine::TextEmote { .. }) {
-        let ready = world
-            .get_resource::<NameCache>()
-            .is_some_and(|names| line.names_ready(names));
-        if !ready {
-            world.resource_mut::<ChatLog>().pending.push((line, false));
+    match &line {
+        // The text emote handler (`0x504070`) asks with its own callback (`0x5040ef`); a miss queues
+        // the emote on its own list (`0x504107`), never the add's.
+        ChatLine::TextEmote { performer, .. } => {
+            if ask_with(world, *performer, NameWait::TextEmote).is_none() {
+                world.resource_mut::<ChatLog>().emotes.push(line);
+                return;
+            }
+            // Outside the world a named emote is queued marked (`0x50368c` -> `0x502ea0`) on a
+            // list nothing walks again (`0x503fea` skips it), so it never shows.
+            if queue_chat {
+                return;
+            }
         }
-        return;
+        // The roll handler asks with the roll as its callback's param (`0x6e3817`); a miss leaves
+        // the line to that callback (`0x6e382e`), which composes it at the answer.
+        ChatLine::Roll {
+            min,
+            max,
+            roll,
+            guid,
+        } => {
+            let wait = NameWait::Roll {
+                min: *min,
+                max: *max,
+                roll: *roll,
+            };
+            if ask_with(world, *guid, wait).is_none() {
+                return;
+            }
+        }
+        _ => ask_names(world, &line),
     }
     if queue_chat {
         if line.composed_by_caller() {
@@ -1891,7 +1947,11 @@ pub(crate) fn add_now(world: &mut World, line: ChatLine) {
         return;
     }
     if let Some(held) = add_one(world, line) {
-        world.resource_mut::<ChatLog>().pending.push((held, false));
+        let mut log = world.resource_mut::<ChatLog>();
+        match held {
+            ChatLine::TextEmote { .. } => log.emotes.push(held),
+            held => log.pending.push((held, false)),
+        }
     }
 }
 
@@ -1929,20 +1989,34 @@ fn queue_composed(world: &mut World, line: ChatLine) {
     }
 }
 
+/// Ask `guid`'s name record with `wait` as its callback (`0x67d770`): the cached name, else
+/// `None` with the callback registered on the record, a missing record asked for.
+fn ask_with(world: &mut World, guid: u64, wait: NameWait) -> Option<String> {
+    let name = {
+        let (Some(names), Some(commands)) = (
+            world.get_resource::<NameCache>(),
+            world.get_resource::<NetCommands>(),
+        ) else {
+            return None;
+        };
+        names.chat_record(guid, commands).map(str::to_string)
+    };
+    if name.is_none() {
+        if let Some(key @ (NameKey::Player(_) | NameKey::Pet(_))) = NameKey::of(guid, None) {
+            world.resource_mut::<ChatLog>().register(key, wait);
+        }
+    }
+    name
+}
+
 /// The add's name lookups ahead of its queue test (`0x509f48`): each player guid the line names
 /// is asked with the answer's callback when missing (`0x509e51`, `0x509f33`), then a whisper's
 /// sender entered in autocomplete with the name the add read ([`note_whisper`]).
 fn ask_names(world: &mut World, line: &ChatLine) {
-    let (Some(names), Some(commands)) = (
-        world.get_resource::<NameCache>(),
-        world.get_resource::<NetCommands>(),
-    ) else {
-        return;
-    };
     // A player guid asks the name cache, a pet guid the pet-name cache (`0x509f33`, `0x50a06f`).
     for guid in line.player_guids() {
         if is_player_guid(guid) || is_pet_guid(guid) {
-            let _ = names.chat_record(guid, commands);
+            let _ = ask_with(world, guid, NameWait::Chat);
         }
     }
     if let ChatLine::Wire { msg, .. } = line {
@@ -1979,28 +2053,47 @@ fn note_whisper(world: &mut World, msg: &benilla_protocol::messages::ChatMessage
     }
 }
 
-/// A name answer's callback over the held lines (`0x503c80`), run as the answer lands: each line
-/// whose names are now cached is added, in hold order (`0x503edb`), one naming a guid answered
-/// empty is dropped (`0x503e5c`), and the lines queued for the world entry stay (`0x503e6f`).
-pub(crate) fn name_landed(world: &mut World) {
+/// A name record's answer (`0x680c60`) or denial (`0x67a2d0`): this module's callbacks on `key`
+/// run head to tail in registration order (`0x680d03`-`0x680d2c`), each over its own list.
+pub(crate) fn name_landed(world: &mut World, key: NameKey) {
     let Some(mut log) = world.get_resource_mut::<ChatLog>() else {
         return;
     };
-    if log.pending.iter().all(|(_, queued)| *queued) {
-        return;
+    let mut waits = Vec::new();
+    log.waits.retain(|&(k, wait)| {
+        if k == key {
+            waits.push(wait);
+        }
+        k != key
+    });
+    for wait in waits {
+        match wait {
+            NameWait::Chat => chat_callback(world, key),
+            NameWait::TextEmote => text_emote_callback(world, key),
+            NameWait::Roll { min, max, roll } => roll_callback(world, key, min, max, roll),
+        }
     }
+}
+
+/// The chat add's callback over its held lines (`0x503c80`): each unqueued line naming `key` is
+/// added once all its names are cached, in hold order (`0x503edb`), one whose `key` came back
+/// denied is dropped (`0x503e5c`), and the lines queued for the world entry stay (`0x503cbb`).
+fn chat_callback(world: &mut World, key: NameKey) {
+    let Some(mut log) = world.get_resource_mut::<ChatLog>() else {
+        return;
+    };
     let queue_chat = log.queue_chat;
     let held = std::mem::take(&mut log.pending);
     let mut kept = Vec::new();
     for (line, queued) in held {
-        if queued {
-            kept.push((line, true));
+        if queued || !line.names_key(key) {
+            kept.push((line, queued));
             continue;
         }
         let (missing, ready) = world
             .get_resource::<NameCache>()
             .map_or((false, false), |names| {
-                (line.names_missing(names), line.names_ready(names))
+                (line.names_missing(key, names), line.names_ready(names))
             });
         if missing {
             if matches!(line, ChatLine::Notice { notice, .. } if notice == channel_notice::INVITE) {
@@ -2008,27 +2101,81 @@ pub(crate) fn name_landed(world: &mut World) {
             }
             continue;
         }
-        // Outside the world a named text emote is marked queued (`0x504026`) on a list nothing
-        // walks again (`0x503fea` skips it), so it never shows.
-        if queue_chat && ready && matches!(line, ChatLine::TextEmote { .. }) {
+        // A line still waiting on its other name stays for that answer (`0x503ef9`).
+        if !ready {
+            kept.push((line, false));
             continue;
         }
         // Outside the world a ready line is marked queued for the entry's walk (`0x503e78`).
         if queue_chat {
-            kept.push((line, ready));
+            kept.push((line, true));
             continue;
         }
         // The callback hands the add the records' bare names (`0x503e87`-`0x503e98`) and calls it
-        // again (`0x503edb`).
+        // again (`0x503edb`), which asks its names again.
         let line = with_read_names(world, line, false);
-        if let ChatLine::Wire { msg } = &line {
-            note_whisper(world, msg);
-        }
+        ask_names(world, &line);
         if let Some(back) = add_one(world, line) {
             kept.push((back, false));
         }
     }
     restore(world, kept);
+}
+
+/// The text emotes' callback over their own list (`0x503fb0`): each unqueued emote by `key`'s
+/// performer leaves it, shown (`0x50403f`) when the name is cached and the UI is in the world;
+/// outside it the emote is marked queued (`0x504026`) where nothing walks it again, so it never
+/// shows, and a denied name drops it (`0x50401c`).
+fn text_emote_callback(world: &mut World, key: NameKey) {
+    let Some(mut log) = world.get_resource_mut::<ChatLog>() else {
+        return;
+    };
+    let queue_chat = log.queue_chat;
+    let held = std::mem::take(&mut log.emotes);
+    let mut kept = Vec::new();
+    for line in held {
+        let ChatLine::TextEmote { performer, .. } = &line else {
+            continue;
+        };
+        if NameKey::of(*performer, None) != Some(key) {
+            kept.push(line);
+            continue;
+        }
+        let named = world.get_resource::<NameCache>().is_some_and(|names| {
+            names.peek(*performer).is_some() && !names.chat_denied(*performer)
+        });
+        if !named || queue_chat {
+            continue;
+        }
+        if let Some(back) = add_one(world, line) {
+            kept.push(back);
+        }
+    }
+    let mut log = world.resource_mut::<ChatLog>();
+    let later = std::mem::replace(&mut log.emotes, kept);
+    log.emotes.extend(later);
+}
+
+/// A roll's callback (`0x6cb990`): with the roller's record found it composes
+/// `RANDOM_ROLL_RESULT` and calls the add with the text; a denial drops the roll.
+fn roll_callback(world: &mut World, key: NameKey, min: u32, max: u32, roll: u32) {
+    let NameKey::Player(guid) = key else {
+        return;
+    };
+    let found = world
+        .get_resource::<NameCache>()
+        .is_some_and(|names| names.peek(guid).is_some() && !names.chat_denied(guid));
+    if found {
+        add_now(
+            world,
+            ChatLine::Roll {
+                min,
+                max,
+                roll,
+                guid,
+            },
+        );
+    }
 }
 
 /// A wire line with the names the add has read so far filled in, as it queues them with the line
@@ -2076,6 +2223,8 @@ pub(crate) fn enter_world(world: &mut World) {
         let mut line = line;
         if let ChatLine::Wire { msg } = &mut line {
             if !walk_names(world, msg) {
+                // The walk's lookups ask with the chat callback (`0x50aeaf`, `0x50aedd`, `0x50af34`).
+                wait_on_missing(world, &line);
                 kept.push((line, false));
                 continue;
             }
@@ -2089,6 +2238,24 @@ pub(crate) fn enter_world(world: &mut World) {
         }
     }
     restore(world, kept);
+}
+
+/// Register the chat callback on each player or pet record `line` names that is not cached.
+fn wait_on_missing(world: &mut World, line: &ChatLine) {
+    let Some(names) = world.get_resource::<NameCache>() else {
+        return;
+    };
+    let missing: Vec<NameKey> = line
+        .player_guids()
+        .into_iter()
+        .filter(|&g| g != 0 && (names.peek(g).is_none() || names.chat_denied(g)))
+        .filter_map(|g| NameKey::of(g, None))
+        .filter(|key| matches!(key, NameKey::Player(_) | NameKey::Pet(_)))
+        .collect();
+    let mut log = world.resource_mut::<ChatLog>();
+    for key in missing {
+        log.register(key, NameWait::Chat);
+    }
 }
 
 /// The world-entry walk's names for a queued wire line (`0x50ae80`-`0x50af9a`): a player or pet
@@ -2130,7 +2297,31 @@ fn walk_names(world: &World, msg: &mut benilla_protocol::messages::ChatMessage) 
 pub(crate) fn drain_for_test(world: &mut World) {
     enter_world(world);
     crate::ui_script::live::fire_handler_events(world);
-    name_landed(world);
+    land_cached(world);
+}
+
+/// Run the answer of every asked record now cached or denied, in first-registration order, as its answer
+/// would; a pet record always.
+#[cfg(test)]
+pub(crate) fn land_cached(world: &mut World) {
+    let mut keys: Vec<NameKey> = Vec::new();
+    for (key, _) in &world.resource::<ChatLog>().waits {
+        if !keys.contains(key) {
+            keys.push(*key);
+        }
+    }
+    for key in keys {
+        let cached = match key {
+            NameKey::Player(g) => {
+                let names = world.resource::<NameCache>();
+                names.peek(g).is_some() || names.chat_denied(g)
+            }
+            _ => true,
+        };
+        if cached {
+            name_landed(world, key);
+        }
+    }
 }
 
 /// Everything the add reads, defaulted, with the UI past its world entry; the wire's receiver.

@@ -544,8 +544,8 @@ pub(crate) mod net {
             ui.world(move |world| crate::ui_guild_bank::name_landed(world, guid));
             ui.world(move |world| crate::ui_item_text::name_landed(world, guid));
             ui.world(move |world| crate::ui_achievement::name_landed(world, guid, true));
-            // The held chat lines' callback (`0x503c80`).
-            ui.world(crate::ui_chat::name_landed);
+            // The chat module's callbacks on the record (`0x503c80`, `0x503fb0`, `0x6cb990`).
+            ui.world(move |world| crate::ui_chat::name_landed(world, super::NameKey::Player(guid)));
         }
     }
 
@@ -562,7 +562,9 @@ pub(crate) mod net {
                 ui.world(move |world| crate::ui_guild_bank::name_landed(world, guid));
                 ui.world(move |world| crate::ui_item_text::name_landed(world, guid));
                 ui.world(move |world| crate::ui_achievement::name_landed(world, guid, false));
-                ui.world(crate::ui_chat::name_landed);
+                ui.world(move |world| {
+                    crate::ui_chat::name_landed(world, super::NameKey::Player(guid));
+                });
             }
         }
     }
@@ -586,7 +588,9 @@ pub(crate) mod net {
             );
             pet_name(pet_number, name, &mut names);
             // A pet-named line's callback (`0x509eb6` asks with `0x503c80`).
-            ui.world(crate::ui_chat::name_landed);
+            ui.world(move |world| {
+                crate::ui_chat::name_landed(world, super::NameKey::Pet(pet_number));
+            });
         }
     }
 
