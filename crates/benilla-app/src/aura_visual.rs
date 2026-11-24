@@ -270,16 +270,18 @@ fn tint_probe() -> Option<[u8; 3]> {
     })
 }
 
-/// Marker: a proc-11 aura holds this rig's clocks. It saves no speeds, unlike the reference's
-/// per-bone save and restore: here a rate belongs to a clip, and `transplant_up` arms clips under
-/// the freeze with speeds copied from frozen ones, so a saved speed restores as 0.
+/// Marker: a proc-11 aura holds this rig's clocks (`0x6f80b0`, `0x735dd0`). [`hold_frozen_clocks`]
+/// pauses every clip right before `advance_animations` and [`release_frozen_clocks`] resumes them
+/// right after, so no clip clock advances while `is_paused()` stays clear during `Update` and
+/// `AnimationTransitions::play` still fades out a replaced main clip instead of orphaning it.
 #[derive(Component, Default, Debug)]
 pub(crate) struct AnimRateFreeze;
 
-/// Pause the clocks of every unit whose head proc-11 rate is 0, its own rig and its mount's, and
-/// resume them when the aura goes; effect models and global sequences keep running. The pause is
-/// reasserted every frame, since the reference's rate lives on the bone (`+0xb0`) and arming leaves
-/// it alone, and after the animation driver, so a cast armed this frame freezes too.
+/// Mark every unit whose head proc-11 rate is 0 — its own rig and its mount's — with
+/// [`AnimRateFreeze`], and clear the marker when the aura goes (`0x6f80b0`, `0x6f87c0`); effect
+/// models and global sequences keep running. In 12340 the freeze holds each bone's sequence clocks
+/// while cross-fade blends still advance and expire (`0x826c40`), so a clip replaced under the
+/// freeze fades out and never persists past thaw.
 ///
 /// Deviation: a non-zero rate is ignored, because the only one shipped (`8947848.0` on kit 1744, a
 /// packed grey in the rate column) is noise on the reference's integer-ms clock and has no faithful
@@ -290,35 +292,47 @@ pub(crate) fn apply_aura_anim_rate(
         &AuraNodes,
         Option<&crate::entities::mount::MountChild>,
     )>,
-    mut rigs: Query<(&mut AnimationPlayer, Has<AnimRateFreeze>)>,
+    rigs: Query<(&AnimationPlayer, Has<AnimRateFreeze>)>,
     mut commands: Commands,
 ) {
     for (entity, nodes, mount) in &units {
         let frozen = nodes.head_anim_rate() == Some(0.0);
         for rig in [Some(entity), mount.map(|m| m.0)].into_iter().flatten() {
-            let Ok((mut player, held)) = rigs.get_mut(rig) else {
+            let Ok((player, held)) = rigs.get(rig) else {
                 continue;
             };
             match (frozen, held) {
-                (true, _) => {
-                    for (_, anim) in player.playing_animations_mut() {
-                        anim.pause();
-                    }
-                    if !held {
-                        trace_clock_edge("freeze", rig, &player);
-                        commands.entity(rig).try_insert(AnimRateFreeze);
-                    }
+                (true, false) => {
+                    trace_clock_edge("freeze", rig, player);
+                    commands.entity(rig).try_insert(AnimRateFreeze);
                 }
                 (false, true) => {
-                    // Resume every clip: nothing else pauses an animation on a unit rig.
-                    for (_, anim) in player.playing_animations_mut() {
-                        anim.resume();
-                    }
-                    trace_clock_edge("thaw", rig, &player);
+                    trace_clock_edge("thaw", rig, player);
                     commands.entity(rig).try_remove::<AnimRateFreeze>();
                 }
-                (false, false) => {}
+                (true, true) | (false, false) => {}
             }
+        }
+    }
+}
+
+/// Pause every clip on a frozen rig right before `advance_animations`, so no sequence clock moves
+/// while [`AnimRateFreeze`] holds.
+pub(crate) fn hold_frozen_clocks(mut rigs: Query<&mut AnimationPlayer, With<AnimRateFreeze>>) {
+    for mut player in &mut rigs {
+        for (_, anim) in player.playing_animations_mut() {
+            anim.pause();
+        }
+    }
+}
+
+/// Resume every clip [`hold_frozen_clocks`] paused: nothing else pauses a clip on a unit rig, and
+/// clearing the pause before the next `Update` keeps `AnimationTransitions::play` from skipping
+/// the old main clip.
+pub(crate) fn release_frozen_clocks(mut rigs: Query<&mut AnimationPlayer, With<AnimRateFreeze>>) {
+    for mut player in &mut rigs {
+        for (_, anim) in player.playing_animations_mut() {
+            anim.resume();
         }
     }
 }
