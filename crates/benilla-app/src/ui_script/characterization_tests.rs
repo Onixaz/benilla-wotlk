@@ -11683,6 +11683,152 @@ fn the_trade_skill_list_rebuilds_on_the_reagents_items_and_a_removed_recipe() {
     );
 }
 
+/// The other item-driven rebuilds in place, each a step of its handler: the bag slots' watch
+/// after its contents and watched bags (`0x5d9bfe` -> `0x5d9c05`); a watched bag's slot watch,
+/// one per moved slot, before its unlock and `BAG_UPDATE` (`0x5d96bc`, `0x5d96c6`, `0x5d9746`);
+/// an owned item's disable before the bar's item update (`0x70b0c4`, `0x70b0d0`); the visible
+/// entry watch, ours and another player's, before the alert recompute (`0x6e1e9c`, `0x6e1ea4`).
+/// `GetTradeSkillReagentInfo`'s count held reads the bags at each event.
+#[test]
+fn the_trade_skill_list_rebuilds_on_the_bags_a_bag_slot_a_disabled_item_and_a_visible_entry() {
+    use benilla_protocol::field::{
+        FIELD_CONTAINER_NUM_SLOTS, FIELD_CONTAINER_SLOT_1, FIELD_ITEM_CONTAINED, FIELD_ITEM_OWNER,
+        FIELD_ITEM_STACK_COUNT, FIELD_OBJECT_ENTRY, FIELD_PLAYER_INV_SLOT_HEAD,
+        FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_PLAYER_VISIBLE_ITEM_1_ENTRYID as VISIBLE,
+        FIELD_UNIT_BYTES_0,
+    };
+    const FIRST_AID: u32 = 3273;
+    const LINEN_BANDAGE: u32 = 3275;
+    const HEAVY_LINEN_BANDAGE: u32 = 3276;
+    const LINEN_CLOTH: u32 = 2589;
+    const SACK: u64 = 0x4000_0000_0000_0600;
+    const CLOTH: u64 = 0x4000_0000_0000_0601;
+    const OTHER: u64 = 0x0000_0000_0000_0099;
+    let pair = |lo: u32, hi: u32| lo | hi << 16;
+    let guid_pair =
+        |field: u16, guid: u64| [(field, guid as u32), (field + 1, (guid >> 32) as u32)];
+    let template = |entry: u32, name: &str, class: u32, subclass: u32| {
+        let mut t = crate::items::test_template(name);
+        t.class = class;
+        t.subclass = subclass;
+        t.stackable = 20;
+        SessionEvent::ItemTemplate {
+            entry,
+            info: Some(Box::new(t)),
+        }
+    };
+    // A human paladin with First Aid (129) at 1 of 75; the products and the cloth cached.
+    let Some(mut rig) = Rig::login_after(
+        vec![
+            template(1251, "Linen Bandage", 0, 7),
+            template(2581, "Heavy Linen Bandage", 0, 7),
+            template(LINEN_CLOTH, "Linen Cloth", 7, 0),
+            book(&[FIRST_AID, LINEN_BANDAGE, HEAVY_LINEN_BANDAGE]),
+        ],
+        &[
+            OBJECT_TYPE_PLAYER,
+            (FIELD_UNIT_BYTES_0, 1 | 2 << 8 | 1 << 24),
+            (SKILL, 129),
+            (SKILL + 1, pair(1, 75)),
+        ],
+    ) else {
+        return;
+    };
+    const EVENTS: &[&str] = &["TRADE_SKILL_UPDATE", "BAG_UPDATE"];
+    const VERBS: &[&str] = &["tsnum", "tsr2"];
+    let item = |guid: u64, entry: u32, inside: u64, extra: &[(u16, u32)]| {
+        let mut pairs = vec![(FIELD_OBJECT_ENTRY, entry), (FIELD_ITEM_STACK_COUNT, 4)];
+        pairs.extend(guid_pair(FIELD_ITEM_OWNER, ME));
+        pairs.extend(guid_pair(FIELD_ITEM_CONTAINED, inside));
+        pairs.extend_from_slice(extra);
+        let bag = extra.iter().any(|&(f, _)| f == FIELD_CONTAINER_NUM_SLOTS);
+        SessionEvent::ItemCreate {
+            guid,
+            container: bag,
+            fields: ObjectFields::from_pairs(&pairs).into_created(if bag {
+                ObjectType::Container
+            } else {
+                ObjectType::Item
+            }),
+        }
+    };
+    let mut sack = vec![(FIELD_CONTAINER_NUM_SLOTS, 4)];
+    sack.extend(guid_pair(FIELD_CONTAINER_SLOT_1, CLOTH));
+    rig.packets(
+        vec![
+            item(SACK, 4500, ME, &sack),
+            item(CLOTH, LINEN_CLOTH, SACK, &[]),
+        ],
+        2,
+    );
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("CastSpellByName('First Aid')")
+    })
+    .expect("a VM")
+    .expect("the cast runs");
+    rig.run(1);
+    assert_eq!(
+        pin(&rig.take(), &["TRADE_SKILL_SHOW"], VERBS),
+        vec!["TRADE_SKILL_SHOW | tsnum=3 tsr2=Linen Cloth:0"],
+        "the sack is not worn yet"
+    );
+    // The bag slots' watch: the worn sack's cloth counts at its rebuild.
+    let worn = rig.packets(
+        vec![self_values(&guid_pair(
+            FIELD_PLAYER_INV_SLOT_HEAD + 2 * 19,
+            SACK,
+        ))],
+        2,
+    );
+    assert_eq!(
+        pin(&worn, &["TRADE_SKILL_UPDATE"], VERBS),
+        vec!["TRADE_SKILL_UPDATE | tsnum=3 tsr2=Linen Cloth:4"]
+    );
+    // A watched bag's slot watch: one rebuild per moved slot, each before its slot's `BAG_UPDATE`.
+    let mut swap = guid_pair(FIELD_CONTAINER_SLOT_1, 0).to_vec();
+    swap.extend(guid_pair(FIELD_CONTAINER_SLOT_1 + 2, CLOTH));
+    let moved = rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: SACK,
+            fields: ObjectFields::from_pairs(&swap),
+        }],
+        2,
+    );
+    assert_eq!(
+        pin(&moved, EVENTS, VERBS),
+        vec![
+            "TRADE_SKILL_UPDATE | tsnum=3 tsr2=Linen Cloth:4",
+            "BAG_UPDATE 1 | tsnum=3 tsr2=Linen Cloth:4",
+            "TRADE_SKILL_UPDATE | tsnum=3 tsr2=Linen Cloth:4",
+            "BAG_UPDATE 1 | tsnum=3 tsr2=Linen Cloth:4",
+        ]
+    );
+    // An owned item's disable on its destroy.
+    let gone = rig.packets(vec![SessionEvent::ObjectDestroyed(CLOTH)], 2);
+    assert_eq!(
+        pin(&gone, &["TRADE_SKILL_UPDATE"], VERBS),
+        vec!["TRADE_SKILL_UPDATE | tsnum=3 tsr2=Linen Cloth:0"]
+    );
+    // Our visible entry watch, then another player's.
+    let shown = rig.packets(vec![self_values(&[(VISIBLE + 2 * 15, 1251)])], 2);
+    assert_eq!(
+        pin(&shown, &["TRADE_SKILL_UPDATE"], VERBS),
+        vec!["TRADE_SKILL_UPDATE | tsnum=3 tsr2=Linen Cloth:0"]
+    );
+    rig.packets(vec![player_create(OTHER)], 2);
+    let theirs = rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: OTHER,
+            fields: ObjectFields::from_pairs(&[(VISIBLE + 2 * 4, 1251)]),
+        }],
+        2,
+    );
+    assert_eq!(
+        pin(&theirs, &["TRADE_SKILL_UPDATE"], VERBS),
+        vec!["TRADE_SKILL_UPDATE | tsnum=3 tsr2=Linen Cloth:0"]
+    );
+}
+
 /// The UI shutdown closes the crafting list (`0x528f96` -> `0x5da5a0`) on a reload's root
 /// (`0x52b03e`): a waiting repeat stops with `UPDATE_TRADESKILL_RECAST` (`0x5da5d1`), then
 /// `TRADE_SKILL_CLOSE` (`0x5da5df`), both ahead of `PLAYER_LEAVING_WORLD` and `PLAYER_LOGOUT`;
