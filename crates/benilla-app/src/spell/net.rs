@@ -323,29 +323,50 @@ fn place_first_rank(
     bar.write_slot(slot, packed, net).then_some(slot)
 }
 
-fn on_spell_removed(In(ev): In<SessionEvent>, mut l: Lifecycle, mut commands: Commands) {
+fn on_spell_removed(In(ev): In<SessionEvent>, mut l: Lifecycle, commands: Commands) {
+    let SessionEvent::SpellRemoved { spell_id } = ev else {
+        return;
+    };
+    let recipe = our_object_exists(&l)
+        && l.spells
+            .as_deref()
+            .and_then(|s| s.catalog.get(spell_id))
+            .is_some_and(|d| d.attributes & benilla_formats::SPELL_ATTR_IS_TRADESKILL != 0);
+    if recipe {
+        // Our player's removal (`0x6e7878` -> `0x6e71d0`) rebuilds a recipe's list (`0x6e72e6`) before the book removal (`0x6e7361`), so its listeners still find the recipe in the known list.
+        l.ui.world(move |w| crate::ui_tradeskill::recipe_removed(w, spell_id));
+        l.ui.world(move |w| {
+            if let Err(e) = w.run_system_cached_with(spell_removed, spell_id) {
+                error!("net: the spell removal did not run: {e}");
+            }
+        });
+    } else {
+        spell_removed(In(spell_id), l, commands);
+    }
+}
+
+/// The book's side of `SMSG_REMOVED_SPELL`, from the known-spell removal (`0x6e7361` -> `0x53fad0`) on.
+fn spell_removed(In(spell_id): In<u32>, mut l: Lifecycle, mut commands: Commands) {
     refill_in_turn(&mut commands);
-    if let SessionEvent::SpellRemoved { spell_id } = ev {
-        // The known-spell removal drops a companion from its list (`0x53fad0`); before our object exists it zeroes the buffer's entry (`0x6e7888`).
-        let exists = our_object_exists(&l);
-        if !exists {
-            l.known_buffer.0.retain(|&s| s != spell_id);
-        } else {
-            companion_remove(&mut l, spell_id);
-        }
-        // The removal's first argument: whether the spell was in the known list (`0x53fbe2`).
-        let held = l.actions.spells.contains(&spell_id);
-        removed_spell(spell_id, &mut l.actions, l.spells.as_deref(), &mut *l.ui);
-        unlearn_totem(&mut l.multicast, spell_id);
-        // The plain unlearn drops its stance entry (`0x53fe44`, notify clear, `0x6e7361`).
-        if exists {
-            use crate::ui_action::usable_cache::{edit_step, ListEdit};
-            l.ui.world(edit_step(ListEdit::Remove(spell_id)));
-        }
-        // The removal ends in the book update, a spell it held or not (`0x5401b8`).
-        if exists {
-            l.update_book(&LearnedInTab::default(), held);
-        }
+    // The known-spell removal drops a companion from its list (`0x53fad0`); before our object exists it zeroes the buffer's entry (`0x6e7888`).
+    let exists = our_object_exists(&l);
+    if !exists {
+        l.known_buffer.0.retain(|&s| s != spell_id);
+    } else {
+        companion_remove(&mut l, spell_id);
+    }
+    // The removal's first argument: whether the spell was in the known list (`0x53fbe2`).
+    let held = l.actions.spells.contains(&spell_id);
+    removed_spell(spell_id, &mut l.actions, l.spells.as_deref(), &mut *l.ui);
+    unlearn_totem(&mut l.multicast, spell_id);
+    // The plain unlearn drops its stance entry (`0x53fe44`, notify clear, `0x6e7361`).
+    if exists {
+        use crate::ui_action::usable_cache::{edit_step, ListEdit};
+        l.ui.world(edit_step(ListEdit::Remove(spell_id)));
+    }
+    // The removal ends in the book update, a spell it held or not (`0x5401b8`).
+    if exists {
+        l.update_book(&LearnedInTab::default(), held);
     }
 }
 
@@ -1458,8 +1479,6 @@ trait LearnOut: crate::ui_action::signals::SignalSink {
     fn slot_changed(&mut self, slot: u8);
     /// A recipe filed under its line, then the tradeskill list's whole rebuild, at this step (`0x6e7c07`, `0x6e7c1a`).
     fn trade_list_learned(&mut self, spell_id: u32);
-    /// A recipe out of its line's array, then the whole rebuild, at this step (`0x6e72df`, `0x6e72e6`).
-    fn trade_list_removed(&mut self, spell_id: u32);
 }
 
 impl LearnOut for crate::ui_script::live::UiEvents {
@@ -1470,10 +1489,6 @@ impl LearnOut for crate::ui_script::live::UiEvents {
     fn trade_list_learned(&mut self, spell_id: u32) {
         self.world(move |w| crate::ui_tradeskill::recipe_learned(w, spell_id));
     }
-
-    fn trade_list_removed(&mut self, spell_id: u32) {
-        self.world(move |w| crate::ui_tradeskill::recipe_removed(w, spell_id));
-    }
 }
 
 /// A test's record of the lines; the slots are read off the bar.
@@ -1482,8 +1497,6 @@ impl LearnOut for crate::ui_action::signals::LinesSeen {
     fn slot_changed(&mut self, _: u8) {}
 
     fn trade_list_learned(&mut self, _: u32) {}
-
-    fn trade_list_removed(&mut self, _: u32) {}
 }
 
 /// `Attributes & 0x80`: the registrar's first exit (`0x54265c`).
@@ -1533,13 +1546,6 @@ fn removed_spell(
     debug!("net: removed spell {spell_id}");
     if actions.spells.remove(&spell_id) {
         actions.dirty = true;
-        // A recipe leaves its line's array, which rebuilds whole (`0x6e72df`, `0x6e72e6`).
-        if spells
-            .and_then(|s| s.catalog.get(spell_id))
-            .is_some_and(|d| d.attributes & benilla_formats::SPELL_ATTR_IS_TRADESKILL != 0)
-        {
-            errors.trade_list_removed(spell_id);
-        }
     }
     announce_unlearn(spell_id, spells, errors);
 }
@@ -2686,10 +2692,6 @@ mod tests {
         }
 
         fn trade_list_learned(&mut self, _: u32) {
-            self.0.push("trade list".into());
-        }
-
-        fn trade_list_removed(&mut self, _: u32) {
             self.0.push("trade list".into());
         }
     }

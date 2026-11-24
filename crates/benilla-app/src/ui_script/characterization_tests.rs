@@ -66,6 +66,7 @@ local VERBS = {
     { "ts2", function() local n, t, a = GetTradeSkillInfo(2) return n and (n .. ":" .. t .. ":" .. a) end },
     { "ts1", function() local n, t, a = GetTradeSkillInfo(1) return n and (n .. ":" .. t .. ":" .. (a or "")) end },
     { "tsr2", function() local n, _, _, h = GetTradeSkillReagentInfo(2, 1) return h and ((n or "nil") .. ":" .. h) end },
+    { "tslink", function() local l = GetTradeSkillListLink() return l and l:match("Htrade:[^|]*") end },
     { "rating6", function() return GetCombatRating(6) end },
     { "spdmg", function() return GetSpellBonusDamage(2) end },
     { "mainatk", function() return (UnitAttackBothHands("player")) end },
@@ -11822,10 +11823,20 @@ fn the_trade_skill_list_rebuilds_on_the_reagents_items_and_a_removed_recipe() {
         }],
         2,
     );
+    // Our player's removal rebuilds (`0x6e72e6`) before the known list drops the recipe
+    // (`0x6e7361`): the listener's list link (`0x5db060`) still carries the recipe's bit.
+    let at_maxed = pin(&maxed, &["TRADE_SKILL_UPDATE"], &["tslink"]);
+    let link = at_maxed[0].trim_start_matches("TRADE_SKILL_UPDATE | tslink=");
     assert_eq!(
-        pin(&removed, &["TRADE_SKILL_UPDATE"], &["tsnum"]),
-        vec!["TRADE_SKILL_UPDATE | tsnum=2"]
+        pin(&removed, &["TRADE_SKILL_UPDATE"], &["tsnum", "tslink"]),
+        vec![format!("TRADE_SKILL_UPDATE | tsnum=2 tslink={link}")]
     );
+    let after = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval::<String>("return (GetTradeSkillListLink():match('Htrade:[^|]*'))")
+    })
+    .expect("a VM")
+    .expect("the read runs");
+    assert_ne!(after, link, "the bit clears once the known list drops it");
 }
 
 /// The other item-driven rebuilds in place, each a step of its handler: the bag slots' watch
