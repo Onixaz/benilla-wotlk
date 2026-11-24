@@ -33,13 +33,13 @@ pub struct SocketInfo {
 
 /// An item the player holds, found by guid: its slot, as the lock and the tooltip address it.
 #[derive(Clone)]
-pub(super) enum Held<'a> {
+pub(super) enum Held {
     /// A bag slot, read off the World at the call.
     Bag(i64, u32, Box<ContainerSlot>),
-    Worn(u32, &'a InvSlotView),
+    Worn(u32, Box<InvSlotView>),
 }
 
-impl<'a> Held<'a> {
+impl Held {
     /// The Lua `(bag, slot)` the item's lock and events name.
     pub(super) fn position(&self) -> (i64, u32) {
         match self {
@@ -105,13 +105,13 @@ impl<'a> Held<'a> {
 }
 
 /// The player's item with `guid`, in a bag, the bank or worn; `None` for 0 or one not held.
-pub(super) fn find(model: &Model, guid: u64) -> Option<Held<'_>> {
+pub(super) fn find(model: &Model, guid: u64) -> Option<Held> {
     if guid == 0 {
         return None;
     }
-    for (i, slot) in model.inventory_slots.iter().enumerate() {
-        if let Some(s) = slot.as_ref().filter(|s| s.guid == guid) {
-            return Some(Held::Worn(i as u32, s));
+    for (i, slot) in model.worn_slots().into_iter().enumerate() {
+        if let Some(s) = slot.filter(|s| s.guid == guid) {
+            return Some(Held::Worn(i as u32, Box::new(s)));
         }
     }
     super::container::live_bags(model)
@@ -125,7 +125,7 @@ pub(super) fn find(model: &Model, guid: u64) -> Option<Held<'_>> {
 }
 
 /// A held item as the cursor carries it, whole (`0x5c4e76`: no split).
-fn cursor_item(held: &Held<'_>) -> cursor::CursorItem {
+fn cursor_item(held: &Held) -> cursor::CursorItem {
     let (bag, slot) = held.position();
     match held {
         Held::Bag(_, _, s) => cursor::CursorItem {
@@ -154,7 +154,7 @@ fn cursor_item(held: &Held<'_>) -> cursor::CursorItem {
 }
 
 /// `GetNumSockets` (`0x7094e0`): the template's coloured sockets plus a prismatic enchant's.
-pub(super) fn num_sockets(model: &Model, held: &Held<'_>) -> u32 {
+pub(super) fn num_sockets(model: &Model, held: &Held) -> u32 {
     let colored = super::item_stats::item_record(model, held.item_id()).map_or(0, |t| {
         t.socket_colors.iter().filter(|&&c| c != 0).count() as u32
     });
@@ -296,7 +296,7 @@ pub(super) fn watch(model: &mut crate::script::ModelGuard<'_>) {
 /// flagged `0x10` count none.
 pub(super) fn equipped_gem_counts(model: &Model) -> [i32; 4] {
     let mut counts = [0; 4];
-    for s in model.inventory_slots.iter().skip(1).take(19).flatten() {
+    for s in model.worn_slots().iter().skip(1).take(19).flatten() {
         let broken =
             s.flags & 0x8 == 0 && s.durability.is_some_and(|(cur, max)| max > 0 && cur == 0);
         if broken || s.flags & 0x10 != 0 {
@@ -324,8 +324,8 @@ pub(super) fn item_id_by_name(model: &Model, name: &str) -> Option<u32> {
     let name = name.to_lowercase();
     let matches = |n: &str| n.to_lowercase() == name;
     model
-        .inventory_slots
-        .iter()
+        .worn_slots()
+        .into_iter()
         .flatten()
         .find(|s| s.item_id != 0 && s.name.as_deref().is_some_and(matches))
         .map(|s| s.item_id)
@@ -344,7 +344,7 @@ pub(super) fn item_id_by_name(model: &Model, name: &str) -> Option<u32> {
 
 /// Whether the item holds an enchant (`0x708ac0`): a permanent enchant, a gem in the first two sockets or a
 /// prismatic socket; the third socket is not read.
-pub(super) fn has_enchantments(held: &Held<'_>) -> bool {
+pub(super) fn has_enchantments(held: &Held) -> bool {
     held.enchants()
         .iter()
         .any(|e| matches!(e.slot, 0 | 2 | 3 | 6))
@@ -478,10 +478,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if super::cursor::doll::is_inventory_item_locked(&model, id) {
                 return Ok(());
             }
-            if num_sockets(&model, &Held::Worn(id, &s)) == 0 {
+            let guid = s.guid;
+            if num_sockets(&model, &Held::Worn(id, Box::new(s))) == 0 {
                 return Ok(());
             }
-            set_item(&mut model, s.guid);
+            set_item(&mut model, guid);
             Ok(())
         })?,
     )?;

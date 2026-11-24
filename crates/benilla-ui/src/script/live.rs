@@ -1063,6 +1063,57 @@ pub trait LiveState {
     /// `CMSG_SET_TITLE` with `mask`, sent in the call (`0x522efb`).
     fn send_set_title(&mut self, _mask: i32) {}
 
+    /// The active player's sheet figures at the call, its fields, worn weapons and skill pairs, read where 12340's stat verbs read them (`0x610300`, `0x60ddb0`); `None` with no active player held.
+    fn player_combat_stats(&self) -> Option<super::UnitCombatStats> {
+        None
+    }
+
+    /// The active player's doll id `slot` (0 the ammo, 1..=23 the worn slots and equipped bags) at the call, its slot field and item object as the slot reader resolves them (`0x5e7c00`); `Some(None)` for an empty slot, `None` with no active player held.
+    fn inventory_slot(&self, _slot: usize) -> Option<Option<super::InvSlotView>> {
+        None
+    }
+
+    /// The active player's bank bag slot `i` (0..7, live ids 68..=74) at the call (`0x5e7c00`); `Some(None)` for an empty slot, `None` with no active player held.
+    fn bank_bag_slot(&self, _i: usize) -> Option<Option<super::InvSlotView>> {
+        None
+    }
+
+    /// Both weapons' temporary enchantment at the call, main hand then off hand (`0x5eaca0`); `None` with no active player held.
+    fn weapon_enchants(&self) -> Option<[Option<super::WeaponEnchant>; 2]> {
+        None
+    }
+
+    /// The active player's skill slot for line `skill_id` at the call, as `GetSkillLineInfo` reads it (`0x5cdfe7`), slot -1 for a line the player lacks (`0x6dc222`); `None` with no active player held.
+    fn skill_slot(&self, _skill_id: u32) -> Option<super::SkillLive> {
+        None
+    }
+
+    /// A line's `(rank, max)` as the trade-link builder reads the active player at the call (`0x5db120`-`0x5db134`); `None` with no active player held (`0x5db08f`).
+    fn skill_link_ranks(&self, _skill_id: u32) -> Option<(u32, u32)> {
+        None
+    }
+
+    /// The client's skill list at the call (`0xc22ae8`-`0xc22b18`), which a UI reload keeps; `None` where no view lends it.
+    fn skill_list(&self) -> Option<&super::SkillList> {
+        None
+    }
+
+    /// The skill list, for a binding that writes it in its call (the fold, the selection, the skill-ups).
+    fn skill_list_mut(&mut self) -> Option<&mut super::SkillList> {
+        None
+    }
+
+    /// The active player's `PLAYER_CHARACTER_POINTS2` at the call (`0x5cd970`), `None` with no active player held.
+    fn skill_points(&self) -> Option<u32> {
+        None
+    }
+
+    /// `CMSG_UNLEARN_SKILL` for `skill_id`, sent in the call (`0x5ce368`).
+    fn send_unlearn_skill(&mut self, _skill_id: u32) {}
+
+    /// A skill buy, sent in the call (`0x5ce686`, `0x5ce849`).
+    fn send_skill_request(&mut self, _request: super::SkillRequest) {}
+
     /// The client's talent state at the call; `None` where no view lends it.
     fn talent_info(&self) -> Option<&super::TalentInfo> {
         None
@@ -1923,6 +1974,13 @@ pub(crate) struct TestView {
     pub char_titles: Vec<super::TitleRow>,
     pub player_titles: Option<super::PlayerTitles>,
     pub title_sends: Vec<i32>,
+    /// Our sheet figures, our skill slots by line, and the skill sends made, in order.
+    pub combat_stats: Option<super::UnitCombatStats>,
+    pub skills: Option<std::collections::HashMap<u32, super::SkillLive>>,
+    /// What a line missing from `skills` reads: slot -1 (`0x6dc222`).
+    pub skill_slot_minus_one: super::SkillLive,
+    pub unlearn_sends: Vec<u32>,
+    pub skill_sends: Vec<super::SkillRequest>,
     /// The talent state, the talent unit per side `(player, pet)`, the pet's family category, our character points, and the learn sends in order.
     pub talent_info: Option<super::TalentInfo>,
     pub talent_units: (Option<u64>, Option<u64>),
@@ -2052,6 +2110,28 @@ impl LiveState for TestView {
 
     fn send_set_title(&mut self, mask: i32) {
         self.title_sends.push(mask);
+    }
+
+    fn player_combat_stats(&self) -> Option<super::UnitCombatStats> {
+        self.combat_stats.clone()
+    }
+
+    fn skill_slot(&self, skill_id: u32) -> Option<super::SkillLive> {
+        let skills = self.skills.as_ref()?;
+        Some(
+            skills
+                .get(&skill_id)
+                .copied()
+                .unwrap_or(self.skill_slot_minus_one),
+        )
+    }
+
+    fn send_unlearn_skill(&mut self, skill_id: u32) {
+        self.unlearn_sends.push(skill_id);
+    }
+
+    fn send_skill_request(&mut self, request: super::SkillRequest) {
+        self.skill_sends.push(request);
     }
 
     fn talent_info(&self) -> Option<&super::TalentInfo> {

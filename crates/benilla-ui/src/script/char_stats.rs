@@ -441,6 +441,14 @@ impl super::UiScript {
         }
     }
 
+    /// The alert recompute over the slots read at the call, `UPDATE_INVENTORY_ALERTS` on a changed status then `UPDATE_INVENTORY_DURABILITY` (`0x5e90d0`).
+    pub fn update_inventory_alerts(&mut self) {
+        let changed = recompute_inventory_alerts(&mut self.model_mut());
+        for event in alert_events(changed) {
+            self.fire_event(event, vec![]);
+        }
+    }
+
     /// Push the seven bank-bag slots. The caller fires `PLAYERBANKSLOTS_CHANGED` for a changed item:
     /// the stock bank buttons repaint only on it and `BANKFRAME_OPENED` (`BankFrame.lua:206-212`).
     pub fn set_bank_bag_slots(&mut self, slots: BankBagSlots) {
@@ -467,10 +475,11 @@ impl super::UiScript {
 pub(super) fn recompute_inventory_alerts(model: &mut Model) -> bool {
     let mut alerts = [0u8; 12];
     for (i, &slot) in ALERT_SLOTS.iter().enumerate() {
+        let view = model.worn_slot(slot);
         alerts[i] = if i == 11 {
-            ammo_alert_status(&model.inventory_slots[slot])
+            ammo_alert_status(&view)
         } else {
-            let (status, tutorial) = alert_status(&model.inventory_slots[slot]);
+            let (status, tutorial) = alert_status(&view);
             model.tutorial_triggers.extend(tutorial);
             status
         };
@@ -498,12 +507,24 @@ fn with_unit_stats<T>(
         .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data");
     let absent = UnitCombatStats::default();
+    let player;
     let pushed = match token.as_deref() {
-        Some("player") => model.player_combat_stats.as_ref(),
+        Some("player") => {
+            player = player_combat_stats(&model);
+            player.as_ref()
+        }
         Some("pet") => model.pet_combat_stats.as_ref(),
         _ => None,
     };
     f(pushed.unwrap_or(&absent))
+}
+
+/// The player's sheet figures read off the active player at the call (`0x610300`, `0x60ddb0`); with no view lent, a test's pushed figures.
+pub(super) fn player_combat_stats(model: &Model) -> Option<UnitCombatStats> {
+    match super::read_live(|l| l.player_combat_stats()) {
+        Some(live) => live,
+        None => model.player_combat_stats.clone(),
+    }
 }
 
 /// The clamp `UnitDefense` and each hand of `UnitAttackBothHands` apply: a modifier below `-base`
@@ -561,6 +582,18 @@ impl UnitCombatStats {
 /// `token`'s inventory slot, unit-keyed as in the reference so the inspect doll reuses these
 /// bindings: `"player"` reads our own items, the inspected unit its public
 /// `PLAYER_VISIBLE_ITEM_*` entries, which carry no counts or durability.
+/// The ammo record's miss leaves the inventory callback on it (`0x67ca30` with `0x5e7660`), which fires `UNIT_INVENTORY_CHANGED` once it lands.
+fn wait_ammo_record(lua: &Lua, ammo: &InvSlotView) {
+    if ammo.name.is_none() {
+        let mut model = crate::script::model_mut_of(lua);
+        super::item_stats::wait_item_record(
+            &mut model,
+            ammo.item_id,
+            super::ItemRecordWait::Inventory,
+        );
+    }
+}
+
 pub(super) fn player_inv_slot(lua: &Lua, token: &Option<String>, slot: i64) -> Option<InvSlotView> {
     let token = token.as_deref()?;
     let idx = usize::try_from(slot).ok()?;
@@ -600,7 +633,7 @@ impl Model {
                 let keyring = super::container::live_bag(self, KEYRING_CONTAINER)?;
                 return keyring.slots.get(&n).map(InvSlotView::from_container_slot);
             }
-            return self.inventory_slots.get(slot)?.clone();
+            return self.worn_slot(slot);
         }
         self.inspect
             .as_ref()
@@ -628,6 +661,27 @@ impl Model {
         super::merchant::repair_cost(self, at)
     }
 
+    /// The player's doll id `slot` (0 the ammo, 1..=23) read at the call through the slot reader (`0x5e7c00`); with no view lent, a test's snapshot.
+    pub(crate) fn worn_slot(&self, slot: usize) -> Option<InvSlotView> {
+        match super::read_live(|l| l.inventory_slot(slot)).flatten() {
+            Some(live) => live,
+            None => self.inventory_slots.get(slot)?.clone(),
+        }
+    }
+
+    /// Every doll id's slot read at the call, as [`Self::worn_slot`] reads one.
+    pub(crate) fn worn_slots(&self) -> InventorySlots {
+        std::array::from_fn(|slot| self.worn_slot(slot))
+    }
+
+    /// The player's bank bag slot `i` (0..7) read at the call (`0x5e7c00`); with no view lent, a test's snapshot.
+    pub(crate) fn bank_bag(&self, i: usize) -> Option<InvSlotView> {
+        match super::read_live(|l| l.bank_bag_slot(i)).flatten() {
+            Some(live) => live,
+            None => self.bank_bag_slots.get(i)?.clone(),
+        }
+    }
+
     fn bank_inv_slot(&self, slot: usize) -> Option<InvSlotView> {
         if BANK_INV_SLOTS.contains(&slot) {
             let vault = super::container::live_bag(self, BANK_CONTAINER)?;
@@ -638,7 +692,7 @@ impl Model {
             // A bank bag is a container, not a slot in one, so this band is its own store; stock
             // picks it up and describes it through this API.
             let i = slot - BANK_BAG_INV_SLOTS.start();
-            return self.bank_bag_slots.get(i)?.clone();
+            return self.bank_bag(i);
         }
         None
     }
@@ -843,8 +897,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             Ok(match token.as_deref() {
-                Some("player") => model
-                    .player_combat_stats
+                Some("player") => player_combat_stats(&model)
                     .as_ref()
                     .map_or((0, 0, 0, 0), |s| {
                         let (mb, mm) = skill_clamped(s.rated_weapon(s.main_weapon_skill, 0));
@@ -879,8 +932,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             Ok(match token.as_deref() {
-                Some("player") => model
-                    .player_combat_stats
+                Some("player") => player_combat_stats(&model)
                     .as_ref()
                     .map_or((0, 0), |s| skill_clamped(s.rated_defense())),
                 Some("pet") => (cgunit_skill(&model, "pet"), 0),
@@ -902,8 +954,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let model = lua
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
-                Ok(model
-                    .player_combat_stats
+                Ok(player_combat_stats(&model)
                     .as_ref()
                     .map_or(0.0, |s| match pick {
                         0 => f64::from(s.dodge_percent),
@@ -940,8 +991,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             Ok(flag(
-                model
-                    .player_combat_stats
+                player_combat_stats(&model)
                     .as_ref()
                     .is_some_and(|s| s.has_wand),
             ))
@@ -955,7 +1005,17 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(slot) = live_slot_arg(lua, &slot)? else {
                 return Ok(Value::Nil);
             };
-            match player_inv_slot(lua, &token, slot).and_then(|v| v.icon) {
+            let view = player_inv_slot(lua, &token, slot);
+            // The ammo leg answers only while some of it is carried (`0x5e9c53`), its record asked with the inventory callback (`0x5e9c69`).
+            let view = match view {
+                Some(v) if slot == 0 && v.count == 0 => None,
+                Some(v) if slot == 0 => {
+                    wait_ammo_record(lua, &v);
+                    Some(v)
+                }
+                v => v,
+            };
+            match view.and_then(|v| v.icon) {
                 Some(icon) => Ok(Value::String(lua.create_string(&icon)?)),
                 None => Ok(Value::Nil),
             }
@@ -1008,7 +1068,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(slot) = live_slot_arg(lua, &slot)? else {
                 return Ok(Value::Nil);
             };
-            match player_inv_slot(lua, &token, slot) {
+            let view = player_inv_slot(lua, &token, slot);
+            // The ammo leg asks its record with the inventory callback (`0x5ea0ca`).
+            if let Some(v) = view.as_ref().filter(|_| slot == 0) {
+                wait_ammo_record(lua, v);
+            }
+            match view {
                 Some(v) if v.item_id != 0 => Ok(Value::Integer(i64::from(v.quality))),
                 _ => Ok(Value::Nil),
             }
@@ -1077,8 +1142,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "OffhandHasWeapon",
         lua.create_function(|lua, (): ()| {
             let model = crate::script::model_mut_of(lua);
-            let is_weapon = model.inventory_slots[17]
-                .as_ref()
+            let is_weapon = model
+                .worn_slot(17)
                 .filter(|v| v.item_id != 0)
                 .and_then(|v| super::item_stats::item_record(&model, v.item_id))
                 .is_some_and(|t| t.class == 2);

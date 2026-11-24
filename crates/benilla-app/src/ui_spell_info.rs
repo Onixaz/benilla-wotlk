@@ -234,11 +234,11 @@ impl<R: CallReads + ?Sized> SpellInfoSource for Answers<'_, R> {
     }
 
     /// `GetSpellLink` (`0x5408e0`): a row hidden by attributes `0x80` and `0x100` together has
-    /// none; the trade link needs a linkable line (`0x5db060`).
+    /// none; the trade link needs a linkable line and an active player (`0x5db060`).
     fn spell_link(
         &self,
         spell_id: u32,
-        skill: &dyn Fn(u32) -> (u32, u32),
+        skill: &dyn Fn(u32) -> Option<(u32, u32)>,
     ) -> Option<(String, Option<String>)> {
         let d = self.tables.spells.catalog.get(spell_id)?;
         if d.attributes & 0x180 == 0x180 {
@@ -254,7 +254,7 @@ impl<R: CallReads + ?Sized> SpellInfoSource for Answers<'_, R> {
                 lines,
                 now.known,
                 (race, class, now.guid),
-                skill(line),
+                skill(line)?,
             )
         });
         Some((d.name.clone(), trade))
@@ -442,7 +442,7 @@ impl SpellInfoSource for Installed {
     fn spell_link(
         &self,
         spell_id: u32,
-        skill: &dyn Fn(u32) -> (u32, u32),
+        skill: &dyn Fn(u32) -> Option<(u32, u32)>,
     ) -> Option<(String, Option<String>)> {
         self.answers().spell_link(spell_id, skill)
     }

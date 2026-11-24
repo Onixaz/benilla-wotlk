@@ -21,17 +21,22 @@ fn player_stats<T>(lua: &Lua, absent: T, f: impl FnOnce(&UnitCombatStats) -> T) 
     let model = lua
         .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data");
-    model.player_combat_stats.as_ref().map_or(absent, f)
+    super::char_stats::player_combat_stats(&model)
+        .as_ref()
+        .map_or(absent, f)
 }
 
-/// The player's or the pet's snapshot behind a unit-taking verb; any other token is absent.
+/// The player's figures read at the call or the pet's snapshot behind a unit-taking verb; any other token is absent.
 fn unit_stats<T>(lua: &Lua, token: &str, absent: T, f: impl FnOnce(&UnitCombatStats) -> T) -> T {
     let model = lua
         .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data");
-    let pushed = if token.eq_ignore_ascii_case("player") {
-        model.player_combat_stats.as_ref()
-    } else if token.eq_ignore_ascii_case("pet") {
+    if token.eq_ignore_ascii_case("player") {
+        return super::char_stats::player_combat_stats(&model)
+            .as_ref()
+            .map_or(absent, f);
+    }
+    let pushed = if token.eq_ignore_ascii_case("pet") {
         model.pet_combat_stats.as_ref()
     } else {
         None

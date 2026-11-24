@@ -32,8 +32,7 @@ pub struct WeaponEnchant {
 }
 
 impl super::UiScript {
-    /// Push the two weapons' temporary enchantments, `None` for no item or no enchant. Pushed every
-    /// frame: `remaining_ms` is live, and the reference recomputes it per call.
+    /// A test's two weapons' temporary enchantments, `None` for no item or no enchant; the game reads them at the call.
     pub fn set_weapon_enchants(
         &mut self,
         main_hand: Option<WeaponEnchant>,
@@ -51,12 +50,18 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "GetWeaponEnchantInfo",
         lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
+            // Both weapons' enchantment slot and deadline read at the call (`0x5eaca0`); with no view lent, a test's snapshot.
+            let hands = match super::read_live(|l| l.weapon_enchants()).flatten() {
+                Some(live) => live,
+                None => {
+                    lua.app_data_ref::<crate::script::ModelCell>()
+                        .expect("model app_data")
+                        .weapon_enchants
+                }
+            };
             let mut out = Vec::with_capacity(6);
             // Main hand then off hand, three values each: always six.
-            for hand in model.weapon_enchants {
+            for hand in hands {
                 match hand {
                     Some(e) => {
                         out.push(Value::Integer(1));

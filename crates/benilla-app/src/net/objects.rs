@@ -1766,7 +1766,8 @@ fn pet_number_watch(sc: &mut Scene, guid: u64) {
 /// Our own unit's watches in field order (`0x4d5550`): critter (`0x6cf6c0`), health (`0x73f330`), flags (`0x60c240`), dynamic and player flags (`0x6e103a`, `0x6e10fb`), honor.
 fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     use benilla_protocol::field::{
-        FIELD_PLAYER_FARSIGHT, FIELD_PLAYER_FLAGS, FIELD_UNIT_DISPLAYID, FIELD_UNIT_FLAGS,
+        FIELD_PLAYER_FARSIGHT, FIELD_PLAYER_FLAGS, FIELD_UNIT_BYTES_2, FIELD_UNIT_DISPLAYID,
+        FIELD_UNIT_DYNAMIC_FLAGS, FIELD_UNIT_FLAGS,
     };
     // The entry watch (`0x707960`), the count watch (`0x707720`), the charges watch (`0x707880`), then the enchant watch (`0x708bd0`), each its own handler in field order.
     if let Some(old) = merged.item_entry {
@@ -1777,15 +1778,29 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
         sc.ui
             .world(move |world| crate::ui_items::watch::stack_changed(world, guid));
         item_quest_watch(sc, guid);
+        // Its tail: an `INVTYPE_AMMO` item runs the alert recompute (`0x707837`-`0x707864`).
+        sc.ui
+            .world(move |world| crate::ui_items::watch::stack_alerts(world, guid));
     }
     // The charges watch (`0x707880`), between the count's and the enchants' in field order.
     if merged.item_charges {
         sc.ui
             .world(move |world| crate::ui_items::watch::charges_changed(world, guid));
     }
+    // The flags watch (`0x707a30`): the moved `0x10` bit on our worn item runs the alert recompute (`0x707a66`-`0x707ac6`).
+    if let Some((old, new)) = merged.item_flags {
+        if (old ^ new) & 0x10 != 0 {
+            sc.ui
+                .world(move |world| crate::ui_items::watch::flags_changed(world, guid));
+        }
+    }
     if merged.item_enchants {
         sc.ui
             .world(move |world| crate::ui_items::watch::enchants_changed(world, guid));
+    }
+    // The durability watch ends in the alert recompute whatever the item (`0x707c08`).
+    if merged.item_durability {
+        sc.ui.world(crate::ui_char::update_inventory_alerts);
     }
     // The bag's slot watch (`0x5d9600`), once per slot field that moved, only on a bag the UI watches.
     for (j, old) in merged.bag_slots.clone() {
@@ -1875,6 +1890,10 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     // (`0x722c50` -> `0x53d1b0`).
     let target = sc.selection.as_deref().and_then(|s| s.guid);
     if sc.self_guid.0 != Some(guid) {
+        // Another player's visible entry watch (`0x6e1e10`): the alert recompute (`0x6e1ea4`), the rest ours alone (`0x6e1eb6`).
+        for _ in 0..merged.other_visible_entries {
+            sc.ui.world(crate::ui_char::update_inventory_alerts);
+        }
         if merged.aura_state_moved && target == Some(guid) {
             aura_state_watch(sc);
         }
@@ -1924,6 +1943,13 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
         .partition_point(|&(index, ..)| index < FIELD_UNIT_FLAGS);
     let (before, after) = merged.death.split_at(split);
     own_death_fields(sc, guid, before);
+    // Our power regen modifiers' watch, between health and level in field order: `PLAYER_DAMAGE_DONE_MODS` with `"player"` (`0x6e57f0` -> `0x6cddd0`).
+    if merged.regen_mods_moved {
+        sc.ui.fire(
+            "PLAYER_DAMAGE_DONE_MODS",
+            vec![benilla_ui::script::ScriptValue::Str("player".into())],
+        );
+    }
     // Our level's change, in field order: the trainer's re-evaluation (`0x6d6702`).
     if merged.level_moved {
         sc.ui.world(crate::ui_trainer::refresh);
@@ -1939,11 +1965,24 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     let split = unit.partition_point(|&(index, ..)| index < FIELD_UNIT_DISPLAYID);
     let (unit, past_display) = unit.split_at(split);
     own_death_fields(sc, guid, unit);
+    own_stat_signals(sc, guid, &merged.stat_signals, ..FIELD_UNIT_DISPLAYID);
     // Our display id's watch (`0x716860`) closes an open barber shop, in field order.
     if merged.display_moved {
         sc.ui.world(crate::ui_barber::display_changed);
     }
+    own_stat_signals(
+        sc,
+        guid,
+        &merged.stat_signals,
+        FIELD_UNIT_DISPLAYID..FIELD_UNIT_DYNAMIC_FLAGS,
+    );
     own_death_fields(sc, guid, past_display);
+    own_stat_signals(
+        sc,
+        guid,
+        &merged.stat_signals,
+        FIELD_UNIT_DYNAMIC_FLAGS..FIELD_UNIT_BYTES_2,
+    );
     if let Some(form) = merged.form {
         sc.ui
             .world(move |world| crate::ui_bank::form_entered(world, form));
@@ -1960,6 +1999,7 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
         sc.ui.world(crate::ui_action::bonus::form_changed);
         sc.ui.fire("UPDATE_SHAPESHIFT_FORM", Vec::new());
     }
+    own_stat_signals(sc, guid, &merged.stat_signals, FIELD_UNIT_BYTES_2..);
     // Our own fields' usable updates, then the aura state's (`0x716810`).
     for _ in 0..merged.usable_updates {
         sc.ui.world(crate::ui_action::usable_cache::step(
@@ -1986,15 +2026,8 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
         sc.ui
             .world(move |world| crate::ui_aura::aura_vision_moved(world, vision));
     }
-    for _ in 0..merged.bar_updates {
-        sc.ui.world(crate::ui_action::usable_cache::step(
-            crate::ui_action::usable_cache::Pass::Bar,
-        ));
-    }
-    // The level watch's book update, no re-sort (`0x6d66fd`), and each visible weapon's: the main
-    // hand's or the ranged slot's entry moved updates the book for its weapon face (`0x6e1f13`,
-    // `0x6e1f37`).
-    for _ in 0..u8::from(merged.level_moved) + merged.weapons_moved {
+    // The level watch's book update, no re-sort (`0x6d66fd`).
+    if merged.level_moved {
         sc.ui.fire("SPELLS_CHANGED", Vec::new());
     }
     if let Some((old, new)) = merged.pvp_flags {
@@ -2002,6 +2035,10 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     }
     let split = player.partition_point(|&(index, ..)| index < FIELD_PLAYER_FARSIGHT);
     let (player, past_farsight) = player.split_at(split);
+    let split = merged
+        .watched
+        .partition_point(|&(index, ..)| index < FIELD_PLAYER_FARSIGHT);
+    let (watched, watched_past_farsight) = merged.watched.split_at(split);
     own_death_fields(sc, guid, player);
     // The log window's watch (`0x60c280`), then each moved slot's watch (`0x6df370`) in slot order.
     if !merged.quest_slots.is_empty() {
@@ -2015,13 +2052,81 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
                 .world(move |world| crate::ui_quest_log::rows::slot_watch(world, edges));
         }
     }
+    own_player_watches(sc, guid, watched);
     if merged.farsight_moved {
         farsight_possess(sc, guid);
         // The far-sight callback's temporary bar update (`0x6e504a`).
         sc.ui.world(crate::ui_pet::update_pet_temp_bar_step);
     }
     own_death_fields(sc, guid, past_farsight);
-    own_player_watches(sc, guid, &merged.watched);
+    own_player_watches(sc, guid, watched_past_farsight);
+}
+
+/// Our unit watches' events for the moved fields in `range` (`0x614190` registers `0x60c240` on every field with an event slot, the active player registered at `0x7209a4` -> `0x720ab9`), each to every token naming us (`0x60bf10`), one per moved field in field order.
+fn own_stat_signals(
+    sc: &mut Scene,
+    guid: u64,
+    signals: &[(u16, &'static str)],
+    range: impl std::ops::RangeBounds<u16>,
+) {
+    for &(_, event) in signals.iter().filter(|(index, _)| range.contains(index)) {
+        sc.ui
+            .write(move |script| script.fire_unit_event(guid, event, Vec::new()));
+    }
+}
+
+/// The event slot of a unit field our unit watch fires (`0x614190`, the slot the field's index less 6, named at `0x608939` and on): the attack speeds, the ranged attack time and damage, the melee damage, the stats and the max health modifier, the resistances and their modifiers, and the attack powers. The other slots are the units' (#1289) or fire from their own watches.
+fn stat_signal(e: &FieldChanged) -> Option<&'static str> {
+    if !e.is_unit() {
+        return None;
+    }
+    Some(
+        match e.index.checked_sub(benilla_protocol::field::OBJECT_END)? {
+            56 | 57 => "UNIT_ATTACK_SPEED",
+            58 | 123 | 124 => "UNIT_RANGEDDAMAGE",
+            64..=67 => "UNIT_DAMAGE",
+            78..=82 | 139 => "UNIT_STATS",
+            93..=113 => "UNIT_RESISTANCES",
+            117..=119 => "UNIT_ATTACK_POWER",
+            120..=122 => "UNIT_RANGED_ATTACK_POWER",
+            _ => return None,
+        },
+    )
+}
+
+/// A visible-item field's slot (0..19) and whether it is the slot's entry word, the visible entry watch's own (`0x6e464c`, 8 bytes a slot from `0x21c`).
+fn visible_item_field(index: u16) -> Option<(u8, bool)> {
+    let r = index.checked_sub(benilla_protocol::field::FIELD_PLAYER_VISIBLE_ITEM_1_ENTRYID)?;
+    (r < 38).then_some(((r / 2) as u8, r % 2 == 0))
+}
+
+/// Our visible entry watch on `slot` (`0x6e1e10`), the entry moved by magnitude or sign (`0x6e1e56`-`0x6e1e7e`): the alert recompute (`0x6e1ea4`), then ours alone, the bar's usable update and its item updates for the old then the new entry (`0x6e1ec2`, `0x6e1ed2`, `0x6e1ee2`); the main hand's `UNIT_ATTACK` then its book update (`0x6e1f2c`, `0x6e1f37`), the off hand's `UNIT_ATTACK` (`0x6e1f21`), the ranged slot's `UNIT_RANGED_ATTACK_POWER` then its book update (`0x6e1f08`, `0x6e1f13`). The trade-skill refresh ahead of the alerts (`0x6e1e9c`) is the trade-skill module's.
+fn visible_entry_watch(sc: &mut Scene, slot: u8, old: u32, new: u32) {
+    let (old, new) = (old as i32, new as i32);
+    if old.unsigned_abs() == new.unsigned_abs() && (old > 0) == (new > 0) {
+        return;
+    }
+    sc.ui.world(crate::ui_char::update_inventory_alerts);
+    sc.ui.world(crate::ui_action::usable_cache::step(
+        crate::ui_action::usable_cache::Pass::Bar,
+    ));
+    for entry in [old.unsigned_abs(), new.unsigned_abs()] {
+        sc.ui
+            .world(move |world| crate::ui_action::slots::update_item(world, entry));
+    }
+    let player = || vec![benilla_ui::script::ScriptValue::Str("player".into())];
+    match slot {
+        15 => {
+            sc.ui.fire("UNIT_ATTACK", player());
+            sc.ui.fire("SPELLS_CHANGED", Vec::new());
+        }
+        16 => sc.ui.fire("UNIT_ATTACK", player()),
+        17 => {
+            sc.ui.fire("UNIT_RANGED_ATTACK_POWER", player());
+            sc.ui.fire("SPELLS_CHANGED", Vec::new());
+        }
+        _ => {}
+    }
 }
 
 /// The aura state's watch for us or the target (`0x716810`): the full usable update, then `PET_BAR_UPDATE_USABLE` (`0x716836`, `0x716842`).
@@ -2104,7 +2209,7 @@ fn is_buyback_watch(index: u16) -> bool {
     (first..first + 24).contains(&index)
 }
 
-/// A skill slot's second or third word, whose halves the skill watches cover (`0x6e5426`, `0x6e5450`, `0x6e546a`).
+/// A skill slot's second or third word, whose halves the skill watches cover (`0x6e5426`, `0x6e5450`, `0x6e546a`, `0x6e548c`).
 fn is_skill_watch(index: u16) -> bool {
     let first = benilla_protocol::field::FIELD_PLAYER_SKILL_INFO_1_1;
     index.checked_sub(first).is_some_and(|r| {
@@ -2112,15 +2217,66 @@ fn is_skill_watch(index: u16) -> bool {
     })
 }
 
-/// How many skill watches a moved skill word runs: the second word's value half (`0x6da4a0`) and max half (`0x6cddb0`), the third word's permanent-bonus half (`0x6cddb0`).
-fn skill_watch_runs(index: u16, old: u32, new: u32) -> usize {
+/// A moved skill word's watches in registration order (`0x6e5426`, `0x6e5450`, `0x6e546a`, `0x6e548c`), each its own handler step: the second word's value half (`0x6da4a0`) then max half (`0x6cddb0`), the third word's permanent-bonus half (`0x6cddb0`) then temporary-bonus half (`0x6d1bc0`).
+fn skill_watches(sc: &mut Scene, index: u16, old: u32, new: u32) {
     let first = benilla_protocol::field::FIELD_PLAYER_SKILL_INFO_1_1;
+    let slot = ((index - first) / 3) as u8;
     let low = old as u16 != new as u16;
     let high = old >> 16 != new >> 16;
-    match (index - first) % 3 {
-        1 => usize::from(low) + usize::from(high),
-        _ => usize::from(high),
+    if (index - first) % 3 == 1 {
+        if low {
+            let old_value = old as u16;
+            sc.ui.world(move |world| {
+                crate::ui_char::skill_value_watch(world, slot, old_value);
+            });
+        }
+        if high {
+            sc.ui.world(crate::ui_char::skill_max_watch);
+        }
+    } else {
+        if high {
+            sc.ui.world(crate::ui_char::skill_max_watch);
+        }
+        if low {
+            sc.ui.world(crate::ui_char::skill_temp_watch);
+        }
     }
+}
+
+/// The `PLAYER_DAMAGE_DONE_MODS` range an edge at `index` belongs to, registered on the player block (`0x6e556a`, `0x6e5590`, `0x6e55b9`, `0x6e55df`, `0x6e57ca`, `0x6e586e`); `None` off them.
+fn damage_mods_watch(index: u16) -> Option<u16> {
+    use benilla_protocol::field::UNIT_END;
+    // (first word past the player block's start, words), from each registration's byte range.
+    const RANGES: [(u16, u16); 6] = [
+        (0x3ff, 7),
+        (0x406, 7),
+        (0x40d, 7),
+        (0x414, 1),
+        (0x36c, 13),
+        (0x418, 1),
+    ];
+    let at = index.checked_sub(UNIT_END)?;
+    RANGES
+        .iter()
+        .find(|&&(first, n)| (first..first + n).contains(&at))
+        .map(|&(first, _)| first)
+}
+
+/// The `COMBAT_RATING_UPDATE` range an edge at `index` belongs to: the 25 ratings (`0x6e577e`), the shield block (`0x6e57a1`) and the target resistance (`0x6e5894`); `None` off them.
+fn rating_watch(index: u16) -> Option<u16> {
+    use benilla_protocol::field::UNIT_END;
+    const RANGES: [(u16, u16); 3] = [(0x43b, 25), (0x37b, 1), (0x417, 1)];
+    let at = index.checked_sub(UNIT_END)?;
+    RANGES
+        .iter()
+        .find(|&&(first, n)| (first..first + n).contains(&at))
+        .map(|&(first, _)| first)
+}
+
+/// Our power regen modifiers, the unit block's run `PLAYER_DAMAGE_DONE_MODS` watches (`0x6e57f0`).
+pub(super) fn is_regen_mods_watch(index: u16) -> bool {
+    let first = benilla_protocol::field::FIELD_UNIT_POWER_REGEN_FLAT_MODIFIER;
+    (first..first + 14).contains(&index)
 }
 
 /// Our slot fields' watches, the inventory watch's (`0x6e51c5`-`0x6e52c3`) and the containers' (`0x5d9c20`): every slot but the buyback's.
@@ -2238,7 +2394,31 @@ fn own_currency_watch(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)], at: 
 fn own_player_watches(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
     let mut teams_done = false;
     let mut buyback_done = false;
+    let mut inventory_signalled = false;
     for (at, &(index, old, new)) in edges.iter().enumerate() {
+        // A visible slot's words: its entry watch first (the type's list, `0x4d5661`), then on the range's first moved word our unit's inventory watch (our list, `0x4d567b`; `0x614223` -> `0x60c260`), `UNIT_INVENTORY_CHANGED` to every token naming us (`0x60c26c`).
+        if let Some((slot, entry)) = visible_item_field(index) {
+            if entry {
+                visible_entry_watch(sc, slot, old, new);
+            }
+            if !std::mem::replace(&mut inventory_signalled, true) {
+                sc.ui.write(move |script| {
+                    script.fire_unit_event(guid, "UNIT_INVENTORY_CHANGED", Vec::new())
+                });
+            }
+            continue;
+        }
+        // The ammo watch (`0x5e84a2` -> `0x5e83e0`): the bar's usable update (`0x5e8413`), then `UNIT_INVENTORY_CHANGED` with `"player"` (`0x5e8427`).
+        if index == benilla_protocol::field::FIELD_PLAYER_AMMO_ID {
+            sc.ui.world(crate::ui_action::usable_cache::step(
+                crate::ui_action::usable_cache::Pass::Bar,
+            ));
+            sc.ui.fire(
+                "UNIT_INVENTORY_CHANGED",
+                vec![benilla_ui::script::ScriptValue::Str("player".into())],
+            );
+            continue;
+        }
         // The coinage watch (`0x6da070`): the trainer's re-evaluation (`0x6da085`), then `PLAYER_MONEY` (`0x6da091`), then an offer past the new purse trimmed to it (`0x6da104`); its coin sound plays from [`crate::sound`].
         if index == benilla_protocol::field::FIELD_PLAYER_FIELD_COINAGE {
             sc.ui.world(crate::ui_trainer::refresh);
@@ -2246,10 +2426,26 @@ fn own_player_watches(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
             sc.ui.write(move |script| script.trim_trade_offer(new));
             continue;
         }
-        // The skill slots' value, max and permanent-bonus halves, each its own watch re-evaluating the trainer (`0x6da5f3`, `0x6cddb0`).
+        // The skill slots' halves, each its own watch (`0x6e5426`-`0x6e548c`).
         if is_skill_watch(index) {
-            for _ in 0..skill_watch_runs(index, old, new) {
-                sc.ui.world(crate::ui_trainer::refresh);
+            skill_watches(sc, index, old, new);
+            continue;
+        }
+        // `PLAYER_DAMAGE_DONE_MODS` with `"player"`, once per moved range (`0x6cddd0`).
+        if let Some(range) = damage_mods_watch(index) {
+            if at == 0 || damage_mods_watch(edges[at - 1].0) != Some(range) {
+                sc.ui.fire(
+                    "PLAYER_DAMAGE_DONE_MODS",
+                    vec![benilla_ui::script::ScriptValue::Str("player".into())],
+                );
+            }
+            continue;
+        }
+        // `COMBAT_RATING_UPDATE`, then the skill list's rebuild, once per moved range (`0x6cddf0`, `0x6cddff`).
+        if let Some(range) = rating_watch(index) {
+            if at == 0 || rating_watch(edges[at - 1].0) != Some(range) {
+                sc.ui.fire("COMBAT_RATING_UPDATE", Vec::new());
+                sc.ui.world(crate::ui_char::rebuild_skills);
             }
             continue;
         }
@@ -2492,23 +2688,19 @@ fn merge_fields(
             if own && e.unit_field(benilla_protocol::field::FIELD_PLAYER_FIELD_BYTES2) {
                 merged.aura_vision |= ((e.old ^ e.new) >> 24) as u8;
             }
-            // Our visible items' entries (`0x6e1ec2`) and our ammo (`0x5e8413`) refresh the bar.
-            merged.bar_updates += u8::from(
-                own && ((0..19u8).any(|slot| {
-                    e.index == benilla_protocol::field::player_visible_item_entry_field(slot)
-                }) || e.index == benilla_protocol::field::FIELD_PLAYER_AMMO_ID),
+            // Another player's visible entries run its entry watch's alert recompute (`0x6e1ea4`).
+            merged.other_visible_entries += u8::from(
+                !own && e.kind == benilla_protocol::messages::ObjectType::Player
+                    && visible_item_field(e.index).is_some_and(|(_, entry)| entry),
             );
             merged.aura_state_moved |= e.unit_field(benilla_protocol::field::FIELD_UNIT_AURASTATE);
             // A power field moving re-seeds the predicted copy (`0x7234d0` -> `0x722c50`).
             merged.power_moved |=
                 (0..7u16).any(|ty| e.unit_field(benilla_protocol::field::FIELD_UNIT_POWER1 + ty));
-            if own
-                && [15, 17].into_iter().any(|slot| {
-                    e.index == benilla_protocol::field::player_visible_item_entry_field(slot)
-                })
-            {
-                merged.weapons_moved += 1;
+            if let Some(event) = stat_signal(&e).filter(|_| own) {
+                merged.stat_signals.push((e.index, event));
             }
+            merged.regen_mods_moved |= own && e.is_unit() && is_regen_mods_watch(e.index);
             if own && e.is_unit() && QUEST_LOG_FIELDS.contains(&e.index) {
                 merged.quest_slots.push((e.index, e.old, e.new));
             }
@@ -2519,6 +2711,10 @@ fn merge_fields(
             ) {
                 use benilla_protocol::field::{FIELD_CONTAINER_SLOT_1, FIELD_ITEM_ENCHANTMENT_1_1};
                 merged.item_stack |= e.index == benilla_protocol::field::FIELD_ITEM_STACK_COUNT;
+                if e.index == benilla_protocol::field::FIELD_ITEM_FLAGS {
+                    merged.item_flags = Some((e.old, e.new));
+                }
+                merged.item_durability |= e.index == benilla_protocol::field::FIELD_ITEM_DURABILITY;
                 merged.item_charges |= (benilla_protocol::field::FIELD_ITEM_SPELL_CHARGES
                     ..benilla_protocol::field::FIELD_ITEM_SPELL_CHARGES + 5)
                     .contains(&e.index);
@@ -2572,7 +2768,11 @@ fn merge_fields(
                     || is_slot_watch(e.index)
                     || e.unit_field(benilla_protocol::field::FIELD_PLAYER_FIELD_COINAGE)
                     || is_buyback_watch(e.index)
-                    || is_skill_watch(e.index))
+                    || is_skill_watch(e.index)
+                    || damage_mods_watch(e.index).is_some()
+                    || rating_watch(e.index).is_some()
+                    || visible_item_field(e.index).is_some()
+                    || e.unit_field(benilla_protocol::field::FIELD_PLAYER_AMMO_ID))
             {
                 merged.watched.push((e.index, e.old, e.new));
             }
@@ -2662,13 +2862,18 @@ struct Merged {
     guild_moved: bool,
     /// Another player's `PLAYER_GUILD_TIMESTAMP` moved to this stamp (`0x6e1c60`).
     guild_stamp: Option<u32>,
-    /// How many of our own main-hand and ranged visible items' entries moved (`0x6e1e10`, slots
-    /// 15 and 17).
-    weapons_moved: u8,
+    /// How many visible entries of another player moved (`0x6e1e10`).
+    other_visible_entries: u8,
+    /// Our own unit watches' events, by field (`0x60c240`).
+    stat_signals: Vec<(u16, &'static str)>,
+    /// An item's `ITEM_FIELD_FLAGS` `(old, new)` when it moved (`0x707a30`).
+    item_flags: Option<(u32, u32)>,
+    /// An item's durability moved (`0x707ae0`).
+    item_durability: bool,
+    /// Our own power regen modifiers moved (`0x6e57f0`).
+    regen_mods_moved: bool,
     /// How many usable updates our own fields' watches run ([`usable_updates`]).
     usable_updates: u8,
-    /// How many bar refreshes (`0x5aa470`) our own visible-item and ammo watches run.
-    bar_updates: u8,
     /// A unit's `UNIT_FIELD_AURASTATE` moved (`0x716810`).
     aura_state_moved: bool,
     /// A unit's `UNIT_FIELD_POWER1..7` moved.
@@ -2807,12 +3012,25 @@ fn item_post_init(sc: &mut Scene, guid: u64, (entry, owner): (u32, Option<u64>))
     }
 }
 
-/// The post-init with the record (`0x70aa40`): in the world (`0x70ad08`) on an item we own (`0x70ad20`-`0x70ad2f`), its unlock (`0x70ad8d`, `0x70ad9e`), the stack watch's walk (`0x70adfc` -> `0x5e1250`), its container's `BAG_UPDATE` (`0x70ae0b`), then the refund ask.
+/// The post-init with the record (`0x70aa40`): in the world (`0x70ad08`) on an item we own (`0x70ad20`-`0x70ad2f`), its unlock (`0x70ad8d`, `0x70ad9e`), the stack watch's walk (`0x70adfc` -> `0x5e1250`), its container's `BAG_UPDATE` (`0x70ae0b`) and the refund ask; then any item's `UNIT_INVENTORY_CHANGED` (`0x70ae6b`).
 fn item_record_watch(sc: &mut Scene, item: u64, (entry, owner): (u32, Option<u64>)) {
     let me = sc.self_guid.0.filter(|g| sc.index.0.contains_key(g));
-    if me.is_none() || owner != me {
+    if me.is_none() {
         return;
     }
+    if owner == me {
+        owned_item_record_watch(sc, item, entry);
+    }
+    // Then, ours or not, `UNIT_INVENTORY_CHANGED` to every token naming the owner (`0x70ad27` -> `0x70ae51`-`0x70ae6b` -> `0x60bf10`).
+    if let Some(owner) = owner {
+        sc.ui.write(move |script| {
+            script.fire_unit_event(owner, "UNIT_INVENTORY_CHANGED", Vec::new())
+        });
+    }
+}
+
+/// The post-init's legs on an item we own (`0x70ad35`-`0x70ae4c`).
+fn owned_item_record_watch(sc: &mut Scene, item: u64, entry: u32) {
     sc.ui
         .world(move |world| crate::ui_items::watch::post_init_unlock(world, item));
     item_log_walk(sc, entry, true);
@@ -2826,7 +3044,7 @@ fn item_record_watch(sc: &mut Scene, item: u64, (entry, owner): (u32, Option<u64
     }
 }
 
-/// An item's disable on a destroy or out-of-range (`0x70afc0`): on an item we own (`0x70b0b5`-`0x70b0be`), the stack watch's walk (`0x70b0eb` -> `0x5e1250`).
+/// An item's disable on a destroy or out-of-range (`0x70afc0`): on an item we own (`0x70b0b5`-`0x70b0be`), the stack watch's walk (`0x70b0eb` -> `0x5e1250`), then the character page's refresh (`0x70b0fa`).
 fn item_disable_watch(sc: &mut Scene, guid: u64) {
     if !guid::is_item(guid) {
         return;
@@ -2843,6 +3061,9 @@ fn item_disable_watch(sc: &mut Scene, guid: u64) {
         .world(move |world| crate::ui_action::slots::update_item(world, entry));
     let me = sc.self_guid.0.is_some_and(|g| sc.index.0.contains_key(&g));
     item_log_walk(sc, entry, me);
+    // The character page's refresh (`0x70b0fa`).
+    sc.ui
+        .world(move |world| crate::ui_items::watch::disabled(world, guid, entry));
 }
 
 /// The stack watch's walk over the logged quests for `entry` ([`crate::ui_quest_log::rows::item_moved`]).
