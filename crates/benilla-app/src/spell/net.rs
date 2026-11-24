@@ -261,6 +261,10 @@ fn on_spell_learned(
                 spell: spell_id,
                 replaces: None,
             }));
+            // Past the registrar our player's add files a recipe and rebuilds whole (`0x6e7b52`, then `0x6e7c1a`).
+            if is_recipe(l.spells.as_deref(), spell_id) {
+                l.ui.world(move |w| crate::ui_tradeskill::recipe_learned(w, spell_id));
+            }
         }
         // The totem lists, and a live learn's refill (`0x542d33`, `0x542df1`).
         let display = l
@@ -287,6 +291,13 @@ fn on_spell_learned(
             l.ui.world(move |world| learn_place_step(world, spell_id, page));
         }
     }
+}
+
+/// Whether the spell's row carries `SPELL_ATTR_IS_TRADESKILL` (`0x6e7bdb`).
+fn is_recipe(spells: Option<&Spells>, spell_id: u32) -> bool {
+    spells
+        .and_then(|s| s.catalog.get(spell_id))
+        .is_some_and(|d| d.attributes & benilla_formats::SPELL_ATTR_IS_TRADESKILL != 0)
 }
 
 /// The tutorial a live learn into a tab raises after its flash (`0x542d1b`).
@@ -327,11 +338,7 @@ fn on_spell_removed(In(ev): In<SessionEvent>, mut l: Lifecycle, commands: Comman
     let SessionEvent::SpellRemoved { spell_id } = ev else {
         return;
     };
-    let recipe = our_object_exists(&l)
-        && l.spells
-            .as_deref()
-            .and_then(|s| s.catalog.get(spell_id))
-            .is_some_and(|d| d.attributes & benilla_formats::SPELL_ATTR_IS_TRADESKILL != 0);
+    let recipe = our_object_exists(&l) && is_recipe(l.spells.as_deref(), spell_id);
     if recipe {
         // Our player's removal (`0x6e7878` -> `0x6e71d0`) rebuilds a recipe's list (`0x6e72e6`) before the book removal (`0x6e7361`), so its listeners still find the recipe in the known list.
         l.ui.world(move |w| crate::ui_tradeskill::recipe_removed(w, spell_id));
@@ -1464,15 +1471,10 @@ fn learned_spell(
         display.is_some_and(|d| d.attributes & benilla_formats::SPELL_ATTR_IS_TRADESKILL != 0);
     if let Some(d) = display {
         if d.attributes & ATTR_DO_NOT_DISPLAY != 0 {
-            // A recipe joins its line's list after the registrar, which rebuilds whole (`0x6e7c1a`).
-            if recipe {
-                errors.trade_list_learned(spell_id);
-            }
             return None;
         }
         if recipe {
             announce_learn(spell_id, spells, errors);
-            errors.trade_list_learned(spell_id);
             return None;
         }
         if d.is_companion(summons) {
@@ -1492,17 +1494,11 @@ fn learned_spell(
 /// Where a learn's writes signal, in its order: a bar slot it wrote (`0x5aae80`) and its line.
 trait LearnOut: crate::ui_action::signals::SignalSink {
     fn slot_changed(&mut self, slot: u8);
-    /// A recipe filed under its line, then the tradeskill list's whole rebuild, at this step (`0x6e7c07`, `0x6e7c1a`).
-    fn trade_list_learned(&mut self, spell_id: u32);
 }
 
 impl LearnOut for crate::ui_script::live::UiEvents {
     fn slot_changed(&mut self, slot: u8) {
         crate::ui_action::slots::changed_in_turn(self, slot);
-    }
-
-    fn trade_list_learned(&mut self, spell_id: u32) {
-        self.world(move |w| crate::ui_tradeskill::recipe_learned(w, spell_id));
     }
 }
 
@@ -1510,8 +1506,6 @@ impl LearnOut for crate::ui_script::live::UiEvents {
 #[cfg(test)]
 impl LearnOut for crate::ui_action::signals::LinesSeen {
     fn slot_changed(&mut self, _: u8) {}
-
-    fn trade_list_learned(&mut self, _: u32) {}
 }
 
 /// `Attributes & 0x80`: the registrar's first exit (`0x54265c`).
@@ -2705,10 +2699,6 @@ mod tests {
         fn slot_changed(&mut self, slot: u8) {
             self.0.push(format!("slot {slot}"));
         }
-
-        fn trade_list_learned(&mut self, _: u32) {
-            self.0.push("trade list".into());
-        }
     }
 
     /// The rank below leaves its button for the new rank (`0x5aafd0`) before the registrar
@@ -2757,18 +2747,18 @@ mod tests {
         assert_eq!(order.0, ["slot 0", "ERR_LEARN_SPELL_S"]);
     }
 
-    /// A learned recipe's line goes out from the registrar (`0x6e7b52` -> `0x542030`) before its
-    /// list rebuilds whole (`0x6e7c1a`); a hidden recipe skips the line but still rebuilds.
+    /// The registrar (`0x6e7b52` -> `0x542030`) announces a learned recipe (`0x542679`) and skips a
+    /// hidden one (`0x54265c`); the list's rebuild is the handler's later step (`0x6e7c1a`).
     #[test]
-    fn a_learned_recipe_announces_before_its_list_rebuilds() {
+    fn a_learned_recipe_announces_unless_hidden() {
         for (attributes, expect) in [
             (
                 benilla_formats::SPELL_ATTR_IS_TRADESKILL,
-                &["ERR_LEARN_RECIPE_S", "trade list"][..],
+                &["ERR_LEARN_RECIPE_S"][..],
             ),
             (
                 benilla_formats::SPELL_ATTR_IS_TRADESKILL | ATTR_DO_NOT_DISPLAY,
-                &["trade list"][..],
+                &[][..],
             ),
         ] {
             let spells = catalog_with(
