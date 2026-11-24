@@ -304,9 +304,10 @@ fn shutdown_game(mut open: ResMut<TradeSkillOpen>) {
 pub(crate) struct TradeSkillRecipes(std::collections::BTreeMap<u32, Vec<u32>>);
 
 impl TradeSkillRecipes {
-    /// Whether `line` has a node, the rebuild's exit with none (`0x5dd7b6`).
-    fn has_line(&self, line: u32) -> bool {
-        self.0.contains_key(&line)
+    /// `line`'s array in add order (`0x6e73b0`); `None` with no node, the rebuild's exit
+    /// (`0x5dd7b6`).
+    fn line(&self, line: u32) -> Option<&[u32]> {
+        self.0.get(&line).map(Vec::as_slice)
     }
 }
 
@@ -507,30 +508,36 @@ pub(crate) fn refresh(world: &mut World, full: bool) {
         return;
     }
     clear_item_callbacks(world);
-    let ran = world.run_system_cached_with(refresh_system, full);
+    // The name filter's stat lines read the VM's global strings (`0x5dc110`); the VM stays in the
+    // `World` while a call lends it, so a nested rebuild reads them too.
+    let lua = world
+        .get_non_send_resource::<benilla_ui::script::UiScript>()
+        .map(|s| s.lua().clone());
+    let ran = world.run_system_cached_with(refresh_system, (full, lua));
     if let Err(e) = ran {
         warn!("ui_tradeskill: the list rebuild did not run: {e}");
     }
 }
 
 fn refresh_system(
-    In(full): In<bool>,
+    In((full, lua)): In<(bool, Option<mlua::Lua>)>,
     mut open: ResMut<TradeSkillOpen>,
     recipes: Res<TradeSkillRecipes>,
     live: TradeSkillLive,
     actions: Option<Res<PlayerActions>>,
     mut waits: Option<NonSendMut<RecordWaits>>,
     mut ui: Option<ResMut<UiEvents>>,
-    script: Option<NonSend<benilla_ui::script::UiScript>>,
 ) {
     let empty = std::collections::BTreeSet::new();
     let known = actions.as_deref().map_or(&empty, |a| &a.spells);
     let line = open.list.line;
     let mut pending = Vec::new();
-    // No player, or no array for the line, exits with nothing filed (`0x5dd79e`, `0x5dd7b6`).
-    let rows = (line != 0 && recipes.has_line(line))
-        .then(|| live.rows(line, known, &mut pending))
-        .flatten();
+    // The open line's array (`0x5dd7ac`); no player, or no array, exits with nothing filed
+    // (`0x5dd79e`, `0x5dd7b6`).
+    let rows = recipes
+        .line(line)
+        .filter(|_| line != 0)
+        .and_then(|array| live.rows(line, array, &mut pending));
     for &product in &pending {
         if let Some(w) = waits.as_deref_mut() {
             w.wait(product, RecordWait::TradeSkillList, false);
@@ -542,9 +549,8 @@ fn refresh_system(
         (n.map(str::to_string), a, b)
     };
     let global = |key: &str| {
-        script
-            .as_deref()
-            .and_then(|s| benilla_ui::strings::global(s.lua(), key))
+        lua.as_ref()
+            .and_then(|lua| benilla_ui::strings::global(lua, key))
     };
     let passes = |spell: u32| live.filter_spell(spell, min, max, name.as_deref(), known, &global);
     let fired = open.list.refresh(full, rows, &passes);
@@ -641,33 +647,22 @@ impl TradeSkillLive<'_, '_> {
         items.template(entry, 0, commands)
     }
 
-    /// The open line's recipes as the rebuild files them (`0x5dd5a0`); a create-item recipe whose
-    /// product record misses joins `pending`, asked (`0x5ddaf1`). `None` with no player.
-    fn rows(
-        &self,
-        line: u32,
-        known: &std::collections::BTreeSet<u32>,
-        pending: &mut Vec<u32>,
-    ) -> Option<Vec<TradeSkillRow>> {
+    /// The open line's recipes as the rebuild files them (`0x5dd5a0`), entry i of the line's
+    /// array in add order (`0x5dd910`); a create-item recipe whose product record misses joins
+    /// `pending`, asked (`0x5ddaf1`). `None` with no player.
+    fn rows(&self, line: u32, array: &[u32], pending: &mut Vec<u32>) -> Option<Vec<TradeSkillRow>> {
         let store = self.store()?;
         let spells = self.spells.as_deref()?;
         let skill_lines = self.skill_lines.as_deref()?;
         let rank = raw_rank(store, line);
         let (race, class) = crate::spell::race_class(Some(store));
         let mut rows = Vec::new();
-        for &spell_id in known {
+        for &spell_id in array {
             let Some(d) = spells.catalog.get(spell_id) else {
                 continue;
             };
-            if d.attributes & SPELL_ATTR_IS_TRADESKILL == 0 {
-                continue;
-            }
-            // A recipe files under its line for our race and class (`0x6e7b00`).
-            let Some(sla) = skill_lines
-                .catalog
-                .ability(spell_id, race, class)
-                .filter(|sla| sla.skill_id == line)
-            else {
+            // The recipe's ability for our race and class (`0x5dd928` -> `0x812410`).
+            let Some(sla) = skill_lines.catalog.ability(spell_id, race, class) else {
                 continue;
             };
             // The fewest crafts the bags cover (`0x5dda7c` -> `0x754d00`), -1 with no reagent.

@@ -196,11 +196,6 @@ const CALLS_NO_LUA: &[(&str, &str, &str)] = &[
         "reads the money line's global strings off the VM",
     ),
     (
-        "ui_tradeskill.rs",
-        "refresh_system",
-        "reads the name filter's stat-line global strings off the VM (`0x5dc110`)",
-    ),
-    (
         "target/click.rs",
         "act_on_right_click",
         "reads and takes the cursor's sale off the model; its talks run as steps with the `World`",

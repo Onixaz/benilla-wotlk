@@ -11527,6 +11527,151 @@ fn the_trade_skill_window_shows_with_a_product_record_in_flight() {
     );
 }
 
+/// The rebuild reads the open line's array entry by entry in add order (`0x5dd910`), not spell-id
+/// order: with products in flight it returns before the filter pass and its sort (`0x5ddeb7`), so
+/// after a learn the list indexes Heavy Linen Bandage (added first) ahead of Linen Bandage; the
+/// records landing file them under their header.
+#[test]
+fn the_trade_skill_list_reads_the_line_in_the_order_its_recipes_were_added() {
+    use benilla_protocol::field::{FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_UNIT_BYTES_0};
+    const FIRST_AID: u32 = 3273;
+    const LINEN_BANDAGE: u32 = 3275;
+    const HEAVY_LINEN_BANDAGE: u32 = 3276;
+    const SILK_BANDAGE: u32 = 7928;
+    let pair = |lo: u32, hi: u32| lo | hi << 16;
+    let bandage = |entry: u32, name: &str| {
+        let mut t = crate::items::test_template(name);
+        t.class = 0;
+        t.subclass = 7;
+        SessionEvent::ItemTemplate {
+            entry,
+            info: Some(Box::new(t)),
+        }
+    };
+    // A human paladin with First Aid (129) at 1 of 75 and Heavy Linen Bandage known; no record cached.
+    let Some(mut rig) = Rig::login_after(
+        vec![book(&[FIRST_AID, HEAVY_LINEN_BANDAGE])],
+        &[
+            OBJECT_TYPE_PLAYER,
+            (FIELD_UNIT_BYTES_0, 1 | 2 << 8 | 1 << 24),
+            (SKILL, 129),
+            (SKILL + 1, pair(1, 75)),
+        ],
+    ) else {
+        return;
+    };
+    rig.packets(
+        vec![SessionEvent::SpellLearned {
+            spell_id: LINEN_BANDAGE,
+        }],
+        2,
+    );
+    const EVENTS: &[&str] = &["TRADE_SKILL_UPDATE", "TRADE_SKILL_SHOW"];
+    const VERBS: &[&str] = &["tsnum", "ts1", "ts2"];
+    rig.take();
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("CastSpellByName('First Aid')")
+    })
+    .expect("a VM")
+    .expect("the cast runs");
+    rig.run(1);
+    assert_eq!(
+        pin(&rig.take(), EVENTS, VERBS),
+        vec![
+            "TRADE_SKILL_UPDATE | tsnum=2 ts1=Heavy Linen Bandage:optimal:0 ts2=Linen Bandage:optimal:0",
+            "TRADE_SKILL_UPDATE | tsnum=2 ts1=Heavy Linen Bandage:optimal:0 ts2=Linen Bandage:optimal:0",
+            "TRADE_SKILL_SHOW | tsnum=2 ts1=Heavy Linen Bandage:optimal:0 ts2=Linen Bandage:optimal:0",
+        ]
+    );
+    // Learned with the products still in flight: the whole rebuild files the array as it stands,
+    // unsorted, with no update (`0x6e7c1a`, `0x5ddeb7`).
+    let learned = rig.packets(
+        vec![SessionEvent::SpellLearned {
+            spell_id: SILK_BANDAGE,
+        }],
+        2,
+    );
+    assert_eq!(pin(&learned, EVENTS, VERBS), Vec::<String>::new());
+    let read = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval::<String>(
+            "local t = {} for i = 1, 3 do t[i] = (GetTradeSkillInfo(i)) end              return table.concat(t, ',')",
+        )
+    })
+    .expect("a VM")
+    .expect("the read runs");
+    assert_eq!(read, "Heavy Linen Bandage,Linen Bandage,Silk Bandage");
+    let landed = rig.packets(
+        vec![
+            bandage(2581, "Heavy Linen Bandage"),
+            bandage(1251, "Linen Bandage"),
+            bandage(6450, "Silk Bandage"),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(&landed, EVENTS, VERBS),
+        vec!["TRADE_SKILL_UPDATE | tsnum=4 ts1=Bandage:header:0 ts2=Silk Bandage:optimal:0"]
+    );
+}
+
+/// A superseded recipe pair with the list open: the removal (`0x6e7e81`) rebuilds without the old
+/// recipe and before the new one is in the line's array, which only the learn (`0x6e7e92`) appends
+/// (`0x6e7c11`) and rebuilds again (`0x6e7c1a`).
+#[test]
+fn a_superseded_recipe_leaves_the_list_before_its_successor_joins() {
+    use benilla_protocol::field::{FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_UNIT_BYTES_0};
+    const FIRST_AID: u32 = 3273;
+    const LINEN_BANDAGE: u32 = 3275;
+    const HEAVY_LINEN_BANDAGE: u32 = 3276;
+    let pair = |lo: u32, hi: u32| lo | hi << 16;
+    let bandage = |entry: u32, name: &str| {
+        let mut t = crate::items::test_template(name);
+        t.class = 0;
+        t.subclass = 7;
+        SessionEvent::ItemTemplate {
+            entry,
+            info: Some(Box::new(t)),
+        }
+    };
+    // A human paladin with First Aid (129) at 1 of 75 and Linen Bandage known; both records cached.
+    let Some(mut rig) = Rig::login_after(
+        vec![
+            bandage(1251, "Linen Bandage"),
+            bandage(2581, "Heavy Linen Bandage"),
+            book(&[FIRST_AID, LINEN_BANDAGE]),
+        ],
+        &[
+            OBJECT_TYPE_PLAYER,
+            (FIELD_UNIT_BYTES_0, 1 | 2 << 8 | 1 << 24),
+            (SKILL, 129),
+            (SKILL + 1, pair(1, 75)),
+        ],
+    ) else {
+        return;
+    };
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("CastSpellByName('First Aid')")
+    })
+    .expect("a VM")
+    .expect("the cast runs");
+    rig.run(1);
+    rig.take();
+    let seen = rig.packets(
+        vec![SessionEvent::SpellSuperceded {
+            old_spell_id: LINEN_BANDAGE,
+            new_spell_id: HEAVY_LINEN_BANDAGE,
+        }],
+        2,
+    );
+    assert_eq!(
+        pin(&seen, &["TRADE_SKILL_UPDATE"], &["tsnum", "ts2"]),
+        vec![
+            "TRADE_SKILL_UPDATE | tsnum=0 ts2=nil",
+            "TRADE_SKILL_UPDATE | tsnum=2 ts2=Heavy Linen Bandage:optimal:0",
+        ]
+    );
+}
+
 /// The item-driven rebuilds in place, each a step of its handler: a reagent's record landing
 /// (`0x5de100` -> `0x5de10b`); our item's post-init (`0x70ade4`); a pack slot's watch on a move
 /// (`0x5d9859`), one per slot; a stack count's (`0x7077db`) after its unlock and before the bar

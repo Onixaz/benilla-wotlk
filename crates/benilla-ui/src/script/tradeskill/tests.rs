@@ -472,8 +472,9 @@ fn a_pending_product_files_the_recipes_without_the_filter_pass() {
     assert_eq!(s.eval::<i64>("return GetNumTradeSkills()").unwrap(), 8);
 }
 
-/// A switch to a line whose product is in flight indexes the new line's recipes in spell order,
-/// under the old filtered count (`0x5dd889`, `0x5ddeb7`).
+/// A switch to a line whose product is in flight indexes the new line's recipes in the order the
+/// rebuild reads them, the line's array (`0x5dd910`), under the old filtered count (`0x5dd889`,
+/// `0x5ddeb7`).
 #[test]
 fn a_pending_switch_indexes_the_new_recipes_under_the_old_count() {
     let mut s = open();
