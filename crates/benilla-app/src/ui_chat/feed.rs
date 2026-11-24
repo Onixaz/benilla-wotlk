@@ -972,8 +972,8 @@ pub(super) struct AddParams<'w, 's> {
         Option<Res<'w, crate::ui_achievement::Achievements>>,
         Res<'w, crate::net::ServerTime>,
     ),
-    /// The language gate: the word pool, this character's fluency and the GM bit.
-    langs: Res<'w, super::language::ChatLanguages>,
+    /// The language gate: the word pool, and the active player's GM bit and fluency read at the call.
+    langs: super::language::Hearer<'w, 's>,
     /// `Languages.dbc`, whose record names arg3 and the log's header (`0x4fdbfd`, `0x50abd6`).
     languages: Option<Res<'w, crate::ui_unit::LanguagesRes>>,
     /// Item names for `TRADESKILL_LOG`, `FEEDPET_LOG`, `ITEMENCHANTMENT*`, `SPELLDURABILITYDAMAGE`.

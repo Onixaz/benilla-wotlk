@@ -105,13 +105,10 @@ impl Plugin for UiChatPlugin {
             )
             // The slash-command table needs the VM's globals and the emote catalog, both `Startup`.
             .add_systems(PostStartup, commands::build_slash_commands)
-            // The language gate's feeds, ahead of the packet drain and the calls that read them.
+            // The garble word pool, ahead of the packet drain and the calls that read it.
             .add_systems(
                 Update,
-                (
-                    language::load_language_words,
-                    language::feed_language_skills,
-                )
+                language::load_language_words
                     .before(crate::net::apply_net_updates)
                     // Ahead of every call into Lua, whose item-text verbs read the tables at the call.
                     .before(crate::ui_script::UiPress),

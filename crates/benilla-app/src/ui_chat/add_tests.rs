@@ -403,7 +403,6 @@ fn a_line_names_its_language_off_its_record() {
     use benilla_protocol::messages::CHAT_MSG_SAY;
     let (mut world, _sent) = world();
     hear(&world, &["CHAT_MSG_SAY"]);
-    world.insert_resource(super::language::ChatLanguages::with_player());
     world.insert_resource(crate::ui_unit::LanguagesRes(
         benilla_formats::Languages::from_rows(&[(7, "Common"), (35, "Draenei")]),
     ));
@@ -982,4 +981,29 @@ fn a_text_emote_outside_the_world_never_shows() {
     // Past the entry the same emote shows at once.
     add(&mut world, wave(""));
     assert_eq!(lines(&world).len(), 1);
+}
+
+/// The add reads the active player's GM bit at its call (`0x50a3bd`-`0x50a3cc`): a `PLAYER_FLAGS`
+/// write earlier in the same frame turns the next line to language 0, with no feed between.
+#[test]
+fn the_add_reads_the_gm_bit_at_its_call() {
+    use benilla_protocol::messages::CHAT_MSG_SAY;
+    let mut world = emote_world();
+    enter_world(&mut world);
+    add(&mut world, player_line(CHAT_MSG_SAY, ANN, 7, "hi"));
+    world.spawn((
+        crate::net::SelfPlayer,
+        crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+            benilla_protocol::field::FIELD_PLAYER_FLAGS,
+            0x8,
+        )])),
+    ));
+    add(&mut world, player_line(CHAT_MSG_SAY, ANN, 7, "hi"));
+    assert_eq!(
+        lines(&world),
+        [
+            "CHAT_MSG_SAY|hi|Ann|Common|1|0x0000000000000011",
+            "CHAT_MSG_SAY|hi|Ann|Universal|2|0x0000000000000011",
+        ]
+    );
 }
