@@ -30,6 +30,8 @@ pub(super) struct TextStyle {
     pub alpha_gradient: Option<(f32, f32)>,
     /// The V-plate's name and level, seated on the plate's device-snapped overlay, not the UI grid.
     pub world_seat: bool,
+    /// The wrap style bits the string lays out by.
+    pub wrap: benilla_ui::script::TextWrap,
 }
 
 /// The extraction loop's context for one Text quad.
@@ -81,6 +83,7 @@ pub(super) fn emit(
         outline: style.outline,
         alpha_gradient: style.alpha_gradient,
         spacing: style.spacing * host.scale * host.font_scale,
+        wrap: style.wrap,
     };
     // The focused editbox draws windowed: the scroll window's substring from the line origin,
     // unwrapped and clipped at the box edge, the selection behind, the caret after.

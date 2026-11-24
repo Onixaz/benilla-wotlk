@@ -423,6 +423,7 @@ fn extract_one(
             {
                 art
             } else if is_text {
+                let wrap = model.text_wrap(&data);
                 QuadContent::Text {
                     text: data.text,
                     color: data.vertex_color,
@@ -439,6 +440,7 @@ fn extract_one(
                     alpha_gradient: data.alpha_gradient,
                     // The owner's property: an addon's strings on a plate slide with it.
                     world_seat: owner.is_some_and(|o| super::nameplate::is_world_seated(model, o)),
+                    wrap,
                 }
             } else {
                 // The draw gate is the texture slot, never the colour (empty `+0xcc` emits

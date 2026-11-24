@@ -722,7 +722,9 @@ pub(crate) struct Model {
     pub(crate) drag_registered: HashMap<FrameHandle, HashSet<String>>,
     /// The indented word wrap (style bit `0x20000`) of a message frame's, edit box's or SimpleHTML's
     /// own font, by frame and font slot (SimpleHTML's `P`, `H1`, `H2`, `H3` are 0 to 3; every other
-    /// frame has slot 0). Stored, not applied, as on a FontString.
+    /// frame has slot 0). A message frame's rows narrow and step in by it
+    /// ([`super::LineMeasureRequest::indented`]); an edit box's and a SimpleHTML's are read by
+    /// their getter alone (#1468).
     pub(crate) frame_indented_wrap: HashSet<(FrameHandle, u8)>,
     /// The minimap art every minimap shares, by the setter that replaced it (`SetBlipTexture`,
     /// `SetIconTexture`, ...); an absent key is the stock file.
@@ -1155,6 +1157,22 @@ impl Model {
 
 impl Model {
     /// A named font object, matched case-insensitively (ASCII) as the client's compare does.
+    /// The wrap style bits FontString data `d` lays out by: its own, the indent falling back to its
+    /// font object's, which a dependent inherits until it sets its own (`0x48e600`).
+    pub(crate) fn text_wrap(&self, d: &super::RegionData) -> super::TextWrap {
+        let indented = d.indented_word_wrap.unwrap_or_else(|| {
+            d.font_object
+                .as_deref()
+                .and_then(|n| self.font_object(n))
+                .is_some_and(|fo| fo.indented_word_wrap)
+        });
+        super::TextWrap {
+            word_wrap: !d.no_word_wrap,
+            non_space_wrap: d.non_space_wrap.unwrap_or(false),
+            indented,
+        }
+    }
+
     pub(crate) fn font_object(&self, name: &str) -> Option<&FontObject> {
         if name.bytes().any(|b| b.is_ascii_uppercase()) {
             self.font_objects_by_lower.get(&name.to_ascii_lowercase())

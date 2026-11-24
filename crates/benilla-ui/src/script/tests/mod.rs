@@ -65,6 +65,7 @@ mod visibility;
 mod widget_methods;
 mod worldframe;
 mod worldmap;
+mod wrap_style;
 
 #[test]
 fn an_instruction_budget_turns_a_runaway_loop_into_an_error() {

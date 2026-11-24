@@ -4,16 +4,18 @@
 use bevy::math::Rect;
 use bevy::prelude::*;
 
-use benilla_ui::script::{JustifyH, JustifyV, Outline};
+use benilla_ui::script::{JustifyH, JustifyV, Outline, TextWrap};
 
 use crate::ui_pass::{UiQuad, UvRect};
 
 use super::engine::TextEngine;
-use super::markup::{fontstring_lines, icon_index, ColorRun};
+use super::markup::{fontstring_lines, icon_index};
 
 mod measure;
 mod overflow;
 mod wrap;
+#[cfg(test)]
+mod wrap_style_tests;
 
 /// The width law, for the engine's differential test against shaped strings.
 #[cfg(test)]
@@ -62,6 +64,9 @@ pub(crate) struct FontSpec<'a> {
     /// The line gap (`SetSpacing`), seam folded in like [`Self::height`]: lines step the font
     /// height plus it (the FontString's string update hands `+0xf8` to the text block).
     pub spacing: f32,
+    /// The wrap style bits: word wrap off lays one line, and the indent narrows and steps in every
+    /// row after the first ([`measure::layout_rows`]).
+    pub wrap: TextWrap,
 }
 
 /// A block of `lines` lines at height `size` and gap `spacing`: `N·S + (N-1)·gap`, as the text
@@ -191,14 +196,8 @@ pub(crate) fn layout_text_quads_full(
     let thick_rise = f32::from(u8::from(matches!(font.outline, Outline::Thick)));
 
     // Wrap only within a pinned width; `rect` is in the pen's own space, so no conversion.
-    let mut render_lines: Vec<Vec<ColorRun>> = if rect.width() > WRAP_MIN_WIDTH {
-        lines
-            .iter()
-            .flat_map(|line| measure::wrap_line(e, r, line, rect.width(), &icon_px))
-            .collect()
-    } else {
-        lines
-    };
+    let mut render_lines = measure::layout_rows(e, r, lines, rect.width(), font.wrap, &icon_px);
+    let indent = measure::indent_of(e, font.wrap);
     // The line stack (`[string+0x40]`): a height-pinned rect stops emitting lines once the pitch
     // sum passes it, even for a caller that skips the ellipsis seam.
     if rect.height() > HEIGHT_LIMIT_MIN {
@@ -256,7 +255,7 @@ pub(crate) fn layout_text_quads_full(
     // `SetAlphaGradient`'s character index counts drawn characters, markup stripped; it trails the
     // engine's source count by at most the newline count, a frame or two on the reveal's tail.
     let mut char_index: usize = 0;
-    for line in &render_lines {
+    for (row, line) in render_lines.iter().enumerate() {
         // First pass: lay the line at origin 0 and measure its width.
         let mut pending: Vec<PendingGlyph> = Vec::new();
         let mut pending_icons: Vec<PendingIcon> = Vec::new();
@@ -322,10 +321,13 @@ pub(crate) fn layout_text_quads_full(
 
         // Second pass: shift the line by the justify offset and emit.
         let line_width = pen_dev / dpi;
+        // An indented string's rows after the first stand in from a left (`0x6c7e25`) or right
+        // (`0x6c7dc0`) edge; a centred row does not move.
+        let step = if row > 0 { indent } else { 0.0 };
         let origin_x = match justify.h {
-            JustifyH::Left => rect.min.x,
+            JustifyH::Left => rect.min.x + step,
             JustifyH::Center => rect.min.x + (rect.width() - line_width) * 0.5,
-            JustifyH::Right => rect.max.x - line_width,
+            JustifyH::Right => rect.max.x - line_width - step,
         };
         // The line's rounded device anchors; `thick_rise` (logical px) rounds with the baseline.
         let origin_dev_x = (origin_x * dpi).round();
@@ -467,6 +469,7 @@ mod measure_fits_render {
             outline: Outline::None,
             alpha_gradient: None,
             spacing: 0.0,
+            wrap: benilla_ui::script::TextWrap::default(),
         }
     }
 
@@ -932,6 +935,7 @@ mod ellipsis_cost {
             outline: Outline::None,
             alpha_gradient: None,
             spacing: 0.0,
+            wrap: benilla_ui::script::TextWrap::default(),
         };
         let r = measure::resolve(&mut e, &s);
         let fits = overflow::lines_fitting(BOX_H, r.size);

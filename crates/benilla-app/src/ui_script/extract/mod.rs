@@ -663,6 +663,11 @@ fn tick_lent(
                                 outline: r.outline, // the outline biases the stepped width
                                 alpha_gradient: None,
                                 spacing: 0.0,
+                                // Each line's string takes the frame font's indent (`0x969fa0`).
+                                wrap: benilla_ui::script::TextWrap {
+                                    indented: r.indented,
+                                    ..benilla_ui::script::TextWrap::default()
+                                },
                             },
                         );
                         (r.frame, r.index, n, r.key)
@@ -1835,6 +1840,7 @@ fn convert_entry(
             outline,
             alpha_gradient,
             world_seat,
+            wrap,
         } => {
             // No atlas (no client data, or an unreadable font) draws no text.
             let (Some(atlas), Some(text)) = (font_atlas.as_deref_mut(), text) else {
@@ -1855,6 +1861,7 @@ fn convert_entry(
                     outline,
                     alpha_gradient,
                     world_seat,
+                    wrap,
                 },
                 text::TextHost {
                     z: eq.z,

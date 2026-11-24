@@ -212,6 +212,7 @@ pub(super) fn pill_quads(
                 outline: Outline::None,
                 alpha_gradient: None,
                 spacing: 0.0,
+                wrap: benilla_ui::script::TextWrap::default(),
             },
             // Our own dev overlay: measured off a degenerate rect, then shifted into the pill.
             crate::ui_text::TextSeat::Exact,
