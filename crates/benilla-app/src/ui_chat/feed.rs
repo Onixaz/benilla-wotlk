@@ -1038,11 +1038,11 @@ fn unit_name(
 }
 
 /// Build one line through the add (`0x509dd0`): its names resolved, asked when missing, its text
-/// composed; the VM is read and its autocomplete written, nothing raised. With `passes` a composed
+/// composed; the VM is read, nothing raised. With `passes` a composed
 /// line also takes the add's text passes ([`composed_passes`]); a line composed to be queued does
 /// not, as 12340 queues it ahead of them (`0x509f48`) and runs them when the queue adds it again.
 #[allow(clippy::too_many_lines)] // one add, every line type's arm
-fn build(In((item, mut script, passes)): In<(ChatLine, UiScript, bool)>, p: AddParams) -> Built {
+fn build(In((item, script, passes)): In<(ChatLine, UiScript, bool)>, p: AddParams) -> Built {
     let AddParams {
         mut log,
         channels,
@@ -1128,17 +1128,6 @@ fn build(In((item, mut script, passes)): In<(ChatLine, UiScript, bool)>, p: AddP
                     msg.chat_type, msg.text
                 );
                 return Built::Steps(steps);
-            }
-            // A whisper in or out enters autocomplete, addon whispers aside (`0x57b7c0`).
-            if matches!(
-                msg.chat_type,
-                benilla_protocol::messages::CHAT_MSG_WHISPER
-                    | benilla_protocol::messages::CHAT_MSG_WHISPER_INFORM
-            ) && msg.language != 0xFFFF_FFFF
-            {
-                if let Some(n) = name.as_deref() {
-                    script.note_autocomplete_contact(n);
-                }
             }
             // The base name; `stamp_channel` adds arg4's number and arg7-arg9 below.
             let channel_base = msg.channel.clone().unwrap_or_default();
@@ -1799,8 +1788,8 @@ fn queue_composed(world: &mut World, line: ChatLine) {
 }
 
 /// The add's name lookups ahead of its queue test (`0x509f48`): each player guid the line names
-/// is asked with the answer's callback when missing (`0x509e51`, `0x509f33`), and a whisper's or
-/// its echo's cached sender entered in autocomplete, an addon whisper aside (`0x509ec7`-`0x509ee0`).
+/// is asked with the answer's callback when missing (`0x509e51`, `0x509f33`), then a whisper's
+/// sender entered in autocomplete with the name the add read ([`note_whisper`]).
 fn ask_names(world: &mut World, line: &ChatLine) {
     let (Some(names), Some(commands)) = (
         world.get_resource::<NameCache>(),
@@ -1814,23 +1803,37 @@ fn ask_names(world: &mut World, line: &ChatLine) {
             let _ = names.chat_record(guid, commands);
         }
     }
-    let ChatLine::Wire { msg, .. } = line else {
-        return;
-    };
-    let sender = match &msg.sender_name {
-        Some(name) => Some(name.clone()),
-        None if sender_waits(msg) => names.peek(msg.sender_guid).map(str::to_string),
-        None => None,
-    };
+    if let ChatLine::Wire { msg, .. } = line {
+        note_whisper(world, msg);
+    }
+}
+
+/// The add's autocomplete entry, once per add call (`0x509ec7`-`0x509ee0`): a whisper or its
+/// echo, an addon whisper aside, enters its sender's guid with the name the add read: the passed
+/// name (`0x509e17`), else a cached player's full name (`0x509e6a`) or the pet record's
+/// (`0x509eb6`), else none.
+fn note_whisper(world: &mut World, msg: &benilla_protocol::messages::ChatMessage) {
     let whisper = matches!(
         msg.chat_type,
         benilla_protocol::messages::CHAT_MSG_WHISPER
             | benilla_protocol::messages::CHAT_MSG_WHISPER_INFORM
     ) && msg.language != 0xFFFF_FFFF;
-    if let (true, Some(name)) = (whisper, sender) {
-        if let Some(mut script) = world.get_non_send_resource_mut::<UiScript>() {
-            script.note_autocomplete_contact(&name);
+    if !whisper {
+        return;
+    }
+    let guid = msg.sender_guid;
+    let name = msg.sender_name.clone().or_else(|| {
+        let names = world.get_resource::<NameCache>()?;
+        if is_player_guid(guid) {
+            names.peek_full_name(guid)
+        } else if is_pet_guid(guid) {
+            names.peek(guid).map(str::to_string)
+        } else {
+            None
         }
+    });
+    if let Some(mut script) = world.get_non_send_resource_mut::<UiScript>() {
+        script.note_autocomplete_contact(guid, name.as_deref());
     }
 }
 
@@ -1872,8 +1875,12 @@ pub(crate) fn name_landed(world: &mut World) {
             kept.push((line, ready));
             continue;
         }
-        // The callback hands the add the records' bare names (`0x503e87`-`0x503e98`).
+        // The callback hands the add the records' bare names (`0x503e87`-`0x503e98`) and calls it
+        // again (`0x503edb`).
         let line = with_read_names(world, line, false);
+        if let ChatLine::Wire { msg } = &line {
+            note_whisper(world, msg);
+        }
         if let Some(back) = add_one(world, line) {
             kept.push((back, false));
         }
@@ -1922,6 +1929,10 @@ pub(crate) fn enter_world(world: &mut World) {
         if !queued {
             kept.push((line, false));
             continue;
+        }
+        // The walk calls the add again on each queued line (`0x50afdc`).
+        if let ChatLine::Wire { msg } = &line {
+            note_whisper(world, msg);
         }
         if let Some(back) = add_one(world, line) {
             kept.push((back, false));

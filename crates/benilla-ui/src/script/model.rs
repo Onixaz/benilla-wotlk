@@ -1123,8 +1123,9 @@ pub(crate) struct Model {
     pub(crate) knows_cold_weather_flying: bool,
     /// What the macro conditions `equipped` and `worn` read.
     pub(crate) equipped_for_macros: super::EquippedForMacros,
-    /// Whispered names by folded name: the spelling and the time last used, for autocomplete.
-    pub(crate) autocomplete_contacts: std::collections::HashMap<String, (String, f64)>,
+    /// Whispered contacts by guid (`0x57ae80`): the name, empty until one is passed, and the time
+    /// last used, for autocomplete.
+    pub(crate) autocomplete_contacts: std::collections::HashMap<u64, (String, f64)>,
     /// Condition names `SecureCmdOptionParse` did not know, for `ERR_UNKNOWN_MACRO_OPTION_S`.
     pub(crate) unknown_macro_options: Vec<String>,
 }

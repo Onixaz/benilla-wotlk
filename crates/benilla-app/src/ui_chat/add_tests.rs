@@ -779,3 +779,47 @@ fn a_composed_kind_hands_the_add_its_3_3_5a_type() {
     assert_eq!(of(ChatEventKind::ArenaPoints), Some(w::ARENA_POINTS));
     assert_eq!(of(ChatEventKind::CombatXpGain), Some(0x21));
 }
+
+/// Each add call enters a whisper's sender in autocomplete once, by guid, with the name the add
+/// read (`0x509ec7`-`0x509ee0`, `0x57b7c0`): a cached sender's full name (`0x509e6a`), so a realm's
+/// player is offered as `Name-Realm` alone, in the world and when queued outside it; a held
+/// sender enters with no name and is named by the callback's bare name (`0x503e98`).
+#[test]
+fn a_whisper_enters_autocomplete_once_with_the_name_the_add_read() {
+    use benilla_protocol::messages::CHAT_MSG_WHISPER;
+    const BOB: u64 = 0x22;
+    const CY: u64 = 0x33;
+    let ask = "return GetAutoCompleteResults('', 0x10, 0, 9, nil, true)";
+    let (mut world, _sent) = world();
+    {
+        let mut names = world.resource_mut::<crate::names::NameCache>();
+        names.insert_player(ANN, "Ann".into(), None);
+        names.set_player_realm(ANN, "Icecrown".into());
+        names.insert_player(CY, "Cy".into(), None);
+        names.set_player_realm(CY, "Lordaeron".into());
+    }
+    // Outside the world the whisper queues; the entry's walk adds it again.
+    add(&mut world, player_line(CHAT_MSG_WHISPER, CY, 0, "early"));
+    enter_world(&mut world);
+    add(&mut world, player_line(CHAT_MSG_WHISPER, ANN, 0, "hi"));
+    add(&mut world, player_line(CHAT_MSG_WHISPER, BOB, 0, "yo"));
+    let offered = |world: &World| {
+        let mut v = world
+            .non_send_resource::<UiScript>()
+            .eval::<mlua::MultiValue>(ask)
+            .unwrap()
+            .into_iter()
+            .map(|v| v.to_string().unwrap())
+            .collect::<Vec<_>>();
+        v.sort();
+        v
+    };
+    assert_eq!(offered(&world), ["Ann-Icecrown", "Cy-Lordaeron"]);
+    {
+        let mut names = world.resource_mut::<crate::names::NameCache>();
+        names.insert_player(BOB, "Bob".into(), None);
+        names.set_player_realm(BOB, "Icecrown".into());
+    }
+    name_landed(&mut world);
+    assert_eq!(offered(&world), ["Ann-Icecrown", "Bob", "Cy-Lordaeron"]);
+}
