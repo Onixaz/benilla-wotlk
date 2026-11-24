@@ -96,6 +96,8 @@ pub mod chat_tag {
     pub const AFK: u8 = 0x01;
     pub const DND: u8 = 0x02;
     pub const GM: u8 = 0x04;
+    /// A commentator, whose whisper the handler gates on our contacts (`0x50c0e2`).
+    pub const COMMENTATOR: u8 = 0x08;
     pub const DEV: u8 = 0x10;
 }
 
@@ -122,8 +124,8 @@ pub struct ChatMessage {
     pub chat_tag: u8,
     /// The achievement a `$a` names, on the two achievement lanes (0 elsewhere).
     pub achievement: u32,
-    /// The 3.3.5a type byte the add takes, 0 on a line built client-side: as it came, but a
-    /// foreign whisper is passed on as `WHISPER` (`0x50bfc7`).
+    /// The 3.3.5a type byte as it came, 0 on a line built client-side; the handler passes a
+    /// foreign whisper on to the add as `WHISPER` (`0x50bfc7`).
     pub wire_type: u8,
     /// The `u32` after the sender guid, which a chat complaint echoes (`0x50dfd0`).
     pub sender_word: u32,
@@ -364,12 +366,7 @@ pub(super) fn read_message_chat_wotlk(r: &mut &[u8], gm: bool) -> io::Result<Opt
         text,
         chat_tag,
         achievement,
-        // After its middle is read, a foreign whisper goes on as a whisper (`0x50bfc7`).
-        wire_type: if wire_type == w::WHISPER_FOREIGN {
-            w::WHISPER
-        } else {
-            wire_type
-        },
+        wire_type,
         sender_word,
     }))
 }
@@ -526,7 +523,7 @@ mod tests {
     }
 
     #[test]
-    fn a_foreign_whisper_reaches_the_add_as_a_whisper() {
+    fn a_foreign_whisper_keeps_its_type_for_the_handler() {
         let mut body = vec![wotlk_chat_type::WHISPER_FOREIGN];
         body.extend_from_slice(&0u32.to_le_bytes());
         body.extend_from_slice(&0x77u64.to_le_bytes());
@@ -541,7 +538,7 @@ mod tests {
             .expect("parses")
             .expect("a line");
         assert_eq!(msg.chat_type, CHAT_MSG_WHISPER);
-        assert_eq!(msg.wire_type, wotlk_chat_type::WHISPER);
+        assert_eq!(msg.wire_type, wotlk_chat_type::WHISPER_FOREIGN);
         assert_eq!(msg.sender_guid, 0x77);
         assert_eq!(msg.sender_name.as_deref(), Some("Ann"));
         assert_eq!(msg.target_guid, 0x55);

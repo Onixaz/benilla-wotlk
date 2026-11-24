@@ -2181,7 +2181,7 @@ pub(super) fn writer_loop(
                     ClientCommand::AddMute { name } => w.add_mute(&name),
                     ClientCommand::DelMute { guid } => w.del_mute(guid),
                     ClientCommand::Who { request } => w.who(&request),
-                    ClientCommand::ChatIgnored { guid } => w.chat_ignored(guid),
+                    ClientCommand::ChatIgnored { guid, reason } => w.chat_ignored(guid, reason),
                     ClientCommand::ChatFiltered { guid } => w.chat_filtered(guid),
                     ClientCommand::GuildQuery { guild_id } => w.guild_query(guild_id),
                     ClientCommand::GuildCreate { name } => w.guild_create(&name),

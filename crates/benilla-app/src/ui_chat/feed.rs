@@ -199,6 +199,10 @@ pub(crate) struct ChatLog {
     queue_chat: bool,
     /// A channel invite waits on its inviter's name; another is dropped meanwhile (`0x50e79e`).
     invite_waiting: bool,
+    /// The guids whose whispers we heard, newest first, 16 deep (`0x4fb710`).
+    whisper_sources: Vec<u64>,
+    /// The guids our whispers reached, newest first, 128 deep (`0x4fb820`).
+    whisper_dests: Vec<u64>,
 }
 
 impl Default for ChatLog {
@@ -207,11 +211,50 @@ impl Default for ChatLog {
             pending: Vec::new(),
             queue_chat: true,
             invite_waiting: false,
+            whisper_sources: Vec::new(),
+            whisper_dests: Vec::new(),
         }
     }
 }
 
+/// Move `guid` to the front of `list`, the oldest falling off past `depth`; guid 0 is never entered
+/// (`0x4fb71f`, `0x4fb82f`).
+fn note_recent(list: &mut Vec<u64>, guid: u64, depth: usize) {
+    if guid == 0 {
+        return;
+    }
+    match list.iter().position(|&g| g == guid) {
+        Some(i) => {
+            list.remove(i);
+        }
+        None => list.truncate(depth - 1),
+    }
+    list.insert(0, guid);
+}
+
 impl ChatLog {
+    /// A whisper's sender enters the source history (`0x4fb710`); both histories start empty with
+    /// the game (`0x50f11b`, `0x50f143`), here with the session's chat state.
+    pub(crate) fn record_whisper_source(&mut self, guid: u64) {
+        note_recent(&mut self.whisper_sources, guid, 16);
+    }
+
+    /// A whisper echo's receiver enters the destination history (`0x4fb820`).
+    pub(crate) fn record_whisper_dest(&mut self, guid: u64) {
+        note_recent(&mut self.whisper_dests, guid, 128);
+    }
+
+    /// Whether our whispers reached `guid` lately: the destination history alone (`0x4fb7e0`).
+    pub(crate) fn whispered(&self, guid: u64) -> bool {
+        guid != 0 && self.whisper_dests.contains(&guid)
+    }
+
+    /// The source history, newest first.
+    #[cfg(test)]
+    pub(crate) fn whisper_sources(&self) -> &[u64] {
+        &self.whisper_sources
+    }
+
     /// The UI's world exit (`0x528cc9` -> `0x4fb190`): the add queues every line until the next
     /// entry.
     pub(crate) fn leave_world(&mut self) {

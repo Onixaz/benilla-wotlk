@@ -42,9 +42,13 @@ impl WorldWriter {
         )
     }
 
-    /// Tell the server we ignore `guid`; that player gets a `CHAT_MSG_IGNORED` notice.
-    pub fn chat_ignored(&mut self, guid: u64) -> Result<()> {
-        self.send(opcode::CMSG_CHAT_IGNORED, &messages::full_guid(guid))
+    /// Tell the server we ignore `guid`'s whisper, with its `reason` byte; that player gets a
+    /// `CHAT_MSG_IGNORED` notice ([`messages::chat_ignored`]).
+    pub fn chat_ignored(&mut self, guid: u64, reason: u8) -> Result<()> {
+        self.send(
+            opcode::CMSG_CHAT_IGNORED,
+            &messages::chat_ignored(guid, reason),
+        )
     }
 
     /// Report a whisper the spam filter dropped (`CMSG_CHAT_FILTERED`, the sender's `u64` guid,

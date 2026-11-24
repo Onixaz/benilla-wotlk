@@ -258,6 +258,16 @@ pub fn text_emote(text_id: u32, file_index: i32, target: u64) -> Vec<u8> {
     b
 }
 
+/// `CMSG_CHAT_IGNORED` body (`0x500180`): the sender's `u64` guid (`0x5001d0`), then a `u8`
+/// (`0x5001dc`): 0 for an ignored sender's whisper (`0x50c186`), 1 for one the commentator gate
+/// refuses (`0x50c134`).
+pub fn chat_ignored(guid: u64, reason: u8) -> Vec<u8> {
+    let mut body = Vec::with_capacity(9);
+    body.extend_from_slice(&guid.to_le_bytes());
+    body.push(reason);
+    body
+}
+
 pub fn full_guid(guid: u64) -> Vec<u8> {
     guid.to_le_bytes().to_vec()
 }
