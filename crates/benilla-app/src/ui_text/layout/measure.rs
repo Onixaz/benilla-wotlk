@@ -159,9 +159,10 @@ pub(super) fn indent_of(e: &TextEngine, wrap: TextWrap) -> f32 {
 }
 
 /// The rows the markup `lines` lay out into at `width`, as the string's geometry pass lays them
-/// (`0x6c7b10`). Word wrap off draws the first line alone (`0x6c7f79`), cut at the last character
-/// within a pinned width (`0x6c2103`). Wrapped, every row after the first, a `\n` line's first row
-/// included, wraps narrower by the indent (`0x6c7ca6`). An unpinned width wraps nothing.
+/// (`0x6c7b10`). Word wrap off draws one line and stops (`0x6c7f79`), cut at the last character
+/// within a pinned width (`0x6c2103`); a blank line before it only steps a row (`0x6c7ced`), so it
+/// draws below and indented. Wrapped, every row after the first, a `\n` line's first row included,
+/// wraps narrower by the indent (`0x6c7ca6`). An unpinned width wraps nothing.
 pub(super) fn layout_rows(
     e: &TextEngine,
     r: Resolved,
@@ -172,22 +173,35 @@ pub(super) fn layout_rows(
 ) -> Vec<Vec<ColorRun>> {
     let pinned = width > WRAP_MIN_WIDTH;
     if !wrap.word_wrap {
-        let Some(first) = lines.into_iter().next() else {
-            return Vec::new();
-        };
-        if !pinned {
-            return vec![first];
+        let mut rows: Vec<Vec<ColorRun>> = Vec::new();
+        let mut lines = lines.into_iter().peekable();
+        while let Some(line) = lines.next() {
+            let blank = line.iter().all(|run| run.text.is_empty());
+            // A line opening with the newline code adds a row and steps y (`0x6c7cf2`).
+            if blank && lines.peek().is_some() {
+                rows.push(line);
+                continue;
+            }
+            if !pinned {
+                rows.push(line);
+                break;
+            }
+            // From the second row on the indent narrows it (`0x6c7cad`).
+            let w = if rows.is_empty() {
+                width
+            } else {
+                width - indent_of(e, wrap)
+            };
+            let (row, kept) = cut_line(&line, w, |t| {
+                measure_line_width(e, r, r.step_extra, t, icons)
+            });
+            // Not one character fits: the pass stops before drawing a line.
+            if kept > 0 || blank {
+                rows.push(row);
+            }
+            break;
         }
-        let (row, kept) = cut_line(&first, width, |t| {
-            measure_line_width(e, r, r.step_extra, t, icons)
-        });
-        // Not one character fits: the pass stops before drawing a line.
-        let blank = first.iter().all(|run| run.text.is_empty());
-        return if kept == 0 && !blank {
-            Vec::new()
-        } else {
-            vec![row]
-        };
+        return rows;
     }
     if !pinned {
         return lines;
@@ -253,8 +267,18 @@ pub(crate) fn measure_text(
     // outline pad (`N·S + (N-1)·gap`); an outlined ring pokes past it, as in the reference.
     (
         max_w.ceil() + 1.0,
-        super::text_block_h(render_lines.len(), r.size, font.spacing),
+        super::text_block_h(block_rows(&render_lines, font.wrap), r.size, font.spacing),
     )
+}
+
+/// The rows a measure counts: with word wrap off the wrapped height's walk ends after its first
+/// row (`0x6bda3d`), a blank one included; the draw's block counts every row (`0x6c61a8`).
+fn block_rows(rows: &[Vec<ColorRun>], wrap: TextWrap) -> usize {
+    if wrap.word_wrap {
+        rows.len()
+    } else {
+        rows.len().min(1)
+    }
 }
 
 /// How many rows `text` wraps into at `wrap_width`, by the render's own [`layout_rows`] pass: the

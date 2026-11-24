@@ -270,3 +270,56 @@ fn a_cut_line_ellipsizes_unless_the_non_space_wrap_bit_walks_on() {
     };
     assert_eq!(fits(one_line(false)), None);
 }
+
+/// Word wrap off with a blank line first: the newline only steps a row (`0x6c7ced`), so the
+/// first non-blank line draws one row down, cut narrower and stepped in by the indent since the
+/// line count is already 1 (`0x6c7cad`, `0x6c7e25`); the measure stays one row (`0x6bda3d`).
+#[test]
+fn word_wrap_off_draws_the_first_line_past_leading_blank_lines() {
+    let Some(mut e) = test_engine(1.0) else {
+        eprintln!("skipping: no install / font chain");
+        return;
+    };
+    let rect = Rect::new(0.0, 0.0, 400.0, 400.0);
+    let plain = row_lefts(&draw(&mut e, "ab", rect, JustifyH::Left, one_line(false)));
+    assert_eq!(plain.len(), 1);
+    let pitch = {
+        let two = row_lefts(&draw(
+            &mut e,
+            "ab\nab",
+            rect,
+            JustifyH::Left,
+            TextWrap::default(),
+        ));
+        two[1].1 - two[0].1
+    };
+    for (text, down) in [("\nab", 1.0), ("\n\nab", 2.0), ("|nab", 1.0)] {
+        let rows = row_lefts(&draw(&mut e, text, rect, JustifyH::Left, one_line(false)));
+        assert_eq!(rows.len(), 1, "{text:?} draws one line");
+        assert!(
+            (rows[0].1 - plain[0].1 - down * pitch).abs() < 1e-3,
+            "{text:?} sits {down} rows down: {rows:?} vs {plain:?}"
+        );
+        assert!(
+            (rows[0].0 - plain[0].0).abs() < 1e-3,
+            "{text:?} not indented"
+        );
+        let wrap = TextWrap {
+            indented: true,
+            ..one_line(false)
+        };
+        let stepped = row_lefts(&draw(&mut e, text, rect, JustifyH::Left, wrap));
+        assert!(
+            (stepped[0].0 - plain[0].0 - 15.0).abs() < 1.0 + 1e-3,
+            "{text:?} indented steps in: {stepped:?}"
+        );
+        let (w, h) = measure_text(&mut e, text, None, spec(one_line(false)));
+        assert_eq!(
+            (w, h),
+            measure_text(&mut e, "ab", None, spec(TextWrap::default())),
+            "{text:?} measures one row, the drawn line's width"
+        );
+    }
+    // A blank string still has its one row and draws nothing.
+    assert!(draw(&mut e, "\n", rect, JustifyH::Left, one_line(false)).is_empty());
+}
