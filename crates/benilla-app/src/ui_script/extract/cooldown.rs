@@ -62,7 +62,8 @@ pub(super) fn emit(
     }
     // Deviation: the reference draws the edge with blend 0, `DISABLE` (`0x5ebdf3`; the names at
     // `0xa43fe8`), which would paint the art's black ground over the whole button; it is blended
-    // here, so only the line shows. No stock file calls `SetDrawEdge`.
+    // here, so only the line shows. Stock `TargetFrame.xml` turns the edge on (`drawEdge="true"`)
+    // for every target, focus and boss aura sweep.
     if let Some(uvs) = paint.edge {
         if let Some(texture) = assets.sprite_texture(EDGE, images) {
             out.push(UiQuad {
