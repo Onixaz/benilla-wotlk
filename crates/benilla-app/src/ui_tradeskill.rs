@@ -377,6 +377,22 @@ pub(crate) fn close(world: &mut World) {
     }
 }
 
+/// The UI shutdown's close (`0x528f96` -> `0x5da5a0`), after the trade cancel and before the world
+/// leave, on the reload's root (`0x52b03e`) and the game shutdown's (`0x529163`): its events reach
+/// the dying VM.
+pub(crate) fn shutdown_close(world: &mut World) {
+    if world.get_resource::<TradeSkillOpen>().is_none() {
+        return;
+    }
+    close(world);
+    crate::ui_script::live::fire_handler_events(world);
+}
+
+/// The world leave's part (`0x528d0f` -> `0x5dcae0`): the item callbacks cleared.
+pub(crate) fn leave_world(world: &mut World) {
+    clear_item_callbacks(world);
+}
+
 /// The item callbacks the rebuild left, cleared (`0x5dad10`): none waits and none is pending.
 fn clear_item_callbacks(world: &mut World) {
     let pending = world
@@ -1048,6 +1064,26 @@ fn send_trade_skill(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The world leave clears the list's product callbacks and its in-flight count (`0x528d0f`
+    /// -> `0x5dad10`), and leaves a reagent's (`0x5de100`) waiting.
+    #[test]
+    fn the_world_leave_clears_the_lists_item_callbacks() {
+        let mut world = World::new();
+        let mut open = TradeSkillOpen::default();
+        open.list.items_pending = 1;
+        world.insert_resource(open);
+        let mut waits = RecordWaits::default();
+        waits.wait(1251, RecordWait::TradeSkillList, false);
+        waits.wait(2589, RecordWait::TradeSkillItem, false);
+        world.insert_non_send_resource(waits);
+        leave_world(&mut world);
+        assert_eq!(world.resource::<TradeSkillOpen>().list.items_pending, 0);
+        assert_eq!(
+            world.non_send_resource::<RecordWaits>().waiting(),
+            [(2589, RecordWait::TradeSkillItem)]
+        );
+    }
 
     fn spell(effect: u32) -> SpellDisplay {
         SpellDisplay {

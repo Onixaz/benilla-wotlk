@@ -825,7 +825,7 @@ fn bank_banker(world: &World) -> Option<u64> {
         .banker
 }
 
-/// The world leave's inspect (`0x528cd3`), item text (`0x528ce2`), taxi (`0x528cf6`), trainer (`0x528cfb`), merchant (`0x528d00`), trade (`0x528d05`), pet (`0x528d14`), duel (`0x528d23`), battlefield (`0x528d46`), talent (`0x528d4b`), auction house (`0x528d55`), stable (`0x528d5a`) and interaction close (`0x528dce`) parts, in its order.
+/// The world leave's inspect (`0x528cd3`), item text (`0x528ce2`), taxi (`0x528cf6`), trainer (`0x528cfb`), merchant (`0x528d00`), trade (`0x528d05`), trade skill (`0x528d0f`), pet (`0x528d14`), duel (`0x528d23`), battlefield (`0x528d46`), talent (`0x528d4b`), auction house (`0x528d55`), stable (`0x528d5a`) and interaction close (`0x528dce`) parts, in its order.
 pub(crate) fn leave_world(world: &mut World) {
     crate::ui_inspect::leave_world(world);
     crate::ui_item_text::leave_world(world);
@@ -833,6 +833,8 @@ pub(crate) fn leave_world(world: &mut World) {
     crate::ui_trainer::leave_world(world);
     crate::ui_merchant::leave_world(world);
     crate::ui_trade::leave_world(world);
+    // The trade skill's item callbacks (`0x528d0f`), ahead of the pet's part.
+    crate::ui_tradeskill::leave_world(world);
     crate::ui_pet::possess::leave_world(world);
     if let Some(mut duel) = world.get_resource_mut::<crate::ui_duel::DuelState>() {
         duel.leave_world();

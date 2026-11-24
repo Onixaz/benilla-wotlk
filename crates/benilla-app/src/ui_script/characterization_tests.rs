@@ -11526,6 +11526,95 @@ fn the_trade_skill_window_shows_with_a_product_record_in_flight() {
     );
 }
 
+/// The UI shutdown closes the crafting list (`0x528f96` -> `0x5da5a0`) on a reload's root
+/// (`0x52b03e`): a waiting repeat stops with `UPDATE_TRADESKILL_RECAST` (`0x5da5d1`), then
+/// `TRADE_SKILL_CLOSE` (`0x5da5df`), both ahead of `PLAYER_LEAVING_WORLD` and `PLAYER_LOGOUT`;
+/// the reloaded UI's opener press then opens the line again (`0x5de2e5`).
+#[test]
+fn a_reload_closes_the_trade_skill_list_and_the_opener_opens_it_again() {
+    use benilla_protocol::field::{FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_UNIT_BYTES_0};
+    const FIRST_AID: u32 = 3273;
+    const LINEN_BANDAGE: u32 = 3275;
+    let pair = |lo: u32, hi: u32| lo | hi << 16;
+    let mut t = crate::items::test_template("Linen Bandage");
+    t.subclass = 7;
+    let Some(mut rig) = Rig::login_after(
+        vec![
+            SessionEvent::ItemTemplate {
+                entry: 1251,
+                info: Some(Box::new(t)),
+            },
+            book(&[FIRST_AID, LINEN_BANDAGE]),
+        ],
+        &[
+            OBJECT_TYPE_PLAYER,
+            (FIELD_UNIT_BYTES_0, 1 | 2 << 8 | 1 << 24),
+            (SKILL, 129),
+            (SKILL + 1, pair(1, 75)),
+        ],
+    ) else {
+        return;
+    };
+    let open = |rig: &mut Rig| {
+        super::live::with_live_world(rig.app.world_mut(), |s| {
+            s.run("CastSpellByName('First Aid')")
+        })
+        .expect("a VM")
+        .expect("the cast runs");
+        rig.run(1);
+        fired(&rig.take(), &["TRADE_SKILL_SHOW", "TRADE_SKILL_CLOSE"])
+    };
+    rig.take();
+    assert_eq!(open(&mut rig), ["TRADE_SKILL_SHOW"]);
+    // A repeat of two waiting for its cast start (`0x5d9fa0`).
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::ui_tradeskill::TradeSkillOpen>()
+        .list
+        .set_recast(LINEN_BANDAGE, 2);
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run(
+            "RegisterCVar('charzTsShutdown', '') \
+             local f = CreateFrame('Frame') \
+             for _, e in ipairs({ 'UPDATE_TRADESKILL_RECAST', 'TRADE_SKILL_CLOSE', \
+               'PLAYER_LEAVING_WORLD', 'PLAYER_LOGOUT' }) do f:RegisterEvent(e) end \
+             f:SetScript('OnEvent', function(_, e) \
+               SetCVar('charzTsShutdown', GetCVar('charzTsShutdown') .. e .. ',') end)",
+        )
+    })
+    .expect("a VM")
+    .unwrap();
+    rig.app
+        .world()
+        .non_send_resource::<benilla_ui::script::UiScript>()
+        .run("ReloadUI()")
+        .unwrap();
+    rig.run(4);
+    let order = rig
+        .app
+        .world()
+        .resource::<crate::cvars::Cvars>()
+        .get("charzTsShutdown")
+        .unwrap_or_default();
+    assert_eq!(
+        order,
+        "UPDATE_TRADESKILL_RECAST,TRADE_SKILL_CLOSE,TRADE_SKILL_CLOSE,PLAYER_LEAVING_WORLD,PLAYER_LOGOUT,",
+        "the stock hide's CloseTradeSkill signals again (`0x5da8ef`)"
+    );
+    let list = &rig
+        .app
+        .world()
+        .resource::<crate::ui_tradeskill::TradeSkillOpen>()
+        .list;
+    assert_eq!((list.line, list.opener), (0, 0));
+    rig.take();
+    assert_eq!(
+        open(&mut rig),
+        ["TRADE_SKILL_SHOW"],
+        "the opener opens, not closes"
+    );
+}
+
 /// Two minor glyphs off the install, by `GlyphProperties.dbc` id, and the first one's spell.
 fn two_minor_glyphs() -> (u32, u32, u32) {
     let data = benilla_formats::wow_data().expect("install");

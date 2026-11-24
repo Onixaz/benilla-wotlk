@@ -822,6 +822,9 @@ fn close_ui_session(world: &mut World) {
         .and_then(|id| id.0.clone());
     // Spent at the root: of this edge and the worldport's, the first to a departure owns it.
     let leaving_world = run_leave_world_sweep(world);
+    if !ui_never_loaded {
+        crate::ui_tradeskill::shutdown_close(world);
+    }
     // Past the latch the UI shutdown leaves the world (`0x52901a` -> `0x528c30`): its module parts
     // run ahead of `PLAYER_LEAVING_WORLD` (`0x528edc`) and `PLAYER_LOGOUT` (`0x52902a`).
     if leaving_world {
@@ -957,6 +960,7 @@ pub(crate) fn shutdown_on_exit(world: &mut World) {
     let Ok(Some((identity, leaving_world))) = world.run_system_cached(exit_sweep) else {
         return;
     };
+    crate::ui_tradeskill::shutdown_close(world);
     // The game's destroy runs the UI shutdown, whose world leave runs past the latch (`0x52901a`).
     if leaving_world {
         crate::ui_battlefield::leave_world(world);
