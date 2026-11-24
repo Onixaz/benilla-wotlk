@@ -934,11 +934,9 @@ fn chat_arm(
                     voice,
                 } => {
                     manual_join_or_leave(&channels, &mut script, &name);
-                    // A zone channel's slot is claimed at send (`0x507a80`).
-                    if channels.channels.zone_channel_id(&name) != 0
-                        && channels.claim_slot(&name).is_some()
-                    {
-                        script.set_channel_slots(channels.ui_slots());
+                    // A zone channel's slot is claimed at send (`0x507a80`), with no relist.
+                    if channels.channels.zone_channel_id(&name) != 0 {
+                        channels.claim_slot(&name);
                     }
                     channels.join_command(name, password, false, voice)
                 }

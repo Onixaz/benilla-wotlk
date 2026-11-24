@@ -123,6 +123,8 @@ pub(crate) struct ChannelSlot {
     pub state: SlotState,
     /// `+0xa0`: we asked to leave (`0x509628`); a join request clears it (`0x5077b4`).
     pub leave_asked: bool,
+    /// `+0x90`, the channel flags its last display list or user-list notice carried (`0x503a69`).
+    pub flags: u8,
 }
 
 /// The reference's per-slot state (`+0x9c`), in the values whose notice token differs: the stock
@@ -149,6 +151,7 @@ impl ChannelSlot {
             name: name.to_string(),
             state: SlotState::Joined,
             leave_asked: false,
+            flags: 0,
         }
     }
 }
@@ -361,7 +364,7 @@ impl ChannelState {
             .collect()
     }
 
-    /// The slots for the VM's mirror and channel pane, holes kept: a zone channel carries its
+    /// The records as the verbs read them at the call, holes kept: a zone channel carries its
     /// row's Shortcut, which the pane lists it by (`0x4fdfa5`), and a suspended slot lists grey.
     pub(crate) fn ui_slots(&self) -> Vec<Option<benilla_ui::script::ChannelSlotInfo>> {
         self.joined
@@ -374,6 +377,7 @@ impl ChannelState {
                         .row_for_name(&s.name)
                         .map(|r| r.shortcut.clone()),
                     active: s.state != SlotState::Suspended,
+                    flags: s.flags,
                 })
             })
             .collect()

@@ -5,7 +5,7 @@
 
 use bevy::prelude::*;
 
-use crate::ui_script::{UiDrain, UiFeed};
+use crate::ui_script::UiDrain;
 
 #[cfg(test)]
 mod ace_gate_tests;
@@ -49,9 +49,8 @@ mod tests;
 
 pub(crate) use away::AfkMirror;
 pub(crate) use broadcast::Broadcast;
-/// The zone-channel catalog's seed, called from the world-entry UI load: addons read the catalog
-/// at file scope, before an `Update` push would land.
-pub(crate) use channels::seed_zone_channel_catalog;
+/// The channel records, mask and zone catalog the channel verbs read at the call.
+pub(crate) use channels::ChannelLive;
 /// The joined-channel roster and the `ChatChannels.dbc` catalog, named by `net`'s docs and tests.
 #[cfg_attr(not(test), allow(unused_imports))]
 pub(crate) use edit::ChannelState;
@@ -68,6 +67,8 @@ pub(crate) use feed::{
 pub(crate) use frames::{
     add_chat_line_in_call, add_chat_line_now, add_combat_line_now, ChatWindows,
 };
+/// The channel pane's name callback, run by the name answer's handler.
+pub(crate) use net::channel_name_landed;
 /// The per-character chat cache's restore, called from the world-entry UI load: its two events
 /// must precede the session's first chat line and `PLAYER_LOGIN`.
 pub(crate) use settings::restore_chat_looks;
@@ -119,13 +120,6 @@ impl Plugin for UiChatPlugin {
             // The last-input stamp, ungated and ahead of the UI pass: the reference stamps raw
             // input before dispatch, so a key the chat box swallows still counts.
             .add_systems(Update, idle::stamp_input.before(crate::ui_script::UiPress))
-            // A fresh VM's joined-channel mirror.
-            .add_systems(
-                Update,
-                channels::seed_channels.in_set(crate::ui_script::UiFeed),
-            )
-            // The channel pane's roster names, as the name cache answers them.
-            .add_systems(Update, net::feed_channel_roster_names.in_set(UiFeed))
             .add_systems(
                 Update,
                 (
@@ -156,12 +150,8 @@ impl Plugin for UiChatPlugin {
             .add_systems(
                 Update,
                 (
-                    crate::ui_script::raises::then_fire(
-                        channels::end_session_channels_on_disconnect,
-                    ),
-                    crate::ui_script::raises::then_fire(
-                        channels::auto_join_zone_channels.in_set(crate::char_select::InWorldGated),
-                    ),
+                    channels::end_session_channels_on_disconnect,
+                    channels::auto_join_zone_channels.in_set(crate::char_select::InWorldGated),
                     crate::ui_script::raises::then_fire(
                         recruitment::guild_recruitment_cascade
                             .in_set(crate::char_select::InWorldGated),
@@ -175,10 +165,7 @@ impl Plugin for UiChatPlugin {
             )
             .add_systems(
                 OnExit(crate::char_select::ClientState::InWorld),
-                (
-                    crate::ui_script::raises::then_fire(channels::end_session_channels),
-                    end_session_chat,
-                ),
+                (channels::end_session_channels, end_session_chat),
             );
         settings::plugin(app);
         logging::plugin(app);

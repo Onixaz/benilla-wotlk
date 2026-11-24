@@ -42,6 +42,9 @@ local function button2()
 end
 local VERBS = {
     { "taxi", function() return UnitOnTaxi("player") end },
+    { "chan1", function() return (select(2, GetChannelName(1))) end },
+    { "chann", function() return select("#", GetChannelList()) end },
+    { "roster1", function() return CHARZ_CHAN and (GetChannelRosterInfo(CHARZ_CHAN, 1)) end },
     { "achcan", function() return CanShowAchievementUI() end },
     { "achcrit", function() return CHARZ_CRIT and (select(4, GetAchievementCriteriaInfo(CHARZ_CRIT))) end },
     { "achtracked", function() return GetNumTrackedAchievements() end },
@@ -11685,4 +11688,191 @@ fn remove_glyph_from_socket_sends_inside_the_call() {
         "socket 2 alone, sent before the chunk returned"
     );
     assert_eq!(left, i64::from(spell), "the glyph waits for the server");
+}
+
+// ── Chat channels: the records read live, the list's update and the roster's names (#1283) ──────
+
+/// `SMSG_CHANNEL_NOTIFY` for `channel`.
+fn channel_notice(
+    notice: u8,
+    channel: &str,
+    tail: benilla_protocol::messages::ChannelNoticeTail,
+) -> SessionEvent {
+    SessionEvent::ChannelNotify {
+        notice,
+        channel: channel.into(),
+        tail,
+    }
+}
+
+/// Our `YOU_JOINED` and `YOU_LEFT` for `channel`.
+fn joined_notice(channel: &str) -> SessionEvent {
+    use benilla_protocol::messages::{channel_notice, ChannelNoticeTail};
+    channel_notice(
+        channel_notice::YOU_JOINED,
+        channel,
+        ChannelNoticeTail::YouJoined {
+            flags: 0,
+            text: None,
+        },
+    )
+}
+
+fn left_notice(channel: &str) -> SessionEvent {
+    use benilla_protocol::messages::{channel_notice, ChannelNoticeTail};
+    channel_notice(
+        channel_notice::YOU_LEFT,
+        channel,
+        ChannelNoticeTail::YouLeft { constant: false },
+    )
+}
+
+/// The channel events and the auction marker (`|`), with the channel verbs' answers at each.
+fn channel_order(seen: &[Seen]) -> Vec<String> {
+    seen.iter()
+        .filter_map(|s| match s.event.as_str() {
+            "CHANNEL_UI_UPDATE" | "CHANNEL_COUNT_UPDATE" | "CHANNEL_ROSTER_UPDATE" => {
+                Some(s.line(&["chan1", "chann", "roster1"]))
+            }
+            "CHAT_MSG_CHANNEL_NOTICE" => Some(format!(
+                "{} {} | {}",
+                s.event,
+                s.args.split(' ').next().unwrap_or_default(),
+                s.line(&["chan1", "chann"])
+                    .split(" | ")
+                    .nth(1)
+                    .unwrap_or_default()
+            )),
+            "AUCTION_HOUSE_DISABLED" => Some("|".to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The join's confirm relists in its handler before the notice line (`0x507880` -> `0x505d40`),
+/// the leave's after it (`0x507900`), and `GetChannelName` and `GetChannelList` read the records
+/// at each event (`0xbcf094`): the leave line still numbers the channel, the relist after it no
+/// longer does. Each fires between the packets around it.
+#[test]
+fn a_join_and_a_leave_relist_in_their_handlers_and_read_the_records_live() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let seen = rig.packets(
+        vec![
+            closed_house(),
+            joined_notice("Charz"),
+            closed_house(),
+            left_notice("Charz"),
+            closed_house(),
+        ],
+        1,
+    );
+    assert_eq!(
+        channel_order(&seen),
+        [
+            "|",
+            "CHANNEL_UI_UPDATE | chan1=Charz chann=2 roster1=nil",
+            "CHAT_MSG_CHANNEL_NOTICE YOU_JOINED | chan1=Charz chann=2",
+            "|",
+            "CHAT_MSG_CHANNEL_NOTICE YOU_LEFT | chan1=Charz chann=2",
+            "CHANNEL_UI_UPDATE | chan1=nil chann=0 roster1=nil",
+            "|",
+        ]
+    );
+}
+
+/// A reload reads the records where they live: the fresh files' `GetChannelName` answers the joined
+/// channel from `PLAYER_LOGIN` on, and nothing relists, as 12340's UI load fires no
+/// `CHANNEL_UI_UPDATE`.
+#[test]
+fn a_reload_reads_the_joined_channels_with_no_relist() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    rig.packets(vec![joined_notice("Charz")], 1);
+    super::live::with_live_world(rig.app.world_mut(), |s| s.run("ReloadUI()"))
+        .expect("a VM")
+        .unwrap();
+    rig.run(4);
+    let seen = rig.take();
+    assert_eq!(
+        pin(
+            &seen,
+            &["PLAYER_LOGIN", "CHANNEL_UI_UPDATE"],
+            &["chan1", "chann"]
+        ),
+        ["PLAYER_LOGIN | chan1=Charz chann=2"]
+    );
+}
+
+/// The selected channel's display list (`0x503990`) waits on a member's name; the name answer's
+/// callback (`0x4ffe30`) fires the count and the roster in the answer's handler, with the roster
+/// reading the name, in whichever order the two packets come. A name cached before the list fires
+/// them in the list's handler.
+#[test]
+fn the_roster_fires_at_its_last_name_in_either_packet_order() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    rig.packets(vec![joined_notice("Charz")], 1);
+    // The custom header's one entry: group header, world header, custom header, Charz.
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("GetNumDisplayChannels() SetSelectedDisplayChannel(4) CHARZ_CHAN = 4")
+    })
+    .expect("a VM")
+    .unwrap();
+    const ANN: u64 = 0x41;
+    const BOB: u64 = 0x42;
+    let list = |guid| SessionEvent::ChannelList {
+        display: true,
+        channel: "Charz".into(),
+        flags: 0,
+        members: vec![(guid, 0)],
+    };
+    let seen = rig.packets(
+        vec![
+            list(ANN),
+            closed_house(),
+            name_answer(ANN, "Ann"),
+            closed_house(),
+        ],
+        1,
+    );
+    assert_eq!(
+        channel_order(&seen),
+        [
+            "|",
+            "CHANNEL_COUNT_UPDATE 4 1 | chan1=Charz chann=2 roster1=Ann",
+            "CHANNEL_ROSTER_UPDATE 4 1 | chan1=Charz chann=2 roster1=Ann",
+            "|",
+        ],
+        "the list waits; the answer's handler fires the roster"
+    );
+    assert!(
+        rx.try_iter()
+            .any(|c| matches!(c, crate::net::ClientCommand::NameQuery { guid: ANN })),
+        "the list asks the uncached name"
+    );
+    let seen = rig.packets(
+        vec![
+            name_answer(BOB, "Bob"),
+            closed_house(),
+            list(BOB),
+            closed_house(),
+        ],
+        1,
+    );
+    assert_eq!(
+        channel_order(&seen),
+        [
+            "|",
+            "CHANNEL_COUNT_UPDATE 4 1 | chan1=Charz chann=2 roster1=Bob",
+            "CHANNEL_ROSTER_UPDATE 4 1 | chan1=Charz chann=2 roster1=Bob",
+            "|",
+        ],
+        "a cached name: the list's own handler fires the roster"
+    );
 }

@@ -117,22 +117,21 @@ fn on_channel_user_list(In(ev): In<SessionEvent>, world: &mut World) {
     });
 }
 
-/// The channel pane's roster waits on the name cache (`0x4ffe30`): each answer that has landed is
-/// handed over, and the last one fires the roster's events.
-pub(super) fn feed_channel_roster_names(
-    mut script: crate::ui_script::InTurn,
-    names: Option<Res<crate::names::NameCache>>,
-    commands: Option<Res<NetCommands>>,
-) {
-    let (Some(mut script), Some(names), Some(commands)) = (script.turn(), names, commands) else {
+/// The channel pane's name callback (`0x4ffe30`), run by the name answer's handler once the record
+/// lands or the ask ends: the roster takes the cached name, and the last one awaited fires its
+/// count and roster with the `World` lent.
+pub(crate) fn channel_name_landed(world: &mut World, guid: u64) {
+    let awaits = world
+        .get_non_send_resource::<benilla_ui::script::UiScript>()
+        .is_some_and(|s| s.channel_roster_awaits(guid));
+    if !awaits {
         return;
-    };
-    for guid in script.channel_roster_unnamed() {
-        if let Some(answer) = names.answer(crate::names::NameKey::Player(guid), guid, &commands) {
-            let answer = answer.map(str::to_string);
-            script.channel_roster_named(guid, answer);
-        }
     }
+    let name = world
+        .get_resource::<crate::names::NameCache>()
+        .and_then(|n| n.peek(guid))
+        .map(str::to_string);
+    crate::ui_script::safe_world::lend(world, |s| s.channel_roster_named(guid, name));
 }
 
 fn on_whisper_refusal(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
@@ -721,29 +720,38 @@ mod tests {
     /// `World` holds at the handler (`0x503990`), with no unit fixture: the owner gate reads it.
     #[test]
     fn a_display_list_seats_our_own_row_against_the_player_held() {
-        use benilla_ui::script::{ChannelSlotInfo, UiScript};
+        use benilla_ui::script::UiScript;
         const ME: u64 = 0x10;
         const GENERAL: &str = "General - Elwynn Forest";
         let mut world = World::new();
         world.init_resource::<ChatLog>();
         world.init_resource::<crate::ui_script::live::UiEvents>();
         world.spawn((crate::net::SelfPlayer, crate::net::Guid(ME)));
-        let mut script = UiScript::new().expect("a VM");
-        script.set_channel_slots(vec![Some(ChannelSlotInfo {
-            name: GENERAL.into(),
-            shortcut: Some("General".into()),
-            active: true,
-        })]);
-        script
-            .run("SetSelectedDisplayChannel(3)")
-            .expect("the channel is listed under the world header");
-        world.insert_non_send_resource(script);
-        let owner = |w: &World| {
-            w.non_send_resource::<UiScript>()
-                .eval::<bool>("return IsDisplayChannelOwner() == 1")
-                .unwrap()
+        world.insert_resource(crate::ui_chat::ChannelState {
+            joined: vec![Some(crate::ui_chat::edit::ChannelSlot::joined(GENERAL))],
+            channels: benilla_formats::ChatChannelsCatalog::from_rows(vec![
+                benilla_formats::ChatChannelRow {
+                    id: 1,
+                    flags: 0x80003,
+                    pattern: "General - %s".into(),
+                    shortcut: "General".into(),
+                },
+            ]),
+            ..Default::default()
+        });
+        world.insert_non_send_resource(UiScript::new().expect("a VM"));
+        crate::ui_script::safe_world::lend(&mut world, |s| {
+            s.run("GetNumDisplayChannels() SetSelectedDisplayChannel(3)")
+                .expect("the channel is listed under the world header")
+        });
+        let owner = |w: &mut World| {
+            crate::ui_script::safe_world::lend(w, |s| {
+                s.eval::<bool>("return IsDisplayChannelOwner() == 1")
+                    .unwrap()
+            })
+            .unwrap()
         };
-        assert!(!owner(&world));
+        assert!(!owner(&mut world));
         world
             .run_system_once_with(
                 on_channel_list,
@@ -756,7 +764,7 @@ mod tests {
             )
             .unwrap();
         crate::ui_script::live::fire_handler_events(&mut world);
-        assert!(owner(&world), "our row carries the owner bit");
+        assert!(owner(&mut world), "our row carries the owner bit");
     }
 
     /// The answer seeds the active player's clock alone (`0x4013c6`-`0x4013f1`): with no active

@@ -502,6 +502,8 @@ pub(crate) mod net {
             ui.world(move |world| crate::ui_achievement::name_landed(world, guid, true));
             // The held chat lines' callback (`0x503c80`).
             ui.world(crate::ui_chat::name_landed);
+            // The channel pane's roster callback (`0x4ffe30`).
+            ui.world(move |world| crate::ui_chat::channel_name_landed(world, guid));
         }
     }
 
@@ -519,6 +521,7 @@ pub(crate) mod net {
                 ui.world(move |world| crate::ui_item_text::name_landed(world, guid));
                 ui.world(move |world| crate::ui_achievement::name_landed(world, guid, false));
                 ui.world(crate::ui_chat::name_landed);
+                ui.world(move |world| crate::ui_chat::channel_name_landed(world, guid));
             }
         }
     }

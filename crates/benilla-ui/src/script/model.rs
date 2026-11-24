@@ -300,8 +300,6 @@ pub(crate) struct Model {
     /// `DropItemOnUnit` tokens, gated by the app; a refusal silently keeps the item.
     pub(crate) drop_item_on_unit: Vec<String>,
 
-    /// Channels the server confirmed, in join order: the numbers `GetChannelName` answers.
-    pub(crate) joined_channels: Vec<Option<String>>,
     /// The channel pane's display list, selection and roster.
     pub(crate) channel_pane: super::channel_pane::ChannelPane,
     /// The party or raid roster the app pushes; the default is not in a group.
@@ -378,8 +376,6 @@ pub(crate) struct Model {
     /// Chat-type colours: 94 fixed and 10 `CHANNELn`, overlaid by `chat-cache.txt`.
     pub(crate) chat_colors: Vec<super::chat_types::ChatTypeColor>,
     pub(crate) chat_colors_changed: bool,
-    /// The zone channel ids `ResetChatWindows` put back in the auto-join mask.
-    pub(crate) zone_mask_additions: Vec<u32>,
     /// A trade enchant slot ask: `false` the slot's click, `true` the replace popup's Accept.
     pub(crate) trade_enchant_targets: Vec<bool>,
     /// The languages this character knows, in `Languages.dbc` row order.
@@ -388,7 +384,6 @@ pub(crate) struct Model {
     pub(crate) class_names: Vec<super::class_list::ClassNames>,
     /// `Languages.dbc`'s `(ID, Name_lang)` rows in file order, whatever the character knows.
     pub(crate) language_table: Vec<(u32, String)>,
-    pub(crate) zone_channel_catalog: Vec<super::channel::ZoneChannelRow>,
     pub(crate) channel_commands: Vec<super::channel::ChannelCommand>,
     /// The recruitment auto-join latch, the chat's guild-recruitment mode: 0 `STANDARD`, 1 `AUTO`.
     /// Boots at 1, as the reference writes `AUTO` for an untouched option.
@@ -1476,7 +1471,6 @@ impl Model {
             script_calls: Vec::new(),
             input: Default::default(),
             drop_item_on_unit: Vec::new(),
-            joined_channels: Vec::new(),
             channel_pane: Default::default(),
             party: party::PartyState::default(),
             difficulty: Default::default(),
@@ -1518,12 +1512,10 @@ impl Model {
             chat_window_changes: HashSet::new(),
             chat_colors: super::chat_types::seed(),
             chat_colors_changed: false,
-            zone_mask_additions: Vec::new(),
             trade_enchant_targets: Vec::new(),
             known_languages: Vec::new(),
             class_names: Vec::new(),
             language_table: Vec::new(),
-            zone_channel_catalog: Vec::new(),
             channel_commands: Vec::new(),
             guild_recruitment_mode: 1,
             guild_recruitment_changed: false,

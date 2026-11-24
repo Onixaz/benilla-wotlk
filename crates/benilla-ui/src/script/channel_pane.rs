@@ -1,7 +1,8 @@
 //! The channel pane's engine, the social window's Chat tab (`ChannelFrame.lua`): the display list
 //! of category headers over the group sessions and the joined channels (`0x504840`), the selected
-//! entry (`0xb743dc`/`0xb743e0`) and its roster (`0xbcfb68`). A channel's roster is the server's
-//! display `SMSG_CHANNEL_LIST` (`0x503990`), named by the app off its name cache; a party's or
+//! entry (`0xb743dc`/`0xb743e0`) and its roster (`0xbcfb68`). The channel records are the app's,
+//! read live at each call. A channel's roster is the server's display `SMSG_CHANNEL_LIST`
+//! (`0x503990`), named off the name cache and its answers (`0x4ffe30`); a party's or
 //! raid's is built from the group roster (`0x5045c0`, `0x504720`). benilla runs no voice chat, so
 //! no entry carries voice and no voice session is active.
 
@@ -34,6 +35,13 @@ pub struct ChannelSlotInfo {
     pub shortcut: Option<String>,
     /// The slot holds the channel (`+0x9c == 0`, `0x504bb4`); a suspended zone channel lists grey.
     pub active: bool,
+    /// The record's channel flags (`+0x90`), which its last display list carried (`0x503a69`).
+    pub flags: u8,
+}
+
+/// The channel records at the call, read live; none with nothing lent.
+fn live_slots() -> Vec<Option<ChannelSlotInfo>> {
+    super::read_live(|l| l.channel_slots()).unwrap_or_default()
 }
 
 /// A display entry's type: a channel or a group session; a header's 4 is `None`.
@@ -107,17 +115,9 @@ struct Member {
     asked: bool,
 }
 
-/// A joined slot, with the channel flags its display lists carry (the channel record's `+0x90`).
-#[derive(Clone, Debug)]
-struct PaneSlot {
-    info: ChannelSlotInfo,
-    flags: u8,
-}
-
 /// The pane's state, the reference's statics around `0xb743cc`.
 #[derive(Debug, Default)]
 pub(crate) struct ChannelPane {
-    slots: Vec<Option<PaneSlot>>,
     /// The display list (`0xb74468`), its length the count (`0xb74460`).
     entries: Vec<Entry>,
     /// The collapsed headers (`0xb743d0`).
@@ -143,15 +143,12 @@ fn names_equal(a: &str, b: &str) -> bool {
 impl ChannelPane {
     /// The entry's display string (`0x4fe1c0`): its kind with a channel's full name or a group's
     /// empty one; `None` for a header or an index past the list.
-    fn target(&self, index: i64) -> Option<(Kind, String)> {
+    fn target(&self, index: i64, slots: &[Option<ChannelSlotInfo>]) -> Option<(Kind, String)> {
         let entry = self.entries.get(usize::try_from(index).ok()?)?;
         match entry.kind? {
             Kind::Channel => {
-                let slot = self
-                    .slots
-                    .get(usize::try_from(entry.channel).ok()?)?
-                    .as_ref()?;
-                Some((Kind::Channel, slot.info.name.clone()))
+                let slot = slots.get(usize::try_from(entry.channel).ok()?)?.as_ref()?;
+                Some((Kind::Channel, slot.name.clone()))
             }
             kind => Some((kind, String::new())),
         }
@@ -166,11 +163,11 @@ impl ChannelPane {
 
     /// The entry lookup (`0x4ff4f0`): the 1-based entry naming `kind` and, for a channel, `name`; 0
     /// for none.
-    fn find(&self, kind: Kind, name: &str) -> usize {
+    fn find(&self, kind: Kind, name: &str, slots: &[Option<ChannelSlotInfo>]) -> usize {
         (0..self.entries.len())
             .find(|&i| {
                 self.entries[i].header < 0
-                    && self.target(i as i64).is_some_and(|(k, n)| {
+                    && self.target(i as i64, slots).is_some_and(|(k, n)| {
                         k == kind && (k != Kind::Channel || names_equal(&n, name))
                     })
             })
@@ -178,9 +175,9 @@ impl ChannelPane {
     }
 
     /// The selection's 1-based entry, 0 for none.
-    fn selected_index(&self) -> usize {
+    fn selected_index(&self, slots: &[Option<ChannelSlotInfo>]) -> usize {
         match &self.selected {
-            Some((kind, name)) => self.find(*kind, name),
+            Some((kind, name)) => self.find(*kind, name, slots),
             None => 0,
         }
     }
@@ -219,13 +216,13 @@ fn group(model: &Model) -> Group {
 
 /// The list rebuild (`0x504840`) without its signal. Every entry is rebuilt, so a
 /// channel's listed roster size lasts only until the next rebuild, as in the reference.
-fn rebuild(model: &mut Model) {
-    rebuild_list(model);
+fn rebuild(model: &mut Model, slots: &[Option<ChannelSlotInfo>]) {
+    rebuild_list(model, slots);
     rebuild_roster(model);
 }
 
 /// The list's entries alone, which read no unit.
-fn rebuild_list(model: &mut Model) {
+fn rebuild_list(model: &mut Model, slots: &[Option<ChannelSlotInfo>]) {
     let g = group(model);
     let party_count = model.party.members.len() as u32 + 1;
     let raid_count = model.party.raid.len() as u32;
@@ -260,18 +257,18 @@ fn rebuild_list(model: &mut Model) {
     for (header, &folded) in collapsed.iter().enumerate().skip(1) {
         let at = entries.len();
         entries.push(Entry::header(header as i32, folded));
-        for (i, slot) in pane.slots.iter().enumerate() {
+        for (i, slot) in slots.iter().enumerate() {
             let Some(slot) = slot else {
                 continue;
             };
-            let zone = slot.info.shortcut.is_some();
+            let zone = slot.shortcut.is_some();
             if (header == 1) != zone {
                 continue;
             }
             if !folded {
                 entries.push(Entry {
                     // `0x504bb4` reads the slot's state; a custom slot is always live (`0x504c81`).
-                    enabled: !zone || slot.info.active,
+                    enabled: !zone || slot.active,
                     world: zone,
                     ..Entry::under(i as i32, Kind::Channel)
                 });
@@ -443,41 +440,20 @@ fn count_value(count: u32) -> Value {
 }
 
 impl super::UiScript {
-    /// Push the joined slots in slot order, holes kept: the pane relists them and fires
-    /// `CHANNEL_UI_UPDATE`, as each join, leave and drop does (`0x505d40`). A selected channel no
-    /// longer held live is unselected, as its leave does (`0x507900`).
-    pub fn set_channel_slots(&mut self, slots: Vec<Option<ChannelSlotInfo>>) {
+    /// The channel list changed (`0x505d40`): the pane relists the live records and fires
+    /// `CHANNEL_UI_UPDATE` (`0x504840` with 1). A selected channel no longer held live is
+    /// unselected, as its leave does (`0x507900`).
+    pub fn channels_updated(&mut self) {
+        let slots = live_slots();
         {
             let mut model = self.model_mut();
             let model: &mut Model = &mut model;
-            let names: Vec<Option<String>> = slots
-                .iter()
-                .map(|s| s.as_ref().map(|s| s.name.clone()))
-                .collect();
-            model.joined_channels = names;
-            let old = std::mem::take(&mut model.channel_pane.slots);
-            model.channel_pane.slots = slots
-                .into_iter()
-                .enumerate()
-                .map(|(i, s)| {
-                    s.map(|info| {
-                        // A slot keeps the channel flags its last display list carried.
-                        let flags = old
-                            .get(i)
-                            .and_then(Option::as_ref)
-                            .filter(|o| names_equal(&o.info.name, &info.name))
-                            .map_or(0, |o| o.flags);
-                        PaneSlot { info, flags }
-                    })
-                })
-                .collect();
             let pane = &mut model.channel_pane;
             let dropped = match &pane.selected {
-                Some((Kind::Channel, name)) => !pane
-                    .slots
+                Some((Kind::Channel, name)) => !slots
                     .iter()
                     .flatten()
-                    .any(|s| s.info.active && names_equal(&s.info.name, name)),
+                    .any(|s| s.active && names_equal(&s.name, name)),
                 _ => false,
             };
             if dropped {
@@ -485,7 +461,7 @@ impl super::UiScript {
                 pane.roster.clear();
                 pane.own_flags = 0;
             }
-            rebuild_list(model);
+            rebuild_list(model, &slots);
         }
         // A host step's relist reads our guid in its turn, with the `World` lent.
         super::world_loan::in_turn_or_now(self, |s| rebuild_roster(&mut s.model_mut()));
@@ -504,6 +480,7 @@ impl super::UiScript {
         members: &[(u64, u8)],
         name_of: impl Fn(u64) -> Option<Option<String>>,
     ) {
+        let slots = live_slots();
         let mut events: Vec<(&str, Vec<ScriptValue>)> = Vec::new();
         {
             let mut model = self.model_mut();
@@ -516,17 +493,10 @@ impl super::UiScript {
             pane.unnamed = 0;
             pane.roster.clear();
             pane.own_flags = 0;
-            let index = pane.find(Kind::Channel, channel);
+            let index = pane.find(Kind::Channel, channel, &slots);
             let at = ScriptValue::Int(index as i64);
-            if index != 0 {
-                let slot = usize::try_from(pane.entries[index - 1].channel)
-                    .ok()
-                    .and_then(|i| pane.slots.get_mut(i))
-                    .and_then(Option::as_mut);
-                if let Some(slot) = slot.filter(|s| s.flags != flags) {
-                    slot.flags = flags;
-                    events.push(("CHANNEL_FLAGS_UPDATED", vec![at.clone()]));
-                }
+            if index != 0 && channel_flags_moved(&slots, pane.entries[index - 1].channel, flags) {
+                events.push(("CHANNEL_FLAGS_UPDATED", vec![at.clone()]));
             }
             for &(guid, member_flags) in members {
                 if own != 0 && guid == own {
@@ -630,6 +600,7 @@ impl super::UiScript {
         channel_flags: u8,
         edit: impl FnOnce(&mut ChannelPane) -> bool,
     ) {
+        let slots = live_slots();
         let mut events: Vec<(&str, Vec<ScriptValue>)> = Vec::new();
         {
             let mut model = self.model_mut();
@@ -637,17 +608,12 @@ impl super::UiScript {
             if !pane.is_selected(Kind::Channel, channel) {
                 return;
             }
-            let index = pane.find(Kind::Channel, channel);
+            let index = pane.find(Kind::Channel, channel, &slots);
             let at = ScriptValue::Int(index as i64);
-            if index != 0 {
-                let slot = usize::try_from(pane.entries[index - 1].channel)
-                    .ok()
-                    .and_then(|i| pane.slots.get_mut(i))
-                    .and_then(Option::as_mut);
-                if let Some(slot) = slot.filter(|s| s.flags != channel_flags) {
-                    slot.flags = channel_flags;
-                    events.push(("CHANNEL_FLAGS_UPDATED", vec![at.clone()]));
-                }
+            if index != 0
+                && channel_flags_moved(&slots, pane.entries[index - 1].channel, channel_flags)
+            {
+                events.push(("CHANNEL_FLAGS_UPDATED", vec![at.clone()]));
             }
             if edit(pane) && index != 0 {
                 let count = pane.roster.len() as u32;
@@ -662,34 +628,25 @@ impl super::UiScript {
         }
     }
 
-    /// The guids whose name the pane's roster still waits for.
-    pub fn channel_roster_unnamed(&self) -> Vec<u64> {
-        let model = self.model_ref();
-        let pane = &model.channel_pane;
-        if pane.unnamed == 0 {
-            return Vec::new();
-        }
-        pane.roster
-            .iter()
-            .filter(|m| m.asked)
-            .map(|m| m.guid)
-            .collect()
-    }
-
-    /// The name cache answered for `guid` (`0x4ffe30`), `None` a negative answer; the last awaited
-    /// one sorts the roster and fires its count and roster.
+    /// The name cache's answer for `guid` (`0x4ffe30`), `None` a negative one: with names awaited
+    /// and a row of `guid`, the count falls, and the last one sorts the roster and fires its count
+    /// and roster.
     pub fn channel_roster_named(&mut self, guid: u64, name: Option<String>) {
+        let slots = live_slots();
         let mut events: Vec<(&str, Vec<ScriptValue>)> = Vec::new();
         {
             let mut model = self.model_mut();
             let pane = &mut model.channel_pane;
+            if pane.unnamed == 0 {
+                return;
+            }
             let mut found = false;
             for m in pane.roster.iter_mut().filter(|m| m.guid == guid) {
                 m.name = name.clone();
                 m.asked = false;
                 found = true;
             }
-            if pane.unnamed == 0 || !found {
+            if !found {
                 return;
             }
             pane.unnamed -= 1;
@@ -697,7 +654,7 @@ impl super::UiScript {
                 return;
             }
             sort_members(&mut pane.roster);
-            let index = pane.selected_index();
+            let index = pane.selected_index(&slots);
             if index != 0 {
                 let count = pane.roster.len() as u32;
                 pane.entries[index - 1].count = count;
@@ -713,6 +670,29 @@ impl super::UiScript {
             self.fire_event(event, args);
         }
     }
+
+    /// Whether the pane's roster waits on `guid`'s name, a callback the name answer runs.
+    pub fn channel_roster_awaits(&self, guid: u64) -> bool {
+        let model = self.model_ref();
+        let pane = &model.channel_pane;
+        pane.unnamed != 0 && pane.roster.iter().any(|m| m.guid == guid)
+    }
+}
+
+/// The record's flags byte against `flags` (`0x503a62`): a change is written through the live
+/// state (`0x503a69`) and answers true.
+fn channel_flags_moved(slots: &[Option<ChannelSlotInfo>], channel: i32, flags: u8) -> bool {
+    let Some(slot) = usize::try_from(channel).ok() else {
+        return false;
+    };
+    let Some(Some(info)) = slots.get(slot) else {
+        return false;
+    };
+    if info.flags == flags {
+        return false;
+    }
+    super::write_live(|l| l.set_channel_flags(slot, flags));
+    true
 }
 
 /// Register the channel pane's globals.
@@ -724,9 +704,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumDisplayChannels",
         lua.create_function(|lua, _: MultiValue| {
+            let slots = live_slots();
             let mut model = crate::script::model_mut_of(lua);
             let model: &mut Model = &mut model;
-            rebuild(model);
+            rebuild(model, &slots);
             Ok(model.channel_pane.entries.len() as i64)
         })?,
     )?;
@@ -741,6 +722,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(index) = index_arg(lua, index)? else {
                 return Err(mlua::Error::runtime("Usage: GetChannelDisplayInfo(index)"));
             };
+            let slots = live_slots();
             let (entry, label, active_voice) = {
                 let model = lua
                     .app_data_ref::<crate::script::ModelCell>()
@@ -756,14 +738,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 // The channel's short name (`0x4fdf50`): a DBC channel's Shortcut, else its name.
                 let label = usize::try_from(entry.channel)
                     .ok()
-                    .and_then(|i| pane.slots.get(i))
+                    .and_then(|i| slots.get(i))
                     .and_then(Option::as_ref)
-                    .map(|s| {
-                        s.info
-                            .shortcut
-                            .clone()
-                            .unwrap_or_else(|| s.info.name.clone())
-                    });
+                    .map(|s| s.shortcut.clone().unwrap_or_else(|| s.name.clone()));
                 (entry, label, pane.active_voice)
             };
             let count = count_value(entry.count);
@@ -826,7 +803,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(match model.channel_pane.selected_index() {
+            Ok(match model.channel_pane.selected_index(&live_slots()) {
                 0 => Value::Nil,
                 i => Value::Integer(i as i64),
             })
@@ -841,9 +818,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(index) = index_arg(lua, index)? else {
                 return Ok(());
             };
+            let slots = live_slots();
             let mut model = crate::script::model_mut_of(lua);
             let model: &mut Model = &mut model;
-            let Some((kind, name)) = model.channel_pane.target(index) else {
+            let Some((kind, name)) = model.channel_pane.target(index, &slots) else {
                 return Ok(());
             };
             if model.channel_pane.is_selected(kind, &name) {
@@ -868,6 +846,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     return Ok(());
                 };
                 {
+                    let slots = live_slots();
                     let mut model = crate::script::model_mut_of(lua);
                     let model: &mut Model = &mut model;
                     let header = usize::try_from(index)
@@ -879,7 +858,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                         return Ok(());
                     };
                     model.channel_pane.collapsed[header] = collapse;
-                    rebuild(model);
+                    rebuild(model, &slots);
                 }
                 super::tick::fire_event_into(lua, "CHANNEL_UI_UPDATE", Vec::new());
                 Ok(())
@@ -896,9 +875,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(index) = index_arg(lua, index)? else {
                 return Ok(Value::Nil);
             };
+            let slots = live_slots();
             let mut model = crate::script::model_mut_of(lua);
             let model: &mut Model = &mut model;
-            let Some((kind, name)) = model.channel_pane.target(index) else {
+            let Some((kind, name)) = model.channel_pane.target(index, &slots) else {
                 return Ok(Value::Nil);
             };
             let count = if !model.channel_pane.is_selected(kind, &name) {
@@ -927,9 +907,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(MultiValue::new());
             };
             let (name, flags) = {
+                let slots = live_slots();
                 let mut model = crate::script::model_mut_of(lua);
                 let model: &mut Model = &mut model;
-                let Some((kind, target)) = model.channel_pane.target(index) else {
+                let Some((kind, target)) = model.channel_pane.target(index, &slots) else {
                     return Ok(MultiValue::new());
                 };
                 if !model.channel_pane.is_selected(kind, &target) {
@@ -973,7 +954,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
                 let pane = &model.channel_pane;
-                let index = pane.selected_index();
+                let index = pane.selected_index(&live_slots());
                 Ok(flag(
                     index != 0 && pane.entries[index - 1].header < 0 && pane.own_flags & mask != 0,
                 ))

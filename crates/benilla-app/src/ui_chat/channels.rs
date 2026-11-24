@@ -58,11 +58,10 @@ impl ZoneChannelWalk {
     }
 }
 
-/// End the channel session: vmangos leaves every channel with the session
-/// (`Player::CleanupChannels`, `Objects/Player.cpp:5107`), so the next one starts in none. The
-/// mask stays, as it belongs to the character's file.
+/// End the channel session: the server leaves every channel with the session, so the next one
+/// starts in none. The verbs read the records live, so nothing reaches the VM. The mask stays, as
+/// it belongs to the character's file.
 fn end_channel_session(
-    script: Option<&mut benilla_ui::script::UiScript>,
     channels: &mut ChannelState,
     walk: &mut ZoneChannelWalk,
     cascade: &mut GuildRecruitmentCascade,
@@ -70,45 +69,20 @@ fn end_channel_session(
     walk.clear_session();
     cascade.clear_session();
     channels.joined.clear();
-    if let Some(script) = script {
-        script.set_channel_slots(Vec::new());
-    }
-}
-
-/// Seed a fresh VM's joined-channel mirror, which is otherwise pushed only on a join or a leave, so
-/// a `/reload` would leave `GetChannelName` and `/N` empty until the next one.
-pub(super) fn seed_channels(
-    mut script: crate::ui_script::InTurn,
-    channels: Res<ChannelState>,
-    mut seeded: Local<crate::ui_script::VmMemo<bool>>,
-) {
-    let Some(mut script) = script.turn() else {
-        return;
-    };
-    if seeded.claim(&script) {
-        script.set_channel_slots(channels.ui_slots());
-    }
 }
 
 /// The session-end edge: a confirmed `/logout` back to the glue screens (`OnExit(InWorld)`).
 pub(super) fn end_session_channels(
-    mut script: crate::ui_script::InTurn,
     mut channels: ResMut<ChannelState>,
     mut walk: ResMut<ZoneChannelWalk>,
     mut cascade: ResMut<GuildRecruitmentCascade>,
 ) {
-    end_channel_session(
-        script.turn().as_deref_mut(),
-        &mut channels,
-        &mut walk,
-        &mut cascade,
-    );
+    end_channel_session(&mut channels, &mut walk, &mut cascade);
 }
 
 /// The other session end, a dead socket: a recoverable drop never leaves `InWorld`, but the
 /// reconnect gets a fresh server-side `Player` in no channels, so it clears the same state.
 pub(super) fn end_session_channels_on_disconnect(
-    mut script: crate::ui_script::InTurn,
     mut channels: ResMut<ChannelState>,
     mut walk: ResMut<ZoneChannelWalk>,
     mut cascade: ResMut<GuildRecruitmentCascade>,
@@ -117,12 +91,57 @@ pub(super) fn end_session_channels_on_disconnect(
     if disconnects.read().next().is_none() {
         return;
     }
-    end_channel_session(
-        script.turn().as_deref_mut(),
-        &mut channels,
-        &mut walk,
-        &mut cascade,
-    );
+    end_channel_session(&mut channels, &mut walk, &mut cascade);
+}
+
+/// What the channel verbs read and write at the call: the channel records, the `ZONECHANNELS`
+/// mask (`0xbcf010`) and `ChatChannels.dbc` composed for the client's zone id (`0xbd080c`).
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct ChannelLive<'w> {
+    channels: ResMut<'w, ChannelState>,
+    zone: Option<Res<'w, crate::area::ZoneIds>>,
+    areas: Option<Res<'w, AreaTableRes>>,
+}
+
+impl ChannelLive<'_> {
+    /// The records in slot order, holes kept.
+    pub(crate) fn slots(&self) -> Vec<Option<benilla_ui::script::ChannelSlotInfo>> {
+        self.channels.ui_slots()
+    }
+
+    /// A record's flags byte, as a display list writes it (`0x503a69`).
+    pub(crate) fn set_flags(&mut self, slot: usize, flags: u8) {
+        if let Some(Some(s)) = self.channels.joined.get_mut(slot) {
+            s.flags = flags;
+        }
+    }
+
+    /// The catalog composed for the zone id at the call; zone-less while it is 0 or unknown, and
+    /// empty without `ChatChannels.dbc`.
+    pub(crate) fn catalog(&self) -> Vec<benilla_ui::script::ZoneChannelRow> {
+        if self.channels.channels.is_empty() {
+            return Vec::new();
+        }
+        let areas = self.areas.as_deref();
+        let zone = self.zone.as_deref().map_or(0, |z| z.zone);
+        let (name, in_city) = areas
+            .and_then(|a| a.0.get(zone))
+            .map(|r| (r.name.clone(), r.flags & AREA_FLAG_TRADE_CHANNEL != 0))
+            .unwrap_or_default();
+        zone_channel_catalog(
+            &self.channels.channels,
+            &name,
+            in_city,
+            areas.and_then(|a| city_word(&a.0)),
+        )
+    }
+
+    /// A channel id's `ZONECHANNELS` bit set, once the mask is seated.
+    pub(crate) fn add_zone_bit(&mut self, id: u32) {
+        if let Some(mask) = &mut self.channels.zone_mask {
+            *mask |= super::edit::zone_bit(id);
+        }
+    }
 }
 
 /// Startup: read `ChatChannels.dbc`; without an install nothing auto-joins and arg7 stays 0.
@@ -303,9 +322,9 @@ pub(crate) fn plan_walk(
     steps
 }
 
-/// Apply a plan in order; answers whether a slot name moved, the VM mirror's cue.
-fn apply_walk(steps: &[WalkStep], channels: &mut ChannelState, commands: &NetCommands) -> bool {
-    let mut names_moved = false;
+/// Apply a plan in order. Nothing relists: neither the walk nor its join (`0x507a80`) calls the
+/// list's update (`0x505d40`).
+fn apply_walk(steps: &[WalkStep], channels: &mut ChannelState, commands: &NetCommands) {
     for step in steps {
         match step {
             WalkStep::Leave(name) => {
@@ -325,14 +344,10 @@ fn apply_walk(steps: &[WalkStep], channels: &mut ChannelState, commands: &NetCom
             WalkStep::Rename { old, new } => {
                 if let Some(n) = channels.rename_slot(old, new) {
                     debug!("chat: zone channel slot {n} renamed {old:?} → {new:?}");
-                    names_moved = true;
                 }
             }
             WalkStep::Register(name) => match channels.claim_slot(name) {
-                Some(n) => {
-                    debug!("chat: zone channel {name:?} registered as slot {n}");
-                    names_moved = true;
-                }
+                Some(n) => debug!("chat: zone channel {name:?} registered as slot {n}"),
                 None => warn!(
                     "chat: no free slot for zone channel {name:?} — all {} are taken",
                     super::edit::MAX_CHANNELS
@@ -346,7 +361,6 @@ fn apply_walk(steps: &[WalkStep], channels: &mut ChannelState, commands: &NetCom
             WalkStep::Confirm(name) => channels.confirm_slot(name),
         }
     }
-    names_moved
 }
 
 /// Whether the zone under the player is final: an active avatar done settling, benilla's stand-in
@@ -375,17 +389,8 @@ pub(super) fn auto_join_zone_channels(
     ),
     mut walk: ResMut<ZoneChannelWalk>,
     mut entered: MessageReader<crate::net::EnteredWorldMessage>,
-    mut script: crate::ui_script::InTurn,
-    mut catalog_fed: Local<crate::ui_script::VmMemo<Option<(String, bool)>>>,
 ) {
     let (player, cinematic) = (&body.0, &body.1);
-    if let Some(mut script) = script.turn() {
-        for id in script.take_zone_mask_additions() {
-            if let Some(mask) = &mut channels.zone_mask {
-                *mask |= super::edit::zone_bit(id);
-            }
-        }
-    }
     // World entry arms the walk; the session-end edges disarm it.
     if entered.read().next().is_some() {
         walk.live = true;
@@ -410,25 +415,6 @@ pub(super) fn auto_join_zone_channels(
         .and_then(|id| areas?.0.get(id))
         .map(|row| (row.name.clone(), row.flags & AREA_FLAG_TRADE_CHANNEL != 0));
 
-    // The VM's catalog is fed before those gates: to its verbs an empty catalog means "no such
-    // built-in channel", which files `General` as a custom channel and joins one of that name.
-    // Zone-less, a zone row carries `resolved: None`, the reference's nil leg.
-    if !channels.channels.is_empty() {
-        if let Some(mut script) = script.turn() {
-            let at = zone.clone().unwrap_or_default();
-            let fed = catalog_fed.get(&script);
-            if fed.as_ref() != Some(&at) {
-                script.set_zone_channel_catalog(zone_channel_catalog(
-                    &channels.channels,
-                    &at.0,
-                    at.1,
-                    areas.and_then(|a| city_word(&a.0)),
-                ));
-                *fed = Some(at);
-            }
-        }
-    }
-
     let (Some(zone_id), Some((zone_name, in_city)), Some(areas)) = (zone_id, zone, areas) else {
         return; // nothing to walk against yet
     };
@@ -440,31 +426,8 @@ pub(super) fn auto_join_zone_channels(
     }
 
     let steps = plan_walk(&channels, &zone_name, in_city, city_word(&areas.0));
-    if apply_walk(&steps, &mut channels, &commands) {
-        if let Some(mut script) = script.turn() {
-            // `GetChannelName(n)` answers the new name from this frame on, as in the reference.
-            script.set_channel_slots(channels.ui_slots());
-        }
-    }
+    apply_walk(&steps, &mut channels, &commands);
     walk.at = Some(zone_id);
-}
-
-/// Feed the VM the zone-less catalog before any interface file runs: world entry runs FrameXML,
-/// the addons and `PLAYER_LOGIN` in one call, ahead of the walk's first tick.
-pub(crate) fn seed_zone_channel_catalog(
-    world: &mut World,
-    script: &mut benilla_ui::script::UiScript,
-) {
-    let Some(channels) = world.get_resource::<ChannelState>() else {
-        return;
-    };
-    if channels.channels.is_empty() {
-        return; // no `ChatChannels.dbc`: nothing to feed, as in the walk
-    }
-    let city = world
-        .get_resource::<AreaTableRes>()
-        .and_then(|a| city_word(&a.0));
-    script.set_zone_channel_catalog(zone_channel_catalog(&channels.channels, "", false, city));
 }
 
 /// Every `ChatChannels.dbc` row as the VM needs it: the id, the Shortcut the verbs match a typed
@@ -542,6 +505,7 @@ mod tests {
             name: name.into(),
             state: SlotState::Suspended,
             leave_asked: false,
+            flags: 0,
         })
     }
 
@@ -614,7 +578,7 @@ mod tests {
         cascade.observe_guild_id(7);
 
         // No VM in a unit test: the mirror leg is the one line this cannot reach.
-        end_channel_session(None, &mut channels, &mut walk, &mut cascade);
+        end_channel_session(&mut channels, &mut walk, &mut cascade);
 
         assert_eq!(walk.at, None, "the next entry re-walks from scratch");
         assert_eq!(walk.zone_id, None);

@@ -186,12 +186,8 @@ pub(super) fn guild_recruitment_cascade(
             info!("chat: guild recruitment cascade — unguilded in a capital, joining {name:?}");
             // The slot (by name), window 1's list, then the send, always.
             match channels.claim_slot(&name) {
-                Some(n) => {
-                    debug!("chat: {name:?} registered as slot {n}");
-                    // After an earlier arm's `UPDATE_CHAT_WINDOWS` listeners, as the write below.
-                    let slots = channels.ui_slots();
-                    script.after_raises(move |s| s.set_channel_slots(slots));
-                }
+                // No relist: the join (`0x507a80`) does not update the list (`0x505d40`).
+                Some(n) => debug!("chat: {name:?} registered as slot {n}"),
                 None => warn!(
                     "chat: no free slot for {name:?} — all {} are taken",
                     super::edit::MAX_CHANNELS

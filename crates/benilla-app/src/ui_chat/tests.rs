@@ -2821,6 +2821,7 @@ fn a_channel_send_carries_the_numbered_slots_name() {
                 name: "LocalDefense - Elwynn Forest".into(),
                 state: SlotState::Suspended,
                 leave_asked: false,
+                flags: 0,
             }),
         ],
         ..Default::default()

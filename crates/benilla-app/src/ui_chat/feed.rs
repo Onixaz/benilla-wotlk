@@ -787,12 +787,18 @@ pub(super) fn deliver(
     channels: &mut ChannelState,
     event: &mut ChatEvent,
 ) {
-    if deliver_before(script, channels, event) {
+    let (password, relist) = deliver_before(channels, event);
+    if relist {
+        script.channels_updated();
+    }
+    if password {
         script.fire_event("CHANNEL_PASSWORD_REQUEST", password_request_args(event));
     }
     let after = deliver_mid(channels, event);
     route(script, windows, event);
-    deliver_after(script, channels, event, after);
+    if deliver_after(channels, event, after) {
+        script.channels_updated();
+    }
 }
 
 /// A `WRONG_PASSWORD` notice's `CHANNEL_PASSWORD_REQUEST` argument, ahead of the line with the
@@ -801,12 +807,9 @@ fn password_request_args(event: &ChatEvent) -> Vec<benilla_ui::script::ScriptVal
     vec![benilla_ui::script::ScriptValue::Str(event.channel.clone())]
 }
 
-/// [`deliver`]'s writes ahead of the line; whether a password request fires before it.
-fn deliver_before(
-    script: &mut benilla_ui::script::UiScript,
-    channels: &mut ChannelState,
-    event: &mut ChatEvent,
-) -> bool {
+/// [`deliver`]'s writes ahead of the line: whether a password request fires before it, and whether
+/// the join relists the channels (`0x507880` -> `0x505d40`).
+fn deliver_before(channels: &mut ChannelState, event: &mut ChatEvent) -> (bool, bool) {
     let notice = event
         .notice_byte()
         .filter(|_| event.kind == Some(ChatEventKind::ChannelNotice));
@@ -863,12 +866,12 @@ fn deliver_before(
         }
     }
     // A custom channel's confirmed join enters the chat cache's re-join list, under its number.
-    if notice == Some(channel_notice::YOU_JOINED) {
+    let joined = notice == Some(channel_notice::YOU_JOINED);
+    if joined {
         channels.note_custom_channel_joined(&event.channel);
-        // Every confirmed join relists the channel pane before the notice prints (`0x507880`).
-        script.set_channel_slots(channels.ui_slots());
     }
-    password
+    // Every confirmed join relists the channel pane before the notice prints (`0x507880`).
+    (password, joined)
 }
 
 /// The wire names of a leave and a refusal, read before the stamp numbers the line.
@@ -898,13 +901,13 @@ fn deliver_mid(channels: &mut ChannelState, event: &mut ChatEvent) -> AfterLine 
 }
 
 /// [`deliver`]'s writes after the line: a leave frees its slot unless suspended, a refusal frees
-/// its own; either relists the channel pane.
+/// its own; whether either relists the channel pane (`0x507900`, `0x507a30` -> `0x505d40`).
 fn deliver_after(
-    script: &mut benilla_ui::script::UiScript,
     channels: &mut ChannelState,
     event: &ChatEvent,
     AfterLine { leaving, refused }: AfterLine,
-) {
+) -> bool {
+    let mut relist = false;
     if let Some(name) = leaving {
         // A suspended leave keeps the record: the reference skips the teardown, so leaving a
         // capital keeps Trade's number for the re-join.
@@ -916,13 +919,20 @@ fn deliver_after(
             debug!("chat: server confirms channel {name:?} left (slot {freed:?} now free)");
         }
         // Either leg relists the channel pane (`0x507900`).
-        script.set_channel_slots(channels.ui_slots());
+        relist = true;
     }
     if let Some(name) = refused {
         let freed = channels.free_slot(&name);
         debug!("chat: server refused channel {name:?} (slot {freed:?} now free)");
-        script.set_channel_slots(channels.ui_slots());
+        relist = true;
     }
+    relist
+}
+
+/// The channel list's update (`0x505d40`) with the `World` lent: the pane relists the live records
+/// and fires `CHANNEL_UI_UPDATE`.
+fn channels_updated(world: &mut World) {
+    crate::ui_script::safe_world::lend(world, |s| s.channels_updated());
 }
 
 /// The speaker's gesture, which the add selects ahead of the line (`0x50a1ce`).
@@ -1543,7 +1553,11 @@ fn run_step(world: &mut World, script: &mut UiScript, step: Step) {
             let Some(mut channels) = world.get_resource_mut::<ChannelState>() else {
                 return;
             };
-            if deliver_before(script, &mut channels, &mut event) {
+            let (password, relist) = deliver_before(&mut channels, &mut event);
+            if relist {
+                channels_updated(world);
+            }
+            if password {
                 crate::ui_script::safe_world::raise(
                     world,
                     "CHANNEL_PASSWORD_REQUEST",
@@ -1552,12 +1566,9 @@ fn run_step(world: &mut World, script: &mut UiScript, step: Step) {
             }
             let after = deliver_mid(&mut world.resource_mut::<ChannelState>(), &mut event);
             route_in_world(world, script, &event, None);
-            deliver_after(
-                script,
-                &mut world.resource_mut::<ChannelState>(),
-                &event,
-                after,
-            );
+            if deliver_after(&mut world.resource_mut::<ChannelState>(), &event, after) {
+                channels_updated(world);
+            }
         }
     }
 }
