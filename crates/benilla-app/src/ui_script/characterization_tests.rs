@@ -11453,6 +11453,62 @@ fn the_trade_skill_list_rebuilds_at_each_handler_step() {
     );
 }
 
+/// An abandoned line with the list open: the slot's id and ranks clear, and the value watch's
+/// rebuild in place (`0x6da5fa`) finds no slot, reading slot -1's value half unchecked
+/// (`0x5dd8cf`-`0x5dd8e5`), PLAYER_XP's low half, so each recipe's difficulty bands against it.
+#[test]
+fn the_rebuild_reads_a_missing_lines_rank_from_slot_minus_one() {
+    use benilla_protocol::field::{
+        FIELD_PLAYER_SKILL_INFO_1_1 as SKILL, FIELD_PLAYER_XP, FIELD_UNIT_BYTES_0,
+    };
+    const FIRST_AID: u32 = 3273;
+    const LINEN_BANDAGE: u32 = 3275;
+    let pair = |lo: u32, hi: u32| lo | hi << 16;
+    let mut t = crate::items::test_template("Linen Bandage");
+    t.class = 0;
+    t.subclass = 7;
+    // A human paladin with First Aid (129) at 1 of 75, Linen Bandage known, 300 experience.
+    let Some(mut rig) = Rig::login_after(
+        vec![
+            SessionEvent::ItemTemplate {
+                entry: 1251,
+                info: Some(Box::new(t)),
+            },
+            book(&[FIRST_AID, LINEN_BANDAGE]),
+        ],
+        &[
+            OBJECT_TYPE_PLAYER,
+            (FIELD_UNIT_BYTES_0, 1 | 2 << 8 | 1 << 24),
+            (SKILL, 129),
+            (SKILL + 1, pair(1, 75)),
+            (FIELD_PLAYER_XP, pair(300, 7)),
+        ],
+    ) else {
+        return;
+    };
+    rig.take();
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("CastSpellByName('First Aid')")
+    })
+    .expect("a VM")
+    .expect("the cast runs");
+    rig.run(1);
+    assert_eq!(
+        pin(&rig.take(), &["TRADE_SKILL_SHOW"], &["ts2"]),
+        vec!["TRADE_SKILL_SHOW | ts2=Linen Bandage:optimal:0"]
+    );
+    // The abandon clears the slot; the value and max watches' rebuilds (`0x6da5fa`, `0x6cddb7`)
+    // band against 300, past Linen Bandage's grey.
+    let abandoned = rig.packets(vec![self_values(&[(SKILL, 0), (SKILL + 1, 0)])], 2);
+    assert_eq!(
+        pin(&abandoned, &["TRADE_SKILL_UPDATE"], &["ts2"]),
+        vec![
+            "TRADE_SKILL_UPDATE | ts2=Linen Bandage:trivial:0",
+            "TRADE_SKILL_UPDATE | ts2=Linen Bandage:trivial:0",
+        ]
+    );
+}
+
 /// A product record in flight at the open: the rebuild files and counts the recipe (`0x5dd889`)
 /// and returns before its update (`0x5ddeb7`), so `TRADE_SKILL_SHOW` still fires (`0x5de2d1`,
 /// `0x5de2e5`); the record's callback rebuilds whole with its

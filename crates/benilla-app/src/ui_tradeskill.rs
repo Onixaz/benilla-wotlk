@@ -617,12 +617,9 @@ pub(crate) fn refresh_in_place(world: &mut World) {
     refresh(world, false);
 }
 
-/// A line's raw rank half, the difficulty's rank; 0 for a line the player lacks.
+/// A line's raw rank half (`0x5dd8cf`-`0x5dd8e5`); a missing line reads slot -1, PLAYER_XP ([`crate::ui_char::found_skill_slot`]).
 fn raw_rank(store: &ObjectStore, skill_id: u32) -> u32 {
-    (0..benilla_protocol::messages::PLAYER_SKILL_SLOTS)
-        .filter_map(|i| store.0.player_skill(i))
-        .find(|s| u32::from(s.skill_id) == skill_id)
-        .map_or(0, |s| u32::from(s.value))
+    u32::from(crate::ui_char::found_skill_slot(&store.0, skill_id).value)
 }
 
 /// What the rebuild and the verbs read of the game at the call: the spell, skill, item and tool
