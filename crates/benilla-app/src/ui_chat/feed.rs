@@ -80,8 +80,8 @@ pub(crate) enum ChatLine {
     },
     /// An area discovery (`SMSG_EXPLORATION_EXPERIENCE`).
     Discovery { area: String, xp: u32 },
-    /// One combat-log line, classified at the packet: its unit names read in the call, waiting
-    /// only on an item's record.
+    /// One combat-log line, classified at the packet: its unit names read in the call, never held;
+    /// an uncached item asks its record with the composer's callback.
     Combat(Box<super::combat::PendingCombat>),
     /// A ready event (client-composed lines; name-carrying notices).
     Event(ChatEvent),
@@ -1021,6 +1021,8 @@ pub(super) struct AddParams<'w, 's> {
     languages: Option<Res<'w, crate::ui_unit::LanguagesRes>>,
     /// Item names for `TRADESKILL_LOG`, `FEEDPET_LOG`, `ITEMENCHANTMENT*`, `SPELLDURABILITYDAMAGE`.
     items: Res<'w, crate::items::Items>,
+    /// The item records' callbacks, which an uncached combat line's item joins.
+    record_waits: Option<NonSendMut<'w, crate::items::RecordWaits>>,
     /// The spam and profanity filters, which run in the reference's display function.
     text_filter: crate::text_filter::ChatTextFilter<'w>,
     /// The honor title's side, off the victim's faction template (`0x50b755`).
@@ -1099,6 +1101,7 @@ fn build(In((item, script, passes)): In<(ChatLine, UiScript, bool)>, p: AddParam
         langs,
         languages,
         items,
+        mut record_waits,
         mut text_filter,
         factions,
     } = p;
@@ -1539,32 +1542,50 @@ fn build(In((item, script, passes)): In<(ChatLine, UiScript, bool)>, p: AddParam
             steps.push(Step::TextEmote(event));
         }
         ChatLine::Combat(mut line) => {
-            // The unit names are read in the call (`0x50be09`, `0x50bce3`, `0x50de48`), never held;
-            // guid 0 needs none.
-            let mut wait = false;
-            if line.subject != 0 {
-                let store = guids.0.get(&line.subject).and_then(|e| stores.get(*e).ok());
-                line.fills.subject = unit_name(&script, line.subject, store, &names, &commands);
-            }
-            // An item the server answered unknown does not wait: the line composes with what
-            // the arm left in `named` (the reference falls back to `"UKNOWNOBJECT"`).
-            match line.named {
-                super::combat::Named::Ready => {}
-                super::combat::Named::Item(entry) => {
-                    match items.template(entry, 0, &commands).map(|t| t.name.clone()) {
-                        Some(name) => line.fills.named = name,
-                        None if !items.template_answered_unknown(entry) => wait = true,
-                        None => {}
+            // The item record comes first: uncached, it is asked with the composer's callback,
+            // which composes the line again on its answer, and nothing shows now (`0x50bdb1`,
+            // `0x50bb11`); the open-lock line asks with none, which sends no query (`0x67ca5d`), and
+            // shows nothing (`0x50ddeb`).
+            if let super::combat::Named::Item(entry, callback) = line.named {
+                let name = match callback {
+                    Some(callback) => {
+                        let name = items
+                            .ask_template(entry, 0, &commands)
+                            .map(|t| t.name.clone());
+                        if name.is_none() {
+                            if let Some(waits) = record_waits.as_deref_mut() {
+                                waits.wait(entry, callback, false);
+                            }
+                        }
+                        name
                     }
-                }
-                super::combat::Named::Unit(guid) => {
-                    let store = guids.0.get(&guid).and_then(|e| stores.get(*e).ok());
-                    line.fills.named = unit_name(&script, guid, store, &names, &commands);
+                    None => items.template_cached(entry).map(|t| t.name.clone()),
+                };
+                let Some(name) = name else {
+                    return Built::Steps(steps);
+                };
+                line.fills.named = name;
+            }
+            // The unit names are read in the call (`0x50be09`, `0x50bce3`, `0x50de48`), never held;
+            // guid 0 needs none. The feed-pet line reads its caster's name record with no callback
+            // and shows nothing without one (`0x50bb80`-`0x50bb87`).
+            if line.subject != 0 {
+                if line.family.stem == super::combat::FEEDPET_LOG.stem {
+                    let record = is_player_guid(line.subject)
+                        .then(|| names.peek(line.subject))
+                        .flatten();
+                    let Some(name) = record else {
+                        return Built::Steps(steps);
+                    };
+                    line.fills.subject = name.to_string();
+                } else {
+                    let store = guids.0.get(&line.subject).and_then(|e| stores.get(*e).ok());
+                    line.fills.subject = unit_name(&script, line.subject, store, &names, &commands);
                 }
             }
-            // Only the item waits, on its record's callback (`0x50bdb1` asks with `0x4fb970`).
-            if wait {
-                return Built::Held(ChatLine::Combat(line));
+            if let super::combat::Named::Unit(guid) = line.named {
+                let store = guids.0.get(&guid).and_then(|e| stores.get(*e).ok());
+                line.fills.named = unit_name(&script, guid, store, &names, &commands);
             }
             let composed = super::combat::compose_line(&script, line.family, line.me, &line.fills);
             if let Some(text) = composed {
@@ -1837,7 +1858,7 @@ pub(crate) fn add_now(world: &mut World, line: ChatLine) {
 
 /// Queue a line its caller composes ahead of the add while the UI is outside the world: its text
 /// built now, with the names as they read now, and queued as text (`0x509f92`); a step that is no
-/// chat line (the discovery toast) runs at once. One still waiting on an item record stays held.
+/// chat line (the discovery toast) runs at once.
 fn queue_composed(world: &mut World, line: ChatLine) {
     let Some(mut script) = world
         .get_non_send_resource::<UiScript>()

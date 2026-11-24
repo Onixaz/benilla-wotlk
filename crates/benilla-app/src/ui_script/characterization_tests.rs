@@ -11686,3 +11686,61 @@ fn remove_glyph_from_socket_sends_inside_the_call() {
     );
     assert_eq!(left, i64::from(spell), "the glyph waits for the server");
 }
+
+/// A combat line's uncached item: the tradeskill line asks its record with its callback and shows
+/// nothing (`0x50bdb1`); the answer runs the record's callbacks in ask order (`0x67ca30`), the
+/// line's composing it again (`0x4fb970`) before a later asker's runs, and a missing record shows
+/// nothing (`0x4fb977`).
+#[test]
+fn a_combat_lines_item_callback_runs_in_ask_order() {
+    use benilla_protocol::messages::{ExecuteLog, SpellLogExecute};
+    const CRAFTED: u32 = 591_101;
+    const MISSING: u32 = 591_102;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let create = |item_entry| {
+        SessionEvent::SpellLogExecute(SpellLogExecute {
+            caster: ME,
+            spell_id: 2_329,
+            effects: vec![(24, vec![ExecuteLog::CreateItem { item_entry }])],
+        })
+    };
+    let events = &["CHAT_MSG_TRADESKILLS", "TRAINER_DESCRIPTION_UPDATE"];
+    let seen = rig.packets(vec![create(CRAFTED)], 2);
+    assert!(
+        pin(&seen, events, &[]).is_empty(),
+        "nothing before the record"
+    );
+    // A later asker on the same record.
+    rig.app
+        .world_mut()
+        .non_send_resource_mut::<crate::items::RecordWaits>()
+        .wait(CRAFTED, crate::items::RecordWait::Trainer, false);
+    let seen = rig.packets(
+        vec![SessionEvent::ItemTemplate {
+            entry: CRAFTED,
+            info: Some(Box::new(crate::items::test_template("Charz Elixir"))),
+        }],
+        2,
+    );
+    let pinned = pin(&seen, events, &[]);
+    assert_eq!(pinned.len(), 2, "{pinned:?}");
+    assert!(
+        pinned[0].starts_with("CHAT_MSG_TRADESKILLS") && pinned[0].contains("Charz Elixir"),
+        "{pinned:?}"
+    );
+    assert_eq!(pinned[1], "TRAINER_DESCRIPTION_UPDATE");
+    rig.packets(vec![create(MISSING)], 2);
+    let seen = rig.packets(
+        vec![SessionEvent::ItemTemplate {
+            entry: MISSING,
+            info: None,
+        }],
+        2,
+    );
+    assert!(
+        pin(&seen, events, &[]).is_empty(),
+        "a missing record shows nothing"
+    );
+}

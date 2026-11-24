@@ -1007,3 +1007,142 @@ fn the_add_reads_the_gm_bit_at_its_call() {
         ]
     );
 }
+
+/// A world for the combat lines: their sentences, a spy on their events, and the record waits.
+fn combat_world() -> (
+    World,
+    crossbeam_channel::Receiver<crate::net::ClientCommand>,
+) {
+    let (mut world, sent) = world();
+    world
+        .non_send_resource::<UiScript>()
+        .run(
+            r#"
+            TRADESKILL_LOG_FIRSTPERSON = "You create %s."
+            TRADESKILL_LOG_THIRDPERSON = "%s creates %s."
+            FEEDPET_LOG_FIRSTPERSON = "Your pet eats %s."
+            FEEDPET_LOG_THIRDPERSON = "%s's pet eats %s."
+            OPEN_LOCK_SELF = "You perform %s on %s."
+            OPEN_LOCK_OTHER = "%s performs %s on %s."
+            local f = CreateFrame("Frame")
+            f:RegisterEvent("CHAT_MSG_TRADESKILLS")
+            f:RegisterEvent("CHAT_MSG_PET_INFO")
+            f:RegisterEvent("CHAT_MSG_OPENING")
+            f:SetScript("OnEvent", function(_, e, a1) Seen[#Seen + 1] = e .. ":" .. a1 end)
+        "#,
+        )
+        .unwrap();
+    world.insert_non_send_resource(crate::items::RecordWaits::default());
+    world.resource_mut::<crate::net::SelfGuid>().0 = Some(ANN);
+    enter_world(&mut world);
+    (world, sent)
+}
+
+/// The combat lines one builder queued, each through the add.
+fn add_combat(world: &mut World, build: impl FnOnce(&mut crate::ui_script::live::UiEvents)) {
+    let mut ui = crate::ui_script::live::UiEvents::default();
+    build(&mut ui);
+    for line in ui.take_chat() {
+        add(world, line);
+    }
+}
+
+fn item_queries(sent: &crossbeam_channel::Receiver<crate::net::ClientCommand>) -> Vec<u32> {
+    sent.try_iter()
+        .filter_map(|c| match c {
+            crate::net::ClientCommand::ItemQuery { entry, .. } => Some(entry),
+            _ => None,
+        })
+        .collect()
+}
+
+/// An uncached item's tradeskill or feed-pet line shows nothing: its composer asks the record
+/// with its callback (`0x50bdb1` -> `0x4fb970`, `0x50bb11` -> `0x4fb950`), which composes the line
+/// again on the answer; a cached one shows at once.
+#[test]
+fn an_uncached_items_combat_line_waits_on_its_record_callback() {
+    use crate::items::RecordWait;
+    let (mut world, sent) = combat_world();
+    add_combat(&mut world, |ui| {
+        crate::combat_log::chat::tradeskill_create(ui, Some(ANN), ANN, 7_001);
+        crate::combat_log::chat::feed_pet(ui, Some(ANN), ANN, 7_002);
+    });
+    assert!(seen(&world).is_empty());
+    assert_eq!(item_queries(&sent), [7_001, 7_002]);
+    assert_eq!(
+        world
+            .non_send_resource::<crate::items::RecordWaits>()
+            .waiting(),
+        [
+            (7_001, RecordWait::TradeskillLine(ANN)),
+            (7_002, RecordWait::FeedPetLine(ANN))
+        ]
+    );
+    assert_eq!(
+        world.resource::<super::ChatLog>().pending_count(),
+        0,
+        "no line is held on the chat log"
+    );
+    world
+        .resource_mut::<crate::items::Items>()
+        .insert_template(7_001, Some(crate::items::test_template("Elixir")));
+    add_combat(&mut world, |ui| {
+        crate::combat_log::chat::tradeskill_create(ui, Some(ANN), ANN, 7_001);
+    });
+    assert_eq!(seen(&world), ["CHAT_MSG_TRADESKILLS:You create Elixir."]);
+}
+
+/// The open-lock line asks its item with no callback, which sends no query (`0x50ec7f`,
+/// `0x67ca5d`), and shows nothing without the record (`0x50ddeb`).
+#[test]
+fn an_open_lock_line_on_an_uncached_item_shows_nothing_and_asks_nothing() {
+    use crate::combat_log::chat::{open_lock, Opened};
+    let (mut world, sent) = combat_world();
+    add_combat(&mut world, |ui| {
+        open_lock(ui, Some(ANN), ANN, "Opening".into(), Opened::Item(7_003));
+    });
+    assert!(seen(&world).is_empty());
+    assert!(item_queries(&sent).is_empty());
+    assert!(world
+        .non_send_resource::<crate::items::RecordWaits>()
+        .waiting()
+        .is_empty());
+    world
+        .resource_mut::<crate::items::Items>()
+        .insert_template(7_003, Some(crate::items::test_template("Lockbox")));
+    add_combat(&mut world, |ui| {
+        open_lock(ui, Some(ANN), ANN, "Opening".into(), Opened::Item(7_003));
+    });
+    assert_eq!(
+        seen(&world),
+        ["CHAT_MSG_OPENING:You perform Opening on Lockbox."]
+    );
+}
+
+/// The feed-pet line names another caster off his name record, read with no callback, and shows
+/// nothing without it (`0x50bb80`-`0x50bb87`).
+#[test]
+fn a_feed_pet_line_needs_its_casters_name_record() {
+    const BOB: u64 = 0x33;
+    let (mut world, sent) = combat_world();
+    world
+        .resource_mut::<crate::items::Items>()
+        .insert_template(7_004, Some(crate::items::test_template("Bread")));
+    add_combat(&mut world, |ui| {
+        crate::combat_log::chat::feed_pet(ui, Some(ANN), BOB, 7_004);
+    });
+    assert!(seen(&world).is_empty());
+    assert!(
+        !sent
+            .try_iter()
+            .any(|c| matches!(c, crate::net::ClientCommand::NameQuery { .. })),
+        "the record is read with no ask"
+    );
+    world
+        .resource_mut::<crate::names::NameCache>()
+        .insert_player(BOB, "Bob".into(), None);
+    add_combat(&mut world, |ui| {
+        crate::combat_log::chat::feed_pet(ui, Some(ANN), BOB, 7_004);
+    });
+    assert_eq!(seen(&world), ["CHAT_MSG_PET_INFO:Bob's pet eats Bread."]);
+}
