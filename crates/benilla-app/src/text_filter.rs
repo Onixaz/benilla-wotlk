@@ -531,8 +531,8 @@ pub(crate) struct ChatTextFilter<'w> {
 
 impl ChatTextFilter<'_> {
     /// Arm 1: whether to drop the line. In the reference's order: not `CHAT_MSG_FILTERED`, no
-    /// `"GM"` tag, a non-GM viewer, `spamFilter` on, then the predicate. Every exit, a GM viewer's
-    /// included, still reaches the mask arm.
+    /// `"GM"` or `"DEV"` flag, a non-GM viewer, `spamFilter` on, not a system line (`0x50a6a7`),
+    /// then the predicate. Every exit, a GM viewer's included, still reaches the mask arm.
     pub(crate) fn should_drop(
         &self,
         chat_type: u8,
@@ -540,8 +540,10 @@ impl ChatTextFilter<'_> {
         viewer_is_gm: bool,
         text: &str,
     ) -> bool {
-        use benilla_protocol::messages::{chat_tag as tag, CHAT_MSG_FILTERED};
-        if chat_type == CHAT_MSG_FILTERED || chat_tag == tag::GM || viewer_is_gm {
+        use benilla_protocol::messages::{chat_tag as tag, CHAT_MSG_FILTERED, CHAT_MSG_SYSTEM};
+        // The flag the handler read is `"GM"` or `"DEV"` (`0x50a65e`, `0x50a676`).
+        let staff = chat_tag & (tag::GM | tag::DEV) != 0;
+        if chat_type == CHAT_MSG_FILTERED || staff || viewer_is_gm || chat_type == CHAT_MSG_SYSTEM {
             return false;
         }
         self.filter.is_spam(self.switches.spam, text)

@@ -313,8 +313,8 @@ fn chat(
     server_said: &mut MessageWriter<ServerSaidMessage>,
 ) -> Option<super::ChatLine> {
     // Addon traffic: 1.12 has no addon opcode or chat type, so `LANG_ADDON` on any lane is the
-    // whole test. The line never renders; it fires `CHAT_MSG_ADDON` once the sender's name
-    // resolves. An ignored sender's fires nothing, as the reference drops ignored lines first, and
+    // whole test. The line goes through the add like any other, which fires `CHAT_MSG_ADDON` past
+    // its name hold (`0x509fd8`). An ignored sender's fires nothing, as the reference drops ignored lines first, and
     // needs no `CMSG_CHAT_IGNORED`: vmangos refuses addon whispers (`ChatHandler.cpp:84-103`).
     if m.is_addon() {
         if !social.is_ignored(m.sender_guid) {
@@ -329,7 +329,7 @@ fn chat(
                     &format!("<- [{:#04x}] {:?}", m.chat_type, m.text),
                 );
             }
-            return Some(super::feed::addon_line(&m.text, m.chat_type, m.sender_guid));
+            return Some(super::ChatLine::Wire { msg: m });
         }
         return None;
     }

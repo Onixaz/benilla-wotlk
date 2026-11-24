@@ -47,6 +47,12 @@ impl WorldWriter {
         self.send(opcode::CMSG_CHAT_IGNORED, &messages::full_guid(guid))
     }
 
+    /// Report a whisper the spam filter dropped (`CMSG_CHAT_FILTERED`, the sender's `u64` guid,
+    /// `0x50a6e4`-`0x50a702`).
+    pub fn chat_filtered(&mut self, guid: u64) -> Result<()> {
+        self.send(opcode::CMSG_CHAT_FILTERED, &messages::full_guid(guid))
+    }
+
     /// Ask our played time (`CMSG_PLAYED_TIME`), answered by `SMSG_PLAYED_TIME`.
     pub fn played_time(&mut self, show: bool) -> Result<()> {
         self.send(opcode::CMSG_PLAYED_TIME, &messages::played_time(show))

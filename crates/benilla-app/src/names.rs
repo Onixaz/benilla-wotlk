@@ -444,6 +444,50 @@ impl NameCache {
         self.full_name(guid, commands)
     }
 
+    /// A player's or pet's name record as the chat add asks it with its callback (`0x67d770`,
+    /// `0x67ea30`): a denied answer left no record (`0x67a2d0` deletes it), so a guid denied before
+    /// is asked again and waits on the new answer.
+    pub(crate) fn chat_record(&self, guid: u64, commands: &NetCommands) -> Option<&str> {
+        match NameKey::of(guid, None)? {
+            NameKey::Player(g) => {
+                self.players.ask_again(g, || {
+                    let _ = commands.0.send(ClientCommand::NameQuery { guid: g });
+                });
+                self.resolve(g, commands)
+            }
+            NameKey::Pet(n) => {
+                self.pets.ask_again(n, || {
+                    let _ = commands.0.send(ClientCommand::PetNameQuery {
+                        pet_number: n,
+                        guid,
+                    });
+                });
+                self.resolve_pet(n, guid, commands)
+            }
+            NameKey::Creature(_) => None,
+        }
+    }
+
+    /// Whether a player's or pet's guid was answered denied: `0x67a2d0` runs the record's
+    /// callbacks with no record, and the chat callback drops the lines naming it (`0x503e5c`).
+    pub(crate) fn chat_denied(&self, guid: u64) -> bool {
+        match NameKey::of(guid, None) {
+            Some(NameKey::Player(g)) => self.players.answered_unknown(g),
+            Some(NameKey::Pet(n)) => self.pets.answered_unknown(n),
+            _ => false,
+        }
+    }
+
+    /// The sender name the chat add reads off a cached player record (`0x509e6a` -> `0x4fd220`):
+    /// `name-realm` when the record holds a realm, else the bare name.
+    pub(crate) fn peek_full_name(&self, guid: u64) -> Option<String> {
+        let name = self.players.get(guid)?;
+        Some(match self.player_realms.get(&guid) {
+            Some(realm) => format!("{name}-{realm}"),
+            None => name.clone(),
+        })
+    }
+
     /// A player's name as the reference's realm-aware callers format it: `name-realm` when the
     /// record holds a realm (`"%s-%s"`, `0x54b58a`), else the bare name. Asks once on a miss.
     pub(crate) fn full_name(&self, guid: u64, commands: &NetCommands) -> Option<String> {

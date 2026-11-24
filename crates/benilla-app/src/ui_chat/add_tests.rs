@@ -46,12 +46,7 @@ fn seen(world: &World) -> Vec<String> {
 }
 
 fn addon_line() -> ChatLine {
-    ChatLine::Addon {
-        prefix: "oRA".into(),
-        message: "SYNC".into(),
-        distribution: "PARTY".into(),
-        guid: ANN,
-    }
+    super::feed::addon_line("oRA\tSYNC", benilla_protocol::messages::CHAT_MSG_PARTY, ANN)
 }
 
 fn system_line(text: &str) -> ChatLine {
@@ -428,4 +423,267 @@ fn a_line_names_its_language_off_its_record() {
         super::frames::log_line(&event, ChatEventKind::Say, Some(7), &strings).unwrap(),
         "Ann says: [Draenei] hi"
     );
+}
+
+/// An addon line holds only on a nonzero player or pet sender with no name (`0x509f5d`-`0x509f92`):
+/// from guid 0 or a creature it fires `CHAT_MSG_ADDON` at once with `""`, nothing asked or held.
+/// The distribution is the type's (`0x50a09e`): a whisper's and a Battle.net line's `"WHISPER"`,
+/// a type outside the table `"UNKNOWN"`.
+#[test]
+fn an_addon_line_from_no_player_fires_at_once_with_an_empty_sender() {
+    use benilla_protocol::messages as m;
+    let (mut world, sent) = world();
+    hear(&world, &["CHAT_MSG_ADDON"]);
+    enter_world(&mut world);
+    add(
+        &mut world,
+        super::feed::addon_line("A\tx", m::CHAT_MSG_WHISPER, 0),
+    );
+    add(
+        &mut world,
+        super::feed::addon_line("B\ty", m::CHAT_MSG_BATTLENET, 0xF130_0000_0001_0001),
+    );
+    add(
+        &mut world,
+        super::feed::addon_line("C\tz", m::CHAT_MSG_RAID_LEADER, 0),
+    );
+    assert_eq!(
+        heard(&world),
+        [
+            "CHAT_MSG_ADDON:A:x:WHISPER",
+            "CHAT_MSG_ADDON:B:y:WHISPER",
+            "CHAT_MSG_ADDON:C:z:UNKNOWN"
+        ]
+    );
+    assert_eq!(
+        seen(&world),
+        [
+            "CHAT_MSG_ADDON:A:",
+            "CHAT_MSG_ADDON:B:",
+            "CHAT_MSG_ADDON:C:"
+        ],
+        "no name to read: the sender is empty"
+    );
+    assert!(sent.try_recv().is_err(), "nothing is asked");
+    assert_eq!(world.resource::<super::ChatLog>().pending_count(), 0);
+}
+
+/// A denied answer leaves no record (`0x67a2d0`), so a later line naming that guid asks again with
+/// the callback (`0x509e51`) and waits, an unrelated answer leaving it; the next denial drops it
+/// (`0x503e5c`), and nothing stays held.
+#[test]
+fn a_line_from_a_denied_name_asks_again_and_drops_on_the_next_denial() {
+    use benilla_protocol::messages::CHAT_MSG_SAY;
+    let (mut world, sent) = world();
+    enter_world(&mut world);
+    add(&mut world, addon_line());
+    assert!(matches!(
+        sent.try_recv(),
+        Ok(crate::net::ClientCommand::NameQuery { guid: ANN })
+    ));
+    world
+        .resource_mut::<crate::names::NameCache>()
+        .insert_player(ANN, String::new(), None);
+    name_landed(&mut world);
+    assert_eq!(world.resource::<super::ChatLog>().pending_count(), 0);
+
+    add(&mut world, addon_line());
+    add(&mut world, player_line(CHAT_MSG_SAY, ANN, 0, "hi"));
+    assert!(
+        matches!(
+            sent.try_recv(),
+            Ok(crate::net::ClientCommand::NameQuery { guid: ANN })
+        ),
+        "the denied guid is asked again"
+    );
+    assert!(sent.try_recv().is_err(), "once");
+    assert_eq!(world.resource::<super::ChatLog>().pending_count(), 2);
+    world
+        .resource_mut::<crate::names::NameCache>()
+        .insert_player(0x22, "Bob".into(), None);
+    name_landed(&mut world);
+    assert_eq!(
+        world.resource::<super::ChatLog>().pending_count(),
+        2,
+        "another guid's answer leaves them waiting"
+    );
+    world
+        .resource_mut::<crate::names::NameCache>()
+        .insert_player(ANN, String::new(), None);
+    name_landed(&mut world);
+    assert_eq!(world.resource::<super::ChatLog>().pending_count(), 0);
+    assert!(seen(&world).is_empty());
+}
+
+/// A cached sender is named by its record's full name, `Name-Realm` for another realm's player
+/// (`0x509e6a` -> `0x4fd220`); a line held for its name is added by the answer's callback with the
+/// record's bare name (`0x503e98`).
+#[test]
+fn a_cached_sender_reads_its_full_name_and_a_held_one_its_bare_name() {
+    use benilla_protocol::messages::CHAT_MSG_SAY;
+    const BOB: u64 = 0x22;
+    let (mut world, _sent) = world();
+    hear(&world, &["CHAT_MSG_SAY"]);
+    enter_world(&mut world);
+    {
+        let mut names = world.resource_mut::<crate::names::NameCache>();
+        names.insert_player(ANN, "Ann".into(), None);
+        names.set_player_realm(ANN, "Icecrown".into());
+    }
+    add(&mut world, player_line(CHAT_MSG_SAY, ANN, 0, "hi"));
+    add(&mut world, player_line(CHAT_MSG_SAY, BOB, 0, "yo"));
+    {
+        let mut names = world.resource_mut::<crate::names::NameCache>();
+        names.insert_player(BOB, "Bob".into(), None);
+        names.set_player_realm(BOB, "Icecrown".into());
+    }
+    name_landed(&mut world);
+    assert_eq!(
+        heard(&world),
+        ["CHAT_MSG_SAY:hi:Ann-Icecrown:", "CHAT_MSG_SAY:yo:Bob:"]
+    );
+}
+
+/// An empty say or yell reads its type's unknown line as an emote, an empty emote
+/// `CHAT_EMOTE_UNKNOWN`, each in the `_FEMALE` form for a female sender record when the VM has one
+/// (`0x50a291`-`0x50a2df`, `0x819d86`).
+#[test]
+fn an_empty_text_reads_its_types_unknown_line() {
+    use benilla_protocol::messages::{CHAT_MSG_EMOTE, CHAT_MSG_SAY, CHAT_MSG_YELL};
+    const BOB: u64 = 0x22;
+    let (mut world, _sent) = world();
+    world
+        .non_send_resource::<UiScript>()
+        .run(
+            r#"
+            CHAT_SAY_UNKNOWN = "says something unintelligible."
+            CHAT_SAY_UNKNOWN_FEMALE = "says something unintelligible, she."
+            CHAT_YELL_UNKNOWN = "yells something unintelligible."
+            CHAT_EMOTE_UNKNOWN = "makes some strange gestures."
+        "#,
+        )
+        .unwrap();
+    hear(&world, &["CHAT_MSG_SAY", "CHAT_MSG_YELL", "CHAT_MSG_EMOTE"]);
+    {
+        let mut names = world.resource_mut::<crate::names::NameCache>();
+        names.insert_player(ANN, "Ann".into(), Some((1, 1, 0)));
+        names.insert_player(BOB, "Bob".into(), Some((1, 1, 1)));
+    }
+    enter_world(&mut world);
+    add(&mut world, player_line(CHAT_MSG_SAY, ANN, 0, ""));
+    add(&mut world, player_line(CHAT_MSG_SAY, BOB, 0, ""));
+    add(&mut world, player_line(CHAT_MSG_YELL, BOB, 0, ""));
+    add(&mut world, player_line(CHAT_MSG_EMOTE, ANN, 0, ""));
+    add(&mut world, player_line(CHAT_MSG_SAY, ANN, 0, "hi"));
+    assert_eq!(
+        heard(&world),
+        [
+            "CHAT_MSG_EMOTE:says something unintelligible.:Ann:",
+            "CHAT_MSG_EMOTE:says something unintelligible, she.:Bob:",
+            "CHAT_MSG_EMOTE:yells something unintelligible.:Bob:",
+            "CHAT_MSG_EMOTE:makes some strange gestures.:Ann:",
+            "CHAT_MSG_SAY:hi:Ann:",
+        ]
+    );
+}
+
+/// Each quest link takes the difficulty colour of its level against the player's over the ten
+/// bytes before it (`0x50a2ec`-`0x50a393`): -1 is the player's own level, a `||` escape is left,
+/// and with no active player every link reads yellow (`0x61e562`).
+#[test]
+fn quest_links_take_the_players_difficulty_colour() {
+    use super::feed::recolor_quest_links as recolor;
+    let link = |level: &str| format!("|cff000000|Hquest:123:{level}|h[Q]|h|r");
+    assert_eq!(
+        recolor(link("80"), Some(70)),
+        "|cffff2020|Hquest:123:80|h[Q]|h|r"
+    );
+    assert_eq!(
+        recolor(link("73"), Some(70)),
+        "|cffff8040|Hquest:123:73|h[Q]|h|r"
+    );
+    assert_eq!(
+        recolor(link("-1"), Some(70)),
+        "|cffffff00|Hquest:123:-1|h[Q]|h|r"
+    );
+    assert_eq!(
+        recolor(link("80"), None),
+        "|cffffff00|Hquest:123:80|h[Q]|h|r"
+    );
+    let yellow = "|cffffff00|Hquest:123:80|h[Q]|h|r";
+    assert_eq!(
+        recolor(format!("a {} b {}", link("80"), link("80")), Some(80)),
+        format!("a {yellow} b {yellow}")
+    );
+    let escaped = "|cff000000||Hquest:1:80|h".to_string();
+    assert_eq!(recolor(escaped.clone(), Some(1)), escaped);
+}
+
+/// A monster's say or yell bubble reads each `%%` as `%` (`0x50a92a`-`0x50a960`).
+#[test]
+fn a_monster_bubble_reads_a_doubled_percent_as_one() {
+    assert_eq!(super::feed::unescape_percent("50%% off %%%"), "50% off %%");
+    assert_eq!(super::feed::unescape_percent("100%"), "100%");
+}
+
+/// The chat session end zeroes both logging flags (`0x5072d6`), and it runs at the unattended
+/// reconnect's re-entry, an exit from the world to the world.
+#[test]
+fn the_session_end_zeroes_the_logging_flags_at_a_reconnects_re_entry() {
+    use crate::char_select::ClientState;
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin))
+        .insert_state(ClientState::InWorld)
+        .init_resource::<super::ChatLog>()
+        .init_resource::<super::frames::ChatWindows>()
+        .init_resource::<super::logging::CombatLogFile>()
+        .add_systems(OnExit(ClientState::InWorld), super::end_session_chat);
+    let mut s = UiScript::new().unwrap();
+    s.set_logging_flags(true, true);
+    app.insert_non_send_resource(s);
+    app.update();
+    assert_eq!(
+        app.world().non_send_resource::<UiScript>().logging_flags(),
+        (true, true)
+    );
+    app.world_mut()
+        .resource_mut::<NextState<ClientState>>()
+        .set(ClientState::InWorld);
+    app.update();
+    assert_eq!(
+        app.world().non_send_resource::<UiScript>().logging_flags(),
+        (false, false)
+    );
+}
+
+/// A whisper the spam filter drops is reported with its sender's guid (`0x50a6c4`-`0x50a718`);
+/// another type's drop sends nothing, and a system line is never filtered (`0x50a6a7`).
+#[test]
+fn a_spam_filtered_whisper_is_reported_and_a_system_line_never_filtered() {
+    use benilla_protocol::messages::{CHAT_MSG_SAY, CHAT_MSG_SYSTEM, CHAT_MSG_WHISPER};
+    let (mut world, sent) = world();
+    hear(&world, &["CHAT_MSG_SYSTEM"]);
+    world
+        .resource_mut::<crate::text_filter::TextFilter>()
+        .set_server_spam(&["gold".to_string()]);
+    world
+        .resource_mut::<crate::names::NameCache>()
+        .insert_player(ANN, "Ann".into(), None);
+    enter_world(&mut world);
+    add(
+        &mut world,
+        player_line(CHAT_MSG_WHISPER, ANN, 0, "cheap gold"),
+    );
+    add(&mut world, player_line(CHAT_MSG_SAY, ANN, 0, "cheap gold"));
+    add(&mut world, player_line(CHAT_MSG_SYSTEM, 0, 0, "cheap gold"));
+    let sent: Vec<_> = sent.try_iter().collect();
+    assert!(
+        matches!(
+            sent.as_slice(),
+            [crate::net::ClientCommand::ChatFiltered { guid: ANN }]
+        ),
+        "{}",
+        sent.len()
+    );
+    assert_eq!(heard(&world), ["CHAT_MSG_SYSTEM:cheap gold::"]);
 }

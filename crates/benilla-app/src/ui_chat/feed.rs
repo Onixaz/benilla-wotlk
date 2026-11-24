@@ -47,8 +47,9 @@ pub(super) fn load_emote_texts(mut commands: Commands, assets: Option<Res<WorldA
 /// One chat add (`0x509dd0`) and the client-composed lines that share its path, as a handler or
 /// step hands it over; one that waits on a name is held on [`ChatLog`] until the name lands.
 pub(crate) enum ChatLine {
-    /// A decoded `SMSG_MESSAGECHAT`; the player types wait on the sender's name (`0x509f92`), and
-    /// any type on a player or pet receiver's sent without its name (`0x509f98`-`0x509fd2`).
+    /// A decoded `SMSG_MESSAGECHAT`, addon lines included: a player or pet sender waits on its
+    /// name (`0x509f92`), and a player or pet receiver sent without its name on that
+    /// (`0x509f98`-`0x509fd2`).
     Wire { msg: ChatMessage },
     /// A channel notice with guids to name (`b_guid` is a kick's or ban's actor, 0 when absent).
     Notice {
@@ -56,14 +57,6 @@ pub(crate) enum ChatLine {
         channel: String,
         a_guid: u64,
         b_guid: u64,
-    },
-    /// An inbound addon line waiting on its sender's name: the add signals `CHAT_MSG_ADDON` once
-    /// the name is cached (`0x50a0fa`), so `sender` is a name.
-    Addon {
-        prefix: String,
-        message: String,
-        distribution: String,
-        guid: u64,
     },
     /// A `/random` broadcast awaiting the roller's name.
     Roll {
@@ -132,11 +125,11 @@ impl ChatLine {
             .all(|g| g == 0 || names.peek(g).is_some())
     }
 
-    /// A guid this line names whose answer came back empty (`0x503e5c`): the line is dropped.
+    /// A guid this line waits on whose answer came back denied (`0x503e5c`): the line is dropped.
     fn names_missing(&self, names: &NameCache) -> bool {
         self.player_guids()
             .into_iter()
-            .any(|g| g != 0 && names.answered_unknown(g))
+            .any(|g| g != 0 && names.chat_denied(g))
     }
 
     /// The player and pet guids whose names the line waits on, 0 for none.
@@ -158,7 +151,7 @@ impl ChatLine {
                 },
             ],
             ChatLine::Notice { a_guid, b_guid, .. } => [*a_guid, *b_guid],
-            ChatLine::Addon { guid, .. } | ChatLine::Roll { guid, .. } => [*guid, 0],
+            ChatLine::Roll { guid, .. } => [*guid, 0],
             ChatLine::TextEmote { performer, .. } => [*performer, 0],
             ChatLine::Mode { guid, .. } => [*guid, 0],
             _ => [0, 0],
@@ -241,12 +234,7 @@ impl ChatLog {
         self.pending
             .iter()
             .filter_map(|(p, _)| match p {
-                ChatLine::Addon {
-                    prefix,
-                    message,
-                    distribution,
-                    ..
-                } => Some((prefix.clone(), message.clone(), distribution.clone())),
+                ChatLine::Wire { msg } if msg.is_addon() => Some(addon_split(msg)),
                 _ => None,
             })
             .collect()
@@ -257,8 +245,14 @@ impl ChatLog {
     pub(crate) fn pending_len(&self) -> usize {
         self.pending
             .iter()
-            .filter(|(p, _)| !matches!(p, ChatLine::Addon { .. }))
+            .filter(|(p, _)| !matches!(p, ChatLine::Wire { msg } if msg.is_addon()))
             .count()
+    }
+
+    /// Every held line, addon lines included.
+    #[cfg(test)]
+    pub(crate) fn pending_count(&self) -> usize {
+        self.pending.len()
     }
 
     /// The kind and text of every held event line, in order.
@@ -373,29 +367,57 @@ impl ChatSink for crate::ui_script::VmTurn<'_> {
     }
 }
 
-/// An inbound addon line: the text splits on its first tab, and with none it is all prefix;
-/// `distribution` names PARTY, RAID, GUILD and BATTLEGROUND, any other type `"UNKNOWN"`.
+/// An inbound addon line on `chat_type` (the shared numbering) from `guid`, as the decoder hands
+/// it over.
+#[cfg(test)]
 pub(crate) fn addon_line(text: &str, chat_type: u8, guid: u64) -> ChatLine {
+    ChatLine::Wire {
+        msg: ChatMessage {
+            chat_type,
+            language: benilla_protocol::messages::LANGUAGE_ADDON,
+            sender_guid: guid,
+            target_guid: 0,
+            sender_name: None,
+            receiver_name: None,
+            channel: None,
+            text: text.to_string(),
+            chat_tag: 0,
+            achievement: 0,
+            wire_type: 0,
+            sender_word: 0,
+        },
+    }
+}
+
+/// An addon line's prefix, message and distribution: the text splits on its first tab, and with
+/// none it is all prefix (`0x50a012`-`0x50a02a`); the distribution is the type's
+/// ([`addon_distribution`]).
+fn addon_split(msg: &ChatMessage) -> (String, String, String) {
     const TAB: char = '\u{9}';
+    let text = msg.text.as_str();
     let (prefix, message) = match text.find(TAB) {
         Some(i) => (text[..i].to_string(), text[i + 1..].to_string()),
         None => (text.to_string(), String::new()),
     };
-    // The inbound line's shared numbering, which the decoder maps the wire's type into.
+    (
+        prefix,
+        message,
+        addon_distribution(msg.chat_type).to_string(),
+    )
+}
+
+/// `CHAT_MSG_ADDON`'s distribution off the line's type, through the add's jump table
+/// (`0x50a09e`, `0x50a0a5`): the whisper types (a foreign whisper arrives as one) and Battle.net
+/// read `"WHISPER"`, a type outside the table `"UNKNOWN"`.
+fn addon_distribution(chat_type: u8) -> &'static str {
     use benilla_protocol::messages as m;
-    let distribution = match chat_type {
+    match chat_type {
         m::CHAT_MSG_PARTY => "PARTY",
         m::CHAT_MSG_RAID => "RAID",
         m::CHAT_MSG_GUILD => "GUILD",
+        m::CHAT_MSG_WHISPER | m::CHAT_MSG_BATTLENET => "WHISPER",
         m::CHAT_MSG_BATTLEGROUND => "BATTLEGROUND",
         _ => "UNKNOWN",
-    }
-    .to_string();
-    ChatLine::Addon {
-        prefix,
-        message,
-        distribution,
-        guid,
     }
 }
 
@@ -405,12 +427,7 @@ pub(crate) fn addon_parts(lines: Vec<ChatLine>) -> Vec<(String, String, String)>
     lines
         .into_iter()
         .filter_map(|p| match p {
-            ChatLine::Addon {
-                prefix,
-                message,
-                distribution,
-                ..
-            } => Some((prefix, message, distribution)),
+            ChatLine::Wire { msg } if msg.is_addon() => Some(addon_split(&msg)),
             _ => None,
         })
         .collect()
@@ -1047,7 +1064,54 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
         ChatLine::Event(event) => {
             steps.push(Step::Deliver(event));
         }
-        ChatLine::Wire { msg } => {
+        ChatLine::Wire { mut msg } => {
+            // A line sent without its sender's name reads it off the player record as its full
+            // name, with the record's sex, or off the pet record (`0x509e51`-`0x509ec1`).
+            let mut female = false;
+            let name = match &msg.sender_name {
+                Some(n) => Some(n.clone()),
+                None if is_player_guid(msg.sender_guid) => {
+                    let guid = msg.sender_guid;
+                    names.chat_record(guid, &commands).and_then(|_| {
+                        // `[record+0x144] == 1` (`0x509e6f`).
+                        female = names.player_traits(guid).is_some_and(|t| t.2 == 1);
+                        names.peek_full_name(guid)
+                    })
+                }
+                None if is_pet_guid(msg.sender_guid) => names
+                    .chat_record(msg.sender_guid, &commands)
+                    .map(str::to_string),
+                None => None,
+            };
+            // The receiver's off its record, bare (`0x509f33`, `0x50a06f`).
+            let target = msg.target_guid;
+            let target_name = match &msg.receiver_name {
+                Some(n) => Some(n.clone()),
+                None if is_player_guid(target) || is_pet_guid(target) => {
+                    names.chat_record(target, &commands).map(str::to_string)
+                }
+                None => None,
+            };
+            // A player or pet sender or receiver still unnamed holds the line, with the names it
+            // read so far (`0x509f5d`-`0x509fd2` -> `0x50ad4c`).
+            let target_waits = msg.receiver_name.is_none()
+                && (is_player_guid(target) || is_pet_guid(target))
+                && target_name.is_none();
+            if (name.is_none() && sender_waits(&msg)) || target_waits {
+                msg.sender_name = msg.sender_name.or(name);
+                msg.receiver_name = msg.receiver_name.or(target_name);
+                return Built::Held(ChatLine::Wire { msg });
+            }
+            // An addon line signals `CHAT_MSG_ADDON` with the sender's name or `""`, nothing else
+            // (`0x509fd8` -> `0x50a0fa`).
+            if msg.is_addon() {
+                let (prefix, message, distribution) = addon_split(&msg);
+                steps.push(Step::Fire(
+                    "CHAT_MSG_ADDON",
+                    addon_args(prefix, message, distribution, name.unwrap_or_default()),
+                ));
+                return Built::Steps(steps);
+            }
             let kind = kind_of_wire(msg.chat_type);
             if kind.is_none() {
                 warn!(
@@ -1055,27 +1119,6 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
                     msg.chat_type, msg.text
                 );
                 return Built::Steps(steps);
-            }
-            // A line sent without its sender's name, from a player or a pet guid of any type,
-            // reads it from the cache and waits on it (`0x509e51`, `0x509eb6`, `0x509f5d`-`0x509f92`).
-            let name = match &msg.sender_name {
-                Some(n) => Some(n.clone()),
-                None if sender_waits(&msg) => names
-                    .resolve(msg.sender_guid, &commands)
-                    .map(str::to_string),
-                _ => None,
-            };
-            if name.is_none() && sender_waits(&msg) {
-                return Built::Held(ChatLine::Wire { msg });
-            }
-            // A player or pet receiver sent without its name waits on it (`0x509f98`-`0x509fd2`);
-            // a creature's comes with the packet (`0x50c2df`-`0x50c30e`).
-            let target = msg.target_guid;
-            if msg.receiver_name.is_none()
-                && (is_player_guid(target) || is_pet_guid(target))
-                && names.peek(target).is_none()
-            {
-                return Built::Held(ChatLine::Wire { msg });
             }
             // A whisper in or out enters autocomplete, addon whispers aside (`0x57b7c0`).
             if matches!(
@@ -1102,7 +1145,7 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
                 let subject_guid = msg.target_guid;
                 let subject = macro_subject(
                     subject_guid,
-                    msg.receiver_name.as_deref(),
+                    target_name.as_deref(),
                     &guids,
                     &stores,
                     &names,
@@ -1134,26 +1177,72 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
                 None
             };
             let plain = expanded.unwrap_or_else(|| msg.text.clone());
+            // The gesture reads the raw type and `plain`, not the garbled text: the selector is
+            // in the parser, on the buffer the handler hands the composer, so a Horde `lol`
+            // laughs for every observer (`0x50a18a`-`0x50a26e`).
+            let speaker_flags = guids
+                .0
+                .get(&msg.sender_guid)
+                .and_then(|e| stores.get(*e).ok())
+                .map(|s| s.0.unit_flags());
+            if let Some(gesture) =
+                crate::creature_anim::select_gesture(msg.chat_type, &plain, |n| {
+                    script
+                        .lua()
+                        .globals()
+                        .get::<String>(format!("LAUGH_WORD{n}"))
+                        .ok()
+                })
+                .filter(|_| !gesture_prevented(speaker_flags))
+            {
+                speaker.gestures.push(msg.sender_guid, gesture);
+            }
+            // The language off the type the line came with (`0x50a273`-`0x50a28a`).
+            let language = langs.effective_language(msg.chat_type, msg.language);
+            // An empty text reads the type's unknown line in the sender record's sex, a say or a
+            // yell becoming an emote (`0x50a291`-`0x50a2df`).
+            let (chat_type, wire_type, kind, plain) =
+                match unknown_text(&script, msg.chat_type, &plain, female) {
+                    Some((chat_type, text)) => (
+                        chat_type,
+                        if chat_type == msg.chat_type {
+                            msg.wire_type
+                        } else {
+                            benilla_protocol::messages::wotlk_chat_type::EMOTE
+                        },
+                        kind_of_wire(chat_type),
+                        text,
+                    ),
+                    None => (msg.chat_type, msg.wire_type, kind, plain),
+                };
+            // Each quest link takes the player's difficulty colour (`0x50a2ec`-`0x50a393`).
+            let player_level = self_guid
+                .0
+                .and_then(|g| guids.0.get(&g))
+                .and_then(|e| stores.get(*e).ok())
+                .and_then(|s| s.0.unit_level())
+                .map(|l| l as i32);
+            let plain = recolor_quest_links(plain, player_level);
             // The language gate: the garble writes the one buffer the line, `arg1` and the
             // bubble read, as the reference fills `[ebp-0xd0c]` once and never reads the wire
             // text again.
-            let language = langs.effective_language(msg.chat_type, msg.language);
             let mut text = langs.garble(language, &plain);
 
             // The text filters, on the garbled buffer as in the reference: spam first, then the
             // mask, so a dropped line consumes no mask indices (the phase is global).
-            if text_filter.should_drop(msg.chat_type, msg.chat_tag, langs.is_gm(), &text) {
-                // Nothing shows in its place: the not-a-whisper leg jumps to the epilogue. A
-                // whisper with a non-zero report guid also sends `CMSG_CHAT_FILTERED` (`0x331`,
-                // the `u64` guid) in the reference; not sent here, as vmangos leaves the opcode
-                // unhandled (`Opcodes.cpp:932`).
-                debug!(
-                    "chat: spam filter dropped [{:#04x}] {:?}",
-                    msg.chat_type, text
-                );
+            if text_filter.should_drop(chat_type, msg.chat_tag, langs.is_gm(), &text) {
+                // Nothing shows in its place; a whisper from a set guid is reported to the server
+                // (`0x50a6c4`-`0x50a718`).
+                if chat_type == benilla_protocol::messages::CHAT_MSG_WHISPER && msg.sender_guid != 0
+                {
+                    let _ = commands.0.send(crate::net::ClientCommand::ChatFiltered {
+                        guid: msg.sender_guid,
+                    });
+                }
+                debug!("chat: spam filter dropped [{chat_type:#04x}] {text:?}");
                 return Built::Steps(steps);
             }
-            text_filter.mask_chat(msg.chat_type, &mut text);
+            text_filter.mask_chat(chat_type, &mut text);
             let text = text;
             let mut event = ChatEvent {
                 kind,
@@ -1175,7 +1264,7 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
             channels.stamp_channel(&mut event);
             // The record is written under the line id the event carries (`0x4fdd80`).
             let record = benilla_ui::script::ChatRecord {
-                chat_type: u32::from(msg.wire_type),
+                chat_type: u32::from(wire_type),
                 sender_guid: msg.sender_guid,
                 sender_word: msg.sender_word,
                 sender_name: event.sender.clone(),
@@ -1187,31 +1276,21 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0, |d| d.as_secs() as u32),
             };
-            // The gesture reads the raw type and `plain`, not the garbled text: the selector is
-            // in the parser, on the buffer the handler hands the composer, so a Horde `lol`
-            // laughs for every observer.
-            let speaker_flags = guids
-                .0
-                .get(&msg.sender_guid)
-                .and_then(|e| stores.get(*e).ok())
-                .map(|s| s.0.unit_flags());
-            if let Some(gesture) =
-                crate::creature_anim::select_gesture(msg.chat_type, &plain, |n| {
-                    script
-                        .lua()
-                        .globals()
-                        .get::<String>(format!("LAUGH_WORD{n}"))
-                        .ok()
-                })
-                .filter(|_| !gesture_prevented(speaker_flags))
-            {
-                speaker.gestures.push(msg.sender_guid, gesture);
-            }
-            // The bubble gets the same text: the reference spawns it in this path (`0x50a970`).
+            // The bubble gets the same text, a monster's say and yell with `%%` read as `%`
+            // (`0x50a91a`-`0x50a968`), shown in this path (`0x50a970`).
+            let bubble = if matches!(
+                chat_type,
+                benilla_protocol::messages::CHAT_MSG_MONSTER_SAY
+                    | benilla_protocol::messages::CHAT_MSG_MONSTER_YELL
+            ) {
+                unescape_percent(&text)
+            } else {
+                text
+            };
             steps.push(Step::Speech {
                 event,
                 record,
-                text,
+                text: bubble,
             });
         }
         ChatLine::Notice {
@@ -1220,9 +1299,9 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
             a_guid,
             b_guid,
         } => {
-            let a = names.resolve(a_guid, &commands).map(str::to_string);
+            let a = names.chat_record(a_guid, &commands).map(str::to_string);
             let b = if b_guid != 0 {
-                names.resolve(b_guid, &commands).map(str::to_string)
+                names.chat_record(b_guid, &commands).map(str::to_string)
             } else {
                 Some(String::new())
             };
@@ -1279,32 +1358,13 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
                 steps.push(Step::Deliver(event));
             }
         }
-        ChatLine::Addon {
-            prefix,
-            message,
-            distribution,
-            guid,
-        } => {
-            let Some(name) = names.resolve(guid, &commands).map(str::to_string) else {
-                return Built::Held(ChatLine::Addon {
-                    prefix,
-                    message,
-                    distribution,
-                    guid,
-                });
-            };
-            steps.push(Step::Fire(
-                "CHAT_MSG_ADDON",
-                addon_args(prefix, message, distribution, name),
-            ));
-        }
         ChatLine::Roll {
             min,
             max,
             roll,
             guid,
         } => {
-            let Some(name) = names.resolve(guid, &commands).map(str::to_string) else {
+            let Some(name) = names.chat_record(guid, &commands).map(str::to_string) else {
                 return Built::Held(ChatLine::Roll {
                     min,
                     max,
@@ -1393,7 +1453,7 @@ fn build(In((item, mut script)): In<(ChatLine, UiScript)>, p: AddParams) -> Buil
             target,
         } => {
             // Both names ask-once: the performer's, and ours for the "is the target me?" test.
-            let performer_name = names.resolve(performer, &commands).map(str::to_string);
+            let performer_name = names.chat_record(performer, &commands).map(str::to_string);
             let your_name = self_guid
                 .0
                 .and_then(|g| names.resolve(g, &commands).map(str::to_string));
@@ -1523,21 +1583,18 @@ fn run_step(world: &mut World, script: &mut UiScript, step: Step) {
             record,
             text,
         } => {
-            route_in_world(world, script, &event, Some(record));
-            // The bubble after the line (`0x50a970`).
-            if let Some(kind) = event.kind {
-                if world.contains_resource::<crate::chat_bubble::BubbleQueue>() {
-                    world.resource_scope(
-                        |world, mut bubbles: Mut<crate::chat_bubble::BubbleQueue>| {
-                            if let Some(cfg) =
-                                world.get_resource::<crate::chat_bubble::BubbleConfig>()
-                            {
-                                bubbles.push(cfg, event.sender_guid, kind, &text);
-                            }
-                        },
-                    );
-                }
+            let Some(kind) = route_raise(world, script, &event, Some(record)) else {
+                return;
+            };
+            // The bubble after the event, ahead of the log (`0x50a970`, `0x50a975`).
+            if world.contains_resource::<crate::chat_bubble::BubbleQueue>() {
+                world.resource_scope(|world, mut bubbles: Mut<crate::chat_bubble::BubbleQueue>| {
+                    if let Some(cfg) = world.get_resource::<crate::chat_bubble::BubbleConfig>() {
+                        bubbles.push(cfg, event.sender_guid, kind, &text);
+                    }
+                });
             }
+            route_log(world, script, &event, kind);
         }
         Step::Deliver(mut event) => {
             let Some(mut channels) = world.get_resource_mut::<ChannelState>() else {
@@ -1572,21 +1629,41 @@ fn route_in_world(
     event: &ChatEvent,
     record: Option<benilla_ui::script::ChatRecord>,
 ) {
+    if let Some(kind) = route_raise(world, script, event, record) {
+        route_log(world, script, event, kind);
+    }
+}
+
+/// [`route_in_world`] up to the raise: the line id, the record and the event (`0x50a8a5`,
+/// `0x50a8d5`); the kind raised, `None` for a line with none. A type whose event has no name
+/// raises nothing (slot 658 for `0x32`, `0x9fbe80`).
+fn route_raise(
+    world: &mut World,
+    script: &mut UiScript,
+    event: &ChatEvent,
+    record: Option<benilla_ui::script::ChatRecord>,
+) -> Option<ChatEventKind> {
     let Some(kind) = event.kind else {
         warn!("chat: unroutable event (no kind): {:?}", event.text);
-        return;
+        return None;
     };
-    let Some(mut windows) = world.get_resource_mut::<ChatWindows>() else {
-        return;
-    };
+    let mut windows = world.get_resource_mut::<ChatWindows>()?;
     windows.line_id = windows.line_id.wrapping_add(1);
     let line_id = windows.line_id;
     if let Some(mut record) = record {
         record.line_id = line_id;
         script.record_chat(record);
     }
-    let args = event.script_args_with_line(line_id);
-    crate::ui_script::safe_world::raise(world, super::event::event_name(kind), args);
+    let name = super::event::event_name(kind);
+    if !name.is_empty() {
+        let args = event.script_args_with_line(line_id);
+        crate::ui_script::safe_world::raise(world, name, args);
+    }
+    Some(kind)
+}
+
+/// [`route_in_world`]'s log line, written while the log flag is set (`0x50a975`).
+fn route_log(world: &mut World, script: &UiScript, event: &ChatEvent, kind: ChatEventKind) {
     // The flag as the listeners left it (`[0xb759d0]`).
     if script.logging_flags().0 {
         let default_language = super::language::default_language_id(world);
@@ -1628,6 +1705,7 @@ pub(crate) fn add_now(world: &mut World, line: ChatLine) {
         if line.composed_by_caller() {
             queue_composed(world, line);
         } else {
+            let line = with_read_names(world, line, true);
             world.resource_mut::<ChatLog>().pending.push((line, true));
         }
         return;
@@ -1684,7 +1762,7 @@ fn ask_names(world: &mut World, line: &ChatLine) {
     // A player guid asks the name cache, a pet guid the pet-name cache (`0x509f33`, `0x50a06f`).
     for guid in line.player_guids() {
         if is_player_guid(guid) || is_pet_guid(guid) {
-            let _ = names.resolve(guid, commands);
+            let _ = names.chat_record(guid, commands);
         }
     }
     let ChatLine::Wire { msg, .. } = line else {
@@ -1745,11 +1823,40 @@ pub(crate) fn name_landed(world: &mut World) {
             kept.push((line, ready));
             continue;
         }
+        // The callback hands the add the records' bare names (`0x503e87`-`0x503e98`).
+        let line = with_read_names(world, line, false);
         if let Some(back) = add_one(world, line) {
             kept.push((back, false));
         }
     }
     restore(world, kept);
+}
+
+/// A wire line with the names the add has read so far filled in, as it queues them with the line
+/// (`0x50ad4c`) or the answer's callback passes them (`0x503e87`-`0x503e98`): a player sender's
+/// full name when `full` (`0x509e6a`), else the bare record name; the receiver's bare.
+fn with_read_names(world: &World, line: ChatLine, full: bool) -> ChatLine {
+    let ChatLine::Wire { mut msg } = line else {
+        return line;
+    };
+    let Some(names) = world.get_resource::<NameCache>() else {
+        return ChatLine::Wire { msg };
+    };
+    if msg.sender_name.is_none() {
+        let guid = msg.sender_guid;
+        msg.sender_name = if full && is_player_guid(guid) {
+            names.peek_full_name(guid)
+        } else if is_player_guid(guid) || is_pet_guid(guid) {
+            names.peek(guid).map(str::to_string)
+        } else {
+            None
+        };
+    }
+    let target = msg.target_guid;
+    if msg.receiver_name.is_none() && (is_player_guid(target) || is_pet_guid(target)) {
+        msg.receiver_name = names.peek(target).map(str::to_string);
+    }
+    ChatLine::Wire { msg }
 }
 
 /// The UI's world entry for chat (`0x5281b3` -> `0x50df80`): the add stops queueing (`0x50dfbd`)
@@ -1878,4 +1985,115 @@ fn macro_subject(
 /// name from a player or a pet guid reads the name and waits on it (`0x509f5d`-`0x509f92`).
 fn sender_waits(msg: &benilla_protocol::messages::ChatMessage) -> bool {
     msg.sender_name.is_none() && (is_player_guid(msg.sender_guid) || is_pet_guid(msg.sender_guid))
+}
+
+/// The add's line for an empty text (`0x50a291`-`0x50a2df`): a say reads `CHAT_SAY_UNKNOWN` and a
+/// yell `CHAT_YELL_UNKNOWN`, both then an emote (`0x50a2d9`), an emote `CHAT_EMOTE_UNKNOWN`, each
+/// in its `_FEMALE` form for a female sender record (`0x819d86`); `None` when the text is not
+/// empty or the type has none.
+fn unknown_text(
+    script: &UiScript,
+    chat_type: u8,
+    text: &str,
+    female: bool,
+) -> Option<(u8, String)> {
+    use benilla_protocol::messages as m;
+    if !text.is_empty() {
+        return None;
+    }
+    let key = match chat_type {
+        m::CHAT_MSG_SAY => "CHAT_SAY_UNKNOWN",
+        m::CHAT_MSG_YELL => "CHAT_YELL_UNKNOWN",
+        m::CHAT_MSG_EMOTE => "CHAT_EMOTE_UNKNOWN",
+        _ => return None,
+    };
+    Some((m::CHAT_MSG_EMOTE, gendered_text(script, key, female)))
+}
+
+/// The VM's string for `key` as the lookup reads it in a gender (`0x819d40`): the `_FEMALE` form
+/// first when female, then the plain key, empty when neither is set.
+fn gendered_text(script: &UiScript, key: &str, female: bool) -> String {
+    let get = |k: &str| script.lua().globals().get::<String>(k).ok();
+    female
+        .then(|| get(&format!("{key}_FEMALE")))
+        .flatten()
+        .or_else(|| get(key))
+        .unwrap_or_default()
+}
+
+/// The add's quest-link pass (`0x50a2ec`-`0x50a393`): each `|Hquest:` not escaped by a `|` before
+/// it reads its level after the second `:` (`0x50a33b`), -1 standing for the active player's
+/// (`0x50a34b`), and its ten bytes before take that level's difficulty colour (`0x50a35d`,
+/// `0x50a369`). 12340 stops the client on a link without its two `:` (`0x50a3a6`) and writes ahead
+/// of the buffer for a link in its first ten bytes; here such a link ends the pass, or is left.
+pub(super) fn recolor_quest_links(text: String, player_level: Option<i32>) -> String {
+    const LINK: &[u8] = b"|Hquest:";
+    if !text.contains("|Hquest:") {
+        return text;
+    }
+    let mut bytes = text.into_bytes();
+    let mut from = 0;
+    while let Some(at) = bytes[from..]
+        .windows(LINK.len())
+        .position(|w| w == LINK)
+        .map(|i| from + i)
+    {
+        from = at + LINK.len();
+        if at > 0 && bytes[at - 1] == b'|' {
+            continue;
+        }
+        let colon = |start: usize| {
+            bytes[start..]
+                .iter()
+                .position(|&b| b == b':')
+                .map(|i| start + i)
+        };
+        let Some(level_at) = colon(at).and_then(|c| colon(c + 1)) else {
+            break;
+        };
+        let mut level = str_to_int(&bytes[level_at + 1..]);
+        if level == -1 {
+            if let Some(player) = player_level {
+                level = player;
+            }
+        }
+        let color = benilla_ui::script::quest_difficulty_color(level, player_level).as_bytes();
+        if let Some(start) = at.checked_sub(color.len()) {
+            bytes[start..at].copy_from_slice(color);
+        }
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// The string-to-int read (`0x76f0d0`): an optional `-`, then decimal digits up to the first other
+/// byte.
+fn str_to_int(bytes: &[u8]) -> i32 {
+    let (negative, digits) = match bytes.first() {
+        Some(b'-') => (true, &bytes[1..]),
+        _ => (false, bytes),
+    };
+    let value = digits
+        .iter()
+        .take_while(|b| b.is_ascii_digit())
+        .fold(0i32, |n, b| {
+            n.wrapping_mul(10).wrapping_add(i32::from(b - b'0'))
+        });
+    if negative {
+        value.wrapping_neg()
+    } else {
+        value
+    }
+}
+
+/// A monster bubble's text (`0x50a92a`-`0x50a960`): each `%%` read as one `%`.
+pub(super) fn unescape_percent(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        out.push(c);
+        if c == '%' && chars.peek() == Some(&'%') {
+            chars.next();
+        }
+    }
+    out
 }

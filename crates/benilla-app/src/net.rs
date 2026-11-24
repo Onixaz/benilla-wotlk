@@ -2517,6 +2517,11 @@ pub(crate) enum ClientCommand {
     ChatIgnored {
         guid: u64,
     },
+    /// `CMSG_CHAT_FILTERED`: a whisper the spam filter dropped, reported with its sender
+    /// (`0x50a6c4`-`0x50a718`).
+    ChatFiltered {
+        guid: u64,
+    },
     /// `CMSG_WHO`, the `/who` filter parsed into wire fields as `SendWho` builds them.
     Who {
         request: Box<WhoRequest>,
