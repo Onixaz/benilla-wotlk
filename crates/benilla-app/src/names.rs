@@ -540,7 +540,7 @@ pub(crate) mod net {
             );
             player_name(guid, name, race, class, gender, &mut names);
             names.set_player_realm(guid, realm);
-            // The record's callbacks run once it is cached (`0x5a47d0`).
+            // The record's callbacks run once it is cached (`0x5a47d0`); by module, not in 12340's one registration-order list (`0x680d03`-`0x680d2c`, #1487).
             ui.world(move |world| crate::ui_guild_bank::name_landed(world, guid));
             ui.world(move |world| crate::ui_item_text::name_landed(world, guid));
             ui.world(move |world| crate::ui_achievement::name_landed(world, guid, true));
@@ -559,6 +559,7 @@ pub(crate) mod net {
             names.player_name_miss(guid, miss, &commands);
             // A placeholder or a denial ends the ask, its callbacks told (`0x635849`, `0x63583f`); a retry asks again.
             if miss != benilla_protocol::messages::NameQueryMiss::Retry {
+                // By module, not in the record's one registration-order list (`0x67a2d0`, #1487).
                 ui.world(move |world| crate::ui_guild_bank::name_landed(world, guid));
                 ui.world(move |world| crate::ui_item_text::name_landed(world, guid));
                 ui.world(move |world| crate::ui_achievement::name_landed(world, guid, false));

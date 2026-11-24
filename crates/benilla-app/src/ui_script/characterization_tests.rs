@@ -7190,6 +7190,47 @@ fn the_guild_bank_fires_from_its_handlers_with_the_bank_read_at_the_call() {
     );
 }
 
+/// 12340 runs every callback on a name record in one list, in registration order (`0x67d880` appends, `0x680d03`-`0x680d2c` runs); benilla runs the guild bank's before the chat's whichever registered first (#1487): today's order, pinned for both registrations.
+#[test]
+fn a_name_answer_runs_the_bank_log_before_the_chat_line_whichever_asked_first() {
+    use benilla_protocol::messages::{GuildBankLog, GuildBankLogEntry};
+    const EVENTS: &[&str] = &["CHAT_MSG_SAY", "GUILDBANKLOG_UPDATE"];
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let log = |player: u64| {
+        SessionEvent::GuildBankLog(GuildBankLog {
+            tab: 0,
+            entries: vec![GuildBankLogEntry {
+                kind: 1,
+                player,
+                ..Default::default()
+            }],
+        })
+    };
+    for (chat_first, guid, name) in [(true, 0x51, "Ann"), (false, 0x52, "Bob")] {
+        let asks = if chat_first {
+            vec![say_from(guid, "hi"), log(guid)]
+        } else {
+            vec![log(guid), say_from(guid, "hi")]
+        };
+        let seen = rig.packets(asks, 2);
+        assert!(
+            fired(&seen, EVENTS).is_empty(),
+            "{:?}",
+            fired(&seen, EVENTS)
+        );
+        let seen = rig.packets(vec![name_answer(guid, name)], 2);
+        assert_eq!(
+            fired(&seen, EVENTS),
+            ["GUILDBANKLOG_UPDATE", "CHAT_MSG_SAY"],
+            "chat registered first: {chat_first}"
+        );
+    }
+}
+
 /// One record's callbacks run in ask order across subsystems, as 12340 links every ask to the tail of the record's one list (`0x67ca82`, `0x67cab1`): our bag item's post-init (`0x70af17`) and an open guild bank's list (`0x5a7664`) wait on the same entry, and its answer runs them in the order they asked, the post-init's `BAG_UPDATE`s (`0x70ae0b`) and `GUILDBANKBAGSLOTS_CHANGED` (`0x5a47a0`) either way round; a verb's callback, the currency build's (`0x5b01d7`), joins the same list.
 #[test]
 fn one_records_callbacks_run_in_ask_order_across_subsystems() {
