@@ -206,6 +206,23 @@ issues in `NOT_READ` (`crates/benilla-formats/tests/dbc_coverage.rs`), not here.
 | `UISoundLookups` | 12340 loads it and never reads it |
 | `WorldSafeLocs` | read only by the admin `worldport` console command (`0x407210`), not planned (#1119); the graveyard branch of `GetMapLandmarkInfo` (`0x545a30`) never runs, since the landmark builder (`0x546310`) never sets its flag |
 
+## The Mac build
+
+On macOS benilla answers as the Mac build of 12340: `IsMacClient()` is 1, the `platform="mac"` rows
+of a binding file register, and the Mac build's own 23 verbs and 12 CVars exist
+(`crates/benilla-ui/src/script/mac_client.rs`, `REGISTERED_MAC` in
+`crates/benilla-app/src/cvars/table.rs`). What those verbs drive is left out. The addresses in this
+table are the Mac build's.
+
+| Verbs | Mac 12340 | What benilla answers | Why |
+|---|---|---|---|
+| `MovieRecording_IsSupported`, `MovieRecording_IsCursorRecordingSupported` | `0x508af0`, `0x508ba0` | `false`, the Mac client's answer on a machine below the recorder's requirements (`0x909f40`) | no movie recording |
+| `MovieRecording_Toggle` | `0x511840` | shows `MOVIE_RECORDING_WARNING_REQUIREMENTS`, as on such a machine | no movie recording |
+| `MovieRecording_Cancel`, `MovieRecording_SearchUncompressedMovie`, `MovieRecording_QueueMovieToCompress`, `MovieRecording_DeleteMovie` | `0x5088e0`, `0x508a50`, `0x508a90`, `0x508ac0` | nothing | no movie recording |
+| `MovieRecording_IsRecording`, `MovieRecording_IsCompressing`, `MovieRecording_GetProgress`, `MovieRecording_GetTime`, `MovieRecording_GetMovieFullPath`, `MovieRecording_MaxLength` | `0x508910`, `0x508940`, `0x5089a0`, `0x508c00`, `0x508bd0`, `0x508d00` | the idle recorder's values | no movie recording |
+| `MovieRecording_IsCodecSupported` | `0x508b20` | `false` for every codec | no QuickTime |
+| `MusicPlayer_PlayPause`, `MusicPlayer_VolumeUp`, `MusicPlayer_VolumeDown`, `MusicPlayer_BackTrack`, `MusicPlayer_NextTrack` | `0x51c100`, `0x51c150`, `0x51c1a0`, `0x51c1f0`, `0x51c240` | nothing | no music player remote |
+
 ## Bugs in 12340
 
 Where 12340's code does something other than what it is written to do, benilla does what the code
@@ -279,20 +296,3 @@ means and records the difference here.
   `GetInventoryItemsForSlot` does the same in its own read (a number less one at `0x5e95e8`, a
   name's id kept at `0x5e967f`), listing what fits the slot after the one named. benilla makes a
   name 0-based in both, as a number is, so a name reads the slot it names.
-
-## The Mac build
-
-On macOS benilla answers as the Mac build of 12340: `IsMacClient()` is 1, the `platform="mac"` rows
-of a binding file register, and the Mac build's own 23 verbs and 12 CVars exist
-(`crates/benilla-ui/src/script/mac_client.rs`, `REGISTERED_MAC` in
-`crates/benilla-app/src/cvars/table.rs`). What those verbs drive is left out. The addresses in this
-table are the Mac build's.
-
-| Verbs | Mac 12340 | What benilla answers | Why |
-|---|---|---|---|
-| `MovieRecording_IsSupported`, `MovieRecording_IsCursorRecordingSupported` | `0x508af0`, `0x508ba0` | `false`, the Mac client's answer on a machine below the recorder's requirements (`0x909f40`) | no movie recording |
-| `MovieRecording_Toggle` | `0x511840` | shows `MOVIE_RECORDING_WARNING_REQUIREMENTS`, as on such a machine | no movie recording |
-| `MovieRecording_Cancel`, `MovieRecording_SearchUncompressedMovie`, `MovieRecording_QueueMovieToCompress`, `MovieRecording_DeleteMovie` | `0x5088e0`, `0x508a50`, `0x508a90`, `0x508ac0` | nothing | no movie recording |
-| `MovieRecording_IsRecording`, `MovieRecording_IsCompressing`, `MovieRecording_GetProgress`, `MovieRecording_GetTime`, `MovieRecording_GetMovieFullPath`, `MovieRecording_MaxLength` | `0x508910`, `0x508940`, `0x5089a0`, `0x508c00`, `0x508bd0`, `0x508d00` | the idle recorder's values | no movie recording |
-| `MovieRecording_IsCodecSupported` | `0x508b20` | `false` for every codec | no QuickTime |
-| `MusicPlayer_PlayPause`, `MusicPlayer_VolumeUp`, `MusicPlayer_VolumeDown`, `MusicPlayer_BackTrack`, `MusicPlayer_NextTrack` | `0x51c100`, `0x51c150`, `0x51c1a0`, `0x51c1f0`, `0x51c240` | nothing | no music player remote |
