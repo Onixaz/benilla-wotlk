@@ -748,13 +748,16 @@ fn drive_vehicle_aim(
         orientation: player.facing().rem_euclid(std::f32::consts::TAU),
     };
     let rec = vehicle.and_then(|v| tables.vehicle(v.id));
+    if let Some(rig) = rig.as_deref_mut() {
+        let in_motion = seat.is_some_and(|p| matches!(p.state, 2 | 5));
+        rig.vehicle_fixed_facing = in_motion || rec.is_some_and(facing::fixed_render_facing);
+    }
     if let (Some(rec), Some(rig)) = (rec, rig.as_deref_mut()) {
         // The limits sit about the vehicle's own facing, relative to any transport it rides.
         let deck = player.transport_yaw();
         rig.vehicle_facing = vehicle
             .and_then(|v| facing::legal_range(rec, v.raw_facing))
             .map(|(min, max)| (min + deck, max + deck));
-        rig.vehicle_fixed_facing = facing::fixed_render_facing(rec);
         let upright = store.is_some_and(|s| {
             !s.0.unit_is_dead()
                 && s.0.unit_flags() & targeting::UNIT_FLAG_STUNNED == 0
