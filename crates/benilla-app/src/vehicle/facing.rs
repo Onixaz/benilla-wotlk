@@ -10,6 +10,15 @@ use benilla_formats::VehicleRec;
 /// The record's facing-limit flag.
 const FACING_LIMITED: u32 = 0x20_0000;
 
+/// The record flags that fix a vehicle's rendered facing (`0x73dab0`): `0x200` or `0x1000`.
+const FIXED_RENDER_FACING: u32 = 0x200 | 0x1000;
+
+/// Whether `rec`'s model turns with its facing at once (`0x73dab0`), with no stationary chase and no
+/// twist of its key bones. Both Isle of Conquest siege engines set `0x1000`.
+pub(crate) fn fixed_render_facing(rec: &VehicleRec) -> bool {
+    rec.flags & FIXED_RENDER_FACING != 0
+}
+
 /// `0x6eaa50`: the facings `rec` allows about `raw_facing` (the vehicle's own, set when it became
 /// a vehicle), right limit below and left above, or `None` for an unlimited record.
 pub(crate) fn legal_range(rec: &VehicleRec, raw_facing: f32) -> Option<(f32, f32)> {
@@ -93,5 +102,23 @@ mod tests {
         let range = (0.75, 1.5);
         assert_eq!(clamp(1.125 + std::f32::consts::PI - 0.1, range), Some(1.5));
         assert_eq!(clamp(1.125 + std::f32::consts::PI + 0.1, range), Some(0.75));
+    }
+
+    #[test]
+    fn a_record_fixes_its_render_facing_under_either_bit() {
+        let rec = |flags| VehicleRec {
+            flags,
+            ..Default::default()
+        };
+        assert!(!fixed_render_facing(&rec(0x477)));
+        assert!(fixed_render_facing(&rec(0x200)));
+        assert!(
+            fixed_render_facing(&rec(0x5e8d_d477)),
+            "the Catapult's record (438)"
+        );
+        assert!(
+            fixed_render_facing(&rec(0x5f0d_9677)),
+            "the Demolisher's record (509)"
+        );
     }
 }

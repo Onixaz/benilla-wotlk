@@ -722,6 +722,7 @@ fn drive_vehicle_aim(
         r.hold_pitch_for_aim = false;
         r.vehicle_facing = None;
         r.vehicle_pitch = None;
+        r.vehicle_fixed_facing = false;
         std::mem::take(&mut r.aim_pitch_delta)
     });
     if let Some(power) = script
@@ -747,6 +748,10 @@ fn drive_vehicle_aim(
         orientation: player.facing().rem_euclid(std::f32::consts::TAU),
     };
     let rec = vehicle.and_then(|v| tables.vehicle(v.id));
+    if let Some(rig) = rig.as_deref_mut() {
+        let in_motion = seat.is_some_and(|p| matches!(p.state, 2 | 5));
+        rig.vehicle_fixed_facing = in_motion || rec.is_some_and(facing::fixed_render_facing);
+    }
     if let (Some(rec), Some(rig)) = (rec, rig.as_deref_mut()) {
         // The limits sit about the vehicle's own facing, relative to any transport it rides.
         let deck = player.transport_yaw();

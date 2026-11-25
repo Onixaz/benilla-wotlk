@@ -13,25 +13,29 @@ use super::{Player, STATIONARY_CHASE_RATE};
 /// or swimming, snaps it to the aim; standing runs the frozen chase, holding the 90° ceiling while
 /// the aim is steered, then sweeping onto it at 8× the turn rate. The swim pitch is applied at the
 /// transform write. The turn-in-place shuffle keys on the body's own rotation (chase-step bits
-/// `0x800`/`0x1000`), not the turn keys, so a deck's turn never shuffles.
+/// `0x800`/`0x1000`), not the turn keys, so a deck's turn never shuffles. A `fixed` body turns with
+/// its aim at once (`0x73dab0`: a vehicle record with `0x200` or `0x1000`, or a model with neither
+/// twist bone), so no chase holds it back and nothing twists.
+#[allow(clippy::too_many_arguments)] // the frame's flags and the mover's, one each
 pub(super) fn drive_body_heading(
     player: &mut Player,
     move_flags_now: u32,
     dt: f32,
     swimming: bool,
+    fixed: bool,
     moving: bool,
     airborne: bool,
     steering: bool,
     // The mover's own turn rate in rad/s: a possessed creature settles at its own pace.
     turn_rate: f32,
 ) -> u32 {
-    let strafe_offset = if swimming {
+    let strafe_offset = if swimming || fixed {
         0.0
     } else {
         strafe_body_offset(move_flags_now)
     };
     let mut body_turn_step = 0.0_f32;
-    if swimming {
+    if swimming || fixed {
         player.model_yaw = player.face_yaw;
     } else if strafe_offset != 0.0 {
         player.model_yaw = ease_strafe_yaw(player.model_yaw, player.face_yaw, strafe_offset, dt);
@@ -71,7 +75,17 @@ mod tests {
                 model_yaw: 0.0,
                 ..Default::default()
             };
-            drive_body_heading(&mut player, 0, 0.01, false, false, false, false, turn_rate);
+            drive_body_heading(
+                &mut player,
+                0,
+                0.01,
+                false,
+                false,
+                false,
+                false,
+                false,
+                turn_rate,
+            );
             player.model_yaw
         };
         // Below the 90° ceiling the whole step is the sweep, so it scales with the rate.
@@ -95,12 +109,41 @@ mod tests {
             false,
             false,
             false,
+            false,
             true,
             std::f32::consts::PI,
         );
         assert_eq!(
             player.model_yaw, 0.0,
             "under the 90° ceiling a steering frame moves the body not at all"
+        );
+    }
+
+    /// A fixed body (a siege engine's record, `0x73dab0`) turns with its aim while steered, where a
+    /// character holds its body under the 90° ceiling and twists its spine and head instead.
+    #[test]
+    fn a_fixed_body_turns_with_its_aim_at_once() {
+        let mut player = Player {
+            face_yaw: 1.0,
+            model_yaw: 0.0,
+            ..Default::default()
+        };
+        let flags = drive_body_heading(
+            &mut player,
+            move_flags::TURN_LEFT,
+            0.01,
+            false,
+            true,
+            false,
+            false,
+            true,
+            std::f32::consts::PI,
+        );
+        assert_eq!(player.model_yaw, 1.0);
+        assert_eq!(
+            flags & (move_flags::TURN_LEFT | move_flags::TURN_RIGHT),
+            0,
+            "no shuffle"
         );
     }
 }
