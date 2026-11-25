@@ -33,12 +33,9 @@ pub(super) fn pitch_to_file(radians: f32) -> f32 {
 /// The camera's settings save: the zoom's target, not the arm a wall pulled in, and the pitch, into
 /// the two rows as `%f` writes them. Called by the character slot's save.
 pub(crate) fn save_to_cvars(world: &mut World) {
-    let Some(target) = world
-        .get_resource::<CameraControl>()
-        .map(|r| r.target_distance)
-    else {
+    if !world.contains_resource::<CameraControl>() {
         return;
-    };
+    }
     let Some(pitch) = world
         .query_filtered::<&FlyCam, With<WorldCamera>>()
         .iter(world)
@@ -47,9 +44,30 @@ pub(crate) fn save_to_cvars(world: &mut World) {
     else {
         return;
     };
-    if let Some(mut cvars) = world.get_resource_mut::<crate::cvars::Cvars>() {
-        cvars.set(CVAR_DISTANCE, &format!("{target:.6}"));
-        cvars.set(CVAR_PITCH, &format!("{:.6}", pitch_to_file(pitch)));
+    world.resource_scope(|world, rig: Mut<CameraControl>| {
+        if let Some(mut cvars) = world.get_resource_mut::<crate::cvars::Cvars>() {
+            save_settings(&rig, Some(pitch), &mut cvars);
+        }
+    });
+}
+
+/// `0x5ff320`: the distance a seat's exit will restore while one is kept, else the zoom's target,
+/// into `cameraSavedVehicleDistance` while the vehicle zoom is on, else `cameraSavedDistance`; and
+/// the pitch.
+pub(super) fn save_settings(
+    rig: &CameraControl,
+    pitch: Option<f32>,
+    cvars: &mut crate::cvars::Cvars,
+) {
+    let distance = rig.vehicle_exit_zoom.unwrap_or(rig.target_distance);
+    let row = if rig.vehicle_zoom {
+        super::camera_zoom::CVAR_VEHICLE_DISTANCE
+    } else {
+        CVAR_DISTANCE
+    };
+    cvars.set(row, &format!("{distance:.6}"));
+    if let Some(p) = pitch {
+        cvars.set(CVAR_PITCH, &format!("{:.6}", pitch_to_file(p)));
     }
 }
 

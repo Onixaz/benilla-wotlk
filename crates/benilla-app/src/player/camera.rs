@@ -726,7 +726,7 @@ pub(crate) struct CameraControl {
     pub(super) clipped: bool,
     /// The vehicle seat zoom last applied, by its count.
     pub(super) vehicle_zoom_seen: u32,
-    /// The distance before a seat's zoom, which its exit restores (`m_vehicleExitZoomDistance`).
+    /// The distance before a seat's zoom, which its exit restores.
     pub(super) vehicle_exit_zoom: Option<f32>,
     /// The vehicle's camera pitch offset as it eases in, radians: the view looks that much higher
     /// (`0x606f90`), the arm untouched. Written by the seat camera.
@@ -741,6 +741,10 @@ pub(crate) struct CameraControl {
     pub(crate) vehicle_fade: Option<VehicleFade>,
     /// The vehicle the fade last reached, to hand back opaque.
     pub(super) vehicle_faded: Option<Entity>,
+    /// The vehicle zoom is on (`0x600590`): a 50 yd default max, its own saved distance.
+    pub(super) vehicle_zoom: bool,
+    /// The speed, yd/s, of a vehicle zoom toggle's glide, until it lands or the wheel moves.
+    pub(super) zoom_glide: Option<f32>,
 }
 
 impl CameraControl {
@@ -796,6 +800,11 @@ impl CameraControl {
                 }
             }
         }
+    }
+
+    /// A seat's exit has a distance to restore.
+    pub(crate) fn keeps_exit_zoom(&self) -> bool {
+        self.vehicle_exit_zoom.is_some()
     }
 
     /// Park the orbit distance at `d`, both the live value and the wheel target, or the glide
