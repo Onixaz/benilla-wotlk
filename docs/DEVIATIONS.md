@@ -250,6 +250,29 @@ means and records the difference here.
   (`0x50abcb`–`0x50abeb`). It reads the name at `0x50abd6` without testing the record, and the
   lookup returns null for an id outside the table (`0x65c2ae`), so 12340 faults writing that log
   line. benilla writes an empty name. Every language a server sends in chat has its record.
+- **`EquipItemByName` with a slot name.** The verb (`0x51cdb0`) takes its target slot as a number
+  or as a slot name. A number is made 0-based (`0x51cf23`); a name's slot id is used as it is
+  (`0x51cfb4`), so 12340 equips the item one slot past the one named: `HeadSlot` to the neck,
+  `Trinket0Slot` to the second trinket, and `TabardSlot` (19) fails the range test (`0x51cfbf`)
+  with "Invalid inventory dstSlot". benilla makes a name 0-based as it does a number, so a name
+  equips to the slot it names.
+- **Item tooltip: a token's bind line.** The tooltip builder prints a token's (item class 10)
+  bind line only when the requester guid it was handed equals the loot window's source
+  (`0x627ef7`–`0x627f17`), so the loot window (`0x62e638`) shows it. A tooltip built from an id or
+  a link hands it a zero requester (a chat link `0x62dbbc`, an unheld token `0x630750`), which
+  equals the loot source only while no loot window is open, its guid then being 0. So 12340 shows
+  "Binds when picked up" on a linked token, and drops it while any loot window is open. benilla
+  shows it on every tooltip built with a zero requester; a held token, whose requester is the
+  player (`0x630789`), still shows none.
+- **Inventory verbs with a slot name.** The inventory slot reader (`0x5e7c00`) behind
+  `GetInventoryItemLink`, `GetInventoryItemID`, `GetInventoryItemTexture`,
+  `GetInventoryItemQuality`, `GetInventoryItemCount`, `GetInventoryItemBroken`,
+  `SocketInventoryItem`, `ShowInventorySellCursor`, `SetInventoryPortraitTexture` and the other
+  verbs that take a slot makes a number 0-based (`0x5e7c2c`) but keeps a slot name's id
+  (`0x5e7c9e`), so `GetInventoryItemLink("player", "HeadSlot")` reads the neck.
+  `GetInventoryItemsForSlot` does the same in its own read (a number less one at `0x5e95e8`, a
+  name's id kept at `0x5e967f`), listing what fits the slot after the one named. benilla makes a
+  name 0-based in both, as a number is, so a name reads the slot it names.
 
 ## The Mac build
 
