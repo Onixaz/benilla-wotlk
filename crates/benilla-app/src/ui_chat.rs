@@ -24,11 +24,11 @@ pub(crate) mod commands;
 /// `pub(crate)` for `ui_script::chat_tests`, which joins the stock file's token to this resolve.
 pub(crate) mod edit;
 mod event;
-mod feed;
+pub(crate) mod feed;
 mod frames;
 /// The idle handler: the 5-minute auto-sit and auto-AFK, and the 30-minute camp.
 pub(crate) mod idle;
-mod input;
+pub(crate) mod input;
 #[cfg(test)]
 pub(crate) use input::drain_chat_input;
 /// The language gate: the exemptions and fluency lookup behind the chat garble.
@@ -51,6 +51,9 @@ pub(crate) use away::AfkMirror;
 pub(crate) use broadcast::Broadcast;
 /// The channel records, mask and zone catalog the channel verbs read at the call.
 pub(crate) use channels::ChannelLive;
+/// The zone walk's steps, which the characterization pins apply directly.
+#[cfg(test)]
+pub(crate) use channels::{apply_walk, WalkStep};
 /// The joined-channel roster and the `ChatChannels.dbc` catalog, named by `net`'s docs and tests.
 #[cfg_attr(not(test), allow(unused_imports))]
 pub(crate) use edit::ChannelState;
@@ -67,8 +70,6 @@ pub(crate) use feed::{
 pub(crate) use frames::{
     add_chat_line_in_call, add_chat_line_now, add_combat_line_now, ChatWindows,
 };
-/// The channel pane's name callback, run by the name answer's handler.
-pub(crate) use net::channel_name_landed;
 /// The per-character chat cache's restore, called from the world-entry UI load: its two events
 /// must precede the session's first chat line and `PLAYER_LOGIN`.
 pub(crate) use settings::restore_chat_looks;
@@ -106,13 +107,10 @@ impl Plugin for UiChatPlugin {
             )
             // The slash-command table needs the VM's globals and the emote catalog, both `Startup`.
             .add_systems(PostStartup, commands::build_slash_commands)
-            // The language gate's feeds, ahead of the packet drain and the calls that read them.
+            // The garble word pool, ahead of the packet drain and the calls that read it.
             .add_systems(
                 Update,
-                (
-                    language::load_language_words,
-                    language::feed_language_skills,
-                )
+                language::load_language_words
                     .before(crate::net::apply_net_updates)
                     // Ahead of every call into Lua, whose item-text verbs read the tables at the call.
                     .before(crate::ui_script::UiPress),
@@ -125,15 +123,11 @@ impl Plugin for UiChatPlugin {
                 (
                     // First, so a `/afk` typed this frame reads the descriptor's settled state.
                     away::reconcile_afk_mirror,
-                    crate::ui_script::raises::then_fire(away::movement_clears_afk),
+                    away::movement_clears_afk,
                     // After the clears, so a press that stamps the clock and drops the flag is
                     // settled before the idle timer reads it.
-                    crate::ui_script::raises::then_fire(idle::idle_handler).in_set(idle::IdleStep),
+                    idle::idle_handler.in_set(idle::IdleStep),
                     input::drain_chat_input.in_set(ChatDrain),
-                    // After the box's drain, so a `SendChatMessage` or `SendAddonMessage` from a
-                    // slash handler it just ran goes out this frame.
-                    crate::ui_script::raises::then_fire(input::drain_addon_chat_sends),
-                    crate::ui_script::raises::then_fire(input::drain_addon_message_sends),
                 )
                     .chain()
                     .in_set(UiDrain)
@@ -152,10 +146,7 @@ impl Plugin for UiChatPlugin {
                 (
                     channels::end_session_channels_on_disconnect,
                     channels::auto_join_zone_channels.in_set(crate::char_select::InWorldGated),
-                    crate::ui_script::raises::then_fire(
-                        recruitment::guild_recruitment_cascade
-                            .in_set(crate::char_select::InWorldGated),
-                    ),
+                    recruitment::guild_recruitment_cascade.in_set(crate::char_select::InWorldGated),
                 )
                     .chain()
                     .in_set(crate::ui_script::UiPaint)
@@ -172,19 +163,20 @@ impl Plugin for UiChatPlugin {
     }
 }
 
-/// The chat session end: the undrained feed, which outlives the Lua state, and both windows'
-/// lines. The Lua state is itself replaced at the session end, as the reference destroys its own
-/// at logout.
-///
-/// Deviation: not run on benilla's same-character reconnect, which the reference lacks (it
-/// returns to the login screen), so the window keeps its scrollback there.
+/// The chat session end (`0x529172` -> `0x5072b0`): both logs closed and both logging flags
+/// zeroed, the held lines and both windows' lines dropped. It runs at every exit from the world,
+/// the unattended reconnect's re-entry included (an exit to the same state), as the reference's
+/// disconnect leaves its game UI.
 fn end_session_chat(world: &mut World) {
-    // The logout closes both logs (`0x5072b0`).
+    // Each log closed and its flag zeroed (`0x5072cb`-`0x5072d6`).
     if let Some(mut windows) = world.get_resource_mut::<ChatWindows>() {
         windows.logs.0.close();
     }
     if let Some(mut file) = world.get_resource_mut::<logging::CombatLogFile>() {
         file.0.close();
+    }
+    if let Some(mut script) = world.get_non_send_resource_mut::<benilla_ui::script::UiScript>() {
+        script.set_logging_flags(false, false);
     }
     let mut log = std::mem::take(&mut *world.resource_mut::<ChatLog>());
     // The windows' `Clear` runs Lua: the `World` is lent for it.

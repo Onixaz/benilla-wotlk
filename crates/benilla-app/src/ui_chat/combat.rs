@@ -320,8 +320,9 @@ pub(crate) struct PendingCombat {
 pub(crate) enum Named {
     /// The text is already in [`Fills::named`], or the family has no `Named` slot.
     Ready,
-    /// An item entry, through the item cache.
-    Item(u32),
+    /// An item entry, through the item cache, with the callback its composer asks an uncached
+    /// record with: none for the open-lock line (`0x50ec7f`), which then prints nothing.
+    Item(u32, Option<crate::items::RecordWait>),
     /// A unit guid, through the name cache.
     Unit(u64),
 }

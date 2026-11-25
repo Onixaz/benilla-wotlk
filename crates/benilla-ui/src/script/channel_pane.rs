@@ -109,10 +109,6 @@ struct Member {
     /// `0x1` owner, `0x2` moderator, `0x4` voiced; `0x10` a group member not silenced
     /// (`0x4fcac0`); `0x20`, `0x40` and `0x80` are voice bits, never set here.
     flags: u8,
-    /// The cached name; `None` before the answer and for a negative one, which reads `UNKNOWN`.
-    name: Option<String>,
-    /// The name query is still out (`0x503bf1`).
-    asked: bool,
 }
 
 /// The pane's state, the reference's statics around `0xb743cc`.
@@ -294,18 +290,33 @@ fn rebuild_roster(model: &mut Model) {
     }
 }
 
-fn non_empty(name: &str) -> Option<String> {
-    (!name.is_empty()).then(|| name.to_string())
+/// A member's name read off the name cache at the call, asking nothing (`0x4fb123`, `0x50503e`).
+fn member_name(guid: u64) -> Option<String> {
+    super::read_live(|l| l.cached_player_name(guid)).flatten()
 }
 
-/// The roster sort (`0x4fb0f0`): unnamed rows first, the rest by name, case-folded.
+/// The roster sort (`0x4fb0f0`), names read off the cache as it compares: a row without a record or
+/// with an empty name first (`0x4fb14c`, `0x4fb166`), one against a row without a record after
+/// (`0x4fb157`), else by name, case-folded (`0x4fb171`).
 fn sort_members(roster: &mut [Member]) {
-    roster.sort_by(|a, b| match (&a.name, &b.name) {
-        (None, None) => Ordering::Equal,
-        (None, Some(_)) => Ordering::Less,
-        (Some(_), None) => Ordering::Greater,
-        (Some(a), Some(b)) => a.to_lowercase().cmp(&b.to_lowercase()),
+    let mut keyed: Vec<(Option<String>, Member)> = roster
+        .iter()
+        .map(|m| (member_name(m.guid), m.clone()))
+        .collect();
+    keyed.sort_by(|(a, _), (b, _)| {
+        fn named(n: &Option<String>) -> Option<&str> {
+            n.as_deref().filter(|n| !n.is_empty())
+        }
+        match (named(a), named(b)) {
+            (None, None) => Ordering::Equal,
+            (None, Some(_)) => Ordering::Less,
+            (Some(_), None) => Ordering::Greater,
+            (Some(a), Some(b)) => a.to_lowercase().cmp(&b.to_lowercase()),
+        }
     });
+    for (slot, (_, m)) in roster.iter_mut().zip(keyed) {
+        *slot = m;
+    }
 }
 
 /// The party roster (`0x5045c0`): the player and the party, the leader as owner (`5`, else `4`),
@@ -324,8 +335,6 @@ fn build_party(model: &mut Model) -> u32 {
     let mut roster = vec![Member {
         guid: own,
         flags: flags(own),
-        name: non_empty(&model.player_record.name),
-        asked: false,
     }];
     roster.extend(
         model
@@ -336,8 +345,6 @@ fn build_party(model: &mut Model) -> u32 {
             .map(|m| Member {
                 guid: m.guid,
                 flags: flags(m.guid),
-                name: non_empty(&m.name),
-                asked: false,
             }),
     );
     sort_members(&mut roster);
@@ -378,8 +385,6 @@ fn build_raid(model: &mut Model) -> u32 {
             Member {
                 guid: m.guid,
                 flags,
-                name: non_empty(&m.name),
-                asked: false,
             }
         })
         .collect();
@@ -469,8 +474,8 @@ impl super::UiScript {
     }
 
     /// A display `SMSG_CHANNEL_LIST` (`0x503990`), read only while it names the selected channel.
-    /// `name_of` answers the name cache for a member: `Some` held (`Some(None)` a negative answer),
-    /// `None` asked. The player's own row seats the owner and moderator gates, and a roster with
+    /// `held` reads the name cache for a member, a miss asking with the roster's callback
+    /// (`0x503bdb`). The player's own row seats the owner and moderator gates, and a roster with
     /// every name fires `CHANNEL_COUNT_UPDATE` and `CHANNEL_ROSTER_UPDATE`; the events fire after
     /// the parse, in the reference's order.
     pub fn display_channel_list(
@@ -478,7 +483,7 @@ impl super::UiScript {
         channel: &str,
         flags: u8,
         members: &[(u64, u8)],
-        name_of: impl Fn(u64) -> Option<Option<String>>,
+        held: impl Fn(u64) -> bool,
     ) {
         let slots = live_slots();
         let mut events: Vec<(&str, Vec<ScriptValue>)> = Vec::new();
@@ -505,16 +510,12 @@ impl super::UiScript {
                         events.push(("CHANNEL_FLAGS_UPDATED", vec![at.clone()]));
                     }
                 }
-                let answer = name_of(guid);
-                let asked = answer.is_none();
-                if asked {
+                if !held(guid) {
                     pane.unnamed += 1;
                 }
                 pane.roster.push(Member {
                     guid,
                     flags: member_flags,
-                    name: answer.flatten(),
-                    asked,
                 });
             }
             if pane.unnamed == 0 {
@@ -542,18 +543,14 @@ impl super::UiScript {
         guid: u64,
         member_flags: u8,
         channel_flags: u8,
-        name_of: impl Fn(u64) -> Option<Option<String>>,
+        held: impl Fn(u64) -> bool,
     ) {
         self.channel_user_edit(channel, channel_flags, |pane| {
-            let answer = name_of(guid);
-            let asked = answer.is_none();
             pane.roster.push(Member {
                 guid,
                 flags: member_flags,
-                name: answer.flatten(),
-                asked,
             });
-            if asked {
+            if !held(guid) {
                 pane.unnamed += 1;
                 return false;
             }
@@ -628,10 +625,10 @@ impl super::UiScript {
         }
     }
 
-    /// The name cache's answer for `guid` (`0x4ffe30`), `None` a negative one: with names awaited
-    /// and a row of `guid`, the count falls, and the last one sorts the roster and fires its count
-    /// and roster.
-    pub fn channel_roster_named(&mut self, guid: u64, name: Option<String>) {
+    /// The roster's name callback (`0x4ffe30`): with names awaited (`0x4ffe33`) and a row of `guid`
+    /// (`0x4ffe63`), the count falls (`0x4ffe7f`), and the last one sorts the roster and fires its
+    /// count and roster (`0x4ffed1`, `0x4ffee7`).
+    pub fn channel_roster_named(&mut self, guid: u64) {
         let slots = live_slots();
         let mut events: Vec<(&str, Vec<ScriptValue>)> = Vec::new();
         {
@@ -640,12 +637,7 @@ impl super::UiScript {
             if pane.unnamed == 0 {
                 return;
             }
-            let mut found = false;
-            for m in pane.roster.iter_mut().filter(|m| m.guid == guid) {
-                m.name = name.clone();
-                m.asked = false;
-                found = true;
-            }
+            let found = pane.roster.iter().any(|m| m.guid == guid);
             if !found {
                 return;
             }
@@ -669,13 +661,6 @@ impl super::UiScript {
         for (event, args) in events {
             self.fire_event(event, args);
         }
-    }
-
-    /// Whether the pane's roster waits on `guid`'s name, a callback the name answer runs.
-    pub fn channel_roster_awaits(&self, guid: u64) -> bool {
-        let model = self.model_ref();
-        let pane = &model.channel_pane;
-        pane.unnamed != 0 && pane.roster.iter().any(|m| m.guid == guid)
     }
 }
 
@@ -819,8 +804,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(());
             };
             let slots = live_slots();
-            let mut model = crate::script::model_mut_of(lua);
-            let model: &mut Model = &mut model;
+            let mut guard = crate::script::model_mut_of(lua);
+            let model: &mut Model = &mut guard;
             let Some((kind, name)) = model.channel_pane.target(index, &slots) else {
                 return Ok(());
             };
@@ -829,6 +814,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             }
             select(model, kind, &name);
             fetch(model, kind, &name);
+            drop(guard);
+            super::channel::send_queued(lua);
             Ok(())
         })?,
     )?;
@@ -876,8 +863,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(Value::Nil);
             };
             let slots = live_slots();
-            let mut model = crate::script::model_mut_of(lua);
-            let model: &mut Model = &mut model;
+            let mut guard = crate::script::model_mut_of(lua);
+            let model: &mut Model = &mut guard;
             let Some((kind, name)) = model.channel_pane.target(index, &slots) else {
                 return Ok(Value::Nil);
             };
@@ -889,6 +876,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             } else {
                 model.channel_pane.roster.len() as u32
             };
+            drop(guard);
+            super::channel::send_queued(lua);
             Ok(count_value(count))
         })?,
     )?;
@@ -906,16 +895,18 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(member) = index_arg(lua, member)? else {
                 return Ok(MultiValue::new());
             };
-            let (name, flags) = {
+            let (guid, flags) = {
                 let slots = live_slots();
-                let mut model = crate::script::model_mut_of(lua);
-                let model: &mut Model = &mut model;
+                let mut guard = crate::script::model_mut_of(lua);
+                let model: &mut Model = &mut guard;
                 let Some((kind, target)) = model.channel_pane.target(index, &slots) else {
                     return Ok(MultiValue::new());
                 };
                 if !model.channel_pane.is_selected(kind, &target) {
                     select(model, kind, &target);
                     fetch(model, kind, &target);
+                    drop(guard);
+                    super::channel::send_queued(lua);
                     return Ok(MultiValue::new());
                 }
                 if model.channel_pane.unnamed != 0 {
@@ -927,9 +918,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 else {
                     return Ok(MultiValue::new());
                 };
-                (row.name.clone(), row.flags)
+                (row.guid, row.flags)
             };
-            let name = name.unwrap_or_else(|| global_text(lua, "UNKNOWN"));
+            // The name off the cache at the call; none or empty reads `UNKNOWN` (`0x505043`-`0x50505a`).
+            let name = member_name(guid)
+                .filter(|n| !n.is_empty())
+                .unwrap_or_else(|| global_text(lua, "UNKNOWN"));
             Ok(MultiValue::from_vec(vec![
                 Value::String(lua.create_string(name)?),
                 flag(flags & 0x1 != 0),

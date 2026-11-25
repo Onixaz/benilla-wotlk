@@ -164,19 +164,10 @@ pub(super) fn feed_party(
     };
     let (fed, vm_reset) = fed.get_reset(&script);
     let edges = FieldEdges::collect(&mut edges);
-    // The initiator's 30 s timer and the lines it and the packets composed, pushed as system chat
-    // ahead of the gate: the timer runs on the frame clock, which the gate does not watch.
-    script.ready_check_tick();
-    let lines: Vec<String> = script
-        .take_ready_check_lines()
-        .into_iter()
-        .chain(script.take_party_lines())
-        .collect();
-    for line in lines {
-        script.push_event(crate::ui_chat::ChatEvent::text_only(
-            crate::ui_chat::ChatEventKind::System,
-            line,
-        ));
+    // The initiator's 30 s timer ahead of the gate: it runs on the frame clock, which the gate
+    // does not watch, and its close adds its line through the chat add (`0x5735bc`, `0x573602`).
+    if script.ready_check_due() {
+        script.lent(|s| s.ready_check_tick());
     }
     let chr = tables.classes();
     let types = tables.types(&names);

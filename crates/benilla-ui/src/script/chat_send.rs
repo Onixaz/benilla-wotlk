@@ -2,7 +2,7 @@
 //! through, with no FrameXML between it and the wire. `chatType` defaults to `"SAY"`; the fourth
 //! argument is the whisper target or the channel's number.
 //!
-//! It queues a [`ChatSend`] rather than going through the edit box, whose drain runs the slash
+//! It hands a [`ChatSend`] to the host inside the call, never through the edit box's slash
 //! grammar: an addon's `SendChatMessage("/dance")` says the characters. The reference splits the
 //! same way, `ChatEdit_SendText` parsing and `SendChatMessage` not.
 //!
@@ -172,13 +172,24 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 // `lua_isstring` then `lua_tostring`: a number is its text, so `2.7` reaches the
                 // channel's string-to-int as "2.7", which reads 2.
                 let target = super::binding_abi::optional_string(lua, &target);
-                crate::script::model_mut_of(lua).chat_sends.push(ChatSend {
+                let send = ChatSend {
                     text,
                     chat_type,
                     target,
                     language,
-                });
-                Ok(())
+                };
+                // The rest of the verb runs on the host inside the call (`0x50d170`).
+                match super::calls::ask_host(lua, &super::HostAsk::ChatSend(send.clone())) {
+                    Some(super::HostAnswer::LuaError(msg)) => {
+                        Err(mlua::Error::RuntimeError(msg.into()))
+                    }
+                    Some(_) => Ok(()),
+                    // No host lent: the VM's own record, which only its tests read.
+                    None => {
+                        crate::script::model_mut_of(lua).chat_sends.push(send);
+                        Ok(())
+                    }
+                }
             },
         )?,
     )?;
@@ -186,7 +197,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 }
 
 impl super::UiScript {
-    /// Drain the lines `SendChatMessage` queued since the last call.
+    /// Drain the lines `SendChatMessage` recorded with no host lent, which only the VM's tests make.
     pub fn take_chat_sends(&mut self) -> Vec<ChatSend> {
         drain_field!(self, chat_sends)
     }

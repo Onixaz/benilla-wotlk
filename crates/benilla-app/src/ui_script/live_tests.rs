@@ -191,6 +191,21 @@ fn takes_vm(params: &str) -> bool {
 /// Holders that call no Lua, argued: (file, item, why).
 const CALLS_NO_LUA: &[(&str, &str, &str)] = &[
     (
+        "ui_chat/input/mod.rs",
+        "chat_arm",
+        "reads global strings and writes the model's session asks; its lines are added by the caller with the `World`",
+    ),
+    (
+        "ui_chat/input/mod.rs",
+        "channel_arm",
+        "resets the recruitment latch on the model; its lines are added by the caller with the `World`",
+    ),
+    (
+        "ui_chat/input/mod.rs",
+        "take_chat_lines",
+        "takes the VM's queued emote, roll and console asks and its typed and probe lines",
+    ),
+    (
         "ui_lfg.rs",
         "show_step",
         "reads the money line's global strings off the VM",

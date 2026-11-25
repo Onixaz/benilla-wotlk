@@ -484,6 +484,10 @@ pub(crate) enum RecordWait {
     /// The auction house's: a list row's, a sold row's or a notice's line (`0x59cb70`, `0x59cbb0`,
     /// `0x59cbe0`, `0x59cc10`, `0x59a400`).
     Auction(crate::ui_auction::Callback),
+    /// A tradeskill-create line's, by caster (`0x50bdb1` -> `0x4fb970`).
+    TradeskillLine(u64),
+    /// A feed-pet line's, by caster (`0x50bb11` -> `0x4fb950`).
+    FeedPetLine(u64),
 }
 
 impl RecordWaits {

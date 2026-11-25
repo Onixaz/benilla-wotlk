@@ -169,12 +169,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                         .expect("model app_data");
                     !model.party.raid.is_empty()
                 };
-                crate::script::model_mut_of(lua)
-                    .addon_sends
-                    .push(AddonSend {
-                        text,
-                        distribution: asked.effective(in_raid),
-                    });
+                let send = AddonSend {
+                    text,
+                    distribution: asked.effective(in_raid),
+                };
+                // The packet goes out on the host inside the call (`0x50071f`); with no host lent
+                // the VM records it, which only its tests read.
+                if super::calls::ask_host(lua, &super::HostAsk::AddonSend(send.clone())).is_none() {
+                    crate::script::model_mut_of(lua).addon_sends.push(send);
+                }
                 Ok(())
             },
         )?,

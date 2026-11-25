@@ -1527,6 +1527,8 @@ pub const SMSG_REAL_GROUP_UPDATE: u16 = 0x0397; // 919
 pub const SMSG_POWER_UPDATE: u16 = 0x0480; // 1152
 /// A unit's health, set as its predicted copy (`0x716d20`).
 pub const SMSG_HEALTH_UPDATE: u16 = 0x047F; // 1151
+/// A whisper the spam filter dropped, its sender's guid (`0x50a6e4`).
+pub const CMSG_CHAT_FILTERED: u16 = 0x0331; // 817
 /// The server's chat spam patterns, replacing the last list (`0x501c70`).
 pub const SMSG_EXPECTED_SPAM_RECORDS: u16 = 0x0332; // 818
 /// One reputation slot's at-war flag, set or cleared (`0x5d0850`).

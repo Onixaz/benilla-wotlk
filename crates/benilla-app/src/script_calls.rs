@@ -198,6 +198,37 @@ pub(crate) fn answer_in_call(
                 .put_back(earlier);
             Some(HostAnswer::Done)
         }
+        // `SendChatMessage` past its argument reads, every line it adds added in the call
+        // (`0x50d170`).
+        // What an enclosing turn queued stays its own.
+        HostAsk::ChatSend(send) => {
+            let earlier = world
+                .get_resource_or_init::<crate::ui_script::live::UiEvents>()
+                .set_aside();
+            let refused = crate::ui_chat::input::send_chat_message(world, send);
+            crate::ui_script::live::fire_handler_events(world);
+            world
+                .resource_mut::<crate::ui_script::live::UiEvents>()
+                .put_back(earlier);
+            Some(refused.map_or(HostAnswer::Done, HostAnswer::LuaError))
+        }
+        // A channel verb's send inside its call.
+        HostAsk::Channel(cmd) => {
+            let earlier = world
+                .get_resource_or_init::<crate::ui_script::live::UiEvents>()
+                .set_aside();
+            crate::ui_chat::input::run_channel_command(world, cmd);
+            crate::ui_script::live::fire_handler_events(world);
+            world
+                .resource_mut::<crate::ui_script::live::UiEvents>()
+                .put_back(earlier);
+            Some(HostAnswer::Done)
+        }
+        // `SendAddonMessage`'s packet (`0x50071f`).
+        HostAsk::AddonSend(send) => {
+            crate::ui_chat::input::send_addon_message(world, send);
+            Some(HostAnswer::Done)
+        }
     })
     .flatten()
 }

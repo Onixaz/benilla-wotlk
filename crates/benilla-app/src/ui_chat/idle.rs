@@ -16,7 +16,7 @@ use bevy::input::mouse::{AccumulatedMouseMotion, MouseButtonInput, MouseWheel};
 use bevy::prelude::*;
 use bevy::time::Real;
 
-use super::away::{afk_line, push_system, AfkMirror};
+use super::away::{add_system, afk_line, AfkMirror};
 
 /// The last-input stamp: elapsed real time on the one clock both its writers and the handler read.
 /// Process-global, zero at start and never reset, not even at world entry, so a client untouched
@@ -122,26 +122,21 @@ pub(crate) fn idle_action(idle: Duration, gates: IdleGates) -> IdleAction {
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct IdleStep;
 
-/// The handler, in-world only: the reference runs it in the world frame's render.
-pub(crate) fn idle_handler(
+/// What the handler reads ahead of its legs.
+#[allow(clippy::too_many_arguments)]
+fn idle_reads(
     time: Res<Time<Real>>,
     last: Res<LastInput>,
-    mut script: crate::ui_script::InTurn,
     self_q: Query<&crate::net::ObjectStore, With<crate::net::SelfPlayer>>,
-    mut mirror: ResMut<AfkMirror>,
-    commands: Res<crate::net::NetCommands>,
-    mut stand: MessageWriter<crate::player::StandStateRequest>,
+    mirror: Res<AfkMirror>,
     follow: Res<crate::player::FollowState>,
     approach: Res<crate::player::Approach>,
     logout: Res<crate::ui_logout::LogoutState>,
-) {
+) -> (IdleAction, bool) {
     let idle = time.elapsed().saturating_sub(last.0);
     if idle < AUTO_AFK_AFTER {
-        return;
+        return (IdleAction::default(), logout.pending());
     }
-    let Some(mut script) = script.turn() else {
-        return;
-    };
     let gates = self_q.iter().next().map(|store| {
         let flags = store.0.unit_flags();
         IdleGates {
@@ -162,40 +157,67 @@ pub(crate) fn idle_handler(
             ..IdleAction::default()
         },
     };
+    (action, logout.pending())
+}
 
-    if action.sit {
-        // Through the one setter, like the reference: `player::posture` refuses a swimmer and
-        // drops a request equal to its pending state, so one `CMSG_STANDSTATECHANGE` goes out.
-        stand.write(crate::player::StandStateRequest { state: 1 });
-    }
-
-    if action.afk {
-        // The AFK mark with no message is `/afk` with an empty message and a clear mirror, so it
-        // shares that path: the `DEFAULT_AFK_MESSAGE` echo and body, and the optimistic mirror.
-        let out = afk_line("", *mirror, &|key: &str| {
-            crate::ui_chat::combat::global_string(&script, key)
-        });
-        if let Some(line) = out.line {
-            push_system(&mut script, line);
-        }
-        if let Some(v) = out.mirror {
-            mirror.0 = v;
-        }
-        let _ = commands.0.send(crate::net::ClientCommand::Chat {
-            kind: crate::net::ChatKind::Afk,
-            target: None,
-            text: out.body,
-            language: None,
-        });
+/// The handler (`0x52af40`), in-world only: the reference runs it in the world frame's render, each
+/// leg's line added in its own turn.
+pub(crate) fn idle_handler(world: &mut World) {
+    let Ok((action, logout_pending)) = world.run_system_cached(idle_reads) else {
+        return;
+    };
+    if world
+        .get_non_send_resource::<benilla_ui::script::UiScript>()
+        .is_none()
+    {
+        return;
     }
     // While a logout is pending the whole leg is skipped, the line with the request, so it runs
-    // once per logout and again after a cancel.
-    if action.camp && !logout.pending() {
-        if let Some(line) = crate::ui_chat::combat::global_string(&script, "IDLE_MESSAGE") {
-            push_system(&mut script, line);
+    // once per logout and again after a cancel (`0x52b273`).
+    if action.camp && !logout_pending {
+        let line = world
+            .get_non_send_resource::<benilla_ui::script::UiScript>()
+            .and_then(|s| crate::ui_chat::combat::global_string(s, "IDLE_MESSAGE"));
+        if let Some(line) = line {
+            add_system(world, line);
         }
-        // The logout request with the game menu's arguments; `crate::ui_logout` owns the rest.
-        script.queue_session_request(benilla_ui::script::SessionRequest::Logout);
+        // The logout request with the game menu's arguments (`0x52b2b7`); `crate::ui_logout` owns
+        // the rest.
+        if let Some(mut script) = world.get_non_send_resource_mut::<benilla_ui::script::UiScript>()
+        {
+            script.queue_session_request(benilla_ui::script::SessionRequest::Logout);
+        }
+    }
+    if action.sit {
+        // Through the one setter, like the reference (`0x52b31b`): `player::posture` refuses a
+        // swimmer and drops a request equal to its pending state, so one `CMSG_STANDSTATECHANGE`
+        // goes out.
+        world.write_message(crate::player::StandStateRequest { state: 1 });
+    }
+    if action.afk {
+        // The AFK mark with no message (`0x52b349`) is `/afk` with an empty message and a clear
+        // mirror, so it shares that path: the `DEFAULT_AFK_MESSAGE` echo and body, the line added
+        // before the mirror is set (`0x6dc6e0`, `0x6dc6e8`).
+        let mirror = *world.resource::<AfkMirror>();
+        let out = afk_line("", mirror, &|key: &str| {
+            world
+                .get_non_send_resource::<benilla_ui::script::UiScript>()
+                .and_then(|s| crate::ui_chat::combat::global_string(s, key))
+        });
+        if let Some(line) = out.line {
+            add_system(world, line);
+        }
+        if let Some(v) = out.mirror {
+            world.resource_mut::<AfkMirror>().0 = v;
+        }
+        if let Some(commands) = world.get_resource::<crate::net::NetCommands>() {
+            let _ = commands.0.send(crate::net::ClientCommand::Chat {
+                kind: crate::net::ChatKind::Afk,
+                target: None,
+                text: out.body,
+                language: None,
+            });
+        }
     }
 }
 
@@ -205,7 +227,7 @@ mod tests {
     use bevy::ecs::system::RunSystemOnce;
 
     use super::*;
-    use crate::net::{ClientCommand, NetCommands, ObjectStore, SelfPlayer};
+    use crate::net::{ClientCommand, ObjectStore, SelfPlayer};
 
     /// Descriptor indices, spelled here so a fixture reads like the field it sets.
     const UNIT_FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_FLAGS;
@@ -497,17 +519,16 @@ mod tests {
         idle_ms: u64,
         fields: &[(u16, u32)],
     ) -> (App, crossbeam_channel::Receiver<ClientCommand>) {
-        let (tx, rx) = crossbeam_channel::unbounded();
         let mut app = App::new();
         app.init_resource::<Time<Real>>()
             .init_resource::<AfkMirror>()
-            .init_resource::<crate::ui_script::live::UiEvents>()
             .init_resource::<LastInput>()
             .init_resource::<crate::player::FollowState>()
             .init_resource::<crate::player::Approach>()
             .init_resource::<crate::ui_logout::LogoutState>()
-            .add_message::<crate::player::StandStateRequest>()
-            .insert_resource(NetCommands(tx));
+            .add_message::<crate::player::StandStateRequest>();
+        // The chat add the handler's lines go through, in the world.
+        let rx = crate::ui_chat::feed::insert_add_resources(app.world_mut());
         // `LastInput` stays at zero and the clock walks forward, so "idle" is just the elapsed.
         app.world_mut()
             .resource_mut::<Time<Real>>()
@@ -516,6 +537,11 @@ mod tests {
             .spawn((SelfPlayer, ObjectStore(ObjectFields::from_pairs(fields))));
 
         let script = benilla_ui::script::UiScript::new().unwrap();
+        script
+            .run(
+                "Seen = {} local f = CreateFrame('Frame') f:RegisterEvent('CHAT_MSG_SYSTEM')                  f:SetScript('OnEvent', function(_, _, t) Seen[#Seen + 1] = t end)",
+            )
+            .unwrap();
         // The three GlobalStrings this handler reaches for, exactly as the install ships them.
         script
             .run(
@@ -532,8 +558,9 @@ mod tests {
 
     fn lines(app: &App) -> Vec<String> {
         app.world()
-            .resource::<crate::ui_script::live::UiEvents>()
-            .chat_texts()
+            .non_send_resource::<benilla_ui::script::UiScript>()
+            .eval::<Vec<String>>("return Seen")
+            .unwrap()
     }
 
     /// The sit is a [`crate::player::StandStateRequest`]; the mark, the `/afk` line and packet.

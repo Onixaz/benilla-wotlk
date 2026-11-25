@@ -479,15 +479,15 @@ fn channel_client_bodies_golden() {
     assert_eq!(messages::opcode::CMSG_CHANNEL_MODERATE, 0x00A8);
 }
 
-/// `CMSG_CHAT_IGNORED` is a raw guid (vmangos `Server/Packets/Misc.cpp:127-130`),
+/// `CMSG_CHAT_IGNORED` is the guid and a `u8` reason (`0x5001d0`, `0x5001dc`),
 /// `CMSG_PLAYED_TIME` is empty, and the `MSG_RANDOM_ROLL` request is `u32` min and max
 /// (`Server/Packets/Group.cpp:39-43`).
 #[test]
 fn chat_ignored_played_time_random_roll_golden() {
     assert_eq!(
-        messages::full_guid(0x1234_5678_9abc_def0),
-        hx("f0debc9a78563412"),
-        "CMSG_CHAT_IGNORED body (a raw guid, same shape as full_guid)"
+        messages::chat_ignored(0x1234_5678_9abc_def0, 1),
+        hx("f0debc9a7856341201"),
+        "CMSG_CHAT_IGNORED body: the guid, then the reason byte"
     );
     assert_eq!(messages::opcode::CMSG_CHAT_IGNORED, 0x0225);
 

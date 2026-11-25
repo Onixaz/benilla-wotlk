@@ -359,24 +359,23 @@ fn a_selected_channel_is_watched_and_its_display_list_fills_the_roster() {
         events(s);
 
         // Only the selected channel's list is read, in any case.
-        s.display_channel_list("MyChan", 0, &[(0x99, 0)], |_| Some(Some("x".into())));
+        s.display_channel_list("MyChan", 0, &[(0x99, 0)], |_| true);
         assert!(events(s).is_empty());
+        test_view(|v| {
+            v.player_names.insert(OWN, "Me".into());
+            v.player_names.insert(0x20, "bob".into());
+        });
         s.display_channel_list(
             "general - elwynn forest",
             0x18,
             &[(OWN, 0x01), (0x20, 0x00), (0x30, 0x02)],
-            |g| match g {
-                OWN => Some(Some("Me".into())),
-                0x20 => Some(Some("bob".into())),
-                _ => None,
-            },
+            |g| g != 0x30,
         );
         assert_eq!(
             events(s),
             vec!["CHANNEL_FLAGS_UPDATED:3:nil", "CHANNEL_FLAGS_UPDATED:3:nil"],
             "the channel's flags moved, then the player's own row (`0x503a7f`, `0x503bc6`)"
         );
-        assert!(s.channel_roster_awaits(0x30));
         assert!(
             s.eval::<Option<i64>>("return GetNumChannelMembers(3)")
                 .unwrap()
@@ -385,12 +384,15 @@ fn a_selected_channel_is_watched_and_its_display_list_fills_the_roster() {
         );
         assert_eq!(s.arity("GetChannelRosterInfo(3, 1)").unwrap(), 0);
 
-        s.channel_roster_named(0x30, Some("Ann".into()));
+        // The answer caches the name before the record's callbacks run (`0x680c60`).
+        test_view(|v| {
+            v.player_names.insert(0x30, "Ann".into());
+        });
+        s.channel_roster_named(0x30);
         assert_eq!(
             events(s),
             vec!["CHANNEL_COUNT_UPDATE:3:3", "CHANNEL_ROSTER_UPDATE:3:3"]
         );
-        assert!(!s.channel_roster_awaits(0x30));
         assert_eq!(s.eval::<i64>("return GetNumChannelMembers(3)").unwrap(), 3);
         assert_eq!(s.arity("GetChannelRosterInfo(3, 1)").unwrap(), 6);
         s.run(
@@ -420,7 +422,7 @@ fn an_unnamed_member_reads_unknown_and_a_leave_unselects() {
     let (mut s, mut v) = pane();
     s.with_live(&mut v, |s| {
         s.run("SetSelectedDisplayChannel(6)").unwrap();
-        s.display_channel_list("MyChan", 0, &[(0x40, 0)], |_| Some(None));
+        s.display_channel_list("MyChan", 0, &[(0x40, 0)], |_| true);
         s.run("assert(GetChannelRosterInfo(6, 1) == 'nobody')")
             .unwrap();
         assert!(
@@ -442,6 +444,58 @@ fn an_unnamed_member_reads_unknown_and_a_leave_unselects() {
             .unwrap()
             .is_none());
         assert_eq!(s.eval::<i64>("return GetNumDisplayChannels()").unwrap(), 5);
+    });
+}
+
+/// `GetChannelRosterInfo` reads the member's name off the cache at the call (`0x504f30`): a record
+/// that changes after the roster fired answers its new name, and one that is gone reads `UNKNOWN`
+/// (`0x50505a`); the roster's order stays as the last name sorted it.
+#[test]
+fn a_roster_name_is_read_off_the_cache_at_the_call() {
+    let (mut s, mut v) = pane();
+    s.with_live(&mut v, |s| {
+        s.run("SetSelectedDisplayChannel(6)").unwrap();
+        test_view(|v| {
+            v.player_names.insert(0x40, "Ann".into());
+            v.player_names.insert(0x41, "Bob".into());
+        });
+        s.display_channel_list("MyChan", 0, &[(0x41, 0), (0x40, 0)], |_| true);
+        s.run(
+            "assert(GetChannelRosterInfo(6, 1) == 'Ann' and GetChannelRosterInfo(6, 2) == 'Bob')",
+        )
+        .unwrap();
+        test_view(|v| {
+            v.player_names.insert(0x40, "Zoe".into());
+        });
+        s.run("assert(GetChannelRosterInfo(6, 1) == 'Zoe', 'the record at the call')")
+            .unwrap();
+        test_view(|v| {
+            v.player_names.remove(&0x40);
+        });
+        s.run("assert(GetChannelRosterInfo(6, 1) == 'nobody', 'no record reads UNKNOWN')")
+            .unwrap();
+    });
+}
+
+/// `ResetChatWindows` sets each `flags & 1` row's `ZONECHANNELS` bit inside the call (`0x50211e`),
+/// and no other row's.
+#[test]
+fn reset_chat_windows_sets_the_auto_join_rows_zone_bits_in_the_call() {
+    let mut s = script();
+    let row = |id: u32, auto_join: bool| crate::script::ZoneChannelRow {
+        id,
+        shortcut: format!("C{id}"),
+        resolved: Some(format!("C{id} - Elwynn Forest")),
+        listed: true,
+        auto_join,
+    };
+    let mut v = TestView {
+        zone_channels: vec![row(1, true), row(2, true), row(3, false), row(22, true)],
+        ..Default::default()
+    };
+    s.with_live(&mut v, |s| {
+        s.run("ResetChatWindows()").unwrap();
+        test_view(|v| assert_eq!(v.zone_bits, vec![1, 2, 22], "set before the call returns"));
     });
 }
 
@@ -479,6 +533,12 @@ fn a_party_lists_under_the_group_header_and_builds_its_roster_at_once() {
              local _, _, _, _, gc = GetChannelDisplayInfo(1) assert(gc == 1, 'one session')",
         )
         .unwrap();
+        // The rows' names are the name cache's at the call (`0x4fb123`, `0x50503e`).
+        test_view(|v| {
+            v.player_names.insert(OWN, "Me".into());
+            v.player_names.insert(0x50, "Zed".into());
+            v.player_names.insert(0x60, "amy".into());
+        });
         assert_eq!(s.eval::<i64>("return GetNumChannelMembers(2)").unwrap(), 3);
         assert!(s.take_channel_commands().is_empty(), "a group asks nothing");
         s.run(
@@ -515,6 +575,12 @@ fn a_raid_lists_its_entry_and_a_battleground_raid_the_battleground() {
                 member("amy", 0x60, 0),
             ],
             ..Default::default()
+        });
+        // The rows' names are the name cache's at the call (`0x4fb123`, `0x50503e`).
+        test_view(|v| {
+            v.player_names.insert(OWN, "Me".into());
+            v.player_names.insert(0x50, "Zed".into());
+            v.player_names.insert(0x60, "amy".into());
         });
         s.run(
             "assert(GetNumDisplayChannels() == 7, 'one group entry') \
@@ -574,10 +640,12 @@ fn the_user_list_packets_edit_the_watched_roster() {
     s.with_live(&mut v, |s| {
         s.run("SetSelectedDisplayChannel(3)").unwrap();
         s.take_channel_commands();
-        s.display_channel_list(GENERAL, 0x18, &[(OWN, 0x01), (0x20, 0)], |g| match g {
-            OWN => Some(Some("Me".into())),
-            _ => Some(Some("bob".into())),
+        test_view(|v| {
+            v.player_names.insert(OWN, "Me".into());
+            v.player_names.insert(0x20, "bob".into());
+            v.player_names.insert(0x30, "Ann".into());
         });
+        s.display_channel_list(GENERAL, 0x18, &[(OWN, 0x01), (0x20, 0)], |_| true);
         events(s);
         let names = |s: &crate::script::UiScript| -> Vec<String> {
             let n = s.eval::<i64>("return GetNumChannelMembers(3)").unwrap();
@@ -589,21 +657,23 @@ fn the_user_list_packets_edit_the_watched_roster() {
                 .collect()
         };
 
-        s.channel_user_added(GENERAL, 0x30, 0, 0x18, |_| Some(Some("Ann".into())));
+        s.channel_user_added(GENERAL, 0x30, 0, 0x18, |_| true);
         assert_eq!(
             events(s),
             vec!["CHANNEL_COUNT_UPDATE:3:3", "CHANNEL_ROSTER_UPDATE:3:3"]
         );
         assert_eq!(names(s), ["Ann", "bob", "Me"]);
 
-        s.channel_user_added(GENERAL, 0x40, 0, 0x1a, |_| None);
+        s.channel_user_added(GENERAL, 0x40, 0, 0x1a, |_| false);
         assert_eq!(
             events(s),
             vec!["CHANNEL_FLAGS_UPDATED:3:nil"],
             "the channel's flags moved; the roster waits on the name"
         );
-        assert!(s.channel_roster_awaits(0x40));
-        s.channel_roster_named(0x40, Some("Cid".into()));
+        test_view(|v| {
+            v.player_names.insert(0x40, "Cid".into());
+        });
+        s.channel_roster_named(0x40);
         assert_eq!(
             events(s),
             vec!["CHANNEL_COUNT_UPDATE:3:4", "CHANNEL_ROSTER_UPDATE:3:4"]

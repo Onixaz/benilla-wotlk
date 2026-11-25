@@ -213,6 +213,17 @@ impl SocialState {
         self.ignores_dirty = true;
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_friends_for_test(&mut self, guids: &[u64]) {
+        self.friends = guids
+            .iter()
+            .map(|&guid| Friend {
+                guid,
+                ..Friend::default()
+            })
+            .collect();
+    }
+
     /// `SMSG_FRIEND_STATUS` (`0x6b73a0`): apply the result and queue its line. The server sends no
     /// fresh list after an add or a remove, so the result codes maintain the lists.
     fn apply_friend_status(&mut self, update: FriendStatusUpdate) {

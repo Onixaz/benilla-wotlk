@@ -7193,6 +7193,47 @@ fn the_guild_bank_fires_from_its_handlers_with_the_bank_read_at_the_call() {
     );
 }
 
+/// 12340 runs every callback on a name record in one list, in registration order (`0x67d880` appends, `0x680d03`-`0x680d2c` runs); benilla runs the guild bank's before the chat's whichever registered first (#1487): today's order, pinned for both registrations.
+#[test]
+fn a_name_answer_runs_the_bank_log_before_the_chat_line_whichever_asked_first() {
+    use benilla_protocol::messages::{GuildBankLog, GuildBankLogEntry};
+    const EVENTS: &[&str] = &["CHAT_MSG_SAY", "GUILDBANKLOG_UPDATE"];
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    let log = |player: u64| {
+        SessionEvent::GuildBankLog(GuildBankLog {
+            tab: 0,
+            entries: vec![GuildBankLogEntry {
+                kind: 1,
+                player,
+                ..Default::default()
+            }],
+        })
+    };
+    for (chat_first, guid, name) in [(true, 0x51, "Ann"), (false, 0x52, "Bob")] {
+        let asks = if chat_first {
+            vec![say_from(guid, "hi"), log(guid)]
+        } else {
+            vec![log(guid), say_from(guid, "hi")]
+        };
+        let seen = rig.packets(asks, 2);
+        assert!(
+            fired(&seen, EVENTS).is_empty(),
+            "{:?}",
+            fired(&seen, EVENTS)
+        );
+        let seen = rig.packets(vec![name_answer(guid, name)], 2);
+        assert_eq!(
+            fired(&seen, EVENTS),
+            ["GUILDBANKLOG_UPDATE", "CHAT_MSG_SAY"],
+            "chat registered first: {chat_first}"
+        );
+    }
+}
+
 /// One record's callbacks run in ask order across subsystems, as 12340 links every ask to the tail of the record's one list (`0x67ca82`, `0x67cab1`): our bag item's post-init (`0x70af17`) and an open guild bank's list (`0x5a7664`) wait on the same entry, and its answer runs them in the order they asked, the post-init's `BAG_UPDATE`s (`0x70ae0b`) and `GUILDBANKBAGSLOTS_CHANGED` (`0x5a47a0`) either way round; a verb's callback, the currency build's (`0x5b01d7`), joins the same list.
 #[test]
 fn one_records_callbacks_run_in_ask_order_across_subsystems() {
@@ -9504,6 +9545,7 @@ fn group_loot_rolls_fire_from_their_handlers_with_the_rolls_read_at_the_call() {
                 "CANCEL_LOOT_ROLL 0 | roll0=nil roll1=Charz Late roll2=nil rleft1=true".to_string(),
             ],
             vec![
+                // The all-passed line is added (`0x6fb4da`) before the roll closes (`0x6fb4f6`).
                 "CHAT_MSG_LOOT Everyone passed on: |cffffffff|Hitem:593922:0:0:0:0:0:0:0:80|h[Charz Late]|h|r      0 0  0 3  0 | roll0=nil roll1=Charz Late roll2=nil rleft1=true".to_string(),
                 "CANCEL_LOOT_ROLL 1 | roll0=nil roll1=nil roll2=nil rleft1=false".to_string(),
             ],
@@ -10915,6 +10957,7 @@ fn say_from(guid: u64, text: &str) -> SessionEvent {
         achievement: 0,
         wire_type: 0,
         sender_word: 0,
+        gm: false,
     })
 }
 
@@ -11078,6 +11121,85 @@ fn a_server_message_adds_its_line_in_its_handler() {
         .map(|s| s.args.clone())
         .unwrap_or_default();
     assert!(line.contains("charz"), "{line}");
+}
+
+/// The two defense broadcasts (`0x50c3c0`, `0x50c850`) add their `CHAT_MSG_CHANNEL` lines in their
+/// handlers, against the slots and zone as they stand at the packet: a joined LocalDefense hears
+/// each between the answers around it, and a renamed or suspended one (`0x50c45e`, `0x50c8d6`)
+/// hears nothing.
+#[test]
+fn a_defense_broadcast_adds_its_channel_line_in_its_handler() {
+    use crate::ui_chat::edit::{ChannelSlot, ChannelState, SlotState};
+    const ELWYNN: u32 = 12;
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let played = |n| SessionEvent::PlayedTime {
+        total: n,
+        level: n,
+        show: true,
+    };
+    let order = |seen: &[Seen]| -> Vec<String> {
+        seen.iter()
+            .filter(|s| s.event == "TIME_PLAYED_MSG" || s.event == "CHAT_MSG_CHANNEL")
+            .map(|s| s.event.clone())
+            .collect()
+    };
+    let slot = |rig: &mut Rig, state: SlotState| {
+        let w = rig.app.world_mut();
+        w.insert_resource(benilla_world::terrain_stream::CurrentArea(Some(ELWYNN)));
+        let mut channels = w.resource_mut::<ChannelState>();
+        let mut s = ChannelSlot::joined("LocalDefense - Elwynn Forest");
+        s.state = state;
+        channels.joined = vec![Some(s)];
+    };
+    let burst = || {
+        vec![
+            played(1),
+            SessionEvent::DefenseMessage {
+                zone_id: ELWYNN,
+                text: "charz defense".into(),
+            },
+            played(2),
+            SessionEvent::ZoneUnderAttack { area_id: ELWYNN },
+            played(3),
+        ]
+    };
+
+    slot(&mut rig, SlotState::Joined);
+    let seen = rig.packets(burst(), 1);
+    assert_eq!(
+        order(&seen),
+        [
+            "TIME_PLAYED_MSG",
+            "CHAT_MSG_CHANNEL",
+            "TIME_PLAYED_MSG",
+            "CHAT_MSG_CHANNEL",
+            "TIME_PLAYED_MSG"
+        ],
+        "each broadcast's line between the answers around it"
+    );
+    let lines: Vec<String> = seen
+        .iter()
+        .filter(|s| s.event == "CHAT_MSG_CHANNEL")
+        .map(|s| s.args.clone())
+        .collect();
+    assert!(lines[0].contains("charz defense"), "{lines:?}");
+    assert!(lines[1].contains("Elwynn Forest"), "{lines:?}");
+    assert!(
+        lines.iter().all(|l| l.contains("LocalDefense")),
+        "{lines:?}"
+    );
+
+    for state in [SlotState::Renamed, SlotState::Suspended] {
+        slot(&mut rig, state);
+        let seen = rig.packets(burst(), 1);
+        assert_eq!(
+            order(&seen),
+            ["TIME_PLAYED_MSG", "TIME_PLAYED_MSG", "TIME_PLAYED_MSG"],
+            "a {state:?} slot hears neither broadcast"
+        );
+    }
 }
 
 /// A reload keeps the skill list: the UI shutdown leaves it (`0x52b03e` -> `0x528f00`) and only the
@@ -11874,5 +11996,284 @@ fn the_roster_fires_at_its_last_name_in_either_packet_order() {
             "|",
         ],
         "a cached name: the list's own handler fires the roster"
+    );
+}
+
+/// The roster's name callback (`0x4ffe30`) joins the chat module's callbacks on the record in the
+/// order they were registered (`0x67d880` appends, `0x680d03`-`0x680d2c` runs): an uncached
+/// speaker's line asked first adds before the roster fires, and a display list asked first fires
+/// the roster before the line, at the one name answer.
+#[test]
+fn the_roster_and_a_held_line_run_in_registration_order() {
+    const EVENTS: &[&str] = &[
+        "CHAT_MSG_SAY",
+        "CHANNEL_COUNT_UPDATE",
+        "CHANNEL_ROSTER_UPDATE",
+    ];
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    rig.packets(vec![joined_notice("Charz")], 1);
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("GetNumDisplayChannels() SetSelectedDisplayChannel(4)")
+    })
+    .expect("a VM")
+    .unwrap();
+    let list = |guid| SessionEvent::ChannelList {
+        display: true,
+        channel: "Charz".into(),
+        flags: 0,
+        members: vec![(guid, 0)],
+    };
+    for (line_first, guid, name) in [(true, 0x61, "Ann"), (false, 0x62, "Bob")] {
+        let asks = if line_first {
+            vec![say_from(guid, "hi"), list(guid)]
+        } else {
+            vec![list(guid), say_from(guid, "hi")]
+        };
+        let seen = rig.packets(asks, 2);
+        assert!(
+            fired(&seen, EVENTS).is_empty(),
+            "{:?}",
+            fired(&seen, EVENTS)
+        );
+        let seen = rig.packets(vec![name_answer(guid, name)], 2);
+        let expected: &[&str] = if line_first {
+            &[
+                "CHAT_MSG_SAY",
+                "CHANNEL_COUNT_UPDATE",
+                "CHANNEL_ROSTER_UPDATE",
+            ]
+        } else {
+            &[
+                "CHANNEL_COUNT_UPDATE",
+                "CHANNEL_ROSTER_UPDATE",
+                "CHAT_MSG_SAY",
+            ]
+        };
+        assert_eq!(
+            fired(&seen, EVENTS),
+            expected,
+            "line registered first: {line_first}"
+        );
+    }
+}
+
+/// The confirmed join writes the notice's flags byte into the record (`0x5078e1`, `0x5078eb`), so a
+/// display list carrying the same flags finds them equal at `0x503a62` and fires nothing; one with
+/// other flags fires `CHANNEL_FLAGS_UPDATED`.
+#[test]
+fn the_join_writes_its_flags_and_an_equal_display_list_fires_nothing() {
+    use benilla_protocol::messages::{channel_notice, ChannelNoticeTail};
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    rig.packets(
+        vec![channel_notice(
+            channel_notice::YOU_JOINED,
+            "Charz",
+            ChannelNoticeTail::YouJoined {
+                flags: 0x18,
+                text: None,
+            },
+        )],
+        1,
+    );
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("GetNumDisplayChannels() SetSelectedDisplayChannel(4)")
+    })
+    .expect("a VM")
+    .unwrap();
+    let list = |flags| SessionEvent::ChannelList {
+        display: true,
+        channel: "Charz".into(),
+        flags,
+        members: Vec::new(),
+    };
+    let seen = rig.packets(vec![list(0x18)], 1);
+    assert!(
+        fired(&seen, &["CHANNEL_FLAGS_UPDATED"]).is_empty(),
+        "the join's flags are the record's"
+    );
+    let seen = rig.packets(vec![list(0x1a)], 1);
+    assert_eq!(
+        fired(&seen, &["CHANNEL_FLAGS_UPDATED"]),
+        ["CHANNEL_FLAGS_UPDATED"]
+    );
+}
+
+/// The roster's callback is registered only on a member the cache missed at list time (`0x503bdb`):
+/// a re-answer for a member that was cached then (here after `SMSG_INVALIDATE_PLAYER`) leaves the
+/// count, and the uncached member's answer fires the count and the roster.
+#[test]
+fn a_cached_members_answer_leaves_the_rosters_count() {
+    const EVENTS: &[&str] = &["CHANNEL_COUNT_UPDATE", "CHANNEL_ROSTER_UPDATE"];
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    rig.packets(vec![joined_notice("Charz")], 1);
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("GetNumDisplayChannels() SetSelectedDisplayChannel(4)")
+    })
+    .expect("a VM")
+    .unwrap();
+    const ANN: u64 = 0x71;
+    const CAL: u64 = 0x73;
+    rig.packets(vec![name_answer(CAL, "Cal")], 1);
+    let seen = rig.packets(
+        vec![SessionEvent::ChannelList {
+            display: true,
+            channel: "Charz".into(),
+            flags: 0,
+            members: vec![(ANN, 0), (CAL, 0)],
+        }],
+        1,
+    );
+    assert!(fired(&seen, EVENTS).is_empty(), "Ann's name is out");
+    let seen = rig.packets(
+        vec![
+            SessionEvent::InvalidatePlayer { guid: CAL },
+            name_answer(CAL, "Cal"),
+        ],
+        1,
+    );
+    assert!(
+        fired(&seen, EVENTS).is_empty(),
+        "Cal's record carries no roster callback"
+    );
+    let seen = rig.packets(vec![name_answer(ANN, "Ann")], 1);
+    assert_eq!(fired(&seen, EVENTS), EVENTS);
+}
+
+/// `JoinChannelByName("General")` sends the join and claims a zone channel's record inside the call
+/// (`0x507a80`) with no `CHANNEL_UI_UPDATE`, and `GetChannelName` reads the claimed record in the
+/// same chunk; the zone walk's rename relists nothing either (`0x508090` calls no `0x505d40`), and
+/// the next `GetChannelName` reads the renamed record.
+#[test]
+fn a_join_verb_and_the_walks_rename_claim_records_with_no_relist() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    // The rig has no asset chain: `ChatChannels.dbc` is read here, as the startup load reads it.
+    let data = benilla_formats::wow_data().expect("install");
+    let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::ui_chat::ChannelState>()
+        .channels =
+        benilla_formats::load_chat_channels_catalog(&mut chain).expect("ChatChannels.dbc");
+    let areas = benilla_formats::load_area_table_catalog(&mut chain).expect("AreaTable.dbc");
+    rig.app.insert_resource(crate::area::AreaTableRes(areas));
+    rig.run(1);
+    rig.take();
+    // Elwynn Forest, the zone id the verbs compose the catalog for.
+    rig.app
+        .insert_resource(crate::area::ZoneIds { zone: 12, area: 12 });
+    let number = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("JoinChannelByName('General')")?;
+        s.eval::<i64>("return (GetChannelName('General - Elwynn Forest'))")
+    })
+    .expect("a VM")
+    .unwrap();
+    assert_ne!(number, 0, "the record is claimed inside the call");
+    assert!(
+        rx.try_iter().any(|c| matches!(
+            c,
+            crate::net::ClientCommand::JoinChannel { ref name, .. } if name == "General - Elwynn Forest"
+        )),
+        "the join went out inside the call"
+    );
+    rig.run(2);
+    assert!(
+        fired(&rig.take(), &["CHANNEL_UI_UPDATE"]).is_empty(),
+        "the join verb relists nothing"
+    );
+    crate::ui_chat::apply_walk(
+        &[crate::ui_chat::WalkStep::Rename {
+            old: "General - Elwynn Forest".into(),
+            new: "General - Westfall".into(),
+        }],
+        &mut rig
+            .app
+            .world_mut()
+            .resource_mut::<crate::ui_chat::ChannelState>(),
+        &crate::net::NetCommands(crossbeam_channel::unbounded().0),
+    );
+    rig.run(2);
+    assert!(
+        fired(&rig.take(), &["CHANNEL_UI_UPDATE"]).is_empty(),
+        "the walk's rename relists nothing"
+    );
+    let renamed = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval::<String>(&format!("return select(2, GetChannelName({number}))"))
+    })
+    .expect("a VM")
+    .unwrap();
+    assert_eq!(renamed, "General - Westfall", "the record read at the call");
+}
+
+/// A combat line's uncached item: the tradeskill line asks its record with its callback and shows
+/// nothing (`0x50bdb1`); the answer runs the record's callbacks in ask order (`0x67ca30`), the
+/// line's composing it again (`0x4fb970`) before a later asker's runs, and a missing record shows
+/// nothing (`0x4fb977`).
+#[test]
+fn a_combat_lines_item_callback_runs_in_ask_order() {
+    use benilla_protocol::messages::{ExecuteLog, SpellLogExecute};
+    const CRAFTED: u32 = 591_101;
+    const MISSING: u32 = 591_102;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let create = |item_entry| {
+        SessionEvent::SpellLogExecute(SpellLogExecute {
+            caster: ME,
+            spell_id: 2_329,
+            effects: vec![(24, vec![ExecuteLog::CreateItem { item_entry }])],
+        })
+    };
+    let events = &["CHAT_MSG_TRADESKILLS", "TRAINER_DESCRIPTION_UPDATE"];
+    let seen = rig.packets(vec![create(CRAFTED)], 2);
+    assert!(
+        pin(&seen, events, &[]).is_empty(),
+        "nothing before the record"
+    );
+    // A later asker on the same record.
+    rig.app
+        .world_mut()
+        .non_send_resource_mut::<crate::items::RecordWaits>()
+        .wait(CRAFTED, crate::items::RecordWait::Trainer, false);
+    let seen = rig.packets(
+        vec![SessionEvent::ItemTemplate {
+            entry: CRAFTED,
+            info: Some(Box::new(crate::items::test_template("Charz Elixir"))),
+        }],
+        2,
+    );
+    let pinned = pin(&seen, events, &[]);
+    assert_eq!(pinned.len(), 2, "{pinned:?}");
+    assert!(
+        pinned[0].starts_with("CHAT_MSG_TRADESKILLS") && pinned[0].contains("Charz Elixir"),
+        "{pinned:?}"
+    );
+    assert_eq!(pinned[1], "TRAINER_DESCRIPTION_UPDATE");
+    rig.packets(vec![create(MISSING)], 2);
+    let seen = rig.packets(
+        vec![SessionEvent::ItemTemplate {
+            entry: MISSING,
+            info: None,
+        }],
+        2,
+    );
+    assert!(
+        pin(&seen, events, &[]).is_empty(),
+        "a missing record shows nothing"
     );
 }

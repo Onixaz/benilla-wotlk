@@ -1,6 +1,7 @@
 //! The chat lines 3.3.5a still prints beside its combat log, queued for their names; the wording
 //! law is [`crate::ui_chat::combat`].
 
+use crate::items::RecordWait;
 use crate::ui_chat::combat::{self, Fills, Named, PendingCombat};
 use crate::ui_chat::ChatEventKind;
 use crate::ui_chat::ChatSink as _;
@@ -26,7 +27,8 @@ fn line(
     }
 }
 
-/// The tradeskill-create line (`0x50bd90`): the created item, `CHAT_MSG_TRADESKILLS`.
+/// The tradeskill-create line (`0x50bd90`): the created item, `CHAT_MSG_TRADESKILLS`. An uncached
+/// item asks its record with `0x4fb970`, which composes the line again on a found answer.
 pub(crate) fn tradeskill_create(
     log: &mut crate::ui_script::live::UiEvents,
     me: Option<u64>,
@@ -39,11 +41,12 @@ pub(crate) fn tradeskill_create(
         me,
         caster,
         Fills::default(),
-        Named::Item(item),
+        Named::Item(item, Some(RecordWait::TradeskillLine(caster))),
     ));
 }
 
-/// The feed-pet line (`0x50baf0`): the food, `CHAT_MSG_PET_INFO`.
+/// The feed-pet line (`0x50baf0`): the food, `CHAT_MSG_PET_INFO`. An uncached item asks its
+/// record with `0x4fb950`, which composes the line again on a found answer.
 pub(crate) fn feed_pet(
     log: &mut crate::ui_script::live::UiEvents,
     me: Option<u64>,
@@ -56,7 +59,7 @@ pub(crate) fn feed_pet(
         me,
         caster,
         Fills::default(),
-        Named::Item(item),
+        Named::Item(item, Some(RecordWait::FeedPetLine(caster))),
     ));
 }
 
@@ -116,7 +119,7 @@ pub(crate) fn open_lock(
     opened: Opened,
 ) {
     let (named, text) = match opened {
-        Opened::Item(entry) => (Named::Item(entry), String::new()),
+        Opened::Item(entry) => (Named::Item(entry, None), String::new()),
         Opened::GameObject(name) => (Named::Ready, name),
     };
     log.push_combat(line(

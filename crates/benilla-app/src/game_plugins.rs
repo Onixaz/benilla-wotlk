@@ -990,7 +990,7 @@ pub(crate) mod schedule_tests {
     ///   them writes, and only when the registry moved.
     /// - the sound-system restart (`sound::engine::restart_sound_system`) against the `Cvars`
     ///   writers and readers `persist_last_character`, `blood_spurts`, `drain_view_requests`,
-    ///   `apply_script_calls`, `movement_clears_afk`, `drain_addon_chat_sends`, `drive_glue_mgr` and
+    ///   `apply_script_calls`, `drive_glue_mgr` and
     ///   `read_plate_cvars`: it writes only the two `Sound_OutputDriver*` rows, which none of them
     ///   touches; and the restart's `.after(UiInput)` drains and the stream owners' stops against
     ///   `finish_colliders`, as the other such drains pair.
@@ -1975,6 +1975,8 @@ pub(crate) mod schedule_tests {
     /// Every one-shot VM consumer not gated on `ingame_ui_up` (read off the schedule) and not a
     /// memo-diffed `fire_event`, keyed `(path under src/, fn)`, with the reason it is safe.
     const EXEMPT: &[(&str, &str, Because, &str)] = &[
+        ("ui_chat/input/mod.rs", "drain_chat_input", Because::FilledByVm,
+         "it takes only the VM's own queued verb asks and the lines typed or probed into it, which exist only once the interface runs"),
         ("bindings.rs", "sync_dispatch", Because::MemoLatched,
          "`seen_generation` is a `VmMemo`: a new VM reads `None`, rebuilds and re-fires UPDATE_BINDINGS"),
         ("screenshot.rs", "ask_for_captures", Because::FilledByVm,

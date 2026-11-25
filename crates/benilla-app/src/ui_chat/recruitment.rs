@@ -99,67 +99,100 @@ pub(crate) fn cascade(auto: bool, guild_id: u32, in_capital: bool) -> Option<Cas
 }
 
 /// The cascade, chained after the walk: the reference runs it at the walk's tail, on a fresh zone.
-pub(super) fn guild_recruitment_cascade(
-    mut script: crate::ui_script::InTurn,
+/// It owns no VM: the mode latch and the windows' list are read and written with the `World` lent,
+/// and `UPDATE_CHAT_WINDOWS` fires in its turn.
+pub(super) fn guild_recruitment_cascade(world: &mut World) {
+    if world
+        .get_non_send_resource::<benilla_ui::script::UiScript>()
+        .is_none()
+    {
+        return;
+    }
+    // The mode setter (`0x508260`), called with 0: unmoved is a no-op; 1 runs the cascade, 0
+    // leaves a joined recruitment channel and refreshes the windows.
+    let mode = world
+        .get_resource_mut::<GuildRecruitmentCascade>()
+        .and_then(|mut s| s.cvar.take());
+    if let Some(mode) = mode {
+        let moved = crate::ui_script::safe_world::lend(world, |s| {
+            s.set_guild_recruitment_mode_from_cvar(mode)
+        });
+        if moved == Some(true) {
+            if mode == 1 {
+                world.resource_mut::<GuildRecruitmentCascade>().request();
+            } else if world.run_system_cached(cvar_leave).unwrap_or(false) {
+                crate::ui_script::safe_world::raise(world, "UPDATE_CHAT_WINDOWS", vec![]);
+            }
+        }
+    }
+    let auto = crate::ui_script::safe_world::lend(world, |s| s.guild_recruitment_mode() == 1)
+        .unwrap_or(false);
+    let Ok(Some(register)) = world.run_system_cached_with(cascade_run, auto) else {
+        return;
+    };
+    // Both acting arms fire it; chat frames re-read channels on it.
+    crate::ui_script::safe_world::lend(world, |s| {
+        if let Some((shortcut, id)) = register {
+            s.register_chat_window_channel(0, &shortcut, id);
+        }
+        s.fire_event("UPDATE_CHAT_WINDOWS", vec![]);
+    });
+}
+
+/// The mode setter's leave at 0: a joined recruitment channel is left; whether it was.
+fn cvar_leave(
+    mut channels: ResMut<ChannelState>,
+    areas: Option<Res<AreaTableRes>>,
+    commands: Res<NetCommands>,
+) -> bool {
+    let Some(name) = areas.as_deref().and_then(|a| {
+        let row = channels
+            .channels
+            .rows()
+            .iter()
+            .find(|r| r.is_guild_recruitment())?;
+        Some(row.joinable_name("", city_word(&a.0)?))
+    }) else {
+        return false;
+    };
+    if channels.number_of(&name).is_none() {
+        return false;
+    }
+    info!("chat: guildRecruitmentChannel 0 — leaving {name:?}");
+    cascade_leave(&mut channels, &commands, name);
+    true
+}
+
+/// One run of the cascade under the `auto` latch: `None` when it does nothing, else the window
+/// entry a join registers ahead of `UPDATE_CHAT_WINDOWS`.
+#[allow(clippy::option_option)]
+fn cascade_run(
+    In(auto): In<bool>,
     mut state: ResMut<GuildRecruitmentCascade>,
     mut channels: ResMut<ChannelState>,
     walk: Res<ZoneChannelWalk>,
     areas: Option<Res<AreaTableRes>>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     commands: Res<NetCommands>,
-) {
-    let Some(mut script) = script.turn() else {
-        return;
-    };
-    // The mode setter (`0x508260`), called with 0: unmoved is a no-op; 1 runs the cascade, 0
-    // leaves a joined recruitment channel and refreshes the windows.
-    if let Some(mode) = state.cvar.take() {
-        if script.set_guild_recruitment_mode_from_cvar(mode) {
-            if mode == 1 {
-                state.request();
-            } else if let Some(name) = areas.as_deref().and_then(|a| {
-                let row = channels
-                    .channels
-                    .rows()
-                    .iter()
-                    .find(|r| r.is_guild_recruitment())?;
-                Some(row.joinable_name("", city_word(&a.0)?))
-            }) {
-                if channels.number_of(&name).is_some() {
-                    info!("chat: guildRecruitmentChannel 0 — leaving {name:?}");
-                    cascade_leave(&mut channels, &commands, name);
-                    script.fire_event("UPDATE_CHAT_WINDOWS", vec![]);
-                }
-            }
-        }
-    }
+) -> Option<Option<(String, u32)>> {
     // Only while the avatar is streamed: a despawned body has not "left the guild".
-    let Some(guild_id) = self_q.iter().next().map(|s| s.0.player_guild_id()) else {
-        return;
-    };
+    let guild_id = self_q.iter().next().map(|s| s.0.player_guild_id())?;
     state.observe_guild_id(guild_id);
     if !state.pending {
-        return;
+        return None;
     }
     // Wait for the chat-cache restore, which seats the latch and the mask.
-    if channels.zone_mask.is_none() {
-        return;
-    }
+    channels.zone_mask?;
     // The zone row: unresolvable ⇒ the retry stays armed.
-    let Some(areas) = areas.as_deref() else {
-        return;
-    };
-    let Some(row) = walk.zone_id.and_then(|id| areas.0.get(id)) else {
-        return;
-    };
-    let auto = script.guild_recruitment_mode() == 1;
+    let areas = areas.as_deref()?;
+    let row = walk.zone_id.and_then(|id| areas.0.get(id))?;
     let verdict = cascade(auto, guild_id, row.flags & AREA_FLAG_CAPITAL != 0);
     let Some(action) = verdict else {
         state.pending = false; // STANDARD: nothing, not even the retry
-        return;
+        return None;
     };
     if action == Cascade::Deferred {
-        return; // the retry stays armed
+        return None; // the retry stays armed
     }
     // The name is composed against the "City" row whatever the zone; with no row or city word the
     // run is consumed, not retried.
@@ -175,12 +208,14 @@ pub(super) fn guild_recruitment_cascade(
         });
     let Some((row, name)) = target else {
         state.pending = false;
-        return;
+        return None;
     };
+    state.pending = false;
     match action {
         Cascade::Leave => {
             info!("chat: guild recruitment cascade — guilded, leaving {name:?}");
             cascade_leave(&mut channels, &commands, name);
+            Some(None)
         }
         Cascade::Join => {
             info!("chat: guild recruitment cascade — unguilded in a capital, joining {name:?}");
@@ -193,20 +228,14 @@ pub(super) fn guild_recruitment_cascade(
                     super::edit::MAX_CHANNELS
                 ),
             }
-            let (shortcut, id) = (row.shortcut.clone(), row.id);
-            script.after_raises(move |s| {
-                s.register_chat_window_channel(0, &shortcut, id);
-            });
             // The client's own join (`0x49eb70`).
             let _ = commands
                 .0
                 .send(channels.join_command(name, String::new(), true, false));
+            Some(Some((row.shortcut.clone(), row.id)))
         }
-        Cascade::Deferred => {}
+        Cascade::Deferred => None,
     }
-    // Both acting arms fire it; chat frames re-read channels on it.
-    script.fire_event("UPDATE_CHAT_WINDOWS", vec![]);
-    state.pending = false;
 }
 
 /// Leave by the full name: the packet and the mask bit. No window loses its entry: the strip
@@ -355,7 +384,6 @@ mod tests {
             .unwrap();
         app.insert_non_send_resource(script);
         app.update();
-        crate::ui_script::raises::fire_raises(app.world_mut());
         let seen: String = app
             .world()
             .non_send_resource::<UiScript>()

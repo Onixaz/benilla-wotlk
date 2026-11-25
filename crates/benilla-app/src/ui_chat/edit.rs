@@ -123,7 +123,8 @@ pub(crate) struct ChannelSlot {
     pub state: SlotState,
     /// `+0xa0`: we asked to leave (`0x509628`); a join request clears it (`0x5077b4`).
     pub leave_asked: bool,
-    /// `+0x90`, the channel flags its last display list or user-list notice carried (`0x503a69`).
+    /// `+0x90`, the channel flags its confirmed join (`0x5078eb`) or its last display list or
+    /// user-list notice (`0x503a69`) carried.
     pub flags: u8,
 }
 
@@ -328,6 +329,15 @@ impl ChannelState {
         if let Some(n) = self.number_of(name) {
             if let Some(slot) = self.joined[n as usize - 1].as_mut() {
                 slot.state = SlotState::Joined;
+            }
+        }
+    }
+
+    /// The confirmed join's flags byte into the record holding `name` (`0x5078eb`).
+    pub(crate) fn set_slot_flags(&mut self, name: &str, flags: u8) {
+        if let Some(n) = self.number_of(name) {
+            if let Some(slot) = self.joined[n as usize - 1].as_mut() {
+                slot.flags = flags;
             }
         }
     }

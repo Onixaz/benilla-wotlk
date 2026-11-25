@@ -89,7 +89,11 @@ fn the_mac_binding_rows_register_and_run() {
     .unwrap();
     for row in mac_rows {
         assert!(names.iter().any(|n| n == row), "{row}: {names:?}");
-        assert!(s.execute_binding(row, true).unwrap(), "{row} ran nothing");
+        // The GUI key's verb adds its system line inside the call, with a host lent.
+        let ran = super::test_live::lending(&mut super::test_live::View, || {
+            s.execute_binding(row, true).unwrap()
+        });
+        assert!(ran, "{row} ran nothing");
     }
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     // The recording key showed the requirements warning; the GUI key flipped its CVar.

@@ -312,9 +312,6 @@ pub(crate) struct Model {
     pub(crate) refer_a_friend: unit_menu::ReferAFriendState,
     /// Party and loot-method calls (`AcceptGroup`, `InviteUnit`, `SetLootMethod`, …) queued.
     pub(crate) party_requests: Vec<party::PartyRequest>,
-    /// System chat lines the bindings composed (`SendSystemMessage`, the party verbs), drained by
-    /// the app.
-    pub(crate) party_lines: Vec<String>,
     /// The ready-check deadline and the unanswered flags the timeout tick reads.
     pub(crate) ready_check: party::ReadyCheckState,
     /// Saved raid lockouts from `SMSG_RAID_INSTANCE_INFO`, which outlive any roster change.
@@ -1121,8 +1118,9 @@ pub(crate) struct Model {
     pub(crate) knows_cold_weather_flying: bool,
     /// What the macro conditions `equipped` and `worn` read.
     pub(crate) equipped_for_macros: super::EquippedForMacros,
-    /// Whispered names by folded name: the spelling and the time last used, for autocomplete.
-    pub(crate) autocomplete_contacts: std::collections::HashMap<String, (String, f64)>,
+    /// Whispered contacts by guid (`0x57ae80`): the name, empty until one is passed, and the time
+    /// last used, for autocomplete.
+    pub(crate) autocomplete_contacts: std::collections::HashMap<u64, (String, f64)>,
     /// Condition names `SecureCmdOptionParse` did not know, for `ERR_UNKNOWN_MACRO_OPTION_S`.
     pub(crate) unknown_macro_options: Vec<String>,
 }
@@ -1477,7 +1475,6 @@ impl Model {
             lfg_restricted: false,
             refer_a_friend: Default::default(),
             party_requests: Vec::new(),
-            party_lines: Vec::new(),
             ready_check: party::ReadyCheckState::default(),
             saved_instances: Vec::new(),
             raid_selection: 0,

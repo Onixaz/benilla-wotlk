@@ -55,9 +55,9 @@ pub(super) fn load_server_messages(mut commands: Commands, assets: Option<Res<Wo
 }
 
 /// The joined channels a defense broadcast about `subject_zone` reaches, in slot order. With
-/// `player_zone` unknown only non-`ZONE_DEP` rows pass, as with the reference's unset zone. Every
-/// slot counts whatever its state; the reference takes only state 0 (`[e+0x9c]`), skipping pending,
-/// renamed and suspended slots.
+/// `player_zone` unknown only non-`ZONE_DEP` rows pass, as with the reference's unset zone. Only a
+/// slot in state 0 counts (`0x50c45e`, `0x50c8d6`): a renamed or suspended one is skipped; a
+/// join-sent slot still reads as joined (#1470).
 pub(crate) fn defense_targets(
     channels: &ChannelState,
     subject_zone: u32,
@@ -65,6 +65,7 @@ pub(crate) fn defense_targets(
 ) -> Vec<String> {
     channels
         .iter_names()
+        .filter(|name| channels.slot_state(name) == Some(super::edit::SlotState::Joined))
         .filter(|name| {
             let Some(row) = channels.channels.row_for_name(name) else {
                 return false; // a custom channel: no DBC row, no defense flag
@@ -246,6 +247,22 @@ mod tests {
     fn a_freed_slot_does_not_end_the_walk() {
         let mut s = state(&["LocalDefense - Westfall", "WorldDefense"]);
         s.joined[0] = None;
+        assert_eq!(
+            defense_targets(&s, WESTFALL, Some(WESTFALL)),
+            vec!["WorldDefense"]
+        );
+    }
+
+    /// Only a slot in state 0 hears it (`0x50c45e`, `0x50c8d6`): a renamed or suspended one is
+    /// skipped.
+    #[test]
+    fn a_renamed_or_suspended_slot_hears_no_broadcast() {
+        use crate::ui_chat::edit::SlotState;
+        let mut s = state(&["LocalDefense - Westfall", "WorldDefense"]);
+        s.joined[0].as_mut().unwrap().state = SlotState::Renamed;
+        s.joined[1].as_mut().unwrap().state = SlotState::Suspended;
+        assert!(defense_targets(&s, WESTFALL, Some(WESTFALL)).is_empty());
+        s.joined[1].as_mut().unwrap().state = SlotState::Joined;
         assert_eq!(
             defense_targets(&s, WESTFALL, Some(WESTFALL)),
             vec!["WorldDefense"]

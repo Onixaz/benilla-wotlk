@@ -324,7 +324,7 @@ pub(crate) fn plan_walk(
 
 /// Apply a plan in order. Nothing relists: neither the walk nor its join (`0x507a80`) calls the
 /// list's update (`0x505d40`).
-fn apply_walk(steps: &[WalkStep], channels: &mut ChannelState, commands: &NetCommands) {
+pub(crate) fn apply_walk(steps: &[WalkStep], channels: &mut ChannelState, commands: &NetCommands) {
     for step in steps {
         match step {
             WalkStep::Leave(name) => {

@@ -100,17 +100,6 @@ pub(crate) fn dnd_line(
     }
 }
 
-/// The implicit AFK clear on every chat send but type `0x14`, gated on `autoClearAFK`, so `/dnd`
-/// (`0x15`) clears AFK first. The caller sends the empty `0x14` packet and zeroes the mirror. It
-/// runs before the refusal arms: a ghost's `/say` clears AFK, then gets `ERR_CHAT_WHILE_DEAD`.
-pub(crate) fn auto_clear_line(
-    mirror: AfkMirror,
-    auto_clear_afk: bool,
-    strings: &impl Fn(&str) -> Option<String>,
-) -> Option<String> {
-    (auto_clear_afk && mirror.is_afk()).then(|| strings("CLEARED_AFK").unwrap_or_default())
-}
-
 /// Fill the first `%s` of a GlobalString, which the reference `snprintf`s; `%%` is a percent.
 fn fill_one(template: &str, arg: &str) -> String {
     let mut out = String::with_capacity(template.len() + arg.len());
@@ -142,6 +131,15 @@ pub(crate) fn push_system(chat: &mut impl super::ChatSink, line: String) {
     chat.push_event(ChatEvent::text_only(ChatEventKind::System, line));
 }
 
+/// Add one of the four lines as `CHAT_MSG_SYSTEM` through the chat add, in the caller's turn
+/// (`0x509dd0`).
+pub(crate) fn add_system(world: &mut World, line: String) {
+    super::feed::add(
+        world,
+        ChatEvent::text_only(ChatEventKind::System, line).into(),
+    );
+}
+
 /// The last `PLAYER_FLAGS` the reconcile saw; `None` with no local player in the world.
 #[derive(Resource, Default)]
 pub(crate) struct AfkMirrorMemo(Option<u32>);
@@ -169,47 +167,31 @@ pub(crate) fn reconcile_afk_mirror(
     }
 }
 
-/// The movement AFK clears: jump, forward/back, strafe and keyboard turn. They sit in the movement
-/// emitters, so only a key press clears; mouse-look turning never reaches the keyboard-turn
-/// emitter, and knockback, fear and splines press nothing. Jump is here but not in
-/// `player::follow`'s cancel set: two separate reference tables.
-pub(crate) fn movement_clears_afk(
-    binds: Res<crate::bindings::BindingsState>,
-    cvars: Res<crate::cvars::Cvars>,
-    mut script: crate::ui_script::InTurn,
-    commands: Res<crate::net::NetCommands>,
-    mut mirror: ResMut<AfkMirror>,
-) {
+/// The movement AFK clears: jump, forward/back, strafe and keyboard turn, each calling the AFK
+/// clear unforced in its own turn (`0x5fae0c`, `0x5faf49`, `0x5fb056`, `0x5fb14e`, `0x5fc069`).
+/// They sit in the movement emitters, so only a key press clears; mouse-look turning never reaches
+/// the keyboard-turn emitter, and knockback, fear and splines press nothing. Jump is here but not
+/// in `player::follow`'s cancel set: two separate reference tables.
+pub(crate) fn movement_clears_afk(world: &mut World) {
     use crate::bindings::Input;
-    if !mirror.is_afk() || cvars.flag("autoClearAFK") == Some(false) {
-        return;
+    let moved = world
+        .get_resource::<crate::bindings::BindingsState>()
+        .is_some_and(|binds| {
+            [
+                Input::Jump,
+                Input::MoveForward,
+                Input::MoveBackward,
+                Input::StrafeLeft,
+                Input::StrafeRight,
+                Input::TurnLeft,
+                Input::TurnRight,
+            ]
+            .iter()
+            .any(|&c| binds.just_pressed(c))
+        });
+    if moved {
+        super::input::clear_afk(world, false);
     }
-    let moved = [
-        Input::Jump,
-        Input::MoveForward,
-        Input::MoveBackward,
-        Input::StrafeLeft,
-        Input::StrafeRight,
-        Input::TurnLeft,
-        Input::TurnRight,
-    ]
-    .iter()
-    .any(|&c| binds.just_pressed(c));
-    if !moved {
-        return;
-    }
-    if let Some(mut script) = script.turn() {
-        let line = super::combat::global_string(&script, "CLEARED_AFK").unwrap_or_default();
-        push_system(&mut script, line);
-    }
-    mirror.0 = 0;
-    // The AFK clear's own packet: the empty `0x14` the command path sends.
-    let _ = commands.0.send(crate::net::ClientCommand::Chat {
-        kind: crate::net::ChatKind::Afk,
-        target: None,
-        text: String::new(),
-        language: None,
-    });
 }
 
 #[cfg(test)]
@@ -306,25 +288,6 @@ mod tests {
             },
             "DND re-marks where AFK stays silent — the reference's own asymmetry"
         );
-    }
-
-    #[test]
-    fn the_auto_clear_is_gated_both_ways() {
-        assert!(
-            auto_clear_line(AfkMirror(1), false, &strings).is_none(),
-            "cvar off"
-        );
-        assert!(
-            auto_clear_line(AfkMirror(0), true, &strings).is_none(),
-            "not afk"
-        );
-        assert!(auto_clear_line(AfkMirror(1), true, &strings).is_some());
-        // The reconcile stores `PLAYER_FLAGS & 2`, so a set mirror can read 2.
-        assert!(
-            auto_clear_line(AfkMirror(2), true, &strings).is_some(),
-            "2 is truthy — every one of the reference's six readers is a non-zero test"
-        );
-        assert!(AfkMirror(2).is_afk());
     }
 
     #[test]

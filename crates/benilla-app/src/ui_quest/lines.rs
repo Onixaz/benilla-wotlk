@@ -173,8 +173,21 @@ fn turn_in_lines(
             ));
         }
     }
-    // Deviation: the arena award's chat line goes out as type `0x32` (`0x6d0ff4`), which has no `ChatTypeInfo` row in the stock UI, so only its text is raised (`0x6d1005`).
+    // `COMBATLOG_ARENAPOINTSAWARD` as a type `0x32` line (`0x6d0fae`-`0x6d0ff7`), whose event has no name, then the combat text (`0x6d1005`).
     if c.arena_points as i32 > 0 {
+        let msg = UiError::args(
+            "COMBATLOG_ARENAPOINTSAWARD",
+            vec![FillArg::D(i64::from(c.arena_points))],
+        );
+        let line = ui_error_text(&msg, &|key: &str| {
+            benilla_ui::strings::global(script.lua(), key)
+        });
+        if let Some(line) = line {
+            script.push_event(crate::ui_chat::ChatEvent::text_only(
+                crate::ui_chat::ChatEventKind::ArenaPoints,
+                line,
+            ));
+        }
         text("ARENA_POINTS_GAINED", c.arena_points);
     }
     // The template's fixed rewards, then the chosen one with no count (`0x6d1018`-`0x6d10b4`).
@@ -508,6 +521,70 @@ mod tests {
         assert_eq!(chat(&app), ["Kobold Camp Cleanup completed."]);
         assert_eq!(app.world().resource::<TurnIns>().waiting(), 0);
         assert!(reward_waits(&app).is_empty());
+    }
+
+    /// The arena award is a type `0x32` line right after the talents line (`0x6d0fae`-`0x6d0ff7`):
+    /// its event has no name, so Lua hears nothing, but it takes the next line id and the chat log
+    /// writes it in turn.
+    #[test]
+    fn a_turn_ins_arena_award_is_a_line_after_the_talents() {
+        let (mut app, _rx) = app();
+        let dir = std::env::temp_dir().join(format!("benilla-arena-log-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("chat.txt");
+        let _ = std::fs::remove_file(&path);
+        {
+            let world = app.world_mut();
+            world
+                .non_send_resource::<UiScript>()
+                .run(r#"COMBATLOG_ARENAPOINTSAWARD = "You have been awarded %d arena points.""#)
+                .unwrap();
+            world
+                .non_send_resource_mut::<UiScript>()
+                .set_logging_flags(true, false);
+            world.resource_mut::<crate::ui_chat::ChatWindows>().logs =
+                crate::ui_chat::logging::ChatLogFile(crate::ui_chat::logging::LogFile::at(&path));
+            world
+                .resource_mut::<QuestLog>()
+                .insert_template(template(7, "Kobold Camp Cleanup", 0));
+            turn_in(
+                world,
+                QuestComplete {
+                    quest_id: 7,
+                    talents: 1,
+                    arena_points: 25,
+                    ..Default::default()
+                },
+            );
+        }
+        assert_eq!(
+            chat(&app),
+            [
+                "Kobold Camp Cleanup completed.",
+                "You have gained 1 talent points."
+            ]
+        );
+        assert_eq!(
+            app.world()
+                .resource::<crate::ui_chat::ChatWindows>()
+                .line_id,
+            3,
+            "the arena line takes a line id"
+        );
+        let log = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = log
+            .lines()
+            .map(|l| l.split_once("  ").map_or(l, |(_, t)| t))
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                "Kobold Camp Cleanup completed.",
+                "You have gained 1 talent points.",
+                "You have been awarded 25 arena points."
+            ]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// With the template uncached the whole turn-in waits for its answer, the window too (`0x6d1192`); the answer runs it (`0x6d1175`).

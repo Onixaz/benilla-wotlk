@@ -5,7 +5,6 @@
 
 use mlua::{IntoLuaMulti, Lua, MultiValue, Value};
 
-
 /// One `ChatChannels.dbc` row for the channel verbs: the id, the Shortcut a typed name is matched
 /// against case-folded, the name composed for the player's zone (`None` while the zone text is
 /// empty, the verbs' nil leg), and whether it is listed (a `flags & 0x10` city row only in a city).
@@ -159,9 +158,24 @@ impl super::UiScript {
     }
 }
 
+/// The pane's selection asks (`0x4fe530`), queued under its model borrow, sent on the host inside
+/// the same call once it lets go; with no host lent they stay recorded.
+pub(super) fn send_queued(lua: &Lua) {
+    if !super::world_loan::lent() {
+        return;
+    }
+    let queued = std::mem::take(&mut crate::script::model_mut_of(lua).channel_commands);
+    for cmd in queued {
+        push(lua, cmd);
+    }
+}
+
+/// A channel verb's send, made on the host inside the call; with no host lent the VM records it,
+/// which only its tests read. The caller holds no model borrow.
 fn push(lua: &Lua, cmd: ChannelCommand) {
-    let mut model = crate::script::model_mut_of(lua);
-    model.channel_commands.push(cmd);
+    if super::calls::ask_host(lua, &super::HostAsk::Channel(cmd.clone())).is_none() {
+        crate::script::model_mut_of(lua).channel_commands.push(cmd);
+    }
 }
 
 fn non_empty(s: Option<String>) -> Option<String> {
@@ -364,9 +378,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 None => (key.clone(), key),
             };
             model.strip_window_channel(&strip_key);
-            model
-                .channel_commands
-                .push(ChannelCommand::Leave { name: wire });
+            drop(model);
+            push(lua, ChannelCommand::Leave { name: wire });
             Ok(())
         })?,
     )?;
