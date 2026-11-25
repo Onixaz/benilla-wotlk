@@ -210,6 +210,7 @@ pub(super) fn steer_follow(
     index: Res<GuidIndex>,
     targets: Query<(&Transform, Option<&ObjectStore>)>,
     input: FollowInput,
+    rig: Option<Res<super::CameraControl>>,
 ) {
     player.auto_forward = false;
     player.auto_turning = false;
@@ -249,7 +250,13 @@ pub(super) fn steer_follow(
     }
     let dt = super::mover::move_step(&time).as_secs_f32();
     let bearing = approach::bearing_or(player.face_yaw, delta);
-    let turning = approach::steer_turn(&mut player, bearing, &mut follow.turn_rate, dt);
+    let turning = approach::steer_turn(
+        &mut player,
+        bearing,
+        &mut follow.turn_rate,
+        dt,
+        rig.as_deref().and_then(|r| r.vehicle_facing),
+    );
     let pitch = approach::steer_pitch(&mut player, delta, dt);
     player.auto_turning = turning || pitch.pitching;
     player.auto_as_move = !approach.enabled;

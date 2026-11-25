@@ -14,6 +14,7 @@ use std::sync::Arc;
 mod aim;
 mod camera;
 mod control;
+pub(crate) mod facing;
 mod override_bar;
 pub(crate) use override_bar::update_override_bar;
 mod passenger;
@@ -718,6 +719,7 @@ fn drive_vehicle_aim(
     // The mouse's motion is the camera's again unless a held aim takes it this frame.
     let delta = rig.as_deref_mut().map_or(0.0, |r| {
         r.hold_pitch_for_aim = false;
+        r.vehicle_facing = None;
         std::mem::take(&mut r.aim_pitch_delta)
     });
     if let Some(power) = script
@@ -744,6 +746,11 @@ fn drive_vehicle_aim(
     };
     let rec = vehicle.and_then(|v| tables.vehicle(v.id));
     if let (Some(rec), Some(rig)) = (rec, rig.as_deref_mut()) {
+        // The limits sit about the vehicle's own facing, relative to any transport it rides.
+        let deck = player.transport_yaw();
+        rig.vehicle_facing = vehicle
+            .and_then(|v| facing::legal_range(rec, v.raw_facing))
+            .map(|(min, max)| (min + deck, max + deck));
         let upright = store.is_some_and(|s| {
             !s.0.unit_is_dead()
                 && s.0.unit_flags() & targeting::UNIT_FLAG_STUNNED == 0
