@@ -99,8 +99,8 @@ pub(crate) fn cascade(auto: bool, guild_id: u32, in_capital: bool) -> Option<Cas
 }
 
 /// The cascade, chained after the walk: the reference runs it at the walk's tail, on a fresh zone.
-/// It owns no VM: the mode latch and the windows' list are read and written with the `World` lent,
-/// and `UPDATE_CHAT_WINDOWS` fires in its turn.
+/// It owns no VM: the mode latch and the join's window entry are read and written with the `World`
+/// lent, the leave's strip is a plain write, and `UPDATE_CHAT_WINDOWS` fires in its turn.
 pub(super) fn guild_recruitment_cascade(world: &mut World) {
     if world
         .get_non_send_resource::<benilla_ui::script::UiScript>()
@@ -163,17 +163,21 @@ fn cvar_leave(
     mut channels: ResMut<ChannelState>,
     areas: Option<Res<AreaTableRes>>,
     commands: Res<NetCommands>,
+    mut vm: NonSendMut<benilla_ui::script::UiScript>,
 ) -> Option<bool> {
-    let name = areas.as_deref().and_then(|a| {
+    let (shortcut, name) = areas.as_deref().and_then(|a| {
         let row = channels
             .channels
             .rows()
             .iter()
             .find(|r| r.is_guild_recruitment())?;
-        Some(row.joinable_name("", city_word(&a.0)?))
+        Some((
+            row.shortcut.clone(),
+            row.joinable_name("", city_word(&a.0)?),
+        ))
     })?;
     info!("chat: guildRecruitmentChannel 0 — leaving {name:?}");
-    Some(cascade_leave(&mut channels, &commands, &name).unwrap_or(false))
+    Some(cascade_leave(&mut channels, &commands, &mut vm, &shortcut, &name).unwrap_or(false))
 }
 
 /// One run of the cascade under the `auto` latch: `None` when it does nothing, else the window
@@ -187,6 +191,7 @@ fn cascade_run(
     areas: Option<Res<AreaTableRes>>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     commands: Res<NetCommands>,
+    mut vm: NonSendMut<benilla_ui::script::UiScript>,
 ) -> Option<CascadeRan> {
     // Only while the avatar is streamed: a despawned body has not "left the guild".
     let guild_id = self_q.iter().next().map(|s| s.0.player_guild_id())?;
@@ -232,7 +237,8 @@ fn cascade_run(
         Cascade::Join if held => None,
         Cascade::Leave => {
             info!("chat: guild recruitment cascade — guilded, leaving {name:?}");
-            let relist = cascade_leave(&mut channels, &commands, &name).unwrap_or(false);
+            let relist = cascade_leave(&mut channels, &commands, &mut vm, &row.shortcut, &name)
+                .unwrap_or(false);
             Some(CascadeRan::Left { relist })
         }
         Cascade::Join => {
@@ -260,12 +266,20 @@ fn cascade_run(
     }
 }
 
-/// The forced leave (`0x5093f0` with its third argument 1): with no record nothing (`0x5095b2`);
-/// otherwise the packet under the record's name in any state (`0x5095c0`), the mask bit
-/// (`0x509639`), and a record still in state 1 freed (`0x50963f`-`0x50967a`). `Some(true)` when it
-/// freed one, which relists (`0x509680`). No window loses its entry: the strip matches the full
-/// name verbatim, which none holds.
-fn cascade_leave(channels: &mut ChannelState, commands: &NetCommands, name: &str) -> Option<bool> {
+/// The forced leave (`0x5093f0` with its third argument 1), handed the row's Shortcut
+/// (`0xb759e0`, copied at `0x4fe2af`): the matched row's Shortcut is the strip key (`0x5094f3`),
+/// stripped from all ten windows before any record (`0x50952f`-`0x509560`). Then with no record
+/// nothing (`0x5095b2`); otherwise the packet under the record's name in any state (`0x5095c0`),
+/// the mask bit (`0x509639`), and a record still in state 1 freed (`0x50963f`-`0x50967a`).
+/// `Some(true)` when it freed one, which relists (`0x509680`).
+fn cascade_leave(
+    channels: &mut ChannelState,
+    commands: &NetCommands,
+    vm: &mut benilla_ui::script::UiScript,
+    shortcut: &str,
+    name: &str,
+) -> Option<bool> {
+    vm.strip_chat_window_channel(shortcut);
     let slot = channels.slot(channels.leave_record(name)?)?;
     let (name, pending) = (
         slot.name.clone(),
@@ -303,11 +317,14 @@ mod tests {
         assert_eq!(cascade(true, 0, false), Some(Cascade::Deferred));
     }
 
+    /// The forced leave strips the Shortcut the join registered from every window (`0x5094f3`,
+    /// `0x50952f`-`0x509560`), whatever the case, then sends.
     #[test]
-    fn the_cascades_leave_keeps_the_windows_entry() {
+    fn the_cascades_leave_strips_the_shortcut_from_every_window() {
         const GUILD_RECRUITMENT: u32 = 25;
         let mut script = UiScript::new().expect("a VM");
         assert!(script.register_chat_window_channel(0, "GuildRecruitment", GUILD_RECRUITMENT));
+        assert!(script.register_chat_window_channel(2, "guildrecruitment", GUILD_RECRUITMENT));
         let mut channels = ChannelState {
             channels: benilla_formats::ChatChannelsCatalog::from_rows(vec![
                 benilla_formats::ChatChannelRow {
@@ -324,7 +341,13 @@ mod tests {
         let (tx, rx) = crossbeam_channel::unbounded();
 
         assert_eq!(
-            cascade_leave(&mut channels, &NetCommands(tx), "GuildRecruitment - City"),
+            cascade_leave(
+                &mut channels,
+                &NetCommands(tx),
+                &mut script,
+                "GuildRecruitment",
+                "GuildRecruitment - City"
+            ),
             Some(false),
             "a confirmed record stays for its YOU_LEFT"
         );
@@ -334,10 +357,10 @@ mod tests {
             "the CMSG_LEAVE_CHANNEL goes out"
         );
         assert_eq!(channels.zone_mask, Some(0), "the mask bit clears");
-        assert_eq!(
-            script.chat_window_looks()[0].channels,
-            vec![("GuildRecruitment".to_string(), GUILD_RECRUITMENT)],
-            "window 1 still carries the entry the join registered"
+        let looks = script.chat_window_looks();
+        assert!(
+            looks.iter().all(|l| l.channels.is_empty()),
+            "no window keeps the entry the join registered"
         );
     }
 
@@ -358,16 +381,28 @@ mod tests {
             zone_mask: Some(0),
             ..Default::default()
         };
+        let mut script = UiScript::new().expect("a VM");
+        assert!(script.register_chat_window_channel(0, "GuildRecruitment", GUILD_RECRUITMENT));
         let (tx, rx) = crossbeam_channel::unbounded();
         let commands = NetCommands(tx);
-        assert_eq!(
-            cascade_leave(&mut channels, &commands, "GuildRecruitment - City"),
-            None
-        );
+        let leave = |channels: &mut ChannelState, script: &mut UiScript| {
+            cascade_leave(
+                channels,
+                &commands,
+                script,
+                "GuildRecruitment",
+                "GuildRecruitment - City",
+            )
+        };
+        assert_eq!(leave(&mut channels, &mut script), None);
         assert!(rx.try_recv().is_err(), "no record, no leave");
+        assert!(
+            script.chat_window_looks()[0].channels.is_empty(),
+            "the strip runs ahead of the record lookup, with no record too"
+        );
         channels.claim_for_join("GuildRecruitment - City", 0);
         assert_eq!(
-            cascade_leave(&mut channels, &commands, "GuildRecruitment - City"),
+            leave(&mut channels, &mut script),
             Some(true),
             "the pending record is freed and relists"
         );

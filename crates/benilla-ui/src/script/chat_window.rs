@@ -339,6 +339,12 @@ impl super::Model {
 }
 
 impl super::UiScript {
+    /// Host-side [`Model::strip_window_channel`], for the guild-recruitment leaves, which strip
+    /// the row's Shortcut from every window.
+    pub fn strip_chat_window_channel(&mut self, key: &str) -> bool {
+        self.model_mut().strip_window_channel(key)
+    }
+
     /// Host-side [`Model::register_window_channel`], for the guild-recruitment join, which
     /// registers `GuildRecruitment` in window 1.
     pub fn register_chat_window_channel(&mut self, window: usize, name: &str, id: u32) -> bool {
