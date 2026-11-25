@@ -6121,3 +6121,282 @@ fn a_fly_tier_riders_drake_strokes_in_flyswim_not_the_ground_walk() {
         assert!(playing(if tier == 3 { 4 } else { 2 }), "rider tier {tier}");
     }
 }
+
+/// A model with the seat clips: Stand, a ride loop (121), an upper ride loop (140) on the torso,
+/// and the JumpEnd (39) and JumpLandRun (187) one-shots.
+fn seated_model() -> ModelAnimations {
+    let mut upper = clip(140, 3, true);
+    upper.upper_node = Some(AnimationNodeIndex::new(6));
+    ModelAnimations {
+        clips: vec![
+            clip(0, 1, true),
+            clip(121, 2, true),
+            upper,
+            clip(39, 4, false),
+            clip(187, 7, false),
+        ],
+        ..caster_model()
+    }
+}
+
+fn seated(app: &mut App, pose: crate::vehicle::SeatPose) -> Entity {
+    app.world_mut()
+        .spawn((
+            seated_model(),
+            AnimationPlayer::default(),
+            AnimationTransitions::new(),
+            AnimDriver::default(),
+            MovementState::default(),
+            pose,
+        ))
+        .id()
+}
+
+/// The seat's base start plays its resolved clip once (even a looping fallback) and hands off to
+/// the loop when it finishes (`0x747b20`, `0x7484e0`).
+#[test]
+fn a_seat_start_plays_its_resolved_clip_once_then_hands_the_base_to_its_loop() {
+    let mut app = app();
+    let unit = seated(
+        &mut app,
+        crate::vehicle::SeatPose {
+            lower: [Some(120), Some(121)],
+            ..Default::default()
+        },
+    );
+    app.update();
+    let drv = app.world().entity(unit).get::<AnimDriver>().unwrap();
+    assert!(
+        !drv.seat_lower_spent,
+        "the fallback plays until it finishes"
+    );
+    assert_eq!(drv.gait, Some(120));
+    // Complete the resolved Stand (node 1) cycle.
+    app.world_mut()
+        .entity_mut(unit)
+        .get_mut::<AnimationPlayer>()
+        .unwrap()
+        .stop(AnimationNodeIndex::new(1));
+    app.update();
+    let drv = app.world().entity(unit).get::<AnimDriver>().unwrap();
+    assert!(
+        drv.seat_lower_spent,
+        "spent once its resolved clip finishes"
+    );
+    assert_eq!(drv.gait, Some(121), "the loop holds the base");
+}
+
+/// The seat's upper loop rides the torso as a looping overlay, and goes with the seat.
+#[test]
+fn a_seat_upper_anim_loops_on_the_torso() {
+    let mut app = app();
+    let unit = seated(
+        &mut app,
+        crate::vehicle::SeatPose {
+            lower: [None, Some(121)],
+            upper: [None, Some(140)],
+            ..Default::default()
+        },
+    );
+    app.update();
+    let ov = app
+        .world()
+        .entity(unit)
+        .get::<AnimDriver>()
+        .unwrap()
+        .overlay;
+    assert!(
+        ov.is_some_and(|ov| ov.id == 140 && ov.looping),
+        "{:?}",
+        ov.map(|o| o.id)
+    );
+    app.world_mut()
+        .entity_mut(unit)
+        .remove::<crate::vehicle::SeatPose>();
+    app.update();
+    let drv = app.world().entity(unit).get::<AnimDriver>().unwrap();
+    assert!(
+        drv.overlay.is_none_or(|ov| ov.id != 140),
+        "off the seat, the torso loop is released"
+    );
+}
+
+/// An exit's end plays once on the base as its anims go, a run's JumpEnd as JumpLandRun
+/// (`0x74b9c0`).
+#[test]
+fn an_exit_leaving_its_anims_plays_its_end() {
+    let mut app = app();
+    let exit = crate::vehicle::SeatPose {
+        end: Some(39),
+        ..Default::default()
+    };
+    let unit = seated(&mut app, exit);
+    app.update();
+    app.world_mut()
+        .entity_mut(unit)
+        .remove::<crate::vehicle::SeatPose>();
+    app.update();
+    let drv = app.world().entity(unit).get::<AnimDriver>().unwrap();
+    assert_eq!(drv.seat_end, Some(39));
+    assert_eq!(drv.gait, Some(39), "the end holds the base once");
+
+    let running = seated(&mut app, exit);
+    app.update();
+    app.world_mut().entity_mut(running).insert(MovementState {
+        flags: move_flags::FORWARD,
+        speed: 7.0,
+        ..Default::default()
+    });
+    app.world_mut()
+        .entity_mut(running)
+        .remove::<crate::vehicle::SeatPose>();
+    app.update();
+    let drv = app.world().entity(running).get::<AnimDriver>().unwrap();
+    assert_eq!(drv.seat_end, Some(187), "a run lands as JumpLandRun");
+}
+
+/// A torso start whose resolved clip loops plays once on the torso, then hands off to the torso
+/// loop when it finishes (`0x747bd0`, `0x7484e0`).
+#[test]
+fn a_looping_seat_upper_start_plays_once_then_hands_the_torso_to_its_loop() {
+    let mut app = app();
+    let mut model = seated_model();
+    let mut looping_start = clip(139, 8, true);
+    looping_start.upper_node = Some(AnimationNodeIndex::new(9));
+    model.clips.push(looping_start);
+    let unit = app
+        .world_mut()
+        .spawn((
+            model,
+            AnimationPlayer::default(),
+            AnimationTransitions::new(),
+            AnimDriver::default(),
+            MovementState::default(),
+            crate::vehicle::SeatPose {
+                lower: [None, Some(121)],
+                upper: [Some(139), Some(140)],
+                ..Default::default()
+            },
+        ))
+        .id();
+    app.update();
+    let drv = app.world().entity(unit).get::<AnimDriver>().unwrap();
+    assert!(!drv.seat_upper_spent, "start plays until it finishes");
+    assert!(
+        drv.overlay.is_some_and(|ov| ov.id == 139 && !ov.looping),
+        "start arms once on the torso: {:?}",
+        drv.overlay.map(|o| (o.id, o.looping))
+    );
+    // Complete the start clip's single cycle on the torso node.
+    app.world_mut()
+        .entity_mut(unit)
+        .get_mut::<AnimationPlayer>()
+        .unwrap()
+        .stop(AnimationNodeIndex::new(9));
+    app.update();
+    let drv = app.world().entity(unit).get::<AnimDriver>().unwrap();
+    assert!(drv.seat_upper_spent, "spent once its cycle finishes");
+    assert!(
+        drv.overlay.is_some_and(|ov| ov.id == 140 && ov.looping),
+        "torso loop takes over: {:?}",
+        drv.overlay.map(|o| (o.id, o.looping))
+    );
+}
+
+/// Dying during an exit queues no exit end (`0x7489c0`), and movement supersedes a playing exit
+/// end (`0x74b9c0`).
+#[test]
+fn seat_end_is_skipped_on_death_and_cancelled_by_movement() {
+    let mut app = app();
+    let exit = crate::vehicle::SeatPose {
+        end: Some(39),
+        ..Default::default()
+    };
+    // Movement cancels a playing exit end instead of replaying it after.
+    let unit = seated(&mut app, exit);
+    app.update();
+    app.world_mut()
+        .entity_mut(unit)
+        .remove::<crate::vehicle::SeatPose>();
+    app.update();
+    assert_eq!(
+        app.world()
+            .entity(unit)
+            .get::<AnimDriver>()
+            .unwrap()
+            .seat_end,
+        Some(39)
+    );
+    app.world_mut().entity_mut(unit).insert(MovementState {
+        flags: move_flags::FORWARD,
+        speed: 7.0,
+        ..Default::default()
+    });
+    app.update();
+    let drv = app.world().entity(unit).get::<AnimDriver>().unwrap();
+    assert_eq!(drv.seat_end, None, "movement supersedes the exit end");
+
+    // Dying mid-exit does not arm an exit end for a later revive.
+    let doomed = seated(&mut app, exit);
+    app.update();
+    let dead_store = crate::net::ObjectStore(
+        benilla_protocol::ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x9),
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 0),
+        ])
+        .into_created(benilla_protocol::messages::ObjectType::Unit),
+    );
+    app.world_mut().entity_mut(doomed).insert(dead_store);
+    app.update();
+    let drv = app.world().entity(doomed).get::<AnimDriver>().unwrap();
+    assert_eq!(drv.seat_end, None, "a dead passenger owes no exit end");
+}
+
+/// Afloat exits skip their end unless `end_forced` (`0x200000`) forces it (`0x74b9c0`).
+#[test]
+fn afloat_exit_end_obeys_end_forced() {
+    let mut app = app();
+    let unforced = seated(
+        &mut app,
+        crate::vehicle::SeatPose {
+            end: Some(39),
+            end_forced: false,
+            ..Default::default()
+        },
+    );
+    let forced = seated(
+        &mut app,
+        crate::vehicle::SeatPose {
+            end: Some(39),
+            end_forced: true,
+            ..Default::default()
+        },
+    );
+    app.update();
+    for u in [unforced, forced] {
+        app.world_mut().entity_mut(u).insert(MovementState {
+            flags: move_flags::FALLING,
+            ..Default::default()
+        });
+        app.world_mut()
+            .entity_mut(u)
+            .remove::<crate::vehicle::SeatPose>();
+    }
+    app.update();
+    assert_eq!(
+        app.world()
+            .entity(unforced)
+            .get::<AnimDriver>()
+            .unwrap()
+            .seat_end,
+        None
+    );
+    assert_eq!(
+        app.world()
+            .entity(forced)
+            .get::<AnimDriver>()
+            .unwrap()
+            .seat_end,
+        Some(39)
+    );
+}

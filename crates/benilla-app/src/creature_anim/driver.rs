@@ -763,11 +763,84 @@ fn drive_unit(
     if mounted {
         mv.stand_state = 0;
     }
-    // A live seated passenger holds its seat's ride pose (`0x7385c0`), out of any stand state.
-    let seat_pose = seat_pose.map(|p| p.0).filter(|_| !dead);
-    if seat_pose.is_some() {
+    // A live passenger holds its seat state's anims (`0x7385c0`), out of any stand state.
+    let seat = seat_pose.copied().filter(|_| !dead);
+    if seat.is_some() {
         mv.stand_state = 0;
     }
+    if seat != drv.seat {
+        // A new seat state clears the start flags and resets a seat-upper start overlay
+        // (`0x7489c0`). An exit leaving its anims owes its end while alive (`0x7489c0`,
+        // `0x74b9c0`): played landed or under the seat's forcing flag, a run's JumpEnd as
+        // JumpLandRun; falling, swimming or flying it leaves the base to the fall or swim.
+        if drv
+            .overlay
+            .is_some_and(|ov| !ov.looping && drv.seat.and_then(|s| s.upper[0]) == Some(ov.id))
+        {
+            retire_overlay(&mut drv, &mut player, ONESHOT_RELEASE_FADE);
+        }
+        drv.seat_end = match (seat, drv.seat) {
+            (None, Some(last)) if !dead => {
+                let afloat = mv.flags
+                    & (move_flags::FALLING | move_flags::SWIMMING | move_flags::FLYING)
+                    != 0;
+                last.end.filter(|_| last.end_forced || !afloat).map(|e| {
+                    // JumpEnd 39 and JumpLandRun 187.
+                    if e == 39 && mv.flags & move_flags::ANY_MOVE != 0 {
+                        187
+                    } else {
+                        e
+                    }
+                })
+            }
+            _ => None,
+        };
+        drv.seat = seat;
+        drv.seat_lower_spent = false;
+        drv.seat_upper_spent = false;
+    }
+    let seat_tier = |id: u16| match catalog.filter(|_| anim_tier != 0) {
+        Some(cat) => anims.resolve_tier(id, anim_tier, cat),
+        None => id,
+    };
+    // An exit's end is a single base play (`0x74b9c0`), so any mode or movement-flag change
+    // supersedes it rather than replaying it after.
+    if let Some(end) = drv.seat_end {
+        let end_id = seat_tier(end);
+        if drv.mode != Mode::Gait || (drv.gait == Some(end_id) && mv.flags != drv.gait_flags) {
+            drv.seat_end = None;
+            if drv.gait == Some(end_id) {
+                drv.gait = None;
+            }
+        }
+    }
+    // The base's seat anim: the start until it plays out, then the loop (`0x747b20`); an exit's
+    // end once, after.
+    let lower_start = seat
+        .and_then(|s| s.lower[0])
+        .filter(|_| !drv.seat_lower_spent);
+    if let Some(start) = lower_start.or(drv.seat_end) {
+        let start_id = seat_tier(start);
+        // Only a clip the model lacks altogether is spent at once; a resolved clip (including a
+        // looping fallback) plays once until its end (`0x7484e0`).
+        let missing = anims.find(resolved(anims, start_id, catalog).id).is_none();
+        if missing
+            || drv.gait == Some(start_id) && oneshot_finished(&player, anims, start_id, catalog)
+        {
+            if lower_start.is_some() {
+                drv.seat_lower_spent = true;
+            } else {
+                drv.seat_end = None;
+            }
+            drv.gait = None;
+        }
+    }
+    let seat_once = seat
+        .and_then(|s| s.lower[0])
+        .filter(|_| !drv.seat_lower_spent)
+        .or(drv.seat_end.filter(|_| seat.is_none()));
+    let seat_pose = seat_once.or_else(|| seat.and_then(|s| s.lower[1]));
+    let seat_once = seat_once.map(seat_tier);
     // The creep vis flag off the unit's own descriptor (`[[unit+0x110]+0x213] & 2`), never
     // predicted: the crouch lands with the server's aura.
     mv.stealthed = store.is_some_and(|s| s.0.unit_is_stealthed());
@@ -1547,6 +1620,7 @@ fn drive_unit(
             relaxed,
             mounted,
             seat_pose,
+            seat_once,
             looting,
             engaged,
             airborne_frozen,
@@ -1609,9 +1683,13 @@ fn drive_unit(
     // ── Masked one-shot completion: a finished overlay is not stopped but faded to rest, its held
     // final frame cross-fading onto the base over 150 ms.
     if let Some(ov) = drv.overlay {
+        let seat_upper_start_active =
+            !ov.looping && drv.seat.and_then(|s| s.upper[0]) == Some(ov.id);
         let done = if ov.looping {
             false // a cast-hold loop: the hold block below owns its release
-        } else if find_resolved(anims, ov.id, catalog).is_some_and(|c| c.looping) {
+        } else if !seat_upper_start_active
+            && find_resolved(anims, ov.id, catalog).is_some_and(|c| c.looping)
+        {
             // A hold-less looping clip (a kit's seated eat/drink) releases on movement; the
             // reference's release for this case is untraced. A Special does not release it:
             // a jump is a bone-0 play and leaves the key bone alone.
@@ -1620,6 +1698,10 @@ fn drive_unit(
             player.animation(ov.node).is_none_or(|a| a.is_finished())
         };
         if done {
+            // The seat's torso start played out: its loop takes the torso next (`0x7484e0`).
+            if seat_upper_start_active {
+                drv.seat_upper_spent = true;
+            }
             // Freeze on the final frame: the snapshot clamps to `seq.end`.
             if let Some(a) = player.animation_mut(ov.node) {
                 a.set_speed(0.0);
@@ -1642,21 +1724,56 @@ fn drive_unit(
                 .find(dir.id)
                 .and_then(|c| c.upper_node.map(|node| (id, node, c, dir)))
         });
+    // With no hold, a seated passenger's torso takes the seat's upper anim (`0x747bd0`), the pick
+    // the base chooser ends on (`0x724500`) moved onto the torso over the seat's base
+    // (`0x7385c0`): its start once, then its loop. A one-shot on the key bone wins while it plays.
+    let mut seat_upper_start = drv
+        .seat
+        .and_then(|s| s.upper[0])
+        .filter(|_| !drv.seat_upper_spent && kit_hold.is_none());
+    if let Some(start) = seat_upper_start {
+        let dir = resolved(anims, start, catalog);
+        let unusable = anims.find(dir.id).is_none_or(|c| c.upper_node.is_none());
+        if unusable {
+            drv.seat_upper_spent = true;
+            seat_upper_start = None;
+        }
+    }
+    let seat_upper = drv
+        .seat
+        .and_then(|s| seat_upper_start.or(s.upper[1]))
+        .filter(|_| kit_hold.is_none())
+        .and_then(|id| {
+            let dir = resolved(anims, id, catalog);
+            anims
+                .find(dir.id)
+                .and_then(|c| c.upper_node.map(|node| (id, node, c, dir)))
+        });
+    let seat_upper_once = seat_upper
+        .map(|(id, ..)| id)
+        .filter(|&id| Some(id) == seat_upper_start);
+    let masked_hold = masked_hold.or(seat_upper);
     match (masked_hold, drv.overlay) {
         (Some((id, node, c, dir)), prior) if prior.is_none_or(|ov| ov.looping && ov.id != id) => {
             // Free slot or a stale hold loop: a blended key-bone re-arm.
             retire_overlay(&mut drv, &mut player, c.blend_time.max(0.0));
+            let once = seat_upper_once == Some(id);
             let active = player.play(node);
             active.replay();
-            active.repeat();
+            if once {
+                active.set_repeat(bevy::animation::RepeatAnimation::Never);
+            } else {
+                active.repeat();
+            }
             active.set_weight(0.0); // the fade upkeep raises it this same frame
             if dir.dir_flags != 0 {
                 dir.apply(active, 1.0, c.duration);
             }
+            // A seat start ends as a one-shot does, and its end hands the torso to the loop.
             drv.overlay = Some(Overlay {
                 node,
                 id,
-                looping: true,
+                looping: !once,
             });
             hold_played = Some(id);
         }
