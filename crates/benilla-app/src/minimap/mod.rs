@@ -474,7 +474,7 @@ fn emit_minimap(
         self_store,
         (names, go_templates, locks, factions, reputations),
         poi_marker,
-        pois,
+        (pois, world_states),
         mut ping,
         mut script,
         (vehicle_units, vehicle_tables, self_seat, mut vehicle_scratch),
@@ -745,8 +745,8 @@ fn emit_minimap(
         }
     }
 
-    // ── The blip layer: landmarks under the player arrow, the dots above it (the reference's
-    // order).
+    // ── The blip layer, in the reference's order: landmark icons, group dots, vehicles, object
+    // blips, rim arrows, and the player arrow above them all.
     // Our own descriptor's tracking state (private fields, only on the self entity).
     let me = self_store.iter().next();
     // Our own guid: our own pet and charm take the blank blip.
@@ -808,13 +808,17 @@ fn emit_minimap(
         None => blips::VehicleSelection::default(),
     };
     let mut hover = blips::MinimapBlipHover::None;
-    if let Some(ctx) = &blip_ctx {
-        // The guard-directions marker rides this pass as a landmark, as the reference appends its
-        // static blip slot after the DBC scan, so it draws even without `AreaPOI.dbc`.
-        if assets.rim_arrows.any() {
-            blips::emit_landmarks(
-                ctx,
-                pois.as_ref().map(|p| &p.0),
+    // The guard-directions marker rides this pass as a landmark, as the reference appends its
+    // static blip slot after the DBC scan, so it draws even without `AreaPOI.dbc`.
+    let landmarks = blip_ctx
+        .as_ref()
+        .filter(|_| assets.rim_arrows.any())
+        .map(|ctx| {
+            blips::select_landmarks(
+                pois.as_ref()
+                    .map(|p| &p.0)
+                    .into_iter()
+                    .flat_map(|c| c.rows().map(|(_, p)| p)),
                 blips::StaticPois {
                     marker: poi_marker.on_map(map.0),
                     // Same map only: a dungeon corpse's display coords are the entrance.
@@ -822,51 +826,17 @@ fn emit_minimap(
                     release: release_poi.on_map(map.0),
                 },
                 map.0,
-                &assets.rim_arrows,
-                assets.poi.as_ref(),
-                &mut quads,
-                &mut hover,
-            );
-            // The group rim arrows, before the player arrow, in the reference's order.
-            blips::emit_group_arrows(
-                ctx,
-                &group,
-                &vehicles.possessors,
-                &guids,
-                &unit_pos,
-                &assets.rim_arrows,
-                &mut quads,
-            );
-        }
-    }
-
-    // The player texture, centred at its set size and turned about its middle (`0x57bcc0`); our
-    // quad turns clockwise and WoW's facing counterclockwise, so the angle is negated.
-    if let Some(arrow) = assets
-        .arrow
-        .as_ref()
-        .filter(|_| slot.player_texture.min_element() > 0.0)
-    {
-        // Still while the map turns (`0x57bcdc`, facing 0).
-        let rotation = if rotate.0 { 0.0 } else { -player.facing() };
-        let rect = Rect::from_center_size(center, slot.player_texture);
-        let riding = self_seat.iter().any(|p| p.state != 0) && !vehicles.own_in_range;
-        let alpha = if riding {
-            blips::RIDING_ARROW_ALPHA
-        } else {
-            1.0
-        };
-        quads.overlays.push(UiQuad {
-            rect,
-            z_key: slot.z,
-            texture: Some(arrow.clone()),
-            color: [1.0, 1.0, 1.0, slot.alpha * alpha],
-            rotation,
-            ..default()
+                ctx.wx,
+                ctx.wy,
+                ctx.radius_yd,
+                |id| world_states.as_ref().map_or(0, |w| w.get(id)),
+            )
         });
+    if let (Some(ctx), Some(sel)) = (&blip_ctx, &landmarks) {
+        blips::emit_landmark_icons(ctx, sel, assets.poi.as_ref(), &mut quads, &mut hover);
     }
 
-    // The group, vehicle and object blips draw last, above the player arrow, in `0x581e80`'s order.
+    // The group dots, vehicle and object blips, in `0x581e80`'s order.
     if let Some(ctx) = &blip_ctx {
         if let Some(party) = &assets.party_blips {
             let class_of = |g: u64| {
@@ -956,6 +926,55 @@ fn emit_minimap(
             }
         }
     }
+    // The rim arrows close the blip pass: the landmarks', then the group's (`0x57d860`, `0x580ae0`,
+    // `0x580ec0`). An object blip under the cursor keeps the hover.
+    if let (Some(ctx), Some(sel)) = (&blip_ctx, &landmarks) {
+        let mut arrow_hover = blips::MinimapBlipHover::None;
+        blips::emit_landmark_arrows(ctx, sel, &assets.rim_arrows, &mut quads, &mut arrow_hover);
+        if !matches!(arrow_hover, blips::MinimapBlipHover::None)
+            && !matches!(hover, blips::MinimapBlipHover::Objects(_))
+        {
+            hover = arrow_hover;
+        }
+        blips::emit_group_arrows(
+            ctx,
+            &group,
+            &vehicles.possessors,
+            &guids,
+            &unit_pos,
+            &assets.rim_arrows,
+            &mut quads,
+        );
+    }
+
+    // The player texture last, above every blip: it is the frame's ARTWORK texture (`0x57dca0`),
+    // and the map and all its blips draw in its BACKGROUND layer (`0x5832c0`).
+    // Centred at its set size and turned about its middle (`0x57bcc0`); our quad turns clockwise
+    // and WoW's facing counterclockwise, so the angle is negated.
+    if let Some(arrow) = assets
+        .arrow
+        .as_ref()
+        .filter(|_| slot.player_texture.min_element() > 0.0)
+    {
+        // Still while the map turns (`0x57bcdc`, facing 0).
+        let rotation = if rotate.0 { 0.0 } else { -player.facing() };
+        let rect = Rect::from_center_size(center, slot.player_texture);
+        let riding = self_seat.iter().any(|p| p.state != 0) && !vehicles.own_in_range;
+        let alpha = if riding {
+            blips::RIDING_ARROW_ALPHA
+        } else {
+            1.0
+        };
+        quads.overlays.push(UiQuad {
+            rect,
+            z_key: slot.z,
+            texture: Some(arrow.clone()),
+            color: [1.0, 1.0, 1.0, slot.alpha * alpha],
+            rotation,
+            ..default()
+        });
+    }
+
     *blip_hover = hover;
 
     // Seat the click against this frame's geometry; the marker is the stock `MiniMapPing`

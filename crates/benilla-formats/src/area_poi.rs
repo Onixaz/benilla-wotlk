@@ -3,7 +3,7 @@
 //! no server loads it. 738 rows of 54 columns (216 B) in 12340: `ID`, `Importance`, `Icon[9]`,
 //! `FactionID`, `Pos[3]`, `ContinentID`, `Flags`, `AreaID`, then `Name` and `Description` as
 //! 17-column loc-strings (enUS, 15 other locales, flags), then `WorldStateID` and `WorldMapLink`.
-//! The minimap draws the first icon; the world map picks one of the nine by the row's world state.
+//! The minimap and the world map both pick one of the nine icons by the row's world state.
 
 use std::collections::HashMap;
 
@@ -20,9 +20,10 @@ const AREA_POI: &str = "DBFilesClient\\AreaPOI.dbc";
 pub struct AreaPoi {
     /// Prominence tier, 0 to 4 in 12340; the minimap ranks its landmark arrows by it.
     pub importance: u32,
-    /// The minimap's icon, a cell of `POIIcons.blp` (`Icon[0]`).
+    /// `Icon[0]`, a cell of `POIIcons.blp`: the icon of a row without a world state.
     pub icon: u32,
-    /// `Icon[9]`, which `GetMapLandmarkInfo` indexes by the row's world state (`0x545a30`).
+    /// `Icon[9]`, which `GetMapLandmarkInfo` (`0x545a30`) and the minimap (`0x581e80`) index by
+    /// the row's world state.
     pub icons: [u32; 9],
     /// `FactionTemplate.dbc` id for a faction-tinted icon, `0` for none.
     pub faction_id: u32,

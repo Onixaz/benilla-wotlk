@@ -3,20 +3,23 @@
 //!
 //! Landmarks:
 //! - Candidates: `ContinentID` is the current map and `Flags & 1`, no faction or importance gate.
-//! - In range (`d / viewRadius ≤ 0.8`): the `POIIcons.blp` cell of the `Icon` column, only for
-//!   rows with `Flags & 2` (the world-PvP towers in 1.12 data); other rows draw nothing.
+//!   A row at (0, 0), or with a `WorldStateID` whose state reads 0, is neither drawn nor ranked
+//!   (`0x7f44a0`).
+//! - In range (`d / viewRadius ≤ 0.8`): the `POIIcons.blp` cell of `Icon[state − 1]` (the first
+//!   without a world state or outside 1 to 9), only for rows with `Flags & 2`; other rows draw
+//!   nothing.
 //! - Out of range within 694.444 yd: the first 3 by (`Importance` signed ascending, distance),
 //!   on the 0.8 rim, each rotated to point at its POI in its source's art ([`RimArrow`]).
 //!
 //! The object blips are [`dots`]': the town tracking type, quest status, an unlearned flight
 //! master and the tracking masks each give a cell of `ObjectIcons.blp`, culled at 0.8 of the view
-//! radius and drawn last.
+//! radius and drawn after the group dots and vehicles; the rim arrows follow, and the player
+//! arrow tops them all (`0x581e80`, `0x5832c0`).
 //!
 //! Blip sizes are frozen once by the minimap frame's constructor against a 140.8-px basis.
 //!
-//! Not built: the landmark `WorldStateID` gate; the per-source rim-arrow z-order (bottom to top
-//! landmark, party, quest, gossip, corpse, from `+0x48` as a frame-level offset), which conflicts
-//! with the reference drawing the dots last and is unsettled; and static blip slot 0,
+//! Not built: the per-source rim-arrow z-order (bottom to top landmark, party, quest, gossip,
+//! corpse, from `+0x48` as a frame-level offset), which is unsettled; and static blip slot 0,
 //! `SelectQuestLogEntry()`'s gold guide arrow at the quest's POI.
 //!
 //! Deviation: blips re-project every frame, where the reference rebuilds them about once a second
@@ -41,7 +44,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use benilla_assets::coords::bevy_to_wow;
-use benilla_formats::{AreaPoi, AreaPoiCatalog};
+use benilla_formats::AreaPoi;
 use benilla_ui::script::UiScript;
 
 use crate::go_templates::GameObjectTemplates;
@@ -186,7 +189,11 @@ pub(super) type BlipInputs<'w, 's> = (
         Res<'w, crate::net::Reputations>,
     ),
     Res<'w, crate::poi_marker::PoiMarker>,
-    Option<Res<'w, crate::area_poi::AreaPoiRes>>,
+    // The landmark rows and the world states that gate them.
+    (
+        Option<Res<'w, crate::area_poi::AreaPoiRes>>,
+        Option<Res<'w, crate::world_state::WorldStates>>,
+    ),
     ResMut<'w, super::MinimapPing>,
     Option<NonSendMut<'w, UiScript>>,
     VehicleInputs<'w, 's>,
@@ -260,8 +267,9 @@ impl BlipCtx {
 
 /// The landmark selection's two draw lists.
 pub(super) struct LandmarkSelection<'a> {
-    /// In-range rows with [`FLAG_IN_RANGE_ICON`], drawn at their position.
-    pub(super) icons: Vec<&'a AreaPoi>,
+    /// In-range rows with [`FLAG_IN_RANGE_ICON`] and the `Icon` cell their world state picks,
+    /// drawn at their position.
+    pub(super) icons: Vec<(&'a AreaPoi, u32)>,
     /// The rim arrows `(dist, poi, art)` in rank order.
     pub(super) arrows: Vec<(f32, &'a AreaPoi, RimArrow)>,
 }
@@ -278,7 +286,7 @@ pub(super) struct StaticPois<'a> {
 }
 
 /// The landmark selection (module doc). The static slots skip the candidacy gate; all but the
-/// corpse's also take the 694.444-yd cut (`0x7f46b1`).
+/// corpse's also take the 694.444-yd cut (`0x7f46b1`). `world_state` reads the live table.
 pub(super) fn select_landmarks<'a>(
     pois: impl Iterator<Item = &'a AreaPoi>,
     statics: StaticPois<'a>,
@@ -286,6 +294,7 @@ pub(super) fn select_landmarks<'a>(
     wx: f32,
     wy: f32,
     radius_yd: f32,
+    world_state: impl Fn(u32) -> i32,
 ) -> LandmarkSelection<'a> {
     let mut icons = Vec::new();
     let mut arrows: Vec<(f32, &AreaPoi, RimArrow)> = Vec::new();
@@ -296,10 +305,16 @@ pub(super) fn select_landmarks<'a>(
         .chain(statics.corpse.map(|c| (c, RimArrow::Corpse, true)))
         .chain(statics.release.map(|r| (r, RimArrow::Corpse, false)));
     for (p, art, uncut) in candidates {
+        // Neither drawn nor on the rim: a row at (0, 0), or one whose world state reads 0
+        // (`0x7f44a0`); Isle of Conquest keeps one row per node state.
+        let unplaced = p.pos[0] == 0.0 && p.pos[1] == 0.0;
+        if unplaced || (p.world_state_id != 0 && world_state(p.world_state_id) == 0) {
+            continue;
+        }
         let d = ((p.pos[0] - wx).powi(2) + (p.pos[1] - wy).powi(2)).sqrt();
         if d / radius_yd <= BLIP_EDGE_RATIO {
             if p.flags & FLAG_IN_RANGE_ICON != 0 {
-                icons.push(p);
+                icons.push((p, landmark_icon(p, &world_state)));
             }
         } else if uncut || d <= LANDMARK_RANK_YD {
             arrows.push((d, p, art));
@@ -312,6 +327,20 @@ pub(super) fn select_landmarks<'a>(
     });
     arrows.truncate(3);
     LandmarkSelection { icons, arrows }
+}
+
+/// The drawn `Icon` column: `Icon[state − 1]` for a row with a world state, the first outside
+/// 1 to 9 or without one (`0x581e80`).
+fn landmark_icon(p: &AreaPoi, world_state: impl Fn(u32) -> i32) -> u32 {
+    match p.world_state_id {
+        // `icon` is `Icon[0]` on a DBC row, and the only icon a static slot sets.
+        0 => p.icon,
+        id => usize::try_from(world_state(id) - 1)
+            .ok()
+            .and_then(|s| p.icons.get(s))
+            .copied()
+            .unwrap_or(p.icons[0]),
+    }
 }
 
 /// The `POIIcons.blp` atlas and its width in texels, which its cells are cut from.
@@ -346,49 +375,50 @@ fn poi_icon_cell(icon: u32, width: u32) -> Option<[f32; 4]> {
     Some([u0, u0 + pitch - texel, v0, v0 + pitch - texel])
 }
 
-/// Draw the in-range POI icons, then the rim arrows; the later-drawn hover hit wins.
-pub(super) fn emit_landmarks(
+/// Draw the in-range POI icons, the first thing on the map after the tiles (`0x581e80`).
+pub(super) fn emit_landmark_icons(
     ctx: &BlipCtx,
-    cat: Option<&AreaPoiCatalog>,
-    statics: StaticPois,
-    map_id: u32,
-    arrows: &RimArrowArt,
+    sel: &LandmarkSelection,
     poi_icons: Option<&PoiAtlas>,
     quads: &mut UiQuads,
     hover: &mut MinimapBlipHover,
 ) {
-    let sel = select_landmarks(
-        cat.into_iter().flat_map(|c| c.rows().map(|(_, p)| p)),
-        statics,
-        map_id,
-        ctx.wx,
-        ctx.wy,
-        ctx.radius_yd,
-    );
-    if let Some(atlas) = poi_icons {
-        for poi in &sel.icons {
-            let Some(cell) = atlas.cell(poi.icon) else {
-                continue;
-            };
-            let rect = Rect::from_center_size(
-                ctx.center + ctx.offset(poi.pos),
-                Vec2::splat(ctx.side * (POI_ICON_PX / BLIP_BASIS_PX)),
-            );
-            quads.overlays.push(UiQuad {
-                rect,
-                z_key: ctx.z,
-                texture: Some(atlas.tex.clone()),
-                uv: UvRect::from_tex_coords(cell),
-                color: [1.0, 1.0, 1.0, ctx.alpha],
-                ..default()
-            });
-            if let Some(c) = ctx.cursor {
-                if rect.contains(c) {
-                    *hover = MinimapBlipHover::Landmark(poi.name.clone());
-                }
+    let Some(atlas) = poi_icons else {
+        return;
+    };
+    for &(poi, icon) in &sel.icons {
+        let Some(cell) = atlas.cell(icon) else {
+            continue;
+        };
+        let rect = Rect::from_center_size(
+            ctx.center + ctx.offset(poi.pos),
+            Vec2::splat(ctx.side * (POI_ICON_PX / BLIP_BASIS_PX)),
+        );
+        quads.overlays.push(UiQuad {
+            rect,
+            z_key: ctx.z,
+            texture: Some(atlas.tex.clone()),
+            uv: UvRect::from_tex_coords(cell),
+            color: [1.0, 1.0, 1.0, ctx.alpha],
+            ..default()
+        });
+        if let Some(c) = ctx.cursor {
+            if rect.contains(c) {
+                *hover = MinimapBlipHover::Landmark(poi.name.clone());
             }
         }
     }
+}
+
+/// Draw the landmark rim arrows, after the object blips and before the group's (`0x57d860`); the
+/// later-drawn hover hit wins.
+pub(super) fn emit_landmark_arrows(
+    ctx: &BlipCtx,
+    sel: &LandmarkSelection,
+    arrows: &RimArrowArt,
+    quads: &mut UiQuads,
+    hover: &mut MinimapBlipHover,
+) {
     for (_d, poi, art) in &sel.arrows {
         let Some(tex) = arrows.get(*art) else {
             continue;
@@ -692,7 +722,7 @@ mod tests {
             release: Some(&release),
             ..Default::default()
         };
-        let sel = select_landmarks(rows.iter(), statics, 0, 0.0, 0.0, 133.0);
+        let sel = select_landmarks(rows.iter(), statics, 0, 0.0, 0.0, 133.0, |_| 0);
         let names: Vec<&str> = sel.arrows.iter().map(|(_, p, _)| p.name.as_str()).collect();
         assert_eq!(names, ["Corpse", "minor-near", "minor-mid"]);
         assert_eq!(sel.arrows[0].2, RimArrow::Corpse);
@@ -723,16 +753,18 @@ mod tests {
         arrows.set(RimArrow::Corpse, Some(Handle::default()));
         let mut quads = UiQuads::default();
         let mut hover = MinimapBlipHover::None;
-        emit_landmarks(
-            &hover_ctx(cursor),
-            None,
+        let ctx = hover_ctx(cursor);
+        let sel = select_landmarks(
+            std::iter::empty(),
             statics,
             0,
-            &arrows,
-            Some(&atlas),
-            &mut quads,
-            &mut hover,
+            ctx.wx,
+            ctx.wy,
+            ctx.radius_yd,
+            |_| 0,
         );
+        emit_landmark_icons(&ctx, &sel, Some(&atlas), &mut quads, &mut hover);
+        emit_landmark_arrows(&ctx, &sel, &arrows, &mut quads, &mut hover);
         hover
     }
 
@@ -789,7 +821,15 @@ mod tests {
             poi(3, 0x1d, 556.0, "Stormwind"),
             poi(3, 0x5, 601.0, "Goldshire"),
         ];
-        let sel = select_landmarks(rows.iter(), StaticPois::default(), 0, 0.0, 0.0, 133.0);
+        let sel = select_landmarks(
+            rows.iter(),
+            StaticPois::default(),
+            0,
+            0.0,
+            0.0,
+            133.0,
+            |_| 0,
+        );
         assert!(sel.icons.is_empty(), "no Flags&2 row is in range");
         let names: Vec<&str> = sel.arrows.iter().map(|(_, p, _)| p.name.as_str()).collect();
         assert_eq!(names, ["Stormwind", "Goldshire"]);
@@ -805,7 +845,15 @@ mod tests {
             poi(3, 1, 400.0, "city-mid"),
             poi(0, 1, 695.0, "beyond-rank"),
         ];
-        let sel = select_landmarks(rows.iter(), StaticPois::default(), 0, 0.0, 0.0, 100.0);
+        let sel = select_landmarks(
+            rows.iter(),
+            StaticPois::default(),
+            0,
+            0.0,
+            0.0,
+            100.0,
+            |_| 0,
+        );
         let names: Vec<&str> = sel.arrows.iter().map(|(_, p, _)| p.name.as_str()).collect();
         assert_eq!(names, ["minor-near", "minor-far", "city-near"]);
     }
@@ -819,7 +867,15 @@ mod tests {
             poi(3, 0x5, 400.0, "Northshire Abbey"),
         ];
         let marker = poi(0, 0x63, 500.0, "Stormwind Warrior Trainer");
-        let sel = select_landmarks(cities.iter(), marker_only(&marker), 0, 0.0, 0.0, 133.0);
+        let sel = select_landmarks(
+            cities.iter(),
+            marker_only(&marker),
+            0,
+            0.0,
+            0.0,
+            133.0,
+            |_| 0,
+        );
         let names: Vec<&str> = sel.arrows.iter().map(|(_, p, _)| p.name.as_str()).collect();
         assert_eq!(
             names,
@@ -838,10 +894,18 @@ mod tests {
     #[test]
     fn the_guard_marker_draws_its_icon_in_range() {
         let marker = poi(0, 0x63, 50.0, "The Bank");
-        let sel = select_landmarks(std::iter::empty(), marker_only(&marker), 0, 0.0, 0.0, 133.0);
+        let sel = select_landmarks(
+            std::iter::empty(),
+            marker_only(&marker),
+            0,
+            0.0,
+            0.0,
+            133.0,
+            |_| 0,
+        );
         assert!(sel.arrows.is_empty(), "in range — no rim arrow");
         assert_eq!(sel.icons.len(), 1);
-        assert_eq!(sel.icons[0].icon, 6);
+        assert_eq!(sel.icons[0].1, 6);
     }
 
     /// The caller ([`crate::poi_marker::PoiMarker`]'s `on_map`) decides the marker's map.
@@ -849,7 +913,15 @@ mod tests {
     fn the_guard_marker_skips_the_candidacy_filter() {
         let mut marker = poi(0, 0, 300.0, "The Inn"); // Flags bit 0 clear: a DBC row would drop
         marker.continent_id = 571; // and a continent that isn't the displayed one
-        let sel = select_landmarks(std::iter::empty(), marker_only(&marker), 0, 0.0, 0.0, 133.0);
+        let sel = select_landmarks(
+            std::iter::empty(),
+            marker_only(&marker),
+            0,
+            0.0,
+            0.0,
+            133.0,
+            |_| 0,
+        );
         assert_eq!(sel.arrows.len(), 1, "appended unconditionally");
     }
 
@@ -859,9 +931,106 @@ mod tests {
         tower.icon = 9;
         let plain = poi(3, 0x5, 50.0, "Northshire Abbey");
         let rows = [tower, plain];
-        let sel = select_landmarks(rows.iter(), StaticPois::default(), 0, 0.0, 0.0, 133.0);
+        let sel = select_landmarks(
+            rows.iter(),
+            StaticPois::default(),
+            0,
+            0.0,
+            0.0,
+            133.0,
+            |_| 0,
+        );
         assert_eq!(sel.arrows.len(), 0);
         assert_eq!(sel.icons.len(), 1, "only the Flags&2 tower draws in range");
+    }
+
+    /// Isle of Conquest's Alliance Keep as `AreaPOI.dbc` 2383-2387 carry it: one row per node
+    /// state, each with its own world state. Only the row whose state is set draws (`0x7f44a0`).
+    fn ioc_alliance_keep() -> Vec<AreaPoi> {
+        [(6, 4341), (11, 4339), (9, 4342), (12, 4343), (10, 4340)]
+            .into_iter()
+            .map(|(icon, ws)| {
+                let mut row = poi(0, 0x3af, 50.0, "Alliance Keep");
+                row.icons[0] = icon;
+                row.icon = icon;
+                row.world_state_id = ws;
+                row
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_landmark_whose_world_state_reads_zero_is_neither_drawn_nor_on_the_rim() {
+        let rows = ioc_alliance_keep();
+        // 4339, the keep held by the Alliance, alone is set.
+        let ws = |id: u32| i32::from(id == 4339);
+        let sel = select_landmarks(rows.iter(), StaticPois::default(), 0, 0.0, 0.0, 133.0, ws);
+        let icons: Vec<u32> = sel.icons.iter().map(|&(_, i)| i).collect();
+        assert_eq!(
+            icons,
+            [11],
+            "only the held row draws, not the last of the five"
+        );
+        let far = select_landmarks(rows.iter(), StaticPois::default(), 0, 0.0, 0.0, 10.0, ws);
+        assert_eq!(
+            far.arrows.len(),
+            1,
+            "the unset rows take no rim slot either"
+        );
+        let none = select_landmarks(
+            rows.iter(),
+            StaticPois::default(),
+            0,
+            0.0,
+            0.0,
+            133.0,
+            |_| 0,
+        );
+        assert!(none.icons.is_empty() && none.arrows.is_empty());
+    }
+
+    #[test]
+    fn a_landmark_draws_the_icon_its_world_state_picks() {
+        let mut row = poi(0, 0x3, 50.0, "Tower");
+        row.world_state_id = 7;
+        row.icons = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+        let pick = |v: i32| {
+            let rows = [row.clone()];
+            let sel = select_landmarks(
+                rows.iter(),
+                StaticPois::default(),
+                0,
+                0.0,
+                0.0,
+                133.0,
+                |_| v,
+            );
+            sel.icons.first().map(|&(_, i)| i)
+        };
+        assert_eq!(pick(1), Some(1), "state 1 is the first column");
+        assert_eq!(pick(9), Some(9), "state 9 is the last");
+        assert_eq!(pick(10), Some(1), "past the nine falls back to the first");
+        assert_eq!(
+            pick(-3),
+            Some(1),
+            "a negative state falls back to the first"
+        );
+        assert_eq!(pick(0), None, "a zero state hides the row");
+    }
+
+    #[test]
+    fn a_landmark_at_the_origin_is_skipped() {
+        let rows = [poi(0, 0x3, 0.0, "Unplaced")];
+        let sel = select_landmarks(
+            rows.iter(),
+            StaticPois::default(),
+            0,
+            0.0,
+            0.0,
+            133.0,
+            |_| 0,
+        );
+        assert!(sel.icons.is_empty() && sel.arrows.is_empty());
     }
 
     /// 14 cells a row of 18 texels, inset one texel, rows cut from the width too.
