@@ -95,7 +95,6 @@ impl Plugin for UiChatPlugin {
         app.add_observer(recruitment::on_cvar);
         app.init_resource::<ChatLog>()
             .init_resource::<away::AfkMirror>()
-            .init_resource::<away::AfkMirrorMemo>()
             .init_resource::<idle::LastInput>()
             .init_resource::<frames::ChatWindows>()
             .init_resource::<edit::ChannelState>()
@@ -128,8 +127,6 @@ impl Plugin for UiChatPlugin {
             .add_systems(
                 Update,
                 (
-                    // First, so a `/afk` typed this frame reads the descriptor's settled state.
-                    away::reconcile_afk_mirror,
                     away::movement_clears_afk,
                     // After the clears, so a press that stamps the clock and drops the flag is
                     // settled before the idle timer reads it.

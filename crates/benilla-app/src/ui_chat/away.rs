@@ -9,9 +9,10 @@ use bevy::prelude::*;
 
 use super::event::{ChatEvent, ChatEventKind};
 
-/// The reference's optimistic mirror of our `PLAYER_FLAGS` AFK bit: written at command time,
-/// reconciled from the descriptor, reseeded at world enter. A `u32` tested for non-zero: the
-/// reconcile stores `PLAYER_FLAGS & 2`, so a set mirror can read 2. DND has no mirror, so a second
+/// The reference's optimistic mirror of our `PLAYER_FLAGS` AFK bit (`[0xbcefec]`): written at
+/// command time, by the player-flags watch ([`flags_watch`]) and at world entry
+/// ([`seed_on_enter_world`]). A `u32` tested for non-zero: the watch stores `PLAYER_FLAGS & 2`, so a
+/// set mirror can read 2. DND has no mirror, so a second
 /// `/dnd` before the server's update re-marks where a second `/afk` clears.
 #[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AfkMirror(pub(crate) u32);
@@ -111,30 +112,27 @@ pub(crate) fn add_system(world: &mut World, line: String) {
     );
 }
 
-/// The last `PLAYER_FLAGS` the reconcile saw; `None` with no local player in the world.
-#[derive(Resource, Default)]
-pub(crate) struct AfkMirrorMemo(Option<u32>);
-
-/// Reconcile the mirror from our descriptor: the `PLAYER_FLAGS` delta arm and the world-enter
-/// reseed. The delta arm writes `flags & 2` only when AFK, DND or GM moved; writing on any delta
-/// would let an unrelated bit, such as resting, clear an optimistic AFK a round trip early.
-pub(crate) fn reconcile_afk_mirror(
-    self_q: Query<&crate::net::ObjectStore, With<crate::net::SelfPlayer>>,
-    mut mirror: ResMut<AfkMirror>,
-    mut memo: ResMut<AfkMirrorMemo>,
-) {
-    let Some(store) = self_q.iter().next() else {
-        // Forgetting the memo makes the next world enter reseed rather than diff.
-        memo.0 = None;
+/// The player-flags watch's mirror write on the active player (`0x6e0fd0`): a move in AFK, DND,
+/// GM or `0x8000` (`0x6e0fe7`) stores `flags & 2` (`0x6e1023`), at the packet's step.
+pub(crate) fn flags_watch(world: &mut World, old: u32, new: u32) {
+    if (old ^ new) & 0x800e == 0 {
         return;
-    };
-    let flags = store.0.player_flags();
-    match memo.0.replace(flags) {
-        // World enter: seed outright.
-        None => mirror.0 = flags & 0x2,
-        // The delta arm: only an AFK/DND/GM move reconciles.
-        Some(prev) if (prev ^ flags) & 0xE != 0 => mirror.0 = flags & 0x2,
-        Some(_) => {}
+    }
+    if let Some(mut mirror) = world.get_resource_mut::<AfkMirror>() {
+        mirror.0 = new & 0x2;
+    }
+}
+
+/// The chat's world-entry seed (`0x50df80`): 1 when the active player's flags carry AFK
+/// (`0x50dfa7`), else 0, also with no active player (`0x50dfb7`).
+pub(crate) fn seed_on_enter_world(world: &mut World) {
+    let afk = world
+        .query_filtered::<&crate::net::ObjectStore, With<crate::net::SelfPlayer>>()
+        .iter(world)
+        .next()
+        .is_some_and(|store| store.0.player_flags() & 0x2 != 0);
+    if let Some(mut mirror) = world.get_resource_mut::<AfkMirror>() {
+        mirror.0 = u32::from(afk);
     }
 }
 
@@ -183,6 +181,38 @@ mod tests {
             }
             .to_string(),
         )
+    }
+
+    /// The world-entry seed stores 1 for a set AFK bit and 0 otherwise or with no active player
+    /// (`0x50dfab`, `0x50dfb7`); the watch stores `flags & 2` on a `0x800e` move only (`0x6e0fe7`).
+    #[test]
+    fn the_mirror_is_seeded_at_entry_and_written_by_the_watch() {
+        use benilla_protocol::field::FIELD_PLAYER_FLAGS;
+        let mut world = World::new();
+        world.insert_resource(AfkMirror(2));
+        super::super::feed::enter_world(&mut world);
+        assert_eq!(world.resource::<AfkMirror>().0, 0, "no active player");
+        let me = world
+            .spawn((
+                crate::net::SelfPlayer,
+                crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+                    FIELD_PLAYER_FLAGS,
+                    0x22,
+                )])),
+            ))
+            .id();
+        super::super::feed::enter_world(&mut world);
+        assert_eq!(world.resource::<AfkMirror>().0, 1);
+        world.entity_mut(me).despawn();
+        flags_watch(&mut world, 0x2, 0x22);
+        assert_eq!(world.resource::<AfkMirror>().0, 1, "outside the mask");
+        flags_watch(&mut world, 0x0, 0x8002);
+        assert_eq!(world.resource::<AfkMirror>().0, 2);
+        flags_watch(&mut world, 0x8002, 0x2);
+        assert_eq!(world.resource::<AfkMirror>().0, 2);
+        world.resource_mut::<AfkMirror>().0 = 1;
+        flags_watch(&mut world, 0x0, 0x8000);
+        assert_eq!(world.resource::<AfkMirror>().0, 0, "0x8000 alone resyncs");
     }
 
     #[test]

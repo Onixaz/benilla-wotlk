@@ -2235,10 +2235,13 @@ fn with_read_names(world: &World, line: ChatLine, full: bool) -> ChatLine {
     ChatLine::Wire { msg }
 }
 
-/// The UI's world entry for chat (`0x5281b3` -> `0x50df80`): the add stops queueing (`0x50dfbd`)
+/// The UI's world entry for chat (`0x5281b3` -> `0x50df80`): the AFK mirror seeded from our flags
+/// (`0x50dfab`), then the add stops queueing (`0x50dfbd`)
 /// and the queued lines go through it in order (`0x50dfc3`), one still missing a name held for
 /// its answer.
 pub(crate) fn enter_world(world: &mut World) {
+    // The AFK mirror's seed first (`0x50dfa7`-`0x50dfb7`).
+    super::away::seed_on_enter_world(world);
     let Some(mut log) = world.get_resource_mut::<ChatLog>() else {
         return;
     };

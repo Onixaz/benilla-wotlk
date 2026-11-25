@@ -753,6 +753,49 @@ fn our_guild_id_watch_runs_the_recruitment_cascade_after_its_guild_change() {
     );
 }
 
+/// The player-flags watch writes the AFK mirror at the packet's step (`0x6e0fe7`, `0x6e1026`): a handler of the next packet's event that sends sees the server's clear, so no `CLEARED_AFK` and no empty AFK packet; a move of `0x8000` alone resyncs a refused optimistic `/afk`, a move outside `0x800e` (resting) does not.
+#[test]
+fn the_player_flags_watch_writes_the_afk_mirror_at_its_step() {
+    use crate::ui_chat::AfkMirror;
+    use benilla_protocol::field::{FIELD_PLAYER_FLAGS, FIELD_PLAYER_WATCHED_FACTION_INDEX};
+
+    let Some(mut rig) = Rig::login(&guild_master()) else {
+        return;
+    };
+    rig.packets(vec![self_values(&[(FIELD_PLAYER_FLAGS, 0x2)])], 2);
+    assert_eq!(rig.app.world().resource::<AfkMirror>().0, 2);
+    call(
+        &mut rig,
+        "local f = CreateFrame('Frame') f:RegisterEvent('UPDATE_FACTION')          f:SetScript('OnEvent', function() SendChatMessage('hi', 'SAY') end)",
+    );
+    let rx = tap(&mut rig);
+    rig.packets(
+        vec![
+            self_values(&[(FIELD_PLAYER_FLAGS, 0)]),
+            self_values(&[(FIELD_PLAYER_WATCHED_FACTION_INDEX, 3)]),
+        ],
+        2,
+    );
+    let kinds: Vec<_> = rx
+        .try_iter()
+        .filter_map(|c| match c {
+            ClientCommand::Chat { kind, .. } => Some(kind),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(kinds, [crate::net::ChatKind::Say], "no auto clear");
+    // A refused `/afk`: the mirror set with the bit clear; `0x8000` moving alone resyncs it.
+    rig.app.world_mut().resource_mut::<AfkMirror>().0 = 1;
+    rig.packets(vec![self_values(&[(FIELD_PLAYER_FLAGS, 0x20)])], 2);
+    assert_eq!(
+        rig.app.world().resource::<AfkMirror>().0,
+        1,
+        "resting is outside the mask"
+    );
+    rig.packets(vec![self_values(&[(FIELD_PLAYER_FLAGS, 0x8020)])], 2);
+    assert_eq!(rig.app.world().resource::<AfkMirror>().0, 0);
+}
+
 /// A stamp moving twice before its guild's answer: the second drop runs the first ask's callback unfound (`0x67a610` -> `0x67a61f` -> `0x67a533`), which the walk skips (`0x6e1b93`), so the answer walks once.
 #[test]
 fn a_pending_stamp_ask_dropped_with_its_record_never_walks() {

@@ -2066,6 +2066,9 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
         sc.ui.fire("SPELLS_CHANGED", Vec::new());
     }
     if let Some((old, new)) = merged.pvp_flags {
+        // The player-flags watch's AFK mirror write (`0x6e1026`), ahead of its PvP stamp (`0x6e102c`).
+        sc.ui
+            .world(move |world| crate::ui_chat::away::flags_watch(world, old, new));
         sc.pvp.watch(old, new, std::time::Instant::now());
     }
     let split = player.partition_point(|&(index, ..)| index < FIELD_PLAYER_FARSIGHT);
