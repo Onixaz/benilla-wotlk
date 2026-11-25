@@ -671,6 +671,9 @@ pub(crate) struct CameraControl {
     /// stops at a limit and a synced mouse-look holds the camera's yaw there. Set each frame by
     /// the vehicle aim.
     pub(crate) vehicle_facing: Option<(f32, f32)>,
+    /// The look session has been inside `vehicle_facing` (`m_flags & 0x4`, `0x6023d0`): once set,
+    /// dragging past a limit clamps the camera's yaw with the body.
+    pub(super) vehicle_facing_latched: bool,
     /// The mouse buttons the world owns this frame, latched by [`latch_world_mouse`].
     pub(super) world_mouse: WorldMouse,
     /// Logical cursor position captured when look began, to restore on release.
@@ -1097,14 +1100,22 @@ pub(super) fn run_look_session(
             cam.pitch = (cam.pitch + d_pitch).clamp(-CAM_PITCH_LIMIT, CAM_PITCH_LIMIT);
         }
         if syncs {
-            // The sync clamps the camera's yaw into the vehicle's range with the body (`0x6023d0`).
+            // `0x6023d0`: inside the vehicle's legal range, latch (`m_flags & 0x4`) and sync both;
+            // past a limit, clamp the camera with the body only while latched, else clamp only the
+            // body (`0x6ee3a0`) until the camera re-enters the range.
             if let Some(limit) = rig
                 .vehicle_facing
                 .and_then(|r| crate::vehicle::facing::clamp(cam.yaw, r))
             {
-                cam.yaw -= super::wrap_pi(cam.yaw - limit);
+                let clamped = cam.yaw - super::wrap_pi(cam.yaw - limit);
+                if rig.vehicle_facing_latched {
+                    cam.yaw = clamped;
+                }
+                *face_yaw = clamped;
+            } else {
+                rig.vehicle_facing_latched = true;
+                *face_yaw = cam.yaw;
             }
-            *face_yaw = cam.yaw;
         }
     }
     // Freelook is right-held mouse-look or a both-button run, which steers like it; a left-drag
@@ -1122,6 +1133,8 @@ fn engage_look(
     cursor_opts: &mut CursorOptions,
 ) {
     rig.look = Some(button);
+    // `0x601ff0` clears `m_flags & 0x4` on entering freelook.
+    rig.vehicle_facing_latched = false;
     if focused {
         take_cursor(rig, window, cursor_opts);
     } else {
@@ -1133,6 +1146,7 @@ fn engage_look(
 /// it was already free, when it is wherever the player left it.
 fn disengage_look(rig: &mut CameraControl, window: &mut Window, cursor_opts: &mut CursorOptions) {
     rig.look = None;
+    rig.vehicle_facing_latched = false;
     let stash = rig.cursor_stash.take();
     if !std::mem::take(&mut rig.cursor_released) {
         release_cursor(cursor_opts);

@@ -479,3 +479,43 @@ fn mouselook_start_under_a_left_drag_is_the_both_button_run() {
     assert_eq!(w.resource::<CameraControl>().look, Some(LookButton::Right));
     assert!(w.resource::<Messages<WorldClick>>().is_empty());
 }
+
+/// `0x6023d0`: a right-drag from inside `vehicle_facing` clamps camera and body together at the
+/// limit; starting outside (after a left orbit) clamps only the body until the camera re-enters.
+#[test]
+fn vehicle_facing_sync_clamps_camera_only_once_latched_inside_range() {
+    let mut w = world(false);
+    w.resource_mut::<CameraControl>().vehicle_facing = Some((-0.5, 0.5));
+    // Start inside (yaw = 0.0), then drag right past -0.5: both camera and body stop at -0.5.
+    press(&mut w, MouseButton::Right);
+    frame(&mut w, 0.0);
+    frame(&mut w, 500.0);
+    assert!((yaw(&mut w) - (-0.5)).abs() < 1e-5, "cam clamped at -0.5");
+    assert!(
+        (w.resource::<Hand>().face_yaw - (-0.5)).abs() < 1e-5,
+        "body clamped at -0.5"
+    );
+    release(&mut w, MouseButton::Right);
+    frame(&mut w, 0.0);
+
+    // Left-orbit outside the range (to yaw < -0.5), then start a right-drag: camera stays outside
+    // while body clamps to -0.5.
+    press(&mut w, MouseButton::Left);
+    frame(&mut w, 400.0);
+    let orbited = yaw(&mut w);
+    assert!(orbited < -0.6, "left-orbited outside range: {orbited}");
+    release(&mut w, MouseButton::Left);
+    frame(&mut w, 0.0);
+
+    press(&mut w, MouseButton::Right);
+    frame(&mut w, 0.0);
+    assert!(
+        (yaw(&mut w) - orbited).abs() < 1e-5,
+        "unlatched right-click does not snap camera: {} vs {orbited}",
+        yaw(&mut w)
+    );
+    assert!(
+        (w.resource::<Hand>().face_yaw - (-0.5)).abs() < 1e-5,
+        "body still clamps to -0.5"
+    );
+}

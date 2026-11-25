@@ -471,6 +471,15 @@ pub(super) fn control(
         if drunk_wobble != 0.0 && translating && !turning {
             player.face_yaw += drunk_wobble;
             turn_delta = drunk_wobble;
+            // Every facing write on a limited vehicle clamps into its range (`0x6ee3a0`).
+            if let Some(limit) = rig
+                .vehicle_facing
+                .and_then(|r| crate::vehicle::facing::clamp(player.face_yaw, r))
+            {
+                let past = wrap_pi(player.face_yaw - limit);
+                player.face_yaw -= past;
+                turn_delta -= past;
+            }
         }
         let face_rot = Quat::from_rotation_y(player.face_yaw);
         let move_fwd = flat(face_rot * Vec3::NEG_Z);
