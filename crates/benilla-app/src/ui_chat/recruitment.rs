@@ -99,8 +99,9 @@ pub(crate) fn cascade(auto: bool, guild_id: u32, in_capital: bool) -> Option<Cas
 }
 
 /// The cascade, chained after the walk: the reference runs it at the walk's tail, on a fresh zone.
-/// It owns no VM: the mode latch and the join's window entry are read and written with the `World`
-/// lent, the leave's strip is a plain write, and `UPDATE_CHAT_WINDOWS` fires in its turn.
+/// It calls Lua only with the `World` lent: the mode latch and the join's window entry are read
+/// and written so, the leave's strip is a plain model write, and `UPDATE_CHAT_WINDOWS` fires in
+/// its turn.
 pub(super) fn guild_recruitment_cascade(world: &mut World) {
     if world
         .get_non_send_resource::<benilla_ui::script::UiScript>()
