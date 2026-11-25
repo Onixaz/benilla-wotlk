@@ -427,12 +427,17 @@ pub(super) fn bearing_or(face_yaw: f32, delta: Vec3) -> f32 {
 }
 
 /// One turn step, the rate latched by the first (`0x731650`): whether the facing still has to turn.
+/// A facing-limited vehicle clamps its target bearing into the legal range (`0x6ef3d0`).
 pub(super) fn steer_turn(
     player: &mut Player,
     bearing: f32,
     latched: &mut Option<f32>,
     dt: f32,
+    facing_range: Option<(f32, f32)>,
 ) -> bool {
+    let bearing = facing_range
+        .and_then(|r| crate::vehicle::facing::clamp(bearing, r))
+        .unwrap_or(bearing);
     let remaining = follow::wrap_pi(bearing - player.face_yaw);
     if remaining.abs() <= follow::TURN_DEADZONE {
         return false;
@@ -508,6 +513,7 @@ pub(super) fn steer_approach(
     index: Res<GuidIndex>,
     targets: Query<(&Transform, Option<&ObjectStore>, Option<&NetEntity>)>,
     input: FollowInput,
+    rig: Option<Res<super::CameraControl>>,
 ) {
     if !approach.active() {
         return;
@@ -596,7 +602,13 @@ pub(super) fn steer_approach(
         (_, Some(d)) => bearing_or(player.face_yaw, d),
         (_, None) => player.face_yaw,
     };
-    let turning = steer_turn(&mut player, bearing, &mut goal.turn_rate, dt);
+    let turning = steer_turn(
+        &mut player,
+        bearing,
+        &mut goal.turn_rate,
+        dt,
+        rig.as_deref().and_then(|r| r.vehicle_facing),
+    );
     if !turning {
         // The facing walk ends once lined up, never holding forward.
         if let Toward::Face(_) = toward {
@@ -1625,5 +1637,29 @@ mod tests {
             assert!(player.auto_turning);
             assert_eq!(player.auto_as_move, as_move);
         }
+    }
+
+    /// A facing-limited vehicle clamps an approach/follow target bearing into its legal range
+    /// (`0x6ef3d0`) and stops turning at the limit.
+    #[test]
+    fn steer_turn_clamps_bearing_to_vehicle_facing_range() {
+        let mut player = Player {
+            face_yaw: 0.0,
+            ..Default::default()
+        };
+        let mut latched = None;
+        let range = Some((-0.5, 0.5));
+        for _ in 0..20 {
+            steer_turn(&mut player, 2.0, &mut latched, 0.05, range);
+        }
+        assert!(
+            (player.face_yaw - 0.5).abs() < 1e-3,
+            "stopped at left limit: {}",
+            player.face_yaw
+        );
+        assert!(
+            !steer_turn(&mut player, 2.0, &mut latched, 0.05, range),
+            "no further turn past limit"
+        );
     }
 }
