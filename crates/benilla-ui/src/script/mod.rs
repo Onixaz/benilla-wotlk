@@ -514,8 +514,11 @@ pub use tooltip_spell::SpellTooltipView;
 pub use totem::{TotemView, MAX_TOTEM_SLOTS};
 pub use trade::{TradeCells, TradeItemFacts, TradeItemSend, TradeTargetItem, TRADE_SLOTS};
 pub use tradeskill::{
-    TradeSkillDifficulty, TradeSkillGroup, TradeSkillReagent, TradeSkillRecipe, TradeSkillState,
+    TradeSkillDifficulty, TradeSkillGroup, TradeSkillLineView, TradeSkillList,
+    TradeSkillReagentView, TradeSkillRecipeView, TradeSkillRow,
 };
+#[cfg(any(test, feature = "fixtures"))]
+pub use tradeskill::{TradeSkillReagent, TradeSkillRecipe, TradeSkillState};
 pub use trainer::{
     trainer_type_filter, TrainerAbilityReq, TrainerGroup, TrainerService, TrainerServiceCategory,
     TrainerServiceLive, TrainerSkillReq, TrainerState, TrainerTooltip, TrainerWindow,

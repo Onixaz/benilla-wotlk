@@ -550,10 +550,7 @@ pub(crate) fn tick_script(
     };
     *world.resource_mut::<super::UiFrameCost>() = ui_cost;
     if let Some((pass, ui_now)) = pass {
-        *world.resource_mut::<super::UiClock>() = super::UiClock {
-            anchor: read.4,
-            ui_now,
-        };
+        *world.resource_mut::<super::UiClock>() = super::UiClock { ui_now };
         *world.resource_mut::<super::UiPassState>() = pass;
     }
 }

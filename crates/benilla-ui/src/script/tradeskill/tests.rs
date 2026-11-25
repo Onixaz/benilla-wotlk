@@ -26,6 +26,7 @@ fn recipe(
         min_made: 1,
         max_made: 1,
         cooldown_end: None,
+        cooldown_on_hold: false,
         description: None,
         search_text: vec![name.to_lowercase()],
         reagents: vec![TradeSkillReagent {
@@ -399,7 +400,7 @@ fn the_repeat_runs_on_the_cast_edges() {
     let mut s = open();
     s.run("SelectTradeSkill(8) DoTradeSkill(8, 5)").unwrap();
     assert_eq!(
-        s.take_trade_skill_casts(),
+        s.trade_skill_list_mut(|t| std::mem::take(&mut t.casts)),
         [(7421, 2)],
         "capped by numAvailable"
     );
@@ -408,27 +409,31 @@ fn the_repeat_runs_on_the_cast_edges() {
         1,
         "no repeat before the cast went (`0x5dacbb`)"
     );
-    s.trade_skill_cast_sent(7421, 2);
+    s.trade_skill_list_mut(|t| t.set_recast(7421, 2));
     assert_eq!(
         s.eval::<i64>("return GetTradeskillRepeatCount()").unwrap(),
         2,
         "capped by numAvailable"
     );
-    s.trade_skill_cast_started(7421);
-    assert!(s.trade_skill_cast_done(7421));
-    assert!(!s.trade_skill_cast_done(7421), "the second go spends it");
+    s.trade_skill_list_mut(|t| {
+        t.commit_pending_recast(7421);
+        assert!(t.do_recast(7421).0);
+        assert!(!t.do_recast(7421).0, "the second go spends it");
+    });
     assert_eq!(
         s.eval::<i64>("return GetTradeskillRepeatCount()").unwrap(),
         1
     );
 
     s.run("DoTradeSkill(8, 2)").unwrap();
-    for (spell, times) in s.take_trade_skill_casts() {
-        s.trade_skill_cast_sent(spell, times);
-    }
-    s.trade_skill_cast_started(7421);
-    s.trade_skill_cast_failed(7421);
-    assert!(!s.trade_skill_cast_done(7421));
+    s.trade_skill_list_mut(|t| {
+        for (spell, times) in std::mem::take(&mut t.casts) {
+            t.set_recast(spell, times);
+        }
+        t.commit_pending_recast(7421);
+        assert_eq!(t.cast_failed(7421), 1);
+        assert!(!t.do_recast(7421).0);
+    });
 }
 
 /// Another line resets the filters and selection; the same line keeps them across a close.
@@ -451,33 +456,46 @@ fn a_line_switch_resets_the_filters() {
     );
 }
 
-/// A product template in flight holds the list back.
+/// A product record in flight files and counts the recipes (`0x5dd889`) but runs no filter pass
+/// (`0x5ddeb7`): no headers, and the filtered count stands until the record lands.
 #[test]
-fn a_pending_product_holds_the_list() {
+fn a_pending_product_files_the_recipes_without_the_filter_pass() {
     let mut s = UiScript::new().unwrap();
     let mut st = enchanting();
     st.recipes[1].group = None;
     s.set_trade_skill(Some(st));
     assert_eq!(s.eval::<i64>("return GetNumTradeSkills()").unwrap(), 0);
+    assert_eq!(
+        s.trade_skill_list_mut(|l| l.entry_count()),
+        enchanting().recipes.len()
+    );
     s.set_trade_skill(Some(enchanting()));
     assert_eq!(s.eval::<i64>("return GetNumTradeSkills()").unwrap(), 8);
 }
 
-/// A switch to a line whose product is in flight shows nothing of the old line meanwhile.
+/// A switch to a line whose product is in flight indexes the new line's recipes in the order the
+/// rebuild reads them, the line's array (`0x5dd910`), under the old filtered count (`0x5dd889`,
+/// `0x5ddeb7`).
 #[test]
-fn a_pending_switch_drops_the_old_lines_list() {
+fn a_pending_switch_indexes_the_new_recipes_under_the_old_count() {
     let mut s = open();
     let mut other = enchanting();
     other.line = 164;
     other.recipes.reverse();
     other.recipes[0].group = None;
+    let second = other.recipes[1].name.clone();
+    let count = other.recipes.len();
     s.set_trade_skill(Some(other));
-    assert_eq!(s.eval::<i64>("return GetNumTradeSkills()").unwrap(), 0);
+    assert_eq!(s.eval::<i64>("return GetNumTradeSkills()").unwrap(), 8);
+    assert_eq!(s.trade_skill_list_mut(|l| l.entry_count()), count);
     assert_eq!(
-        s.eval::<i64>("return select(3, GetTradeSkillInfo(2))")
-            .unwrap(),
-        0
+        s.eval::<String>("return (GetTradeSkillInfo(2))").unwrap(),
+        second
     );
+    assert!(s
+        .eval::<Option<String>>(&format!("return (GetTradeSkillInfo({}))", count + 1))
+        .unwrap()
+        .is_none());
 }
 
 /// The description, the links and the closed state.
@@ -532,18 +550,24 @@ fn links_description_and_the_closed_line() {
     );
 }
 
-/// `CloseTradeSkill` queues the close for the app and fires TRADE_SKILL_CLOSE itself.
+/// `CloseTradeSkill` clears the line and fires TRADE_SKILL_CLOSE inside its call (`0x5da8b0`).
 #[test]
 fn close_trade_skill_fires_the_close() {
     let mut s = open();
     s.run("DoTradeSkill(2)").unwrap();
     // The host's cast went, so the repeat stands for the close to stop.
-    for (spell, times) in s.take_trade_skill_casts() {
-        s.trade_skill_cast_sent(spell, times);
-    }
+    s.trade_skill_list_mut(|t| {
+        for (spell, times) in std::mem::take(&mut t.casts) {
+            t.set_recast(spell, times);
+        }
+    });
     signalled();
     s.run("CloseTradeSkill()").unwrap();
-    assert!(s.take_trade_skill_close());
+    assert_eq!(
+        s.trade_skill_list_mut(|t| t.line),
+        0,
+        "the close clears the line in the call"
+    );
     assert_eq!(
         signalled(),
         ["UPDATE_TRADESKILL_RECAST", "TRADE_SKILL_CLOSE"]
@@ -609,5 +633,189 @@ fn a_filter_verb_rebuilds_then_signals_inside_its_call() {
     assert_eq!(
         call("SetTradeSkillSubClassFilter(3, 1, 1)"),
         ["TRADE_SKILL_UPDATE:2", "after:2"]
+    );
+}
+
+/// `recipe` as the app files it.
+fn row(r: &TradeSkillRecipe) -> TradeSkillRow {
+    TradeSkillRow {
+        spell_id: r.spell_id,
+        name: r.name.clone(),
+        difficulty: r.difficulty,
+        num_available: r.num_available,
+        trivial_high: r.trivial_high,
+        group: r.group.clone(),
+        item_level: r.item_level,
+        inv_slots: r.inv_slots,
+    }
+}
+
+/// A whole rebuild that goes in flight drops the sub-classes and opens both masks (`0x5dd638`,
+/// `0x5dd63e`, `0x5dd644`), files only those before the first miss, shown and unfolded
+/// (`0x5dde6e`), and returns before the saved flags come back (`0x5ddeb7`); past the miss only a
+/// recipe without a product adds its slot bits (`0x5ddb08`, `0x5ddcfc`). The callback's whole
+/// rebuild then saves those defaults: every header unfolds and every sub-class shows.
+#[test]
+fn a_whole_rebuild_in_flight_files_the_sub_classes_before_the_miss_with_default_flags() {
+    let mut rows: Vec<TradeSkillRow> = enchanting().recipes.iter().map(row).collect();
+    // Verb, rod, verb, verb, oil: the third goes in flight, the fourth has no product and the
+    // fifth's product is cached.
+    rows[3].inv_slots = 1 << 9;
+    rows[4].inv_slots = 1 << 10;
+    let mut l = TradeSkillList::default();
+    l.open_line(333, 7411);
+    l.refresh(true, Some(rows.clone()), &|_| true);
+    // Fold the verb header, hide the rods.
+    l.sub_class_filter &= !(1 << 2);
+    l.collapse_filter &= !1;
+    l.apply(true, &|_| true);
+    assert!(l.sub_class_flags().iter().any(|&(_, _, folded)| folded));
+    assert!(l.sub_class_flags().iter().any(|&(_, shown, _)| !shown));
+    l.inv_slots = 0;
+
+    let mut pending = rows.clone();
+    pending[2].group = None;
+    assert!(!l.refresh(true, Some(pending), &|_| true));
+    let filed = l.sub_class_flags();
+    assert_eq!(filed, [((-1, -1), true, false), ((7, 12), true, false)]);
+    assert_eq!(
+        (l.sub_class_filter, l.collapse_filter),
+        (u32::MAX, u32::MAX)
+    );
+    assert_eq!(l.inv_slots, (1 << 8) | SLOT_NONEQUIP | (1 << 9));
+
+    assert!(l.refresh(true, Some(rows), &|_| true));
+    assert_eq!(l.sub_class_flags().len(), 3);
+    assert!(l
+        .sub_class_flags()
+        .iter()
+        .all(|&(_, shown, folded)| shown && !folded));
+    assert_eq!(
+        (l.sub_class_filter, l.collapse_filter),
+        (u32::MAX, u32::MAX)
+    );
+    assert_eq!(l.filtered(), 8);
+}
+
+/// An in-place rebuild in flight keeps the sub-classes and their flags (`0x5ddd02`).
+#[test]
+fn an_in_place_rebuild_in_flight_keeps_the_sub_classes() {
+    let rows: Vec<TradeSkillRow> = enchanting().recipes.iter().map(row).collect();
+    let mut l = TradeSkillList::default();
+    l.open_line(333, 7411);
+    l.refresh(true, Some(rows.clone()), &|_| true);
+    l.collapse_filter &= !1;
+    l.apply(true, &|_| true);
+    let before = l.sub_class_flags();
+    let mut pending = rows;
+    pending[0].group = None;
+    assert!(!l.refresh(false, Some(pending), &|_| true));
+    let after = l.sub_class_flags();
+    assert_eq!(before, after);
+    assert_eq!(l.collapse_filter, !1);
+}
+
+/// The game shutdown (`0x5dcaf0`) clears the line, the list and the repeat but writes neither the
+/// skill-ups flag (`0xc235cc`, set only at `0x5dd43d`) nor the picked sub-class (`0xad0e04`): the
+/// next login's list still shows skill-ups only and the slot menu still narrows.
+#[test]
+fn the_game_shutdown_keeps_the_skill_ups_flag_and_the_picked_sub_class() {
+    let mut s = open();
+    s.run(
+        r#"HEADSLOT = "Head" WRISTSLOT = "Wrist" CHESTSLOT = "Chest"
+           NONEQUIPSLOT = "Created Items"
+           TradeSkillOnlyShowSkillUps(1) SetTradeSkillSubClassFilter(1, 1, 1)"#,
+    )
+    .unwrap();
+    s.trade_skill_list_mut(|t| {
+        t.set_recast(7443, 2);
+        t.commit_pending_recast(7443);
+        t.shutdown();
+    });
+    assert_eq!(
+        s.eval::<i64>("return GetNumTradeSkills()").unwrap(),
+        0,
+        "no list"
+    );
+    assert_eq!(
+        s.eval::<i64>("return GetTradeskillRepeatCount()").unwrap(),
+        1,
+        "no repeat"
+    );
+    s.set_trade_skill(Some(enchanting()));
+    let n = names(&mut s);
+    assert!(
+        !n.contains(&"Runed Copper Rod".to_string()),
+        "the gray rod is still filtered: {n:?}"
+    );
+    assert_eq!(
+        s.eval::<i64>("return select('#', GetTradeSkillInvSlots())")
+            .unwrap(),
+        2,
+        "the slot menu still lists the first sub-class's slots"
+    );
+}
+
+/// An on-hold cooldown still answers: the verb tests only the history's answer (`0x5daa13`), which
+/// reads an on-hold record as started now and 1 ms long (`0x807ad4`, `0x807af2`).
+#[test]
+fn an_on_hold_cooldown_answers_one_millisecond_left() {
+    let mut s = UiScript::new().unwrap();
+    let mut st = enchanting();
+    for r in &mut st.recipes {
+        r.cooldown_end = Some(100.0);
+        r.cooldown_on_hold = true;
+    }
+    s.set_trade_skill(Some(st));
+    s.set_now(90.0);
+    let left = s
+        .eval::<Option<f64>>("return GetTradeSkillCooldown(2)")
+        .unwrap();
+    assert_eq!(left, Some(0.001));
+}
+
+/// A cooldown at its end's millisecond still answers: the history skips only a record with negative
+/// time left (`0x807ae5`), and the verb pushes the end less the clock (`0x5daa24`), 0.
+#[test]
+fn a_cooldown_at_its_end_answers_zero() {
+    let mut s = UiScript::new().unwrap();
+    let mut st = enchanting();
+    for r in &mut st.recipes {
+        r.cooldown_end = Some(100.0);
+    }
+    s.set_trade_skill(Some(st));
+    s.set_now(100.0);
+    let left = s
+        .eval::<Option<f64>>("return GetTradeSkillCooldown(2)")
+        .unwrap();
+    assert_eq!(left, Some(0.0));
+    s.set_now(100.001);
+    let past = s
+        .eval::<Option<f64>>("return GetTradeSkillCooldown(2)")
+        .unwrap();
+    assert_eq!(past, None, "a record past its end is skipped");
+}
+
+/// `GetTradeSkillCooldown` reads the OS clock inside the call (`0x5daa17`) and answers the end
+/// less that (`0x5daa24`): with the clock run on past the last tick, the answer plus `GetTime()`
+/// read next in the same handler is the end, not the end plus the time since the tick.
+#[test]
+fn the_cooldown_left_is_read_against_the_clock_at_the_call() {
+    let mut s = UiScript::new().unwrap();
+    let mut st = enchanting();
+    for r in &mut st.recipes {
+        r.cooldown_end = Some(100.0);
+    }
+    s.set_trade_skill(Some(st));
+    s.set_now(90.0);
+    s.set_live_clock(true);
+    std::thread::sleep(std::time::Duration::from_millis(60));
+    let (left, now) = s
+        .eval::<(f64, f64)>("local c = GetTradeSkillCooldown(2) return c, GetTime()")
+        .unwrap();
+    assert!(now >= 90.05, "the clock ran on past the tick: {now}");
+    assert!(
+        (left + now - 100.0).abs() < 0.01,
+        "left {left} at {now} misses the end"
     );
 }

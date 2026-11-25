@@ -366,7 +366,8 @@ pub(crate) fn inv_slot_changed(world: &mut World, slot: u8, old: u64, new: u64) 
     }
     match slot {
         // The bag slots' watch (`0x5d9b40`): the bar's item update for each item the bag holds
-        // (`0x5d9be3`), our contents, then the watched bags (`0x5d9bf9`, `0x5d9bfe`).
+        // (`0x5d9be3`), our contents, the watched bags (`0x5d9bf9`, `0x5d9bfe`), then the trade-skill
+        // list's refresh in place (`0x5d9c05`).
         19..=22 | 67..=73 => {
             for entry in bag_entries(world, new) {
                 crate::ui_action::slots::update_item(world, entry);
@@ -375,19 +376,24 @@ pub(crate) fn inv_slot_changed(world: &mut World, slot: u8, old: u64, new: u64) 
                 contents_update(world, me);
             }
             update_containers(world);
+            step(world, crate::ui_tradeskill::refresh_in_place);
         }
         // The pack, keyring and token slots' watch (`0x5d9790`): a moved slot's old and new items'
-        // bar updates (`0x5d9839`, `0x5d984f`), the new item unlocks (`0x5d9863`), then our
+        // bar updates (`0x5d9839`, `0x5d984f`) and the list refresh (`0x5d9859`), the new item unlocks (`0x5d9863`), then our
         // contents (`0x5d98e3`).
         23..=38 | 86..=149 => {
             if old != new {
                 bar_item(world, old);
                 bar_item(world, new);
+                step(world, crate::ui_tradeskill::refresh_in_place);
             }
-            unlock_item(world, new);
-            if let Some(me) = me {
-                contents_update(world, me);
-            }
+            // A later step than the rebuild's `TRADE_SKILL_UPDATE`, whose listener still reads the item locked.
+            step(world, move |world| {
+                unlock_item(world, new);
+                if let Some(me) = me {
+                    contents_update(world, me);
+                }
+            });
         }
         _ => {}
     }
@@ -395,7 +401,7 @@ pub(crate) fn inv_slot_changed(world: &mut World, slot: u8, old: u64, new: u64) 
 
 /// A watched bag's slot `j` moved (`0x5d9600`), registered on each of its slots (`0x5d9af8`), the
 /// slot guid's old halves `old` where they moved: a moved slot's old and new items' bar updates
-/// (`0x5d969c`, `0x5d96b2`), the slot's new item unlocks (`0x5d96c6`), then the bag's `BAG_UPDATE`
+/// (`0x5d969c`, `0x5d96b2`) and the trade-skill list's refresh in place (`0x5d96bc`), the slot's new item unlocks (`0x5d96c6`), then the bag's `BAG_UPDATE`
 /// (`0x5d9746`).
 pub(crate) fn bag_slot_changed(
     world: &mut World,
@@ -429,9 +435,13 @@ pub(crate) fn bag_slot_changed(
     if old != new {
         bar_item(world, old);
         bar_item(world, new);
+        step(world, crate::ui_tradeskill::refresh_in_place);
     }
-    unlock_item(world, new);
-    contents_update(world, bag);
+    // A later step than the rebuild's `TRADE_SKILL_UPDATE`, whose listener still reads the item locked.
+    step(world, move |world| {
+        unlock_item(world, new);
+        contents_update(world, bag);
+    });
 }
 
 /// The entries of the items bag `bag` holds, in slot order.
@@ -494,7 +504,7 @@ fn entry_and_slot(world: &mut World, item: u64) -> Option<(u32, Option<u8>)> {
 /// The bar's updates for an item of ours: the melee faces when it is worn in a hand, the ranged
 /// face in the ranged slot (`0x70792d`, `0x707934`; `0x70add6`, `0x70addd`), then its entry's item
 /// update (`0x5aa5c0`).
-fn bar_item_with_faces(world: &mut World, item: u64) {
+fn bar_item_with_faces(world: &mut World, item: u64, refresh: bool) {
     let Some((entry, slot)) = entry_and_slot(world, item) else {
         return;
     };
@@ -503,7 +513,14 @@ fn bar_item_with_faces(world: &mut World, item: u64) {
         Some(17) => crate::ui_action::slots::update_weapon_faces(world, true),
         _ => {}
     }
-    crate::ui_action::slots::update_item(world, entry);
+    if refresh {
+        step(world, crate::ui_tradeskill::refresh_in_place);
+        step(world, move |world| {
+            crate::ui_action::slots::update_item(world, entry)
+        });
+    } else {
+        crate::ui_action::slots::update_item(world, entry);
+    }
 }
 
 /// The bar's item update (`0x5aa5c0`) for the entry of item `guid`, 0 or an unknown guid none.
@@ -639,7 +656,7 @@ pub(crate) fn flags_changed(world: &mut World, item: u64) {
 
 /// The entry watch's record callback (`0x7078e0`): the bar's faces and item update (`0x70792d`-`0x70793d`), its container's `BAG_UPDATE` (`0x707949`) and the character page's slot event (`0x707955`).
 pub(crate) fn entry_record(world: &mut World, item: u64) {
-    bar_item_with_faces(world, item);
+    bar_item_with_faces(world, item, false);
     item_updated(world, item);
     character_item_updated(world, item);
 }
@@ -652,7 +669,7 @@ fn template_of(world: &World, entry: u32) -> Option<(u32, u32)> {
         .map(|t| (t.stackable, t.flags))
 }
 
-/// An item's stack count moved (`0x707720`), on an item we own (`0x707757`): a stackable kind unlocks every item of it, the bank's too (`0x7077c1`), anything else the item alone (`0x7077d2`); then the bar's item update (`0x7077e7`), its container's `BAG_UPDATE` (`0x707805`) and the character page's slot event (`0x707814`).
+/// An item's stack count moved (`0x707720`), on an item we own (`0x707757`): a stackable kind unlocks every item of it, the bank's too (`0x7077c1`), anything else the item alone (`0x7077d2`); then the trade-skill list's refresh in place (`0x7077db`), the bar's item update (`0x7077e7`), its container's `BAG_UPDATE` (`0x707805`) and the character page's slot event (`0x707814`).
 pub(crate) fn stack_changed(world: &mut World, item: u64) {
     let Some((entry, _)) = owned_item(world, item) else {
         return;
@@ -661,9 +678,12 @@ pub(crate) fn stack_changed(world: &mut World, item: u64) {
         Some((stackable, _)) if stackable > 1 => unlock_items_of_type(world, entry, true),
         _ => unlock_item(world, item),
     }
-    crate::ui_action::slots::update_item(world, entry);
-    item_updated(world, item);
-    character_item_updated(world, item);
+    step(world, crate::ui_tradeskill::refresh_in_place);
+    step(world, move |world| {
+        crate::ui_action::slots::update_item(world, entry);
+        item_updated(world, item);
+        character_item_updated(world, item);
+    });
 }
 
 /// An item's spell charges moved (`0x707880`): on an item we own, the bar's item update
@@ -721,7 +741,7 @@ pub(crate) fn enchants_changed(world: &mut World, item: u64) {
     crate::ui_script::live::in_turn(world, crate::ui_char::update_inventory_alerts);
 }
 
-/// The post-init's unlock on an item we own (`0x70ad20`): a single item unlocks itself (`0x70ad9e`), a stackable kind every item of it outside the bank (`0x70ad8d`); then the bar's faces and item update (`0x70add6`-`0x70adf0`).
+/// The post-init's unlock on an item we own (`0x70ad20`): a single item unlocks itself (`0x70ad9e`), a stackable kind every item of it outside the bank (`0x70ad8d`); then the bar's faces, the trade-skill list's refresh in place (`0x70ade4`) and the bar's item update (`0x70adf0`).
 pub(crate) fn post_init_unlock(world: &mut World, item: u64) {
     let Some((entry, _)) = owned_item(world, item) else {
         return;
@@ -730,7 +750,8 @@ pub(crate) fn post_init_unlock(world: &mut World, item: u64) {
         Some((stackable, _)) if stackable > 1 => unlock_items_of_type(world, entry, false),
         _ => unlock_item(world, item),
     }
-    bar_item_with_faces(world, item);
+    // After the unlocks' own steps.
+    step(world, move |world| bar_item_with_faces(world, item, true));
 }
 
 /// `SMSG_OPEN_CONTAINER` (`0x6e32d0` -> `0x5d7110`): `BAG_OPEN` with 0 for our own guid, a watched bag's id for one of them, nothing else.

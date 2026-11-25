@@ -1,20 +1,28 @@
-//! The tradeskill bindings behind the stock `Blizzard_TradeSkillUI`, the client's tradeskill state:
-//! the app pushes a snapshot ([`UiScript::set_trade_skill`]) with recipes resolved from
-//! `Spell.dbc`, `SkillLineAbility.dbc`, item templates and bag counts, and the engine builds the
-//! display list (`0x5dd5a0`): one header per product sub-class, sorted and filtered in place
-//! (`0x5dcc40`). Every Lua index, `SetTradeSkillItem`'s included, is 1-based into that list
-//! ([`recipe_at`]); its first `GetNumTradeSkills()` entries are the visible ones.
+//! The tradeskill bindings behind the stock `Blizzard_TradeSkillUI`. The client's tradeskill
+//! statics ([`TradeSkillList`]) live in the app, which rebuilds the list where the reference does
+//! (`0x5dd5a0`): one entry per known recipe of the open line with its difficulty, makeable count
+//! and slot bits, one header per product sub-class, sorted and filtered in place (`0x5dcc40`). The
+//! verbs read the list and the game through the lent view at the call. Every Lua index,
+//! `SetTradeSkillItem`'s included, is 1-based into that list; its first `GetNumTradeSkills()`
+//! entries are the visible ones.
 
 mod api;
+#[cfg(any(test, feature = "fixtures"))]
+mod fixture;
 mod view;
 
 #[cfg(test)]
 mod tests;
 
 pub(super) use api::install;
-pub(crate) use view::{recipe_at, TradeSkillModel};
+pub(crate) use api::recipe_at;
+#[cfg(any(test, feature = "fixtures"))]
+pub(crate) use fixture::TradeSkillFixture;
+#[cfg(any(test, feature = "fixtures"))]
+pub use fixture::{TradeSkillReagent, TradeSkillRecipe, TradeSkillState};
+pub use view::TradeSkillList;
 
-/// A recipe's difficulty band, computed app-side: gray at or above trivialHigh, green from the
+/// A recipe's difficulty band on the line's rank: gray at or above trivialHigh, green from the
 /// low/high midpoint, yellow from trivialLow, orange below (`0x5dd5a0`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TradeSkillDifficulty {
@@ -50,21 +58,6 @@ impl TradeSkillDifficulty {
     }
 }
 
-/// One reagent of a recipe, as `GetTradeSkillReagentInfo` reports it.
-#[derive(Clone, Debug, PartialEq)]
-pub struct TradeSkillReagent {
-    /// The item entry `SetTradeSkillItem(i, j)` resolves through.
-    pub item: u32,
-    /// `None` until the item template arrives.
-    pub name: Option<String>,
-    /// `None` until the item template arrives.
-    pub icon: Option<String>,
-    /// How many this recipe consumes.
-    pub need: u32,
-    /// How many the player's bags hold.
-    pub have: u32,
-}
-
 /// The header a recipe files under, the reference's sub-class record (`0x5dd5a0`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TradeSkillGroup {
@@ -91,117 +84,93 @@ impl TradeSkillGroup {
     }
 }
 
-/// One known recipe of the open line, resolved app-side.
+/// One recipe as the list rebuild files it (`0x5dd5a0`): the entry's fields, and the spell's name
+/// the sort reads.
 #[derive(Clone, Debug, PartialEq)]
-pub struct TradeSkillRecipe {
+pub struct TradeSkillRow {
     /// What `DoTradeSkill` casts.
     pub spell_id: u32,
+    /// `Spell.dbc` name, the sort's last key (`0x5dae60`).
     pub name: String,
+    /// The band on the rank the rebuild read (`+0x4`).
     pub difficulty: TradeSkillDifficulty,
-    /// The fewest crafts the carried reagents cover; -1 for a recipe without reagents, which
-    /// the list and `DoTradeSkill` read as unlimited.
+    /// The fewest crafts the carried reagents cover, -1 for a recipe without reagents (`+0x18`).
     pub num_available: i32,
     /// `SkillLineAbility` trivialHigh, the sort key after difficulty (`+0x1c`).
     pub trivial_high: u32,
-    /// `None` while the product's template is in flight, which holds the whole list back.
+    /// `None` while the product's record is in flight, which holds the whole list back.
     pub group: Option<TradeSkillGroup>,
     /// The product's `ItemLevel`, 0 without one (`+0x14`).
     pub item_level: u32,
     /// The inventory-slot filter bits (`+0x10`).
     pub inv_slots: u32,
-    /// `Effect[0]` creates an item (24, 157 or 59): no alternate verb, an item link and tooltip.
+}
+
+/// The open line at the call (`0x5db810`): `SkillLine.dbc`'s name and alternate verb, and the
+/// player's rank and max rank of it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TradeSkillLineView {
+    /// `None` without a record: `GetTradeSkillLine` answers `"UNKNOWN", 0, 0`.
+    pub name: Option<String>,
+    pub alt_verb: Option<String>,
+    pub rank: i64,
+    pub max_rank: i64,
+}
+
+/// A recipe's spell record at the call.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TradeSkillRecipeView {
+    pub name: String,
+    /// `SPELL_ATTR_IS_TRADESKILL` (`0x20`), the recipe link's gate (`0x5db9a9`).
+    pub tradeskill: bool,
+    /// `Effect[0]` creates an item (24, 157 or 59).
     pub creates_item: bool,
     /// `EffectItemType[0]`.
     pub product_item: u32,
-    /// The product's `RequiredLevel` while its template is cached, which the level filter reads.
-    pub required_level: Option<u32>,
+    /// The product's inventory icon, else the spell's (`0x5db550`).
     pub icon: Option<String>,
     pub min_made: u32,
     pub max_made: u32,
-    /// When the cooldown ends on the `GetTime()` clock; `None` when ready.
-    pub cooldown_end: Option<f64>,
-    /// The spell's parsed description.
-    pub description: Option<String>,
-    /// The case-folded texts the name filter searches (`0x5dc110`).
-    pub search_text: Vec<String>,
-    /// In display order.
-    pub reagents: Vec<TradeSkillReagent>,
-    /// The Requirements line's `(name, have)` pairs.
-    pub tools: Vec<(String, bool)>,
+    /// The nonzero reagent slots, `(item, count)` in slot order.
+    pub reagents: Vec<(u32, u32)>,
+    /// The recipe's own skill line's name, the recipe link's prefix (`0x5db9c8` -> `0x5da5f0`).
+    pub line_name: Option<String>,
 }
 
-/// One open tradeskill window, pushed whole by the app.
-#[derive(Clone, Debug, PartialEq)]
-pub struct TradeSkillState {
-    /// The `SkillLine.dbc` id, the persistence key (`0xc235f0`).
-    pub line: u32,
-    pub line_name: String,
-    /// `SkillLine.dbc` alternateVerb, possibly empty: the `(-1, -1)` header and the Create
-    /// button's text for a recipe that makes no item.
-    pub alt_verb: String,
-    pub rank: u32,
-    pub max_rank: u32,
-    /// `GetTradeSkillListLink`'s link, `None` for a line that cannot link.
-    pub list_link: Option<String>,
-    /// Unordered: the engine sorts them (`0x5dae60`).
-    pub recipes: Vec<TradeSkillRecipe>,
+/// One reagent at the call (`0x5de400`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TradeSkillReagentView {
+    /// `None` until the item record arrives.
+    pub name: Option<String>,
+    /// `None` until the item record arrives.
+    pub icon: Option<String>,
+    /// How many the bags hold.
+    pub have: u32,
 }
 
 impl super::UiScript {
-    /// Pushes the open window's snapshot, or `None` on close; the app re-pushes on any change,
-    /// each push a list rebuild.
-    ///
-    /// A push for another line resets the name, level and makeable filters, the sub-class,
-    /// slot and fold masks and the selection; the same line keeps them across a close
-    /// (`0x5de120`).
+    /// A test's window: `state` filed as the app files it, with the list's filters and selection
+    /// kept for the same line (`0x5de120`); `None` closes it.
+    #[cfg(any(test, feature = "fixtures"))]
     pub fn set_trade_skill(&mut self, state: Option<TradeSkillState>) {
-        let fire = self.model_mut().trade_skill.set_state(state);
+        let mut model = self.model_mut();
+        let fixture = model
+            .trade_skill
+            .get_or_insert_with(|| Box::new(TradeSkillFixture::default()));
+        let fire = fixture.set(state);
+        drop(model);
         if fire {
             self.fire_event("UPDATE_TRADESKILL_RECAST", vec![]);
         }
     }
 
-    /// Whether the open list has entries, the reference's gate on `TRADE_SKILL_SHOW` (`0x5de2e5`).
-    pub fn trade_skill_has_entries(&self) -> bool {
-        self.model_ref().trade_skill.has_entries()
-    }
-
-    /// Drains the casts `DoTradeSkill` queued, each with its repeat count; the repeat is the engine's (`0x5d9fa0`).
-    pub fn take_trade_skill_casts(&mut self) -> Vec<(u32, u32)> {
-        drain_field!(self, trade_skill.casts)
-    }
-
-    /// `DoTradeSkill`'s cast of `spell_id` went: the repeat takes `times` and `UPDATE_TRADESKILL_RECAST` fires (`0x5dacc1` -> `0x5d9fa0`).
-    pub fn trade_skill_cast_sent(&mut self, spell_id: u32, times: u32) {
-        self.model_mut().trade_skill.set_recast(spell_id, times);
-        self.fire_event("UPDATE_TRADESKILL_RECAST", vec![]);
-    }
-
-    /// Whether `CloseTradeSkill` ran since the last drain; the close sends no packet.
-    pub fn take_trade_skill_close(&mut self) -> bool {
-        drain_field!(self, trade_skill.close)
-    }
-
-    /// Our own cast of `spell_id` started: a pending repeat of it becomes the running one, and
-    /// any other is dropped (`0x5da0f0`).
-    pub fn trade_skill_cast_started(&mut self, spell_id: u32) {
-        self.model_mut().trade_skill.commit_pending_recast(spell_id);
-    }
-
-    /// Our own cast of `spell_id` went off; whether the repeat casts it again (`DoRecast
-    /// 0x5da070`).
-    pub fn trade_skill_cast_done(&mut self, spell_id: u32) -> bool {
-        let (again, fire) = self.model_mut().trade_skill.do_recast(spell_id);
-        if fire {
-            self.fire_event("UPDATE_TRADESKILL_RECAST", vec![]);
-        }
-        again
-    }
-
-    /// Our own cast of `spell_id` failed: its repeat stops (`0x5da020`).
-    pub fn trade_skill_cast_failed(&mut self, spell_id: u32) {
-        if self.model_mut().trade_skill.cast_failed(spell_id) {
-            self.fire_event("UPDATE_TRADESKILL_RECAST", vec![]);
-        }
+    /// The test window's list, which a test drives as the app drives the live one.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub fn trade_skill_list_mut<R>(&mut self, f: impl FnOnce(&mut TradeSkillList) -> R) -> R {
+        let mut model = self.model_mut();
+        let fixture = model
+            .trade_skill
+            .get_or_insert_with(|| Box::new(TradeSkillFixture::default()));
+        f(&mut fixture.list)
     }
 }

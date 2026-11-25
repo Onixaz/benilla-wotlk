@@ -107,6 +107,11 @@ pub(crate) trait CallReads {
     fn spell_usable(&self, _spell_id: u32, _pet: bool) -> Option<(bool, bool)> {
         None
     }
+    /// A trade link's line for our name record (`0x5db0df` -> `0x5da5f0`); `None` with no active
+    /// player (`0x5db08c`).
+    fn link_line(&self, _spell_id: u32) -> Option<u32> {
+        None
+    }
 }
 
 /// The spell tables an answer reads.
@@ -247,7 +252,7 @@ impl<R: CallReads + ?Sized> SpellInfoSource for Answers<'_, R> {
         let now = self.reads.cast_now();
         let (race, class) = now.race_class;
         let trade = self.tables.skill_lines.and_then(|lines| {
-            let line = lines.spell_to_line(spell_id, race, class)?;
+            let line = self.reads.link_line(spell_id)?;
             crate::ui_tradeskill::list_link(
                 d,
                 line,

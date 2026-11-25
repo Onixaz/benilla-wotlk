@@ -618,7 +618,7 @@ fn a_mid_frame_gcd_sweeps_its_whole_duration() {
         })
         .insert_resource(cooldowns)
         .init_resource::<crate::spell::SpellModifiers>()
-        .insert_resource(crate::ui_script::UiClock { anchor, ui_now })
+        .insert_resource(crate::ui_script::UiClock { ui_now })
         .init_resource::<AutoRepeatActive>()
         .init_resource::<crate::spell::PendingCast>()
         .init_resource::<crate::spell::QueuedMeleeSpell>()
