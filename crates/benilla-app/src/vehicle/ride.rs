@@ -92,16 +92,19 @@ pub(crate) fn seat_pose(seat: &VehicleSeatRec, state: u8, exit_anims: bool) -> O
             },
             ..SeatPose::default()
         },
-        4 | 5 => SeatPose {
-            lower: if exit_anims {
-                pair(seat.exit_anims[0], seat.exit_anims[1])
-            } else {
-                [None; 2]
-            },
-            end: seat_anim(seat.exit_anims[2]),
-            end_forced: seat.flags & 0x20_0000 != 0,
-            ..SeatPose::default()
-        },
+        4 | 5 => {
+            let end = seat_anim(seat.exit_anims[2]);
+            SeatPose {
+                lower: if exit_anims {
+                    pair(seat.exit_anims[0], seat.exit_anims[1])
+                } else {
+                    [None; 2]
+                },
+                end,
+                end_forced: end.is_some() && seat.flags & 0x20_0000 != 0,
+                ..SeatPose::default()
+            }
+        }
         _ => return None,
     };
     (pose != SeatPose::default()).then_some(pose)
@@ -251,7 +254,9 @@ pub(super) fn ride_seats(
     creatures: Option<Res<crate::entities::Creatures>>,
 ) {
     for (entity, net, passenger, rider, ride, own_points, own_tf, in_transit) in &passengers {
-        // Seated, or in the exit's pre-delay, which holds the seat (`0x74a7f0`).
+        // Seated, or in the exit's pre-delay, which holds the seat (`0x74a7f0`). Deviation:
+        // state 4 keeps the ride's anims rather than switching to the exit's (`0x747b20`); the
+        // exit's arrive with its motion (state 5).
         let seated = passenger
             .filter(|p| p.state == SEATED || p.state == 4)
             .and_then(|p| Some((p, *index.0.get(&p.vehicle)?)));
@@ -498,6 +503,12 @@ mod tests {
         assert_eq!(seat_pose(&s, 5, false).unwrap().lower, [None, None]);
         let no_enter = VehicleSeatRec { flags: 0, ..s };
         assert_eq!(seat_pose(&no_enter, 1, false), None);
+        let forced_without_end = VehicleSeatRec {
+            flags: 0x20_0000,
+            exit_anims: [-1, -1, -1],
+            ..Default::default()
+        };
+        assert_eq!(seat_pose(&forced_without_end, 5, false), None);
     }
 
     /// The passenger's own point lands on the seat's offset, whatever the turn.

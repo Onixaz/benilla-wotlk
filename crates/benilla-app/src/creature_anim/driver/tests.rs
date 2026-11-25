@@ -6239,3 +6239,135 @@ fn an_exit_leaving_its_anims_plays_its_end() {
     let drv = app.world().entity(running).get::<AnimDriver>().unwrap();
     assert_eq!(drv.seat_end, Some(187), "a run lands as JumpLandRun");
 }
+
+/// A torso start whose resolved clip loops counts as played out so the torso loop takes over
+/// instead of hanging on a seated unit (`0x747bd0`).
+#[test]
+fn a_looping_seat_upper_start_hands_the_torso_to_its_loop() {
+    let mut app = app();
+    let mut model = seated_model();
+    let mut looping_start = clip(139, 8, true);
+    looping_start.upper_node = Some(AnimationNodeIndex::new(9));
+    model.clips.push(looping_start);
+    let unit = app
+        .world_mut()
+        .spawn((
+            model,
+            AnimationPlayer::default(),
+            AnimationTransitions::new(),
+            AnimDriver::default(),
+            MovementState::default(),
+            crate::vehicle::SeatPose {
+                lower: [None, Some(121)],
+                upper: [Some(139), Some(140)],
+                ..Default::default()
+            },
+        ))
+        .id();
+    app.update();
+    let drv = app.world().entity(unit).get::<AnimDriver>().unwrap();
+    assert!(drv.seat_upper_spent, "looping upper start is spent at once");
+    assert!(
+        drv.overlay.is_some_and(|ov| ov.id == 140 && ov.looping),
+        "torso loop takes over immediately: {:?}",
+        drv.overlay.map(|o| (o.id, o.looping))
+    );
+}
+
+/// Dying during an exit queues no exit end (`0x7489c0`), and movement supersedes a playing exit
+/// end (`0x74b9c0`).
+#[test]
+fn seat_end_is_skipped_on_death_and_cancelled_by_movement() {
+    let mut app = app();
+    let exit = crate::vehicle::SeatPose {
+        end: Some(39),
+        ..Default::default()
+    };
+    // Movement cancels a playing exit end instead of replaying it after.
+    let unit = seated(&mut app, exit);
+    app.update();
+    app.world_mut()
+        .entity_mut(unit)
+        .remove::<crate::vehicle::SeatPose>();
+    app.update();
+    assert_eq!(
+        app.world()
+            .entity(unit)
+            .get::<AnimDriver>()
+            .unwrap()
+            .seat_end,
+        Some(39)
+    );
+    app.world_mut().entity_mut(unit).insert(MovementState {
+        flags: move_flags::FORWARD,
+        speed: 7.0,
+        ..Default::default()
+    });
+    app.update();
+    let drv = app.world().entity(unit).get::<AnimDriver>().unwrap();
+    assert_eq!(drv.seat_end, None, "movement supersedes the exit end");
+
+    // Dying mid-exit does not arm an exit end for a later revive.
+    let doomed = seated(&mut app, exit);
+    app.update();
+    let dead_store = crate::net::ObjectStore(
+        benilla_protocol::ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x9),
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 0),
+        ])
+        .into_created(benilla_protocol::messages::ObjectType::Unit),
+    );
+    app.world_mut().entity_mut(doomed).insert(dead_store);
+    app.update();
+    let drv = app.world().entity(doomed).get::<AnimDriver>().unwrap();
+    assert_eq!(drv.seat_end, None, "a dead passenger owes no exit end");
+}
+
+/// Afloat exits skip their end unless `end_forced` (`0x200000`) forces it (`0x74b9c0`).
+#[test]
+fn afloat_exit_end_obeys_end_forced() {
+    let mut app = app();
+    let unforced = seated(
+        &mut app,
+        crate::vehicle::SeatPose {
+            end: Some(39),
+            end_forced: false,
+            ..Default::default()
+        },
+    );
+    let forced = seated(
+        &mut app,
+        crate::vehicle::SeatPose {
+            end: Some(39),
+            end_forced: true,
+            ..Default::default()
+        },
+    );
+    app.update();
+    for u in [unforced, forced] {
+        app.world_mut().entity_mut(u).insert(MovementState {
+            flags: move_flags::FALLING,
+            ..Default::default()
+        });
+        app.world_mut()
+            .entity_mut(u)
+            .remove::<crate::vehicle::SeatPose>();
+    }
+    app.update();
+    assert_eq!(
+        app.world()
+            .entity(unforced)
+            .get::<AnimDriver>()
+            .unwrap()
+            .seat_end,
+        None
+    );
+    assert_eq!(
+        app.world()
+            .entity(forced)
+            .get::<AnimDriver>()
+            .unwrap()
+            .seat_end,
+        Some(39)
+    );
+}

@@ -770,25 +770,43 @@ fn drive_unit(
     }
     if seat != drv.seat {
         // A new seat state clears the start flags (`0x7489c0`). An exit leaving its anims owes
-        // its end (`0x74b9c0`): played landed or under the seat's forcing flag, a run's JumpEnd
-        // as JumpLandRun; falling, swimming or flying it leaves the base to the fall or swim.
-        if let (None, Some(last)) = (seat, drv.seat) {
-            let afloat =
-                mv.flags & (move_flags::FALLING | move_flags::SWIMMING | move_flags::FLYING) != 0;
-            drv.seat_end = last.end.filter(|_| last.end_forced || !afloat).map(|e| {
-                // JumpEnd 39 and JumpLandRun 187.
-                if e == 39 && mv.flags & move_flags::ANY_MOVE != 0 {
-                    187
-                } else {
-                    e
-                }
-            });
-        } else {
-            drv.seat_end = None;
-        }
+        // its end while alive (`0x7489c0`, `0x74b9c0`): played landed or under the seat's forcing
+        // flag, a run's JumpEnd as JumpLandRun; falling, swimming or flying it leaves the base to
+        // the fall or swim.
+        drv.seat_end = match (seat, drv.seat) {
+            (None, Some(last)) if !dead => {
+                let afloat = mv.flags
+                    & (move_flags::FALLING | move_flags::SWIMMING | move_flags::FLYING)
+                    != 0;
+                last.end.filter(|_| last.end_forced || !afloat).map(|e| {
+                    // JumpEnd 39 and JumpLandRun 187.
+                    if e == 39 && mv.flags & move_flags::ANY_MOVE != 0 {
+                        187
+                    } else {
+                        e
+                    }
+                })
+            }
+            _ => None,
+        };
         drv.seat = seat;
         drv.seat_lower_spent = false;
         drv.seat_upper_spent = false;
+    }
+    let seat_tier = |id: u16| match catalog.filter(|_| anim_tier != 0) {
+        Some(cat) => anims.resolve_tier(id, anim_tier, cat),
+        None => id,
+    };
+    // An exit's end is a single base play (`0x74b9c0`), so any mode or movement-flag change
+    // supersedes it rather than replaying it after.
+    if let Some(end) = drv.seat_end {
+        let end_id = seat_tier(end);
+        if drv.mode != Mode::Gait || (drv.gait == Some(end_id) && mv.flags != drv.gait_flags) {
+            drv.seat_end = None;
+            if drv.gait == Some(end_id) {
+                drv.gait = None;
+            }
+        }
     }
     // The base's seat anim: the start until it plays out, then the loop (`0x747b20`); an exit's
     // end once, after.
@@ -796,11 +814,15 @@ fn drive_unit(
         .and_then(|s| s.lower[0])
         .filter(|_| !drv.seat_lower_spent);
     if let Some(start) = lower_start.or(drv.seat_end) {
-        // A one-shot this model lacks, or whose fallback loops, has nothing to play out.
+        let start_id = seat_tier(start);
+        // Deviation: a one-shot this model lacks, or whose resolved clip loops, counts as played
+        // out at once, where `0x7484e0` plays the fallback until its end.
         let missing = anims
-            .find(resolved(anims, start, catalog).id)
+            .find(resolved(anims, start_id, catalog).id)
             .is_none_or(|c| c.looping);
-        if missing || drv.gait == Some(start) && oneshot_finished(&player, anims, start, catalog) {
+        if missing
+            || drv.gait == Some(start_id) && oneshot_finished(&player, anims, start_id, catalog)
+        {
             if lower_start.is_some() {
                 drv.seat_lower_spent = true;
             } else {
@@ -814,6 +836,7 @@ fn drive_unit(
         .filter(|_| !drv.seat_lower_spent)
         .or(drv.seat_end.filter(|_| seat.is_none()));
     let seat_pose = seat_once.or_else(|| seat.and_then(|s| s.lower[1]));
+    let seat_once = seat_once.map(seat_tier);
     // The creep vis flag off the unit's own descriptor (`[[unit+0x110]+0x213] & 2`), never
     // predicted: the crouch lands with the server's aura.
     mv.stealthed = store.is_some_and(|s| s.0.unit_is_stealthed());
@@ -1696,24 +1719,32 @@ fn drive_unit(
     // With no hold, a seated passenger's torso takes the seat's upper anim (`0x747bd0`), the pick
     // the base chooser ends on (`0x724500`) moved onto the torso over the seat's base
     // (`0x7385c0`): its start once, then its loop. A one-shot on the key bone wins while it plays.
-    let seat_upper_start = drv
+    // Deviation: a start whose resolved clip loops counts as played out, where `0x7484e0` plays
+    // the fallback until its end.
+    let mut seat_upper_start = drv
         .seat
         .and_then(|s| s.upper[0])
-        .filter(|_| !drv.seat_upper_spent);
+        .filter(|_| !drv.seat_upper_spent && kit_hold.is_none());
+    if let Some(start) = seat_upper_start {
+        let dir = resolved(anims, start, catalog);
+        let unusable = anims
+            .find(dir.id)
+            .is_none_or(|c| c.upper_node.is_none() || c.looping);
+        if unusable {
+            drv.seat_upper_spent = true;
+            seat_upper_start = None;
+        }
+    }
     let seat_upper = drv
         .seat
         .and_then(|s| seat_upper_start.or(s.upper[1]))
-        .filter(|_| kit_hold.is_none() && !dead)
+        .filter(|_| kit_hold.is_none())
         .and_then(|id| {
             let dir = resolved(anims, id, catalog);
             anims
                 .find(dir.id)
                 .and_then(|c| c.upper_node.map(|node| (id, node, c, dir)))
         });
-    if seat_upper_start.is_some() && seat_upper.is_none() && kit_hold.is_none() {
-        // A start this model lacks has nothing to play out.
-        drv.seat_upper_spent = true;
-    }
     let seat_upper_once = seat_upper
         .map(|(id, ..)| id)
         .filter(|&id| Some(id) == seat_upper_start);
