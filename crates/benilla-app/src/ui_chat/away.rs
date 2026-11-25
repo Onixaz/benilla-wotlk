@@ -23,53 +23,13 @@ impl AfkMirror {
     }
 }
 
-/// What a `/afk` or `/dnd` resolves to: the line to print, the mirror's new value, the wire body.
+/// What a `/dnd` resolves to: the line to print and the wire body; DND has no mirror.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AwayOutcome {
-    /// The `CHAT_MSG_SYSTEM` line, or `None` for the one row that prints nothing.
-    pub(crate) line: Option<String>,
-    /// The mirror's value afterwards. `None` = unchanged (every DND row, and `/afk M` while AFK).
-    pub(crate) mirror: Option<u32>,
+    /// The `CHAT_MSG_SYSTEM` line.
+    pub(crate) line: String,
     /// The `CMSG_MESSAGECHAT` body, after the client's own default-message substitution.
     pub(crate) body: String,
-}
-
-/// `/afk <msg>`, the AFK arm. The default text is substituted before the send, so the server stores
-/// `"Away from Keyboard"`, never an empty body, and the no-`%s` `MARKED_AFK` goes unused.
-pub(crate) fn afk_line(
-    msg: &str,
-    mirror: AfkMirror,
-    strings: &impl Fn(&str) -> Option<String>,
-) -> AwayOutcome {
-    let text = |key: &str| strings(key).unwrap_or_default();
-    if mirror.is_afk() {
-        if msg.is_empty() {
-            // The AFK clear prints `CLEARED_AFK` unformatted and still sends, with an empty body.
-            AwayOutcome {
-                line: Some(text("CLEARED_AFK")),
-                mirror: Some(0),
-                body: String::new(),
-            }
-        } else {
-            // Re-marking while AFK prints nothing, but the new text is still sent.
-            AwayOutcome {
-                line: None,
-                mirror: None,
-                body: msg.to_string(),
-            }
-        }
-    } else {
-        let body = if msg.is_empty() {
-            text("DEFAULT_AFK_MESSAGE")
-        } else {
-            msg.to_string()
-        };
-        AwayOutcome {
-            line: Some(fill_one(&text("MARKED_AFK_MESSAGE"), &body)),
-            mirror: Some(1),
-            body,
-        }
-    }
 }
 
 /// `/dnd <msg>` against the live `PLAYER_FLAGS` bit `0x4`, the DND arm; unlike `/afk`, a repeat
@@ -83,8 +43,7 @@ pub(crate) fn dnd_line(
     let text = |key: &str| strings(key).unwrap_or_default();
     if is_dnd && msg.is_empty() {
         return AwayOutcome {
-            line: Some(text("CLEARED_DND")),
-            mirror: None,
+            line: text("CLEARED_DND"),
             body: String::new(),
         };
     }
@@ -94,14 +53,13 @@ pub(crate) fn dnd_line(
         msg.to_string()
     };
     AwayOutcome {
-        line: Some(fill_one(&text("MARKED_DND"), &body)),
-        mirror: None,
+        line: fill_one(&text("MARKED_DND"), &body),
         body,
     }
 }
 
 /// Fill the first `%s` of a GlobalString, which the reference `snprintf`s; `%%` is a percent.
-fn fill_one(template: &str, arg: &str) -> String {
+pub(crate) fn fill_one(template: &str, arg: &str) -> String {
     let mut out = String::with_capacity(template.len() + arg.len());
     let mut chars = template.chars().peekable();
     let mut used = false;
@@ -216,65 +174,26 @@ mod tests {
 
     #[test]
     fn the_truth_table_row_for_row() {
-        let afk = |msg: &str, m: u32| afk_line(msg, AfkMirror(m), &strings);
         let dnd = |msg: &str, is: bool| dnd_line(msg, is, &strings);
-
-        assert_eq!(
-            afk("", 0),
-            AwayOutcome {
-                line: Some("You are now AFK: Away from Keyboard".into()),
-                mirror: Some(1),
-                body: "Away from Keyboard".into(),
-            },
-            "the server receives the literal default, never an empty body"
-        );
-        assert_eq!(
-            afk("", 1),
-            AwayOutcome {
-                line: Some("You are no longer AFK.".into()),
-                mirror: Some(0),
-                body: String::new(),
-            }
-        );
-        assert_eq!(
-            afk("brb", 0),
-            AwayOutcome {
-                line: Some("You are now AFK: brb".into()),
-                mirror: Some(1),
-                body: "brb".into(),
-            }
-        );
-        assert_eq!(
-            afk("brb", 1),
-            AwayOutcome {
-                line: None,
-                mirror: None,
-                body: "brb".into(),
-            },
-            "silent re-mark: the server still learns the new auto-reply"
-        );
 
         assert_eq!(
             dnd("", false),
             AwayOutcome {
-                line: Some("You are now DND: Do not Disturb.".into()),
-                mirror: None,
+                line: "You are now DND: Do not Disturb.".into(),
                 body: "Do not Disturb".into(),
             }
         );
         assert_eq!(
             dnd("", true),
             AwayOutcome {
-                line: Some("You are no longer marked DND.".into()),
-                mirror: None,
+                line: "You are no longer marked DND.".into(),
                 body: String::new(),
             }
         );
         assert_eq!(
             dnd("busy", false),
             AwayOutcome {
-                line: Some("You are now DND: busy.".into()),
-                mirror: None,
+                line: "You are now DND: busy.".into(),
                 body: "busy".into(),
             }
         );
@@ -282,8 +201,7 @@ mod tests {
         assert_eq!(
             dnd("busy", true),
             AwayOutcome {
-                line: Some("You are now DND: busy.".into()),
-                mirror: None,
+                line: "You are now DND: busy.".into(),
                 body: "busy".into(),
             },
             "DND re-marks where AFK stays silent — the reference's own asymmetry"
@@ -309,8 +227,8 @@ mod tests {
     #[test]
     fn a_missing_string_table_does_not_invent_english() {
         let none = |_: &str| None;
-        let out = afk_line("brb", AfkMirror(0), &none);
-        assert_eq!(out.line.as_deref(), Some(""));
+        let out = dnd_line("brb", false, &none);
+        assert_eq!(out.line, "");
         assert_eq!(
             out.body, "brb",
             "the wire half never depends on the strings"

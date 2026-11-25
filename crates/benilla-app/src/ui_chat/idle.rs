@@ -16,7 +16,7 @@ use bevy::input::mouse::{AccumulatedMouseMotion, MouseButtonInput, MouseWheel};
 use bevy::prelude::*;
 use bevy::time::Real;
 
-use super::away::{add_system, afk_line, AfkMirror};
+use super::away::{add_system, AfkMirror};
 
 /// The last-input stamp: elapsed real time on the one clock both its writers and the handler read.
 /// Process-global, zero at start and never reset, not even at world entry, so a client untouched
@@ -195,29 +195,9 @@ pub(crate) fn idle_handler(world: &mut World) {
         world.write_message(crate::player::StandStateRequest { state: 1 });
     }
     if action.afk {
-        // The AFK mark with no message (`0x52b349`) is `/afk` with an empty message and a clear
-        // mirror, so it shares that path: the `DEFAULT_AFK_MESSAGE` echo and body, the line added
-        // before the mirror is set (`0x6dc6e0`, `0x6dc6e8`).
-        let mirror = *world.resource::<AfkMirror>();
-        let out = afk_line("", mirror, &|key: &str| {
-            world
-                .get_non_send_resource::<benilla_ui::script::UiScript>()
-                .and_then(|s| crate::ui_chat::combat::global_string(s, key))
-        });
-        if let Some(line) = out.line {
-            add_system(world, line);
-        }
-        if let Some(v) = out.mirror {
-            world.resource_mut::<AfkMirror>().0 = v;
-        }
-        if let Some(commands) = world.get_resource::<crate::net::NetCommands>() {
-            let _ = commands.0.send(crate::net::ClientCommand::Chat {
-                kind: crate::net::ChatKind::Afk,
-                target: None,
-                text: out.body,
-                language: None,
-            });
-        }
+        // The AFK mark with no message (`0x52b349`), reached only with the mirror clear
+        // (`0x52b338`): the same mark `/afk` runs, `CLEARED_DND` and all.
+        super::input::set_afk(world, "");
     }
 }
 

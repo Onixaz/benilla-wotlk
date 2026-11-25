@@ -1474,6 +1474,37 @@ pub(crate) fn clear_afk(world: &mut World, forced: bool) -> bool {
     true
 }
 
+/// The AFK mark (`0x6dc640`): an empty message takes `DEFAULT_AFK_MESSAGE` (`0x6dc65b`). With the
+/// mirror clear (`0x6dc66d`) it adds `CLEARED_DND` under a live DND bit (`0x6dc675`-`0x6dc6a0`), then
+/// `MARKED_AFK_MESSAGE` (`0x6dc6e0`), then sets the mirror (`0x6dc6e8`); set, it adds nothing. The
+/// AFK packet always goes out with the message (`0x6dc73d`).
+pub(crate) fn set_afk(world: &mut World, msg: &str) {
+    let body = if msg.is_empty() {
+        vm_string(world, "DEFAULT_AFK_MESSAGE").unwrap_or_default()
+    } else {
+        msg.to_string()
+    };
+    let mirror = world
+        .get_resource::<super::away::AfkMirror>()
+        .copied()
+        .unwrap_or_default();
+    if !mirror.is_afk() {
+        let dnd = world
+            .run_system_cached(
+                |q: Query<&crate::net::ObjectStore, With<crate::net::SelfPlayer>>| is_dnd(&q),
+            )
+            .unwrap_or(false);
+        if dnd {
+            let line = vm_string(world, "CLEARED_DND").unwrap_or_default();
+            super::away::add_system(world, line);
+        }
+        let format = vm_string(world, "MARKED_AFK_MESSAGE").unwrap_or_default();
+        super::away::add_system(world, super::away::fill_one(&format, &body));
+        world.resource_mut::<super::away::AfkMirror>().0 = 1;
+    }
+    send_chat(world, crate::net::ChatKind::Afk, None, body, None);
+}
+
 /// `SendChatMessage`'s body inside the call (`0x50d170`), past the binding's type, empty-line and
 /// language reads. No slash grammar runs here: an addon sending `"/dance"` says six characters.
 /// Every line it adds is added in the call; a `Some` is the verb's Lua error.
@@ -1528,16 +1559,19 @@ pub(crate) fn send_chat_message(
             .get_resource::<super::away::AfkMirror>()
             .copied()
             .unwrap_or_default();
-        let out = super::away::afk_line(&send.text, mirror, &|k| strings(world, k));
-        // The mark adds its line, then sets the mirror (`0x6dc6e0`, `0x6dc6e8`).
-        if let Some(line) = out.line {
-            super::away::add_system(world, line);
+        // A clear mirror's empty line takes `DEFAULT_AFK_MESSAGE` (`0x50d5b8`); a line still empty
+        // is the forced AFK clear (`0x50d5e9`-`0x50d5ee`), any other the AFK mark (`0x50d5db`). The
+        // AFK mark's own packet never reads the language argument.
+        let text = if !mirror.is_afk() && send.text.is_empty() {
+            strings(world, "DEFAULT_AFK_MESSAGE").unwrap_or_default()
+        } else {
+            send.text
+        };
+        if text.is_empty() {
+            clear_afk(world, true);
+        } else {
+            set_afk(world, &text);
         }
-        if let Some(v) = out.mirror {
-            world.resource_mut::<super::away::AfkMirror>().0 = v;
-        }
-        // The AFK mark's own packet never reads the language argument.
-        send_chat(world, wire, send.target, out.body, None);
         return None;
     }
     // Every other type first clears a standing AFK (`0x50d417`-`0x50d425`), `/dnd` included.
@@ -1550,9 +1584,7 @@ pub(crate) fn send_chat_message(
             )
             .unwrap_or(false);
         let out = super::away::dnd_line(&send.text, dnd, &|k| strings(world, k));
-        if let Some(line) = out.line {
-            super::away::add_system(world, line);
-        }
+        super::away::add_system(world, out.line);
         out.body
     } else {
         send.text

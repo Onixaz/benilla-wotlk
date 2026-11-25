@@ -2695,6 +2695,7 @@ fn send_world(
             f:SetScript("OnEvent", function(_, _, text) SystemSeen[#SystemSeen + 1] = text end)
             MARKED_AFK_MESSAGE = "You are now AFK: %s"
             CLEARED_AFK = "You are no longer AFK."
+            CLEARED_DND = "You are no longer marked DND."
             MARKED_DND = "You are now DND: %s."
             DEFAULT_AFK_MESSAGE = "Away from Keyboard"
             DEFAULT_DND_MESSAGE = "Do not Disturb"
@@ -2816,6 +2817,90 @@ fn the_afk_clear_is_gated_on_the_mirror_and_the_cvar() {
             (ChatKind::Afk, String::new()),
             (ChatKind::Afk, String::new())
         ]
+    );
+}
+
+/// The chat commands a test's receiver holds, as (type, text).
+fn chat_sent(
+    rx: &crossbeam_channel::Receiver<crate::net::ClientCommand>,
+) -> Vec<(crate::net::ChatKind, String)> {
+    rx.try_iter()
+        .filter_map(|c| match c {
+            crate::net::ClientCommand::Chat { kind, text, .. } => Some((kind, text)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// An empty AFK line with the mirror set is the forced AFK clear (`0x50d5ee` -> `0x6d52d0`), which
+/// zeroes the mirror (`0x6d530e`) before it adds `CLEARED_AFK` (`0x6d531d`): a `CHAT_MSG_SYSTEM`
+/// listener that says something finds the mirror clear, so its SAY clears nothing and goes out
+/// ahead of the clear's own empty AFK packet.
+#[test]
+fn the_afk_clear_zeroes_the_mirror_before_its_line() {
+    use crate::net::ChatKind;
+
+    let (mut world, rx) = send_world(benilla_ui::script::UiScript::new().expect("VM"));
+    world.resource_mut::<super::away::AfkMirror>().0 = 1;
+    run_lent(
+        &mut world,
+        r#"
+        local f = CreateFrame("Frame")
+        f:RegisterEvent("CHAT_MSG_SYSTEM")
+        f:SetScript("OnEvent", function() if not Said then Said = true SendChatMessage("x", "SAY") end end)
+        SendChatMessage("", "AFK")
+        "#,
+    )
+    .expect("lua");
+    assert_eq!(system_seen(&world), vec!["You are no longer AFK."]);
+    assert_eq!(
+        chat_sent(&rx),
+        vec![(ChatKind::Say, "x".into()), (ChatKind::Afk, String::new())]
+    );
+    assert!(!world.resource::<super::away::AfkMirror>().is_afk());
+}
+
+/// The AFK mark (`0x6dc640`) under a live DND bit adds `CLEARED_DND` before `MARKED_AFK_MESSAGE`
+/// (`0x6dc675`-`0x6dc6e0`); with the mirror already set it adds nothing and still sends the text.
+#[test]
+fn the_afk_mark_clears_a_standing_dnd_in_text_first() {
+    use crate::net::ChatKind;
+
+    let (mut world, rx) = send_world(benilla_ui::script::UiScript::new().expect("VM"));
+    world.spawn((
+        crate::net::SelfPlayer,
+        crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+            benilla_protocol::field::FIELD_PLAYER_FLAGS,
+            0x4,
+        )])),
+    ));
+    run_lent(&mut world, r#"SendChatMessage("brb", "AFK")"#).expect("lua");
+    assert_eq!(
+        system_seen(&world),
+        vec!["You are no longer marked DND.", "You are now AFK: brb"]
+    );
+    run_lent(&mut world, r#"SendChatMessage("later", "AFK")"#).expect("lua");
+    assert!(system_seen(&world).is_empty(), "a set mirror adds nothing");
+    assert_eq!(
+        chat_sent(&rx),
+        vec![
+            (ChatKind::Afk, "brb".into()),
+            (ChatKind::Afk, "later".into())
+        ]
+    );
+    // The idle leg's mark (`0x52b349`) is the same function: the DND line, then the default text.
+    world.resource_mut::<super::away::AfkMirror>().0 = 0;
+    super::input::set_afk(&mut world, "");
+    assert_eq!(
+        system_seen(&world),
+        vec![
+            "You are no longer marked DND.",
+            "You are now AFK: Away from Keyboard"
+        ]
+    );
+    assert_eq!(
+        chat_sent(&rx),
+        vec![(ChatKind::Afk, "Away from Keyboard".into())]
     );
 }
 
