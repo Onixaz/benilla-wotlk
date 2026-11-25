@@ -106,12 +106,11 @@ fn init(pending: Option<u32>) -> (CompanionLists, Vec<&'static str>) {
         commands: &commands,
         ui: &mut ui,
     };
-    add_initial(
-        &mut lists,
-        known().into_iter().map(|id| (id, None)),
-        &mut cx,
-        |_| {},
-    );
+    // The init's adds without a line (`0x6e7fc5`), then its one update (`0x6e7fe3`).
+    for id in known() {
+        add_known(&mut lists, id, false, None, &mut cx);
+    }
+    cx.update(&mut lists, None);
     (lists, ui.names())
 }
 

@@ -109,21 +109,41 @@ pub(super) fn tokenize_words(line: &[ColorRun]) -> Vec<WrapWord> {
 /// A word too wide alone force-breaks at its last fitting glyph, as the reference drops the
 /// exceeding glyph and ends a line with no opportunity (`fcomp`, `je`); when not one glyph fits,
 /// its builder bails and the rest of the source line drops.
+#[cfg(test)]
 pub(super) fn greedy_pack<F: FnMut(&str) -> f32>(
     words: Vec<WrapWord>,
     max_width: f32,
+    measure: F,
+) -> Vec<Vec<ColorRun>> {
+    greedy_pack_rows(words, max_width, max_width, measure)
+}
+
+/// [`greedy_pack`] with the first row `first_width` wide and every later one `rest_width`, the
+/// indented word wrap's narrower continuation rows (`0x6c7ca6`).
+pub(super) fn greedy_pack_rows<F: FnMut(&str) -> f32>(
+    words: Vec<WrapWord>,
+    first_width: f32,
+    rest_width: f32,
     mut measure: F,
 ) -> Vec<Vec<ColorRun>> {
     // One slack covers the pack test and the force-break walk.
-    let max_width = max_width + WIDTH_EPS;
+    let (first_width, rest_width) = (first_width + WIDTH_EPS, rest_width + WIDTH_EPS);
     let mut out: Vec<Vec<WrapWord>> = Vec::new();
     let mut cur: Vec<WrapWord> = Vec::new();
     let mut cur_w = 0.0f32;
+    // The width of the row being filled: the first until one row closes.
+    let width_of = |out: &Vec<Vec<WrapWord>>| {
+        if out.is_empty() {
+            first_width
+        } else {
+            rest_width
+        }
+    };
     for word in words {
         let ww = measure(&word.text());
         if !cur.is_empty() {
             let candidate = cur_w + measure(&word.lead) + ww;
-            if candidate <= max_width {
+            if candidate <= width_of(&out) {
                 cur_w = candidate;
                 cur.push(word);
                 continue;
@@ -134,7 +154,8 @@ pub(super) fn greedy_pack<F: FnMut(&str) -> f32>(
         // A word too wide alone force-breaks into full-line chunks; the remainder keeps packing.
         let mut word = word;
         let mut ww = ww;
-        while ww > max_width {
+        while ww > width_of(&out) {
+            let max_width = width_of(&out);
             let text = word.text();
             let Some(at) = split_at_last_fitting_glyph(&text, max_width, &mut measure) else {
                 // Not one glyph fits: bail, dropping the rest of the line, as the reference does.
@@ -152,6 +173,38 @@ pub(super) fn greedy_pack<F: FnMut(&str) -> f32>(
         cur.push(word);
     }
     finish_pack(out, cur)
+}
+
+/// One line cut at the last character that fits `max_width`, as a one-line layout cuts it
+/// (`0x6c2103`): whitespace is a character like any other, and no word boundary is sought. Returns
+/// the kept runs and the kept byte count of the line's visible text; nothing kept when not one
+/// character fits.
+pub(super) fn cut_line<F: FnMut(&str) -> f32>(
+    line: &[ColorRun],
+    max_width: f32,
+    mut measure: F,
+) -> (Vec<ColorRun>, usize) {
+    let text: String = line.iter().map(|r| r.text.as_str()).collect();
+    let max_width = max_width + WIDTH_EPS;
+    if measure(&text) <= max_width {
+        return (line.to_vec(), text.len());
+    }
+    let at = split_at_last_fitting_glyph(&text, max_width, &mut measure).unwrap_or(0);
+    let (head, _) = split_pieces(line, at);
+    (head, at)
+}
+
+/// The byte length of the longest prefix of `text` within `max_width`, as [`cut_line`] cuts it.
+pub(super) fn fitting_prefix<F: FnMut(&str) -> f32>(
+    text: &str,
+    max_width: f32,
+    mut measure: F,
+) -> usize {
+    let max_width = max_width + WIDTH_EPS;
+    if measure(text) <= max_width {
+        return text.len();
+    }
+    split_at_last_fitting_glyph(text, max_width, &mut measure).unwrap_or(0)
 }
 
 /// Close the packer: flush the open line and rejoin every line's words into runs.

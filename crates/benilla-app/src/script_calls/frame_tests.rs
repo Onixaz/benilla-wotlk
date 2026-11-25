@@ -424,10 +424,7 @@ impl Rig {
         );
         script.run(INSTRUMENT).expect("the instrument loads");
         world.insert_non_send_resource(script);
-        world.insert_resource(crate::ui_script::UiClock {
-            anchor: Instant::now(),
-            ui_now: NOW,
-        });
+        world.insert_resource(crate::ui_script::UiClock { ui_now: NOW });
         let mut frame = Schedule::default();
         frame.set_executor_kind(ExecutorKind::SingleThreaded);
         for &step in &order {

@@ -4,13 +4,13 @@
 
 use bevy::math::Rect;
 
-use benilla_ui::script::{JustifyH, JustifyV};
+use benilla_ui::script::{JustifyH, JustifyV, TextWrap};
 
 use super::super::engine::{TextEngine, UiFontAtlas};
 use super::super::markup::{
     fontstring_lines, icon_index, icons_of, parse_markup_icons, ColorRun, InlineIcon,
 };
-use super::wrap::{greedy_pack, tokenize_words};
+use super::wrap::{cut_line, fitting_prefix, greedy_pack_rows, tokenize_words};
 use super::{client_step, overflow, FontSpec, Justify, HEIGHT_LIMIT_MIN, WRAP_MIN_WIDTH};
 
 /// A [`FontSpec`] resolved once, so measure and draw agree on face and raster size.
@@ -114,8 +114,8 @@ pub(crate) fn measure_line_width_for_test(
 /// whitespace stays verbatim and only the separator at a break drops.
 ///
 /// Break opportunities are whitespace only: the reference's classifier also breaks after `-`, `:`
-/// and `/` and by CJK kinsoku classes, and its `nonspacewrap` flag (ui `0x1000`) is not modelled;
-/// of the flag's three stock users, only `ScriptErrors_Message` wraps past one line.
+/// and `/` and by CJK kinsoku classes, and its `nonspacewrap` flag (ui `0x1000`) is read by the
+/// one-line fit walk alone ([`one_line_fit_rows`]); after a cut word here it is not (#1468).
 pub(super) fn wrap_line(
     e: &TextEngine,
     r: Resolved,
@@ -123,14 +123,96 @@ pub(super) fn wrap_line(
     max_width: f32,
     icons: &[[f32; 2]],
 ) -> Vec<Vec<ColorRun>> {
+    wrap_line_rows(e, r, line, max_width, max_width, icons)
+}
+
+/// [`wrap_line`] with its first row `first_width` wide and every later one `rest_width`.
+fn wrap_line_rows(
+    e: &TextEngine,
+    r: Resolved,
+    line: &[ColorRun],
+    first_width: f32,
+    rest_width: f32,
+    icons: &[[f32; 2]],
+) -> Vec<Vec<ColorRun>> {
     let words = tokenize_words(line);
     if words.is_empty() {
         // A blank or all-whitespace line still takes a row.
         return vec![line.to_vec()];
     }
-    greedy_pack(words, max_width, |t| {
+    greedy_pack_rows(words, first_width, rest_width, |t| {
         measure_line_width(e, r, r.step_extra, t, icons)
     })
+}
+
+/// The indented word wrap's step in device px: 15 screen pixels whatever the font, scale or
+/// window, as the window-size handler stores it (`0x6be1c6`).
+const INDENT_DEVICE_PX: f32 = 15.0;
+
+/// The step an indented string's continuation rows take, in logical px; 0 when not indented.
+pub(super) fn indent_of(e: &TextEngine, wrap: TextWrap) -> f32 {
+    if wrap.indented {
+        INDENT_DEVICE_PX / e.dpi()
+    } else {
+        0.0
+    }
+}
+
+/// The rows the markup `lines` lay out into at `width`, as the string's geometry pass lays them
+/// (`0x6c7b10`). Word wrap off draws one line and stops (`0x6c7f79`), cut at the last character
+/// within a pinned width (`0x6c2103`); a blank line before it only steps a row (`0x6c7ced`), so it
+/// draws below and indented. Wrapped, every row after the first, a `\n` line's first row included,
+/// wraps narrower by the indent (`0x6c7ca6`). An unpinned width wraps nothing.
+pub(super) fn layout_rows(
+    e: &TextEngine,
+    r: Resolved,
+    lines: Vec<Vec<ColorRun>>,
+    width: f32,
+    wrap: TextWrap,
+    icons: &[[f32; 2]],
+) -> Vec<Vec<ColorRun>> {
+    let pinned = width > WRAP_MIN_WIDTH;
+    if !wrap.word_wrap {
+        let mut rows: Vec<Vec<ColorRun>> = Vec::new();
+        let mut lines = lines.into_iter().peekable();
+        while let Some(line) = lines.next() {
+            let blank = line.iter().all(|run| run.text.is_empty());
+            // A line opening with the newline code adds a row and steps y (`0x6c7cf2`).
+            if blank && lines.peek().is_some() {
+                rows.push(line);
+                continue;
+            }
+            if !pinned {
+                rows.push(line);
+                break;
+            }
+            // From the second row on the indent narrows it (`0x6c7cad`).
+            let w = if rows.is_empty() {
+                width
+            } else {
+                width - indent_of(e, wrap)
+            };
+            let (row, kept) = cut_line(&line, w, |t| {
+                measure_line_width(e, r, r.step_extra, t, icons)
+            });
+            // Not one character fits: the pass stops before drawing a line.
+            if kept > 0 || blank {
+                rows.push(row);
+            }
+            break;
+        }
+        return rows;
+    }
+    if !pinned {
+        return lines;
+    }
+    let rest = width - indent_of(e, wrap);
+    let mut out: Vec<Vec<ColorRun>> = Vec::new();
+    for line in &lines {
+        let first = if out.is_empty() { width } else { rest };
+        out.extend(wrap_line_rows(e, r, line, first, rest, icons));
+    }
+    out
 }
 
 /// `text`'s laid-out size, the widest line by all lines' height, wrapping at `wrap_width` by the
@@ -149,35 +231,61 @@ pub(crate) fn measure_text(
 
     let (lines, icons) = fontstring_lines(text, [1.0, 1.0, 1.0, 1.0]);
     let icons = icon_sizes(e, r, &icons);
-    let render_lines: Vec<Vec<ColorRun>> = match wrap_width {
-        Some(w) if w > WRAP_MIN_WIDTH => lines
-            .iter()
-            .flat_map(|line| wrap_line(e, r, line, w, &icons))
-            .collect(),
-        _ => lines,
+    // The wrapped height's walk (`0x6bd900`) counts the rows the draw lays out: one with word wrap
+    // off (`0x6bda3d`), the continuation rows narrower when indented (`0x6bd979`).
+    let width_of = |rows: &[Vec<ColorRun>]| {
+        rows.iter()
+            .map(|line| {
+                line.iter()
+                    .filter(|run| !run.text.is_empty())
+                    .map(|run| measure_line_width(e, r, r.step_extra, &run.text, &icons))
+                    .sum::<f32>()
+            })
+            .fold(0.0f32, f32::max)
     };
-    let mut max_w = 0.0f32;
-    for line in &render_lines {
-        let mut w = 0.0f32;
-        for run in line {
-            if !run.text.is_empty() {
-                w += measure_line_width(e, r, r.step_extra, &run.text, &icons);
-            }
+    let (max_w, render_lines) = match wrap_width {
+        Some(w) => {
+            let rows = layout_rows(e, r, lines, w, font.wrap, &icons);
+            (width_of(&rows), rows)
         }
-        max_w = max_w.max(w);
-    }
+        None => {
+            // An unpinned string is as wide as its widest line under any wrap bits: the extent
+            // walk (`0x6bce60`, called at `0x483f1b`) spans every newline. Its height walks the
+            // rows laid out at that width, where an indented continuation line wraps again; the
+            // draw lays them out in the same box (`0x486be4`).
+            let natural = width_of(&lines);
+            let w = if font.wrap.indented && font.wrap.word_wrap {
+                natural.ceil() + 1.0
+            } else {
+                0.0
+            };
+            let rows = layout_rows(e, r, lines, w, font.wrap, &icons);
+            (natural, rows)
+        }
+    };
     // Deviation: one pixel of headroom over the reference's measured width, kept because dropping
     // it narrows every auto-sized FontString, a look change. Height: N lines at the font em with no
     // outline pad (`N·S + (N-1)·gap`); an outlined ring pokes past it, as in the reference.
     (
         max_w.ceil() + 1.0,
-        super::text_block_h(render_lines.len(), r.size, font.spacing),
+        super::text_block_h(block_rows(&render_lines, font.wrap), r.size, font.spacing),
     )
 }
 
-/// How many rows `text` wraps into at `wrap_width`, by the render's own [`wrap_line`] pass: the
+/// The rows a measure counts: with word wrap off the wrapped height's walk ends after its first
+/// row (`0x6bda3d`), a blank one included; the draw's block counts every row (`0x6c61a8`).
+fn block_rows(rows: &[Vec<ColorRun>], wrap: TextWrap) -> usize {
+    if wrap.word_wrap {
+        rows.len()
+    } else {
+        rows.len().min(1)
+    }
+}
+
+/// How many rows `text` wraps into at `wrap_width`, by the render's own [`layout_rows`] pass: the
 /// engine's ScrollingMessageFrame allocates `rows × font height` per line from it
-/// ([`benilla_ui::script::UiScript::message_lines_needing_measure`]). Never 0.
+/// ([`benilla_ui::script::UiScript::message_lines_needing_measure`]), each line's string taking
+/// the frame font's indent (`0x969fa0`). Never 0.
 pub(crate) fn measure_wrapped_rows(
     e: &mut TextEngine,
     text: &str,
@@ -186,35 +294,88 @@ pub(crate) fn measure_wrapped_rows(
 ) -> u16 {
     let r = resolve(e, &font);
     e.ensure_metrics(r.face, r.ppem, text);
-    let rows = wrapped_rows(e, r, text, wrap_width);
+    let rows = wrapped_rows(e, r, text, wrap_width, font.wrap);
     rows.clamp(1, usize::from(u16::MAX)) as u16
 }
 
 /// The wrapped row count of `text` at `wrap_width`; an unconstrained width counts the `\n` lines.
-fn wrapped_rows(e: &TextEngine, r: Resolved, text: &str, wrap_width: f32) -> usize {
-    wrapped_rows_capped(e, r, text, wrap_width, usize::MAX)
+fn wrapped_rows(e: &TextEngine, r: Resolved, text: &str, wrap_width: f32, wrap: TextWrap) -> usize {
+    wrapped_rows_capped(e, r, text, wrap_width, wrap, usize::MAX)
 }
 
-/// [`wrapped_rows`], stopping at `cap` as the reference's fit walk lays out only
-/// `min(needed, fits + 1)` lines: an overflow test passes `allowed + 1`, the chat band's real count
-/// [`usize::MAX`].
+/// [`wrapped_rows`] as the fit count walks them (`0x6bd390`), stopping at `cap` as the reference's
+/// fit walk lays out only `min(needed, fits + 1)` lines: an overflow test passes `allowed + 1`,
+/// the chat band's real count [`usize::MAX`]. Word wrap off walks [`one_line_fit_rows`].
 fn wrapped_rows_capped(
     e: &TextEngine,
     r: Resolved,
     text: &str,
     wrap_width: f32,
+    wrap: TextWrap,
     cap: usize,
 ) -> usize {
     let (lines, icons) = fontstring_lines(text, [1.0, 1.0, 1.0, 1.0]);
+    if !wrap.word_wrap {
+        let icons = icon_sizes(e, r, &icons);
+        return one_line_fit_rows(e, r, &lines, wrap_width, wrap, &icons, cap);
+    }
     if wrap_width <= WRAP_MIN_WIDTH {
         return lines.len().min(cap);
     }
     let icons = icon_sizes(e, r, &icons);
+    // An indented string's rows after the first are narrower (`0x6bd46d`).
+    let rest = wrap_width - indent_of(e, wrap);
     let mut rows = 0usize;
     for line in &lines {
-        rows += wrap_line(e, r, line, wrap_width, &icons).len();
+        let first = if rows == 0 { wrap_width } else { rest };
+        rows += wrap_line_rows(e, r, line, first, rest, &icons).len();
         if rows >= cap {
             return cap;
+        }
+    }
+    rows
+}
+
+/// The fit walk's row count for a string with word wrap off (`0x6bd390`): it draws one line, but
+/// the walk lays the whole text out, each line cut at its last fitting character (`0x6c2103`).
+/// After a cut the walk goes on only with the non-space wrap bit (`0x6c2124`) and otherwise stops
+/// short (`0x6bd50b`), answered as `cap`, an overflow; a line ended by its `\n` or the text's end
+/// goes on.
+fn one_line_fit_rows(
+    e: &TextEngine,
+    r: Resolved,
+    lines: &[Vec<ColorRun>],
+    width: f32,
+    wrap: TextWrap,
+    icons: &[[f32; 2]],
+    cap: usize,
+) -> usize {
+    if width <= WRAP_MIN_WIDTH {
+        return lines.len().min(1);
+    }
+    let rest = width - indent_of(e, wrap);
+    let measure = |t: &str| measure_line_width(e, r, r.step_extra, t, icons);
+    let mut rows = 0usize;
+    for line in lines {
+        let mut text: String = line.iter().map(|run| run.text.as_str()).collect();
+        loop {
+            let w = if rows == 0 { width } else { rest };
+            let kept = fitting_prefix(&text, w, measure);
+            rows += 1;
+            if rows >= cap {
+                return cap;
+            }
+            if kept == text.len() {
+                break;
+            }
+            if !wrap.non_space_wrap || kept == 0 {
+                return cap;
+            }
+            // The next line starts past the whitespace at the cut.
+            text = text[kept..].trim_start().to_string();
+            if text.is_empty() {
+                break;
+            }
         }
     }
     rows
@@ -228,7 +389,20 @@ pub(super) fn wrapped_rows_for_test(
     text: &str,
     wrap_width: f32,
 ) -> usize {
-    wrapped_rows(e, r, text, wrap_width)
+    wrapped_rows(e, r, text, wrap_width, TextWrap::default())
+}
+
+/// [`wrapped_rows_capped`] under the wrap bits `wrap`, for the tests.
+#[cfg(test)]
+pub(super) fn wrapped_rows_capped_styled_for_test(
+    e: &TextEngine,
+    r: Resolved,
+    text: &str,
+    wrap_width: f32,
+    wrap: TextWrap,
+    cap: usize,
+) -> usize {
+    wrapped_rows_capped(e, r, text, wrap_width, wrap, cap)
 }
 
 /// [`wrapped_rows_capped`], for the tests.
@@ -240,7 +414,7 @@ pub(super) fn wrapped_rows_capped_for_test(
     wrap_width: f32,
     cap: usize,
 ) -> usize {
-    wrapped_rows_capped(e, r, text, wrap_width, cap)
+    wrapped_rows_capped(e, r, text, wrap_width, TextWrap::default(), cap)
 }
 
 /// The display string under the reference's height-gated ellipsis truncate of the FontString:
@@ -276,7 +450,7 @@ pub(crate) fn ellipsize_to_fit(
         let (gap_h, pitch) = (box_h + font.spacing, r.size + font.spacing);
         let cap = overflow::lines_fitting(gap_h.max(pitch), pitch) + 1;
         overflow::ellipsize_in_box(text, gap_h, pitch, |candidate| {
-            wrapped_rows_capped(e, r, candidate, box_w, cap)
+            wrapped_rows_capped(e, r, candidate, box_w, font.wrap, cap)
         })
     };
     atlas

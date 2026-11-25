@@ -79,8 +79,8 @@ pub(super) enum UiFixture {
     Macro,
     /// The macro window's name and icon popup: the icon grid off `SpellIcon.dbc`, the name box.
     MacroPopup,
-    /// The chat edit box opened with a typed draft through the live path (`focus_editbox`,
-    /// `chat_edit_live`) over say and yell lines.
+    /// `ChatFrame1EditBox` opened through the stock `ChatFrame_OpenChat` with a draft, part of it
+    /// selected, over say and yell lines and one long line wrapping with an indented second row.
     ChatEdit,
     /// The chat dock revealed, Combat Log selected, the cursor on the General tab; `$WOW_TABHOVER`
     /// picks an alternate dock state (`fixtures.rs`).

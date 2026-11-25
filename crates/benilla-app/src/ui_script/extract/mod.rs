@@ -550,10 +550,7 @@ pub(crate) fn tick_script(
     };
     *world.resource_mut::<super::UiFrameCost>() = ui_cost;
     if let Some((pass, ui_now)) = pass {
-        *world.resource_mut::<super::UiClock>() = super::UiClock {
-            anchor: read.4,
-            ui_now,
-        };
+        *world.resource_mut::<super::UiClock>() = super::UiClock { ui_now };
         *world.resource_mut::<super::UiPassState>() = pass;
     }
 }
@@ -663,6 +660,11 @@ fn tick_lent(
                                 outline: r.outline, // the outline biases the stepped width
                                 alpha_gradient: None,
                                 spacing: 0.0,
+                                // Each line's string takes the frame font's indent (`0x969fa0`).
+                                wrap: benilla_ui::script::TextWrap {
+                                    indented: r.indented,
+                                    ..benilla_ui::script::TextWrap::default()
+                                },
                             },
                         );
                         (r.frame, r.index, n, r.key)
@@ -1835,6 +1837,7 @@ fn convert_entry(
             outline,
             alpha_gradient,
             world_seat,
+            wrap,
         } => {
             // No atlas (no client data, or an unreadable font) draws no text.
             let (Some(atlas), Some(text)) = (font_atlas.as_deref_mut(), text) else {
@@ -1855,6 +1858,7 @@ fn convert_entry(
                     outline,
                     alpha_gradient,
                     world_seat,
+                    wrap,
                 },
                 text::TextHost {
                     z: eq.z,

@@ -623,7 +623,6 @@ mod tests {
         world.init_resource::<crate::ui_action::RefusalsSeen>();
         world.init_resource::<crate::ui_cast::PressEdges>();
         world.init_resource::<crate::spell::AutoRepeatActive>();
-        world.init_resource::<crate::ui_tradeskill::TradeSkillOpens>();
         world.init_resource::<SpellTargeting>();
         world.init_resource::<crate::spell::HeldForPick>();
         world.init_resource::<Messages<crate::creature_anim::SheathRequest>>();

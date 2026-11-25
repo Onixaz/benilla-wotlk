@@ -250,6 +250,12 @@ means and records the difference here.
   (`0x50abcb`–`0x50abeb`). It reads the name at `0x50abd6` without testing the record, and the
   lookup returns null for an id outside the table (`0x65c2ae`), so 12340 faults writing that log
   line. benilla writes an empty name. Every language a server sends in chat has its record.
+- **`GetTradeSkillCooldown` across a clock tick.** The cooldown history keeps a record whose
+  time left, read against the OS clock (`0x807a7f`), is not negative (`0x807ae5`); the verb then
+  reads the clock again (`0x5daa17`) and pushes the end less it as an unsigned count of
+  milliseconds (`0x5daa24`-`0x5daa36`). When the clock ticks past the end between the two reads,
+  the difference is -1 and the verb answers about 4294967 seconds. benilla answers nil for a
+  cooldown already past its end at the call, and 0 at its end's millisecond.
 - **`EquipItemByName` with a slot name.** The verb (`0x51cdb0`) takes its target slot as a number
   or as a slot name. A number is made 0-based (`0x51cf23`); a name's slot id is used as it is
   (`0x51cfb4`), so 12340 equips the item one slot past the one named: `HeadSlot` to the neck,

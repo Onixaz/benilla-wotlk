@@ -2202,6 +2202,56 @@ mod loader_tests {
         assert!(is("StyleHtml:GetIndentedWordWrap('H2') == 1"));
     }
 
+    /// A `<Font>`'s `nonspacewrap` sets the font's bit `0x1000` (`0x497307`), and a FontString of
+    /// that font inherits it through the mask `0x2107f` (`0x485317`) until it sets its own: its
+    /// getter answers 1 and its draw carries the bit.
+    #[test]
+    fn a_fonts_nonspacewrap_reaches_its_font_strings() {
+        let mut s = UiScript::new().unwrap();
+        s.set_screen_size(800.0, 600.0);
+        let doc = parse(
+            r#"<Ui>
+                <Font name="NsFont" font="Fonts\FRIZQT__.TTF" nonspacewrap="true">
+                    <FontHeight val="12"/>
+                </Font>
+                <Font name="NsChild" inherits="NsFont"/>
+                <Frame name="NsOwner">
+                    <Size x="200" y="100"/>
+                    <Anchors><Anchor point="CENTER"/></Anchors>
+                    <Layers><Layer level="ARTWORK">
+                        <FontString name="NsStr" inherits="NsChild" wordwrap="false" text="x">
+                            <Size x="80" y="20"/>
+                            <Anchors><Anchor point="TOPLEFT"/></Anchors>
+                        </FontString>
+                        <FontString name="NsOwn" inherits="NsFont" nonspacewrap="false"/>
+                    </Layer></Layers>
+                </Frame>
+            </Ui>"#,
+        );
+        let report = load(&s, &doc, &no_files);
+        assert!(report.errors.is_empty(), "errors: {:?}", report.errors);
+        let is = |lua: &str| s.eval::<bool>(&format!("return {lua}")).unwrap();
+        assert!(
+            is("NsStr:CanNonSpaceWrap() == 1"),
+            "inherited from the font"
+        );
+        assert!(is("NsOwn:CanNonSpaceWrap() == nil"), "its own bit wins");
+        s.resolve();
+        let wrap = s
+            .extract()
+            .into_iter()
+            .find_map(|q| match q.content {
+                crate::script::QuadContent::Text {
+                    text: Some(ref t),
+                    wrap,
+                    ..
+                } if t == "x" => Some(wrap),
+                _ => None,
+            })
+            .expect("NsStr's text quad");
+        assert!(wrap.non_space_wrap && !wrap.word_wrap, "{wrap:?}");
+    }
+
     /// A direct-child `<FontString>` declares element font 0 and `<FontStringHeader1>` element font
     /// 1, neither a region, and `hyperlinkFormat=` lands at `+0x360`; stock `ItemTextFrame.xml:214`
     /// uses the first.

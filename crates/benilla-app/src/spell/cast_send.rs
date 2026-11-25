@@ -126,7 +126,6 @@ pub(crate) struct CastLadder<'w, 's> {
     /// The talent spell modifiers the power gate's cost goes through.
     pub(crate) spell_mods: Res<'w, crate::spell::SpellModifiers>,
     pub(crate) auto_repeat: ResMut<'w, AutoRepeatActive>,
-    pub(crate) trade_skill_opens: ResMut<'w, crate::ui_tradeskill::TradeSkillOpens>,
     pub(crate) ground: ResMut<'w, super::targeting::SpellTargeting>,
     pub(crate) held_for_pick: ResMut<'w, HeldForPick>,
     /// The cast send's `UNIT_SPELLCAST_SENT`, fired by the caller inside the press (`0x80b556`).
@@ -757,7 +756,6 @@ impl CastLadder<'_, '_> {
             self.cooldowns.as_mut(),
             &self.spell_mods,
             self.auto_repeat.as_mut(),
-            &mut self.trade_skill_opens,
             self.ground.as_mut(),
             &mut self.held_for_pick,
             &self.area_gate,
@@ -824,7 +822,6 @@ fn send_spell_cast(
     cooldowns: &mut crate::spell::Cooldowns,
     spell_mods: &crate::spell::SpellModifiers,
     auto_repeat: &mut AutoRepeatActive,
-    trade_skill_opens: &mut crate::ui_tradeskill::TradeSkillOpens,
     ground: &mut super::targeting::SpellTargeting,
     held_for_pick: &mut HeldForPick,
     area_gate: &crate::area::CastAreaGate,
@@ -837,7 +834,7 @@ fn send_spell_cast(
     // never reaches the wire; the crafting window opens instead.
     if top && def.is_some_and(|d| d.effects[0] == benilla_formats::SPELL_EFFECT_TRADE_SKILL) {
         debug!("ui_action: cast {spell_id} is a profession opener — the crafting book opens, no packet");
-        trade_skill_opens.0.push(spell_id);
+        press.trade_skill_open(spell_id);
         return;
     }
     // The re-press toggle: pressing the running auto-repeat spell cancels it. The reference does
@@ -2081,7 +2078,6 @@ mod tests {
         world.init_resource::<crate::ui_action::RefusalsSeen>();
         world.init_resource::<crate::ui_cast::PressEdges>();
         world.init_resource::<AutoRepeatActive>();
-        world.init_resource::<crate::ui_tradeskill::TradeSkillOpens>();
         world.init_resource::<crate::spell::SpellTargeting>();
         world.init_resource::<crate::spell::HeldForPick>();
         // A bare World has no message storage until it is asked for.
@@ -2207,9 +2203,12 @@ mod tests {
 
         // The profession intercept comes first: the book opens, no error.
         press(&mut world, PROFESSION, ghost);
-        assert_eq!(
-            world.resource::<crate::ui_tradeskill::TradeSkillOpens>().0,
-            vec![PROFESSION]
+        assert!(
+            world
+                .resource::<crate::ui_cast::PressEdges>()
+                .waiting()
+                .contains(&crate::ui_cast::CastBarEdge::TradeSkillOpen(PROFESSION)),
+            "the open waits as the press's step"
         );
         assert!(crate::ui_action::take_refusals(&mut world).is_empty());
 
