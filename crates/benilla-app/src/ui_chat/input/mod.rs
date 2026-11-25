@@ -1554,7 +1554,8 @@ fn clear_afk_with(
     world.resource_mut::<super::away::AfkMirror>().0 = 0;
     let line = vm_string(vm, "CLEARED_AFK").unwrap_or_default();
     super::away::add_system(world, line);
-    send_chat(world, crate::net::ChatKind::Afk, None, Vec::new(), None);
+    // Language 0 (`0x6d5356`), never the speaker's tongue.
+    send_chat(world, crate::net::ChatKind::Afk, None, Vec::new(), Some(0));
     true
 }
 
@@ -1595,7 +1596,8 @@ fn set_afk_with(world: &mut World, vm: Option<&benilla_ui::script::UiScript>, ms
         super::away::add_system(world, super::away::shown(&line));
         world.resource_mut::<super::away::AfkMirror>().0 = 1;
     }
-    send_chat(world, crate::net::ChatKind::Afk, None, body, None);
+    // Language 0 (`0x6dc724`), never the speaker's tongue.
+    send_chat(world, crate::net::ChatKind::Afk, None, body, Some(0));
 }
 
 /// `SendChatMessage`'s body inside the call (`0x50d170`), past the binding's type, empty-line and

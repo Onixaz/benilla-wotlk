@@ -2794,6 +2794,28 @@ fn afk_then_dnd_clears_the_afk_first() {
     assert!(!world.resource::<super::away::AfkMirror>().is_afk());
 }
 
+/// The AFK mark and clear write language 0 into their packets (`0x6dc724`, `0x6d5356`), not the
+/// speaker's tongue the plain send would take.
+#[test]
+fn the_afk_packets_carry_language_zero() {
+    use crate::net::{ChatKind, ClientCommand};
+
+    let (mut world, rx) = send_world(benilla_ui::script::UiScript::new().expect("VM"));
+    run_lent(&mut world, r#"SendChatMessage("", "AFK")"#).expect("lua");
+    super::input::clear_afk(&mut world, true);
+    let sent: Vec<(ChatKind, Option<u32>)> = rx
+        .try_iter()
+        .map(|c| match c {
+            ClientCommand::Chat { kind, language, .. } => (kind, language),
+            other => panic!("unexpected command {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        sent,
+        vec![(ChatKind::Afk, Some(0)), (ChatKind::Afk, Some(0))]
+    );
+}
+
 /// The AFK clear (`0x6d52d0`) acts only with the mirror set (`0x6d52d9`) and, unforced,
 /// `autoClearAFK` on (`0x6d52ea`); a mirror of 2 is set, as every reader tests non-zero. Acting, it
 /// zeroes the mirror, adds `CLEARED_AFK` in the call and sends the empty AFK message.
