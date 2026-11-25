@@ -340,7 +340,12 @@ pub(super) fn apply_server_moves(
                 cam.yaw = yaw;
                 cam.pitch = player.login_pitch.unwrap_or(LOGIN_PITCH);
             }
-            // No camera re-seat on a mover change: Mind Control's far sight already moved it.
+            // A mover change retargets the camera, whose yaw is relative to its target's facing
+            // (`0x6066e0` takes the new target's): it keeps its side of the new mover, so boarding
+            // a vehicle from behind puts the camera behind the vehicle.
+            if !first {
+                cam.yaw += wrap_pi(yaw - player.face_yaw);
+            }
             player.face_yaw = yaw;
             player.model_yaw = yaw;
             // The first frame owes no `SET_FACING`: the reference sends none until a turn.
@@ -994,6 +999,20 @@ mod handover_tests {
     #[derive(Resource, Default)]
     struct Returned(Vec<movement_net::OwedAck>);
 
+    /// The camera the steps share, so a yaw carried on one frame is seen on the next.
+    #[derive(Resource)]
+    struct TestCam(FlyCam);
+
+    impl Default for TestCam {
+        fn default() -> Self {
+            Self(FlyCam {
+                yaw: 0.0,
+                pitch: 0.0,
+                speed: 0.0,
+            })
+        }
+    }
+
     #[allow(clippy::type_complexity)]
     fn step(
         time: Res<Time>,
@@ -1016,18 +1035,15 @@ mod handover_tests {
         >,
         body: Query<(&Transform, &Guid, Option<&UnitMoveModes>), With<Embodied>>,
         mut out: ResMut<Returned>,
+        mut cam: ResMut<TestCam>,
     ) {
-        let mut cam = FlyCam {
-            yaw: 0.0,
-            pitch: 0.0,
-            speed: 0.0,
-        };
+        let cam = &mut cam.0;
         let driven = body.single().ok();
         let acks = apply_server_moves(
             &time,
             &mut commands,
             &mut player,
-            &mut cam,
+            cam,
             &net,
             &mut r.0,
             &mut r.1,
@@ -1039,7 +1055,7 @@ mod handover_tests {
             &mut r.7,
             Some(ME),
             &transports,
-            driven.map(|(t, ..)| (t.translation, 0.0)),
+            driven.map(|(t, ..)| (t.translation, t.rotation.to_euler(EulerRot::YXZ).0)),
             driven.map(|(_, g, m)| (g.0, m.map_or(0, |m| m.0))),
         );
         // The mode acks as the stream sends them, from this frame's status: here the parked one.
@@ -1075,6 +1091,7 @@ mod handover_tests {
             .insert_resource(NetCommands(tx))
             .init_resource::<Player>()
             .init_resource::<Returned>()
+            .init_resource::<TestCam>()
             .init_resource::<GuidIndex>()
             .add_message::<TeleportMessage>()
             .add_message::<WorldportMessage>()
@@ -1179,6 +1196,54 @@ mod handover_tests {
             speeds,
             [EYE],
             "the eye's forced speed goes to the stream's ack"
+        );
+    }
+
+    /// The camera's yaw is relative to its target's facing (`0x6066e0`): on the hand-over it keeps
+    /// its side of the new mover, and of our body on the way back.
+    #[test]
+    fn a_mover_change_carries_the_camera_to_the_same_side_of_the_new_mover() {
+        let (mut app, me, eye, _rx) = harness();
+        let face = |app: &mut App, e: Entity, yaw: f32| {
+            app.world_mut().get_mut::<Transform>(e).unwrap().rotation = Quat::from_rotation_y(yaw);
+        };
+        let cam_yaw = |app: &App| app.world().resource::<TestCam>().0.yaw;
+        let off = |a: f32, b: f32| wrap_pi(a - b);
+        // Our body faces 0.3 and the camera sits 0.5 to its left.
+        face(&mut app, me, 0.3);
+        app.world_mut().resource_mut::<Player>().face_yaw = 0.3;
+        app.world_mut().resource_mut::<TestCam>().0.yaw = 0.8;
+        face(&mut app, eye, 2.0);
+        app.world_mut().write_message(ClientControlMessage {
+            mover: EYE,
+            allow_move: true,
+        });
+        app.update();
+        app.world_mut().entity_mut(me).remove::<Embodied>();
+        app.world_mut().entity_mut(eye).insert(Embodied);
+        app.world_mut().resource_mut::<Player>().reseat = true;
+        app.update();
+        assert!(
+            (off(cam_yaw(&app), 2.0) - 0.5).abs() < 1e-5,
+            "{}",
+            cam_yaw(&app)
+        );
+        assert!((off(app.world().resource::<Player>().face_yaw, 2.0)).abs() < 1e-5);
+
+        // Back home, 0.5 to the left of our body again.
+        app.world_mut().write_message(ClientControlMessage {
+            mover: ME,
+            allow_move: true,
+        });
+        app.update();
+        app.world_mut().entity_mut(eye).remove::<Embodied>();
+        app.world_mut().entity_mut(me).insert(Embodied);
+        app.world_mut().resource_mut::<Player>().reseat = true;
+        app.update();
+        assert!(
+            (off(cam_yaw(&app), 0.3) - 0.5).abs() < 1e-5,
+            "{}",
+            cam_yaw(&app)
         );
     }
 
