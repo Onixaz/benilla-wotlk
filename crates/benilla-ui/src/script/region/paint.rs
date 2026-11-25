@@ -10,7 +10,7 @@ use super::region_handle_of;
 
 /// The Texture's rotation (`0x483120`): the corners on a unit radius about `(cx, cy)` from `angle -
 /// π/4`, UL, LL, UR then LR, stored in screen order.
-pub(crate) fn rotation_corners(angle: f32, cx: f32, cy: f32) -> TexCoords {
+pub fn rotation_corners(angle: f32, cx: f32, cy: f32) -> TexCoords {
     let (s, c) = (angle - std::f32::consts::FRAC_PI_4).sin_cos();
     let ul = [s + cx, cy - c];
     let ll = [cx - c, cy - s];

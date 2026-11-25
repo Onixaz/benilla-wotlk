@@ -949,15 +949,23 @@ fn emit_minimap(
 
     // The player texture last, above every blip: it is the frame's ARTWORK texture (`0x57dca0`),
     // and the map and all its blips draw in its BACKGROUND layer (`0x5832c0`).
-    // Centred at its set size and turned about its middle (`0x57bcc0`); our quad turns clockwise
-    // and WoW's facing counterclockwise, so the angle is negated.
+    // Centred at its set size. The facing turns its texture coordinates (`0x57bcc0` via
+    // `0x483120`), whose unit-radius corners draw the art at 1/√2 of the quad.
+    // Deviates: we keep the facing-0 corners and turn the quad instead, so the turn rides the
+    // batch's transform rather than rewriting its mesh each frame; `MinimapArrow.blp`'s border
+    // texels are all clear, so the clamped samples outside the art draw the same.
     if let Some(arrow) = assets
         .arrow
         .as_ref()
         .filter(|_| slot.player_texture.min_element() > 0.0)
     {
-        // Still while the map turns (`0x57bcdc`, facing 0).
+        // Still while the map turns (`0x57bcdc`, facing 0); our quad turns clockwise and WoW's
+        // facing counterclockwise, so the angle is negated.
         let rotation = if rotate.0 { 0.0 } else { -player.facing() };
+        let uv = match benilla_ui::script::rotation_corners(0.0, 0.5, 0.5) {
+            benilla_ui::script::TexCoords::Corners(c) => UvRect::from_corners(c),
+            benilla_ui::script::TexCoords::Rect(edges) => UvRect::from_tex_coords(edges),
+        };
         let rect = Rect::from_center_size(center, slot.player_texture);
         let riding = self_seat.iter().any(|p| p.state != 0) && !vehicles.own_in_range;
         let alpha = if riding {
@@ -969,6 +977,7 @@ fn emit_minimap(
             rect,
             z_key: slot.z,
             texture: Some(arrow.clone()),
+            uv,
             color: [1.0, 1.0, 1.0, slot.alpha * alpha],
             rotation,
             ..default()
