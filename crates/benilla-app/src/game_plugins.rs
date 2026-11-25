@@ -1314,7 +1314,9 @@ pub(crate) mod schedule_tests {
         // turn outside them (the zone feed's and the by-name asks' among them), each run only while
         // raises wait.
         // Counts the four destructible-building systems, each gated on its component.
-        ("Update", 662, 636),
+        // Counts `run_object_effects`, every frame: a live loop is re-armed per frame, as the
+        // reference updates each unit's playing effects (`0x6f39b0`).
+        ("Update", 663, 637),
         // Counts `apply_host_sequence` (ship state -> props), gated on `Changed<HostSequence>`.
         ("PostUpdate", 183, 142),
         ("PreUpdate", 60, 60),
