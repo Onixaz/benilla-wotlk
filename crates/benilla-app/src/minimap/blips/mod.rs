@@ -136,31 +136,36 @@ impl RimArrowArt {
     pub(super) fn get(&self, kind: RimArrow) -> Option<&Handle<Image>> {
         self.0[kind as usize].as_ref()
     }
-
-    /// Any art at all: the landmark pass runs without `AreaPOI.dbc`, for the guard marker.
-    pub(super) fn any(&self) -> bool {
-        self.0.iter().any(Option::is_some)
-    }
 }
 /// An in-range POI icon's quad, 16 px (frozen by the constructor), the corpse's too (`0x5827e2`).
 const POI_ICON_PX: f32 = 16.0;
+/// A rim arrow's hover reach on each axis from its centre: `0.005` of the screen height in device
+/// units at the frame's scale (`0x57c720`), 6.4 px on the 140.8-px basis.
+const ARROW_HOVER_PX: f32 = 6.4;
 
-/// The blip under the cursor this frame, for [`drive_blip_tooltip`].
-#[derive(Resource, Default)]
-pub(crate) enum MinimapBlipHover {
-    #[default]
-    None,
-    /// A landmark's name.
-    Landmark(String),
-    /// The object blips under the cursor in draw order (`0x57c720`).
-    Objects(Vec<ObjectHover>),
+/// Every blip under the cursor this frame, for [`drive_blip_tooltip`], in each list's draw order;
+/// the tooltip lists them all (`0x57c720`).
+#[derive(Resource, Default, Clone, Debug, PartialEq)]
+pub(crate) struct MinimapBlipHover {
+    /// The landmark rim arrows' names.
+    pub(crate) directions: Vec<String>,
+    /// The party rim arrows' member names.
+    pub(crate) party: Vec<String>,
+    /// The raid rim arrows' member names.
+    pub(crate) raid: Vec<String>,
+    /// The in-range landmark icons' names.
+    pub(crate) landmarks: Vec<String>,
+    /// The object blips.
+    pub(crate) objects: Vec<ObjectHover>,
 }
 
-/// One hovered object blip: its name, whether it drew grey, and a tracked trainer's title.
+/// One hovered object blip: its name, whether it drew grey, whether it is an unknown flight
+/// master's, and a tracked trainer's title.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ObjectHover {
     pub(crate) name: HoverName,
     pub(crate) grey: bool,
+    pub(crate) flight_master: bool,
     pub(crate) title: Option<String>,
 }
 
@@ -402,16 +407,13 @@ pub(super) fn emit_landmark_icons(
             color: [1.0, 1.0, 1.0, ctx.alpha],
             ..default()
         });
-        if let Some(c) = ctx.cursor {
-            if rect.contains(c) {
-                *hover = MinimapBlipHover::Landmark(poi.name.clone());
-            }
+        if ctx.cursor.is_some_and(|c| rect.contains(c)) {
+            hover.landmarks.push(poi.name.clone());
         }
     }
 }
 
-/// Draw the landmark rim arrows, after the object blips and before the group's (`0x57d860`); the
-/// later-drawn hover hit wins.
+/// Draw the landmark rim arrows, after the object blips and before the group's (`0x57d860`).
 pub(super) fn emit_landmark_arrows(
     ctx: &BlipCtx,
     sel: &LandmarkSelection,
@@ -423,24 +425,30 @@ pub(super) fn emit_landmark_arrows(
         let Some(tex) = arrows.get(*art) else {
             continue;
         };
-        let rect = push_rim_arrow(ctx, poi.pos, tex, ARROW_QUAD_PX, quads);
-        if let Some(c) = ctx.cursor {
-            if rect.contains(c) {
-                *hover = MinimapBlipHover::Landmark(poi.name.clone());
-            }
+        let at = push_rim_arrow(ctx, poi.pos, tex, ARROW_QUAD_PX, quads);
+        if arrow_hovered(ctx, at) {
+            hover.directions.push(poi.name.clone());
         }
     }
 }
 
+/// Whether the cursor is within [`ARROW_HOVER_PX`] of a rim arrow's centre on both axes
+/// (`0x57c720`), a box much smaller than the arrow's art.
+fn arrow_hovered(ctx: &BlipCtx, at: Vec2) -> bool {
+    let reach = ctx.side * (ARROW_HOVER_PX / BLIP_BASIS_PX);
+    ctx.cursor
+        .is_some_and(|c| (c.x - at.x).abs() < reach && (c.y - at.y).abs() < reach)
+}
+
 /// One rim arrow of `px` on the 0.8 rim, pointing at its target, drawn in one pass as only one of
-/// the model's layers is ever opaque. Returns its rect for the hover test.
+/// the model's layers is ever opaque. Returns its centre for the hover test.
 fn push_rim_arrow(
     ctx: &BlipCtx,
     target: [f32; 3],
     tex: &Handle<Image>,
     px: f32,
     quads: &mut UiQuads,
-) -> Rect {
+) -> Vec2 {
     let dir = ctx.offset(target).normalize_or_zero();
     let pos = ctx.center + dir * (ctx.side * 0.5 * BLIP_EDGE_RATIO);
     // Quad rotation is clockwise on a y-down screen and the art points up at zero.
@@ -454,7 +462,7 @@ fn push_rim_arrow(
         rotation,
         ..default()
     });
-    rect
+    pos
 }
 
 /// A party member's position: the streamed transform, else the `PARTY_MEMBER_STATS` position
@@ -491,8 +499,8 @@ pub(super) fn raid_rows(
 }
 
 /// The party and raid rim arrows, the out-of-range half of the group placement, drawn before the
-/// player arrow. A member a tracked vehicle stands for draws none (`0x7f3f40`). The corpse's is a
-/// landmark arrow ([`StaticPois::corpse`]).
+/// player arrow; a hovered one names its member (`0x57c720`). A member a tracked vehicle stands
+/// for draws none (`0x7f3f40`). The corpse's is a landmark arrow ([`StaticPois::corpse`]).
 ///
 /// This differs from the reference, not built yet: its slot 4 is the pet (`UNIT_FIELD_CHARM`, else
 /// `UNIT_FIELD_SUMMON`), so there is no pet blip here.
@@ -504,30 +512,41 @@ pub(super) fn emit_group_arrows(
     unit_pos: &Query<&GlobalTransform, With<NetEntity>>,
     arrows: &RimArrowArt,
     quads: &mut UiQuads,
+    hover: &mut MinimapBlipHover,
 ) {
-    let member = |m: &benilla_protocol::messages::GroupMemberEntry| {
-        (!possessors.contains(&m.guid))
-            .then(|| party_member_pos(m, group, guids, unit_pos))
-            .flatten()
-            .map(|p| (p, RimArrow::Group, GROUP_ARROW_PX))
+    let member = |raid: bool| {
+        move |m: &benilla_protocol::messages::GroupMemberEntry| {
+            (!possessors.contains(&m.guid))
+                .then(|| party_member_pos(m, group, guids, unit_pos))
+                .flatten()
+                .map(|p| (p, raid, m.name.clone()))
+        }
     };
-    let party = group.party_slots().filter_map(member);
+    let party = group.party_slots().filter_map(member(false));
     // The raid's arrows draw after the party's (`0x580ec0` after `0x580ae0`).
-    let raid = raid_rows(group).filter_map(member);
-    for ((x, y), art, px) in party.chain(raid) {
+    let raid = raid_rows(group).filter_map(member(true));
+    for ((x, y), raid, name) in party.chain(raid) {
         let d = ((x - ctx.wx).powi(2) + (y - ctx.wy).powi(2)).sqrt();
         if d / ctx.radius_yd <= BLIP_EDGE_RATIO {
             continue; // in range: the dot pass draws it
         }
-        let Some(tex) = arrows.get(art) else {
+        let Some(tex) = arrows.get(RimArrow::Group) else {
             continue;
         };
-        push_rim_arrow(ctx, [x, y, 0.0], tex, px, quads);
+        let at = push_rim_arrow(ctx, [x, y, 0.0], tex, GROUP_ARROW_PX, quads);
+        if arrow_hovered(ctx, at) {
+            let names = if raid {
+                &mut hover.raid
+            } else {
+                &mut hover.party
+            };
+            names.push(name);
+        }
     }
 }
 
-/// Show the hovered blip's name; a unit's resolves through the name cache. The plate follows the
-/// cursor by itself, and hover loss hides it at once (`0x57d15e`). Runs after `UnitFeed`, so a
+/// Show every hovered blip's name; a unit's resolves through the name cache. The plate follows
+/// the cursor by itself, and hover loss hides it at once (`0x57d15e`). Runs after `UnitFeed`, so a
 /// same-frame move from a world hover to a blip ends on the blip's tooltip.
 pub(super) fn drive_blip_tooltip(
     mut script: crate::ui_script::InTurn,
@@ -540,22 +559,30 @@ pub(super) fn drive_blip_tooltip(
         return;
     };
     let last = last.get(&script);
-    let show = match &*hover {
-        MinimapBlipHover::None => None,
-        MinimapBlipHover::Landmark(name) => Some((name.clone(), false)),
-        MinimapBlipHover::Objects(hits) => {
-            object_tooltip_text(hits, &names, &commands).map(|t| (t, hits.iter().all(|h| h.grey)))
-        }
+    let show = if *hover == MinimapBlipHover::default() {
+        None
+    } else {
+        // `colorblindMode` names an unknown flight master in words (`0x57c720`).
+        let flight_master = script
+            .cvar("colorblindMode")
+            .is_some_and(|v| v.trim().parse::<i64>().unwrap_or(0) != 0)
+            .then(|| {
+                crate::ui_chat::combat::global_string(&script, "MINIMAP_TRACKING_FLIGHTMASTER")
+            })
+            .flatten();
+        hover_tooltip_text(&hover, flight_master.as_deref(), |g| {
+            names.resolve(g, &commands).map(str::to_string)
+        })
     };
     match (&show, &*last) {
-        // Same blip: the cursor mode's layer update keeps the plate on the pointer.
-        (Some((t, _)), Some(lt)) if t == lt => {}
+        // Same blips: the cursor mode's layer update keeps the plate on the pointer.
+        (Some(t), Some(lt)) if t == lt => {}
         // The tooltip runs its handlers: at the raise step after the feed, with the `World` lent,
         // behind a world hover's plate queued this frame.
-        (Some((t, grey)), _) => {
-            let (text, grey) = (t.clone(), *grey);
+        (Some(t), _) => {
+            let text = t.clone();
             benilla_ui::script::world_loan::in_turn_or_now(&mut script, move |s| {
-                s.minimap_tooltip(&text, grey);
+                s.minimap_tooltip(&text);
             });
             *last = Some(t.clone());
         }
@@ -569,28 +596,53 @@ pub(super) fn drive_blip_tooltip(
     }
 }
 
-/// The object blips' tooltip text (`0x57c720`): one name a line, a tracked trainer's title on
-/// the next as ` <title>`; a name not yet cached is skipped.
-fn object_tooltip_text(
-    hits: &[ObjectHover],
-    names: &NameCache,
-    commands: &NetCommands,
+/// The colour an other-floor object's entry draws in: the reference wraps it in `|cffb0b0b0`, which
+/// its tooltip line multiplies with the gold; benilla's markup replaces the colour instead, so the
+/// entry carries that product, gold × 0xb0.
+const OTHER_FLOOR_COLOR: &str = "|cffb09000";
+
+/// The minimap tooltip's one text (`0x57c720`), a line per entry: the landmark rim arrows, the
+/// party's and the raid's rim arrows, the landmark icons, then the object blips. An object adds
+/// ` <flight_master>` for an unknown flight master when given (colour-blind mode) and its tracked
+/// trainer's ` <title>`, all inside the grey of an other-floor blip. An object whose name is not
+/// yet known is left out; `None` when nothing is left.
+fn hover_tooltip_text(
+    hover: &MinimapBlipHover,
+    flight_master: Option<&str>,
+    resolve: impl Fn(u64) -> Option<String>,
 ) -> Option<String> {
-    let mut lines: Vec<String> = Vec::new();
-    for h in hits {
-        let name = match &h.name {
-            HoverName::Known(n) => n.clone(),
-            HoverName::Guid(g) => match names.resolve(*g, commands) {
-                Some(n) => n.to_string(),
-                None => continue,
-            },
+    let mut entries: Vec<String> = hover
+        .directions
+        .iter()
+        .chain(&hover.party)
+        .chain(&hover.raid)
+        .chain(&hover.landmarks)
+        .cloned()
+        .collect();
+    for h in &hover.objects {
+        let Some(name) = (match &h.name {
+            HoverName::Known(n) => Some(n.clone()),
+            HoverName::Guid(g) => resolve(*g),
+        }) else {
+            continue;
         };
-        lines.push(name);
-        if let Some(t) = &h.title {
-            lines.push(format!(" <{t}>"));
+        let mut entry = String::new();
+        if h.grey {
+            entry.push_str(OTHER_FLOOR_COLOR);
         }
+        entry.push_str(&name);
+        if let Some(label) = flight_master.filter(|_| h.flight_master) {
+            entry.push_str(&format!("\n <{label}>"));
+        }
+        if let Some(t) = &h.title {
+            entry.push_str(&format!("\n <{t}>"));
+        }
+        if h.grey {
+            entry.push_str("|r");
+        }
+        entries.push(entry);
     }
-    (!lines.is_empty()).then(|| lines.join("\n"))
+    (!entries.is_empty()).then(|| entries.join("\n"))
 }
 
 #[cfg(test)]
@@ -607,7 +659,10 @@ mod tests {
         w.init_resource::<NameCache>();
         w.init_resource::<crate::ui_script::live::UiEvents>();
         w.insert_resource(NetCommands(tx));
-        w.insert_resource(MinimapBlipHover::Landmark("Stormwind".into()));
+        w.insert_resource(MinimapBlipHover {
+            landmarks: vec!["Stormwind".into()],
+            ..Default::default()
+        });
         let script = UiScript::new().unwrap();
         script
             .run(
@@ -633,7 +688,7 @@ mod tests {
         assert_eq!(seen(&w), "", "nothing runs inside the feed");
         crate::ui_script::raises::fire_raises(&mut w);
         assert_eq!(seen(&w), "show");
-        *w.resource_mut::<MinimapBlipHover>() = MinimapBlipHover::None;
+        *w.resource_mut::<MinimapBlipHover>() = MinimapBlipHover::default();
         w.run_system(drive).unwrap();
         crate::ui_script::raises::fire_raises(&mut w);
         assert_eq!(seen(&w), "show,hide");
@@ -752,7 +807,7 @@ mod tests {
         let mut arrows = RimArrowArt::default();
         arrows.set(RimArrow::Corpse, Some(Handle::default()));
         let mut quads = UiQuads::default();
-        let mut hover = MinimapBlipHover::None;
+        let mut hover = MinimapBlipHover::default();
         let ctx = hover_ctx(cursor);
         let sel = select_landmarks(
             std::iter::empty(),
@@ -778,9 +833,10 @@ mod tests {
             ..Default::default()
         };
         let on = hover_at(Vec2::new(103.0, 84.0), statics);
-        assert!(matches!(&on, MinimapBlipHover::Landmark(n) if n == "Corpse"));
+        assert_eq!(on.landmarks, ["Corpse"]);
+        assert!(on.directions.is_empty());
         let off = hover_at(Vec2::new(100.0, 100.0), statics);
-        assert!(matches!(off, MinimapBlipHover::None));
+        assert_eq!(off, MinimapBlipHover::default());
     }
 
     /// Out of range the corpse's rim arrow carries the same name.
@@ -793,7 +849,136 @@ mod tests {
         };
         let rim = 100.0 - BLIP_BASIS_PX * 0.5 * BLIP_EDGE_RATIO;
         let on = hover_at(Vec2::new(100.0, rim), statics);
-        assert!(matches!(&on, MinimapBlipHover::Landmark(n) if n == "Corpse"));
+        assert_eq!(on.directions, ["Corpse"]);
+        assert!(on.landmarks.is_empty());
+    }
+
+    /// A rim arrow hovers within 6.4 px of its centre on each axis (`0x57c720`), not over its
+    /// whole 38.4-px art.
+    #[test]
+    fn a_rim_arrow_hovers_only_near_its_centre() {
+        let corpse = static_slot(1000.0, "Corpse");
+        let statics = StaticPois {
+            corpse: Some(&corpse),
+            ..Default::default()
+        };
+        let rim = 100.0 - BLIP_BASIS_PX * 0.5 * BLIP_EDGE_RATIO;
+        assert_eq!(
+            hover_at(Vec2::new(106.0, rim), statics).directions,
+            ["Corpse"]
+        );
+        assert!(hover_at(Vec2::new(107.0, rim), statics)
+            .directions
+            .is_empty());
+        assert!(hover_at(Vec2::new(100.0, rim + 15.0), statics)
+            .directions
+            .is_empty());
+    }
+
+    /// One text for everything hovered, in the reference's order (`0x57c720`): the landmark rim
+    /// arrows, the party's, the raid's, the landmark icons, then the objects; an other-floor
+    /// object's whole entry in the faint colour, an unknown flight master named in colour-blind
+    /// mode, a tracked trainer's title, and an object whose name is unknown left out.
+    #[test]
+    fn the_tooltip_lists_every_hovered_blip_in_the_reference_order() {
+        let hover = MinimapBlipHover {
+            directions: vec!["Stormwind".into()],
+            party: vec!["Anna".into()],
+            raid: vec!["Bert".into()],
+            landmarks: vec!["Crown Guard Tower".into()],
+            objects: vec![
+                ObjectHover {
+                    name: HoverName::Guid(7),
+                    grey: false,
+                    flight_master: false,
+                    title: Some("Weapon Master".into()),
+                },
+                ObjectHover {
+                    name: HoverName::Guid(8),
+                    grey: false,
+                    flight_master: false,
+                    title: None,
+                },
+                ObjectHover {
+                    name: HoverName::Known("Thor".into()),
+                    grey: true,
+                    flight_master: true,
+                    title: None,
+                },
+            ],
+        };
+        let resolve = |g: u64| (g == 7).then(|| "Woo Ping".to_string());
+        let text = hover_tooltip_text(&hover, Some("Flight Master"), resolve).unwrap();
+        assert_eq!(
+            text,
+            "Stormwind\nAnna\nBert\nCrown Guard Tower\nWoo Ping\n <Weapon Master>\n\
+             |cffb09000Thor\n <Flight Master>|r"
+        );
+        let plain = hover_tooltip_text(&hover, None, resolve).unwrap();
+        assert!(
+            plain.ends_with("|cffb09000Thor|r"),
+            "no colour-blind line: {plain:?}"
+        );
+        let unknown = MinimapBlipHover {
+            objects: vec![hover.objects[1].clone()],
+            ..Default::default()
+        };
+        assert_eq!(hover_tooltip_text(&unknown, None, resolve), None);
+    }
+
+    /// A party member past the rim hovers its arrow by name, and a raid row lands on the raid's
+    /// list; a member inside the rim draws a dot, not an arrow.
+    #[test]
+    fn a_group_rim_arrow_hovers_as_its_member() {
+        use benilla_protocol::messages::{GroupMemberEntry, PartyMemberStatsInfo};
+        use bevy::ecs::system::RunSystemOnce;
+        let row = |name: &str, guid: u64, flags: u8| GroupMemberEntry {
+            name: name.into(),
+            guid,
+            status: 1,
+            flags,
+            roles: 0,
+        };
+        let at = |x: i16| PartyMemberStatsInfo {
+            position: Some((x, 0)),
+            ..Default::default()
+        };
+        let group = crate::ui_party::GroupState {
+            own_flags: 0x00,
+            members: vec![
+                row("Anna", 2, 0x00),
+                row("Bert", 3, 0x01),
+                row("Cleo", 4, 0x00),
+            ],
+            // North past the rim, north past the rim, and in range.
+            stats: [(2, at(1000)), (3, at(1000)), (4, at(10))]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        };
+        let mut arrows = RimArrowArt::default();
+        arrows.set(RimArrow::Group, Some(Handle::default()));
+        let rim = 100.0 - BLIP_BASIS_PX * 0.5 * BLIP_EDGE_RATIO;
+        let mut world = World::new();
+        let hover = world
+            .run_system_once(move |unit_pos: Query<&GlobalTransform, With<NetEntity>>| {
+                let mut quads = UiQuads::default();
+                let mut hover = MinimapBlipHover::default();
+                emit_group_arrows(
+                    &hover_ctx(Vec2::new(100.0, rim)),
+                    &group,
+                    &[],
+                    &GuidIndex::default(),
+                    &unit_pos,
+                    &arrows,
+                    &mut quads,
+                    &mut hover,
+                );
+                hover
+            })
+            .unwrap();
+        assert_eq!(hover.party, ["Anna"]);
+        assert_eq!(hover.raid, ["Bert"]);
     }
 
     fn poi(importance: u32, flags: u32, x: f32, name: &str) -> AreaPoi {

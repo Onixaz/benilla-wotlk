@@ -422,7 +422,12 @@ pub(in crate::minimap) fn emit_object_blips(
                 Some(t) => HoverName::Known(t.name.clone()),
                 None => HoverName::Guid(guid),
             };
-            hover.push(ObjectHover { name, grey, title });
+            hover.push(ObjectHover {
+                name,
+                grey,
+                flight_master: c.blip == Blip::Interact,
+                title,
+            });
         }
     }
     counts

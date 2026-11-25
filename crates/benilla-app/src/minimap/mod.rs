@@ -480,7 +480,7 @@ fn emit_minimap(
         (vehicle_units, vehicle_tables, self_seat, mut vehicle_scratch),
     ) = blip_inputs;
     // Hover resets every frame; the blip pass re-establishes it while the map draws.
-    *blip_hover = blips::MinimapBlipHover::None;
+    *blip_hover = blips::MinimapBlipHover::default();
     // Drain the `Minimap:PingLocation` click before any early return: it is spent in the frame it
     // was made, and a click on a frame the map does not draw is not a ping.
     let click = script.as_mut().and_then(|s| s.take_minimap_ping_request());
@@ -807,31 +807,30 @@ fn emit_minimap(
         }
         None => blips::VehicleSelection::default(),
     };
-    let mut hover = blips::MinimapBlipHover::None;
+    // Everything under the cursor, gathered as each layer draws (`0x57c720`).
+    let mut hover = blips::MinimapBlipHover::default();
     // The guard-directions marker rides this pass as a landmark, as the reference appends its
-    // static blip slot after the DBC scan, so it draws even without `AreaPOI.dbc`.
-    let landmarks = blip_ctx
-        .as_ref()
-        .filter(|_| assets.rim_arrows.any())
-        .map(|ctx| {
-            blips::select_landmarks(
-                pois.as_ref()
-                    .map(|p| &p.0)
-                    .into_iter()
-                    .flat_map(|c| c.rows().map(|(_, p)| p)),
-                blips::StaticPois {
-                    marker: poi_marker.on_map(map.0),
-                    // Same map only: a dungeon corpse's display coords are the entrance.
-                    corpse: corpse_poi.on_map(map.0),
-                    release: release_poi.on_map(map.0),
-                },
-                map.0,
-                ctx.wx,
-                ctx.wy,
-                ctx.radius_yd,
-                |id| world_states.as_ref().map_or(0, |w| w.get(id)),
-            )
-        });
+    // static blip slot after the DBC scan, so it draws even without `AreaPOI.dbc`. The icons need
+    // only their atlas; a rim arrow whose art is missing skips itself.
+    let landmarks = blip_ctx.as_ref().map(|ctx| {
+        blips::select_landmarks(
+            pois.as_ref()
+                .map(|p| &p.0)
+                .into_iter()
+                .flat_map(|c| c.rows().map(|(_, p)| p)),
+            blips::StaticPois {
+                marker: poi_marker.on_map(map.0),
+                // Same map only: a dungeon corpse's display coords are the entrance.
+                corpse: corpse_poi.on_map(map.0),
+                release: release_poi.on_map(map.0),
+            },
+            map.0,
+            ctx.wx,
+            ctx.wy,
+            ctx.radius_yd,
+            |id| world_states.as_ref().map_or(0, |w| w.get(id)),
+        )
+    });
     if let (Some(ctx), Some(sel)) = (&blip_ctx, &landmarks) {
         blips::emit_landmark_icons(ctx, sel, assets.poi.as_ref(), &mut quads, &mut hover);
     }
@@ -921,21 +920,15 @@ fn emit_minimap(
                     );
                 }
             }
-            if !hits.is_empty() {
-                hover = blips::MinimapBlipHover::Objects(hits);
-            }
+            hover.objects = hits;
         }
     }
     // The rim arrows close the blip pass: the landmarks', then the group's (`0x57d860`, `0x580ae0`,
-    // `0x580ec0`). An object blip under the cursor keeps the hover.
+    // `0x580ec0`).
     if let (Some(ctx), Some(sel)) = (&blip_ctx, &landmarks) {
-        let mut arrow_hover = blips::MinimapBlipHover::None;
-        blips::emit_landmark_arrows(ctx, sel, &assets.rim_arrows, &mut quads, &mut arrow_hover);
-        if !matches!(arrow_hover, blips::MinimapBlipHover::None)
-            && !matches!(hover, blips::MinimapBlipHover::Objects(_))
-        {
-            hover = arrow_hover;
-        }
+        blips::emit_landmark_arrows(ctx, sel, &assets.rim_arrows, &mut quads, &mut hover);
+    }
+    if let Some(ctx) = &blip_ctx {
         blips::emit_group_arrows(
             ctx,
             &group,
@@ -944,6 +937,7 @@ fn emit_minimap(
             &unit_pos,
             &assets.rim_arrows,
             &mut quads,
+            &mut hover,
         );
     }
 

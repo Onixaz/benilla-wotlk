@@ -542,11 +542,11 @@ impl super::UiScript {
         }
     }
 
-    /// Show the minimap blip tooltip (an `AreaPOI` or quest-dot name): one gold line, faint gold
-    /// for a cross-interior dot, through the SetOwner core with `(Minimap, ANCHOR_CURSOR, 0, 0)`
+    /// Show the minimap blip tooltip (every hovered blip's name, a line each): one gold text, its
+    /// own colour codes inside, through the SetOwner core with `(Minimap, ANCHOR_CURSOR, 0, 0)`
     /// (`0x57d181`), whose layer update follows the pointer. Hover loss is
     /// [`Self::minimap_tooltip_hide`].
-    pub fn minimap_tooltip(&mut self, text: &str, grey: bool) -> bool {
+    pub fn minimap_tooltip(&mut self, text: &str) -> bool {
         let (h, id, owner) = {
             let mut model = self.model_mut();
             let Some(h) = model.arena.lookup("GameTooltip") else {
@@ -566,14 +566,7 @@ impl super::UiScript {
             }
         };
         set_owner_core(&self.lua, h, Some(owner), TooltipAnchor::Cursor, (0.0, 0.0));
-        // A cross-interior entry's `|cffb0b0b0` wrap modulates the gold: faint gold, not grey.
-        let dim = 0xb0 as f32 / 255.0;
-        let color = if grey {
-            [GOLD[0] * dim, GOLD[1] * dim, GOLD[2] * dim, 1.0]
-        } else {
-            GOLD
-        };
-        if let Err(e) = append_line(&self.lua, &wrapper, (text.to_string(), color), None, false) {
+        if let Err(e) = append_line(&self.lua, &wrapper, (text.to_string(), GOLD), None, false) {
             self.push_error(e);
             return false;
         }
