@@ -7,7 +7,8 @@ use benilla_ui::script::sstr_to_int;
 
 use crate::net::ChatKind;
 
-/// The sendable chat types, as the wire kind an addon's `SendChatMessage` token maps to.
+/// The sendable chat types, `SendChatMessage`'s name table (`0x4fbb20`), as the wire kind each
+/// token maps to; the leader lanes are the verb's own pick, never a token.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SendType {
     Say,
@@ -16,15 +17,17 @@ pub(crate) enum SendType {
     Whisper,
     Party,
     Raid,
-    RaidLeader,
     RaidWarning,
     Guild,
     Officer,
     Battleground,
-    BattlegroundLeader,
     Afk,
     Dnd,
     Channel,
+    Bn,
+    BnWhisper,
+    BnWhisperInform,
+    BnConversation,
 }
 
 impl SendType {
@@ -39,15 +42,17 @@ impl SendType {
             "WHISPER" => SendType::Whisper,
             "PARTY" => SendType::Party,
             "RAID" => SendType::Raid,
-            "RAID_LEADER" => SendType::RaidLeader,
             "RAID_WARNING" => SendType::RaidWarning,
             "GUILD" => SendType::Guild,
             "OFFICER" => SendType::Officer,
             "BATTLEGROUND" => SendType::Battleground,
-            "BATTLEGROUND_LEADER" => SendType::BattlegroundLeader,
             "AFK" => SendType::Afk,
             "DND" => SendType::Dnd,
             "CHANNEL" => SendType::Channel,
+            "BN" => SendType::Bn,
+            "BN_WHISPER" => SendType::BnWhisper,
+            "BN_WHISPER_INFORM" => SendType::BnWhisperInform,
+            "BN_CONVERSATION" => SendType::BnConversation,
             _ => return None,
         })
     }
@@ -61,15 +66,17 @@ impl SendType {
             SendType::Whisper => ChatKind::Whisper,
             SendType::Party => ChatKind::Party,
             SendType::Raid => ChatKind::Raid,
-            SendType::RaidLeader => ChatKind::RaidLeader,
             SendType::RaidWarning => ChatKind::RaidWarning,
             SendType::Guild => ChatKind::Guild,
             SendType::Officer => ChatKind::Officer,
             SendType::Battleground => ChatKind::Battleground,
-            SendType::BattlegroundLeader => ChatKind::BattlegroundLeader,
             SendType::Afk => ChatKind::Afk,
             SendType::Dnd => ChatKind::Dnd,
             SendType::Channel => ChatKind::Channel,
+            SendType::Bn => ChatKind::Bn,
+            SendType::BnWhisper => ChatKind::BnWhisper,
+            SendType::BnWhisperInform => ChatKind::BnWhisperInform,
+            SendType::BnConversation => ChatKind::BnConversation,
         }
     }
 }
@@ -126,6 +133,8 @@ pub(crate) struct ChannelSlot {
     /// `+0x90`, the channel flags its confirmed join (`0x5078eb`) or its last display list or
     /// user-list notice (`0x503a69`) carried.
     pub flags: u8,
+    /// `+0x98`, the confirmed join's second word (`0x5078e5`).
+    pub instance: u32,
 }
 
 /// The reference's per-slot state (`+0x9c`), in the values whose notice token differs: the stock
@@ -153,8 +162,23 @@ impl ChannelSlot {
             state: SlotState::Joined,
             leave_asked: false,
             flags: 0,
+            instance: 0,
         }
     }
+}
+
+/// What the join found or made of its record (`0x507a80`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum JoinRecord {
+    /// A record holds the channel already: no claim and no send (`0x507c1b` -> `0x507cea`).
+    Held,
+    /// A new record under this number, the join sent.
+    Claimed(u32),
+    /// All ten records taken: the verb's `ERR_TOO_MANY_CHAT_CHANNELS` unless quiet (`0x507755`),
+    /// and the join returns before its send (`0x507c51`).
+    Full,
+    /// The claim found the name held by another record (`0x5076c3`): the join returns.
+    Refused,
 }
 
 /// `id`'s `ZONECHANNELS` bit, `1 << (ChannelID - 1)`; nothing outside `1..=32` has one.
@@ -333,10 +357,12 @@ impl ChannelState {
         }
     }
 
-    /// The confirmed join's flags byte into the record holding `name` (`0x5078eb`).
-    pub(crate) fn set_slot_flags(&mut self, name: &str, flags: u8) {
+    /// The confirmed join's second word and flags byte into the record holding `name` (`0x5078e5`,
+    /// `0x5078eb`).
+    pub(crate) fn set_slot_join(&mut self, name: &str, instance: u32, flags: u8) {
         if let Some(n) = self.number_of(name) {
             if let Some(slot) = self.joined[n as usize - 1].as_mut() {
+                slot.instance = instance;
                 slot.flags = flags;
             }
         }
@@ -388,6 +414,7 @@ impl ChannelState {
                         .map(|r| r.shortcut.clone()),
                     active: s.state != SlotState::Suspended,
                     flags: s.flags,
+                    instance: s.instance,
                 })
             })
             .collect()
@@ -410,8 +437,8 @@ impl ChannelState {
     }
 
     /// Give `name` the first free slot, else a new one under [`MAX_CHANNELS`]; a name already held
-    /// keeps its number. With all ten taken, the reference prints `ERR_TOO_MANY_CHAT_CHANNELS`
-    /// (`0x199`) and still sends the join; here the callers only log it.
+    /// keeps its number. The zone walk's registration; a join claims through
+    /// [`Self::claim_for_join`].
     pub(crate) fn claim_slot(&mut self, name: &str) -> Option<u32> {
         if let Some(n) = self.number_of(name) {
             // A confirmed join on a held slot clears its suspension: the other half of the state-3
@@ -431,6 +458,50 @@ impl ChannelState {
         }
         self.joined.push(Some(ChannelSlot::joined(name)));
         Some(self.joined.len() as u32)
+    }
+
+    /// The join's record (`0x507a80`): a zone channel's found by its ChannelID, a custom one's by
+    /// name (`0x507b3a`-`0x507c11`); one already held skips the claim and the send (`0x507c1b`).
+    /// Otherwise a new record is claimed (`0x507c47` -> `0x5076b0`), at `number` when that slot is
+    /// free (`0x5076f6`-`0x507727`), else at the first free one or a new one under ten.
+    pub(crate) fn claim_for_join(&mut self, name: &str, number: u32) -> JoinRecord {
+        let id = self.channels.zone_channel_id(name);
+        let held = if id != 0 {
+            self.iter_names()
+                .any(|held| self.channels.zone_channel_id(held) == id)
+        } else {
+            self.number_of(name).is_some()
+        };
+        if held {
+            return JoinRecord::Held;
+        }
+        // The claim refuses a name another record holds (`0x5076b7`).
+        if self.number_of(name).is_some() {
+            return JoinRecord::Refused;
+        }
+        let at = usize::try_from(number)
+            .ok()
+            .filter(|n| (1..=MAX_CHANNELS).contains(n))
+            .and_then(|n| {
+                if n > self.joined.len() {
+                    self.joined.resize(n, None);
+                    Some(n - 1)
+                } else {
+                    self.joined[n - 1].is_none().then_some(n - 1)
+                }
+            })
+            .or_else(|| self.joined.iter().position(Option::is_none));
+        let i = match at {
+            Some(i) => i,
+            // All ten taken (`0x507746`).
+            None if self.joined.len() >= MAX_CHANNELS => return JoinRecord::Full,
+            None => {
+                self.joined.push(None);
+                self.joined.len() - 1
+            }
+        };
+        self.joined[i] = Some(ChannelSlot::joined(name));
+        JoinRecord::Claimed(i as u32 + 1)
     }
 
     /// Free the slot holding `name` in place, so no other channel renumbers.

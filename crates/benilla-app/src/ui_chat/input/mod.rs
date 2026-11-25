@@ -974,9 +974,9 @@ pub(crate) fn channel_arm(
     mut arm_lines: ResMut<ArmLines>,
     mut channels: ResMut<super::edit::ChannelState>,
     commands: Res<NetCommands>,
-) {
+) -> ArmOutcome {
     let Some(vm) = vm.as_deref_mut() else {
-        return;
+        return ArmOutcome::Done;
     };
     let mut script = ArmVm {
         vm,
@@ -990,9 +990,15 @@ pub(crate) fn channel_arm(
             voice,
         } => {
             manual_join_or_leave(&channels, &mut script, &name);
-            // A zone channel's slot is claimed at send (`0x507a80`), with no relist.
-            if channels.channels.zone_channel_id(&name) != 0 {
-                channels.claim_slot(&name);
+            // The record is found or claimed before the send, with no relist (`0x507a80`).
+            match channels.claim_for_join(&name, 0) {
+                super::edit::JoinRecord::Claimed(n) => {
+                    debug!("chat: joining {name:?} as slot {n}");
+                }
+                super::edit::JoinRecord::Held => return ArmOutcome::Done,
+                // The verb is not quiet: its line, then no send (`0x507755`, `0x507c51`).
+                super::edit::JoinRecord::Full => return ArmOutcome::TooManyChannels,
+                super::edit::JoinRecord::Refused => return ArmOutcome::Declined,
             }
             channels.join_command(name, password, false, voice)
         }
@@ -1000,7 +1006,7 @@ pub(crate) fn channel_arm(
             // `LeaveChannelByName`: a number names a confirmed slot or the call does
             // nothing. Only this path clears the zone mask and the custom re-join list.
             let Some(name) = channels.leave_target(&name) else {
-                return;
+                return ArmOutcome::Done;
             };
             manual_join_or_leave(&channels, &mut script, &name);
             channels.note_zone_channel_left(&name);
@@ -1021,9 +1027,9 @@ pub(crate) fn channel_arm(
                     continue;
                 };
                 let entry = format!("[{}. {}] ", i + 1, slot.name);
-                // A full buffer goes out first (`0x50db63`-`0x50db8d`), measured as it means to
-                // be, the text's length plus the entry's: 12340 measures the text from the
-                // entry's length on (`0x50db56`), past its end on a short text.
+                // A full buffer goes out first (`0x50db63`-`0x50db8d`). A 12340 bug, fixed: it
+                // measures the text from the entry's length on (`0x50db56`), past its end on a
+                // short text; this measures the text's length plus the entry's.
                 if text.len() + entry.len() >= LIST_CHANNELS_BUFFER {
                     script.push_event(super::event::ChatEvent::text_only(
                         super::event::ChatEventKind::ChannelList,
@@ -1036,7 +1042,7 @@ pub(crate) fn channel_arm(
                 super::event::ChatEventKind::ChannelList,
                 text,
             ));
-            return;
+            return ArmOutcome::Done;
         }
         C::DisplayOwner { name } => ClientCommand::ChannelOwner { name },
         C::SetOwner { name, player } => ClientCommand::ChannelSetOwner { name, player },
@@ -1056,19 +1062,44 @@ pub(crate) fn channel_arm(
         C::DisplayList { name } => ClientCommand::ChannelDisplayList { name },
     };
     let _ = commands.0.send(cmd);
+    ArmOutcome::Done
+}
+
+/// What a channel verb's send left for its binding.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ArmOutcome {
+    /// The verb went on: a join answers its values and registers its window (`0x507cea`).
+    Done,
+    /// The join returned before its send, answering nothing (`0x507bf7`).
+    Declined,
+    /// [`Self::Declined`] after `ERR_TOO_MANY_CHAT_CHANNELS` at the display (`0x507755`).
+    TooManyChannels,
 }
 
 /// `ListChannels`' line buffer, 3000 bytes (`0x50db63`).
 const LIST_CHANNELS_BUFFER: usize = 0xbb8;
 
-/// [`channel_arm`] with the `World`, its lines added in the call's turn.
-pub(crate) fn run_channel_command(world: &mut World, cmd: benilla_ui::script::ChannelCommand) {
+/// [`channel_arm`] with the `World`, its lines added in the call's turn; whether the verb went on.
+pub(crate) fn run_channel_command(
+    world: &mut World,
+    cmd: benilla_ui::script::ChannelCommand,
+) -> bool {
     world.get_resource_or_init::<ArmLines>();
-    let _ = world.run_system_cached_with(channel_arm, cmd);
+    let outcome = world
+        .run_system_cached_with(channel_arm, cmd)
+        .unwrap_or(ArmOutcome::Done);
     let lines = std::mem::take(&mut world.resource_mut::<ArmLines>().0);
     for line in lines {
         super::feed::add(world, line);
     }
+    if outcome == ArmOutcome::TooManyChannels {
+        crate::ui_action::show_line_in_world(
+            world,
+            "chat",
+            crate::ui_action::UiError::key("ERR_TOO_MANY_CHAT_CHANNELS"),
+        );
+    }
+    outcome == ArmOutcome::Done
 }
 
 /// The frame's submitted lines: the engine verbs' queue, then the typed and probe lines, parsed;
@@ -1187,7 +1218,9 @@ pub(crate) fn drain_chat_input(world: &mut World) {
                     s.start_duel(name.as_deref().unwrap_or(""));
                 });
             }
-            ParsedChat::Channel(cmd) => run_channel_command(world, cmd),
+            ParsedChat::Channel(cmd) => {
+                run_channel_command(world, cmd);
+            }
             parsed => {
                 // `DoEmote`'s token resolves with the `World` lent, before the arm reads the rest.
                 let emote = match &parsed {
@@ -1361,15 +1394,21 @@ fn auto_clear_afk(cvars: &crate::cvars::Cvars) -> bool {
     cvars.flag("autoClearAFK").unwrap_or(true)
 }
 
-/// A party line from the party leader goes out as `0x33` (`0x50d516`).
+/// The leader's lanes: a party line goes out as `0x33` (`0x50d516`), a raid line as `0x27`
+/// (`0x50d412`) and a battleground line as `0x2d` (`0x50d4e9`) when the group leader is us.
 pub(super) fn party_lane(
     wire: crate::net::ChatKind,
     leader: u64,
     me: Option<u64>,
 ) -> crate::net::ChatKind {
     use crate::net::ChatKind as K;
+    if me != Some(leader) {
+        return wire;
+    }
     match wire {
-        K::Party if me == Some(leader) => K::PartyLeader,
+        K::Party => K::PartyLeader,
+        K::Raid => K::RaidLeader,
+        K::Battleground => K::BattlegroundLeader,
         other => other,
     }
 }
@@ -1424,46 +1463,45 @@ pub(crate) fn clear_afk(world: &mut World, forced: bool) -> bool {
     true
 }
 
-/// `SendChatMessage`'s body inside the call (`0x50d170`), past the binding's argument reads. No
-/// slash grammar runs here: an addon sending `"/dance"` says six characters. An unknown chat-type
-/// token is the verb's Lua error (`0x50d20f`); an empty line of any type but AFK and DND ends the
-/// call (`0x50d229`-`0x50d231`). Every line it adds is added in the call.
+/// `SendChatMessage`'s body inside the call (`0x50d170`), past the binding's type, empty-line and
+/// language reads. No slash grammar runs here: an addon sending `"/dance"` says six characters.
+/// Every line it adds is added in the call; a `Some` is the verb's Lua error.
 pub(crate) fn send_chat_message(
     world: &mut World,
     mut send: benilla_ui::script::ChatSend,
 ) -> Option<&'static str> {
-    let Some(kind) = super::edit::SendType::from_token(&send.chat_type) else {
+    use super::edit::SendType as T;
+    let Some(kind) = T::from_token(&send.chat_type) else {
         return Some("SendChatMessage(): Unknown chat type");
     };
     if send.ends_at_empty_line() {
         return None;
     }
-    // A channel target is a slot number, sent as that slot's name; with no such slot the call
-    // ends here (`0x50d52f`-`0x50d569`), ahead of the AFK clear and the tutorial acknowledge.
-    if kind == super::edit::SendType::Channel {
-        let name = world
-            .get_resource::<super::edit::ChannelState>()
-            .and_then(|c| send.target.as_deref().and_then(|t| c.send_target(t)));
-        if name.is_none() {
-            debug!(
-                "chat: SendChatMessage names no joined channel {:?}; not sent",
-                send.target
-            );
-            return None;
+    let target_empty = send.target.as_deref().is_none_or(str::is_empty);
+    match kind {
+        // A whisper with no target is the verb's error (`0x50d302`).
+        T::Whisper if target_empty => {
+            return Some("SendChatMessage(): Whisper message missing target player!");
         }
-        send.target = name;
-    }
-    // `SendChatMessage`'s tutorial acknowledge covers the twelve social types, not say, yell or
-    // emote.
-    if !matches!(
-        kind,
-        super::edit::SendType::Say | super::edit::SendType::Yell | super::edit::SendType::Emote
-    ) {
-        if let Some(mut t) = world.get_resource_mut::<Messages<crate::tutorial::TutorialEvent>>() {
-            t.write(crate::tutorial::TutorialEvent::Acknowledge {
-                id: crate::tutorial::id::CHATTING,
-            });
+        // A channel send with no target is the verb's error (`0x50d587`); a target naming no
+        // joined record ends the call (`0x50d52f`-`0x50d569`), else it sends the record's name.
+        T::Channel if target_empty => {
+            return Some("SendChatMessage(): Channel send missing channel number");
         }
+        T::Channel => {
+            let name = world
+                .get_resource::<super::edit::ChannelState>()
+                .and_then(|c| send.target.as_deref().and_then(|t| c.send_target(t)));
+            if name.is_none() {
+                debug!(
+                    "chat: SendChatMessage names no joined channel {:?}; not sent",
+                    send.target
+                );
+                return None;
+            }
+            send.target = name;
+        }
+        _ => {}
     }
     let leader = world
         .get_resource::<crate::ui_party::GroupState>()
@@ -1472,50 +1510,91 @@ pub(crate) fn send_chat_message(
         .get_resource::<crate::net::SelfGuid>()
         .and_then(|g| g.0);
     let wire = party_lane(kind.wire(), leader, me);
-    // Every type but AFK first clears a standing AFK (`0x50d417`-`0x50d425`), `/dnd` included.
-    if !matches!(wire, crate::net::ChatKind::Afk) {
-        clear_afk(world, false);
-    }
     let strings = |world: &World, key: &str| vm_string(world, key);
-    let text = match wire {
-        crate::net::ChatKind::Afk => {
-            let mirror = world
-                .get_resource::<super::away::AfkMirror>()
-                .copied()
-                .unwrap_or_default();
-            let out = super::away::afk_line(&send.text, mirror, &|k| strings(world, k));
-            // The mark adds its line, then sets the mirror (`0x6dc6e0`, `0x6dc6e8`).
-            if let Some(line) = out.line {
-                super::away::add_system(world, line);
-            }
-            if let Some(v) = out.mirror {
-                world.resource_mut::<super::away::AfkMirror>().0 = v;
-            }
-            out.body
+    // AFK marks or clears and returns (`0x50d5a7`-`0x50d5ee`): no AFK clear, dead gate or tutorial.
+    if wire == crate::net::ChatKind::Afk {
+        let mirror = world
+            .get_resource::<super::away::AfkMirror>()
+            .copied()
+            .unwrap_or_default();
+        let out = super::away::afk_line(&send.text, mirror, &|k| strings(world, k));
+        // The mark adds its line, then sets the mirror (`0x6dc6e0`, `0x6dc6e8`).
+        if let Some(line) = out.line {
+            super::away::add_system(world, line);
         }
-        crate::net::ChatKind::Dnd => {
-            // DND has no mirror: the live descriptor bit.
-            let dnd = world
-                .run_system_cached(
-                    |q: Query<&crate::net::ObjectStore, With<crate::net::SelfPlayer>>| is_dnd(&q),
-                )
-                .unwrap_or(false);
-            let out = super::away::dnd_line(&send.text, dnd, &|k| strings(world, k));
-            if let Some(line) = out.line {
-                super::away::add_system(world, line);
-            }
-            out.body
+        if let Some(v) = out.mirror {
+            world.resource_mut::<super::away::AfkMirror>().0 = v;
         }
-        _ => send.text,
+        // The AFK mark's own packet never reads the language argument.
+        send_chat(world, wire, send.target, out.body, None);
+        return None;
+    }
+    // Every other type first clears a standing AFK (`0x50d417`-`0x50d425`), `/dnd` included.
+    clear_afk(world, false);
+    let text = if wire == crate::net::ChatKind::Dnd {
+        // DND has no mirror: the live descriptor bit (`0x50d43c`).
+        let dnd = world
+            .run_system_cached(
+                |q: Query<&crate::net::ObjectStore, With<crate::net::SelfPlayer>>| is_dnd(&q),
+            )
+            .unwrap_or(false);
+        let out = super::away::dnd_line(&send.text, dnd, &|k| strings(world, k));
+        if let Some(line) = out.line {
+            super::away::add_system(world, line);
+        }
+        out.body
+    } else {
+        send.text
     };
-    // Every type but AFK carries the language the binding resolved; the AFK arm's own builder, the
-    // AFK mark, never reads the argument.
-    let language = match wire {
-        crate::net::ChatKind::Afk => None,
-        _ => send.language,
-    };
-    send_chat(world, wire, send.target, text, language);
+    // Dead or a ghost, only the group, guild, whisper, channel and DND lanes speak; any other shows
+    // `ERR_CHAT_WHILE_DEAD` and ends the call (`0x50d632`-`0x50d684`).
+    if !speaks_while_dead(wire) && self_dead_or_ghost(world) {
+        crate::ui_action::show_line_in_world(
+            world,
+            "chat",
+            crate::ui_action::UiError::key("ERR_CHAT_WHILE_DEAD"),
+        );
+        return None;
+    }
+    // Every type that reaches the send flags the chatting tutorial (`0x50d695`).
+    if let Some(mut t) = world.get_resource_mut::<Messages<crate::tutorial::TutorialEvent>>() {
+        t.write(crate::tutorial::TutorialEvent::Acknowledge {
+            id: crate::tutorial::id::CHATTING,
+        });
+    }
+    send_chat(world, wire, send.target, text, send.language);
     None
+}
+
+/// The lanes `SendChatMessage` sends while dead or a ghost (`0x50d643`-`0x50d67d`).
+fn speaks_while_dead(wire: crate::net::ChatKind) -> bool {
+    use crate::net::ChatKind as K;
+    matches!(
+        wire,
+        K::Whisper
+            | K::Party
+            | K::PartyLeader
+            | K::Raid
+            | K::RaidLeader
+            | K::RaidWarning
+            | K::Guild
+            | K::Officer
+            | K::Channel
+            | K::Dnd
+            | K::Battleground
+            | K::BattlegroundLeader
+    )
+}
+
+/// The active player's dead-or-ghost test, read at the call (`0x50d637`).
+fn self_dead_or_ghost(world: &mut World) -> bool {
+    world
+        .run_system_cached(
+            |q: Query<&crate::net::ObjectStore, With<crate::net::SelfPlayer>>| {
+                q.iter().next().is_some_and(|s| s.0.is_dead_or_ghost())
+            },
+        )
+        .unwrap_or(false)
 }
 
 /// `SendAddonMessage`'s packet inside the call (`0x50071f`): the binding has already applied the

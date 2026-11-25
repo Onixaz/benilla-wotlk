@@ -43,11 +43,38 @@ pub struct ChatSend {
 
 impl ChatSend {
     /// The empty-line gate: a line whose first byte is NUL ends the call, before the language is
-    /// read or anything is sent, unless its type is AFK (`0x14`) or DND (`0x15`). The chat-type
+    /// read or anything is sent, unless its type is AFK (`0x17`) or DND (`0x18`). The chat-type
     /// lookup and its "Unknown chat type" come first.
     pub fn ends_at_empty_line(&self) -> bool {
         ends_at_empty_line(&self.text, &self.chat_type)
     }
+}
+
+/// The chat-type names `SendChatMessage` accepts, compared ignoring case (`0x4fbb20`): no
+/// `RAID_LEADER` or `BATTLEGROUND_LEADER`, which the verb picks itself for a leader.
+pub const CHAT_TYPES: [&str; 17] = [
+    "SAY",
+    "PARTY",
+    "RAID",
+    "GUILD",
+    "OFFICER",
+    "YELL",
+    "WHISPER",
+    "EMOTE",
+    "CHANNEL",
+    "AFK",
+    "DND",
+    "RAID_WARNING",
+    "BATTLEGROUND",
+    "BN",
+    "BN_WHISPER",
+    "BN_WHISPER_INFORM",
+    "BN_CONVERSATION",
+];
+
+/// Whether an uppercased token names a [`CHAT_TYPES`] row.
+fn chat_type_known(token: &str) -> bool {
+    CHAT_TYPES.contains(&token)
 }
 
 /// [`ChatSend::ends_at_empty_line`] on the binding's arguments, before the line is built.
@@ -149,25 +176,38 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "SendChatMessage",
         lua.create_function(
-            |lua, (text, chat_type, language, target): (String, Option<String>, Value, Value)| {
-                let chat_type = chat_type
-                    .unwrap_or_else(|| "SAY".into())
-                    .to_ascii_uppercase();
-                // The language is read only past the empty-line gate. The line is queued
-                // anyway: the type check that precedes the gate is the app's, and the drain
-                // applies the gate after it.
-                let reads_language = !ends_at_empty_line(&text, &chat_type);
+            |lua, (text, chat_type, language, target): (Value, Value, Value, Value)| {
+                // A non-string line is the usage error (`0x50d889`).
+                let text = super::binding_abi::string_arg(
+                    lua,
+                    text,
+                    "Usage: SendChatMessage(text [,type] [,language] [,targetPlayer])",
+                )?;
+                // A string type is looked up (`0x50d203` -> `0x4fbb20`) and a miss is the error
+                // (`0x50d20f`); any other value keeps SAY, all ahead of the language.
+                let chat_type = super::binding_abi::optional_string(lua, &chat_type)
+                    .map_or_else(|| "SAY".into(), |t| t.to_ascii_uppercase());
+                if !chat_type_known(&chat_type) {
+                    return Err(mlua::Error::RuntimeError(
+                        "SendChatMessage(): Unknown chat type".into(),
+                    ));
+                }
+                // An empty line of any type but AFK and DND ends the call (`0x50d229`-`0x50d231`).
+                if ends_at_empty_line(&text, &chat_type) {
+                    return Ok(());
+                }
+                // A string language is looked up and a miss is the error (`0x50d28b`, `0x50d297`).
                 let language = match super::binding_abi::optional_string(lua, &language) {
-                    Some(name) if reads_language => {
+                    Some(name) => {
                         let model = lua
                             .app_data_ref::<crate::script::ModelCell>()
                             .expect("model app_data");
                         let id = language_id(&model.language_table, &name);
-                        Some(
-                            id.ok_or_else(|| mlua::Error::RuntimeError("Unknown language".into()))?,
-                        )
+                        Some(id.ok_or_else(|| {
+                            mlua::Error::RuntimeError("SendChatMessage(): Unknown language".into())
+                        })?)
                     }
-                    _ => None,
+                    None => None,
                 };
                 // `lua_isstring` then `lua_tostring`: a number is its text, so `2.7` reaches the
                 // channel's string-to-int as "2.7", which reads 2.

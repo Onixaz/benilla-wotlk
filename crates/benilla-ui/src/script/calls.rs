@@ -81,6 +81,8 @@ pub enum HostAnswer {
     BindIndex(u32),
     /// The step ran.
     Done,
+    /// The verb returned before its work, answering nothing.
+    Declined,
     /// The verb raises this Lua error (`luaL_error`).
     LuaError(&'static str),
 }

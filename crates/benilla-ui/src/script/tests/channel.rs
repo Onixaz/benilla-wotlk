@@ -134,6 +134,35 @@ fn get_channel_list_is_a_flat_slot_name_vararg_in_join_order() {
 }
 
 /// With no records at the call, nothing is listed.
+/// The number legs read only a record in state 0 (`0x4fe8a3`, `0x4fe681`): a left or suspended one
+/// answers (0, nil, 0) by number and is not listed, while its name still finds it (`0x4fe8e4`). A
+/// zone channel lists by its row's Shortcut (`0x4fe6cf`), a custom one by its name; the third value
+/// is the record's `+0x98`; a table is the usage error (`0x4fe938`).
+#[test]
+fn the_number_legs_read_only_joined_records_and_list_zone_channels_by_shortcut() {
+    let mut s = script();
+    let mut trade = slot("Trade - City", Some("Trade"), false);
+    trade.as_mut().unwrap().instance = 4;
+    let mut general = slot("General - Elwynn Forest", Some("General"), true);
+    general.as_mut().unwrap().instance = 7;
+    let mut v = TestView {
+        channel_slots: vec![general, slot("MyChan", None, true), trade],
+        ..Default::default()
+    };
+    s.with_live(&mut v, |s| {
+        s.run(
+            "local a, b, c = GetChannelName(3)              assert(a == 0 and b == nil and c == 0, 'a suspended record by number')              a, b, c = GetChannelName('3')              assert(a == 0 and b == nil and c == 0, 'by numeric string')              a, b, c = GetChannelName('trade - city')              assert(a == 3 and b == 'Trade - City' and c == 4, 'by name, whatever the state')              a, b, c = GetChannelName(1.9)              assert(a == 1 and b == 'General - Elwynn Forest' and c == 7, 'truncated number')              local l = {GetChannelList()}              assert(#l == 4, 'two joined records: ' .. #l)              assert(l[1] == 1 and l[2] == 'General', 'a zone channel by its Shortcut')              assert(l[3] == 2 and l[4] == 'MyChan', 'a custom channel by its name')",
+        )
+        .unwrap();
+        let err = s.run("GetChannelName({})").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Usage: GetChannelName([channelIndex] or [channelName])"),
+            "{err}"
+        );
+    });
+}
+
 #[test]
 fn get_channel_list_is_empty_with_no_records() {
     let empty = crate::script::tests::common::script();
@@ -185,6 +214,7 @@ fn slot(name: &str, shortcut: Option<&str>, active: bool) -> Option<ChannelSlotI
         shortcut: shortcut.map(Into::into),
         active,
         flags: 0,
+        instance: 0,
     })
 }
 

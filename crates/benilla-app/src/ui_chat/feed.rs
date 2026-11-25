@@ -570,8 +570,12 @@ fn channel_notice_lines(
     let wire_channel = channel.clone();
     if let Some(mut event) = notice_event(notice_byte, channel, name, None) {
         event.left_constant = matches!(tail, ChannelNoticeTail::YouLeft { constant: true });
-        if let ChannelNoticeTail::YouJoined { flags, .. } = tail {
+        if let ChannelNoticeTail::YouJoined {
+            flags, instance, ..
+        } = tail
+        {
             event.joined_flags = *flags as u8;
+            event.joined_instance = *instance;
         }
         lines.push(ChatLine::Event(event));
     }
@@ -883,11 +887,9 @@ pub(super) fn notice_event(
     })
 }
 
-/// Deliver one built event: a `YOU_JOINED` claims its slot before the render, a `YOU_LEFT` frees it
-/// after, so the leave line keeps its number and colour ("Left Channel: [2. General - Elwynn
-/// Forest]") and a handler's `GetChannelName` still finds it. The reference flags the teardown,
-/// fires the event, then drops the record; its suspended leg skips the flag. Both arms mirror the
-/// list into the VM for `GetChannelName`.
+/// Deliver one built event at the channel notice handler's steps (`0x50e120`): a `YOU_JOINED`
+/// confirms its record and a `YOU_LEFT` marks it left, each relisting, before the line; a
+/// non-suspended leave or a refusal then drops the record after the line, relisting again.
 #[cfg(test)]
 pub(super) fn deliver(
     script: &mut benilla_ui::script::UiScript,
@@ -904,7 +906,7 @@ pub(super) fn deliver(
     }
     let after = deliver_mid(channels, event);
     route(script, windows, event);
-    if deliver_after(channels, event, after) {
+    if deliver_after(channels, after) {
         script.channels_updated();
     }
 }
@@ -916,7 +918,7 @@ fn password_request_args(event: &ChatEvent) -> Vec<benilla_ui::script::ScriptVal
 }
 
 /// [`deliver`]'s writes ahead of the line: whether a password request fires before it, and whether
-/// the join relists the channels (`0x507880` -> `0x505d40`).
+/// the join (`0x507880`) or the leave (`0x507900`) relists the channels (`0x505d40`).
 fn deliver_before(channels: &mut ChannelState, event: &mut ChatEvent) -> (bool, bool) {
     let notice = event
         .notice_byte()
@@ -932,6 +934,8 @@ fn deliver_before(channels: &mut ChannelState, event: &mut ChatEvent) -> (bool, 
     // Read first: the reference picks the token from `slot+0x9c` before writing it, and the renamed
     // and suspended tokens keep the window's registration.
     event.slot_state = channels.slot_state(&event.channel);
+    // A leave keeps its record when the server says suspended and we did not ask (`0x50e31b`,
+    // `0x50e324`).
     event.suspended = notice == Some(channel_notice::YOU_LEFT)
         && event.left_constant
         && channels.leave_asked(&event.channel) == Some(false);
@@ -945,98 +949,69 @@ fn deliver_before(channels: &mut ChannelState, event: &mut ChatEvent) -> (bool, 
             event.slot_state
         );
     }
-    if notice == Some(channel_notice::YOU_JOINED) {
-        // A confirmed join sets the `ZONECHANNELS` bit, its only runtime growth.
-        channels.note_zone_channel_joined(&event.channel);
-        // A slot the walk renamed is numbered already, but its state must return to `Joined`.
-        channels.confirm_slot(&event.channel);
+    let held = channels.number_of(&event.channel).is_some();
+    // With no record, neither the join nor the leave writes or relists (`0x5078a4`, `0x507926`).
+    if !held {
+        return (password, false);
     }
-    // A zone channel's record is made at send time; one the server joined unasked has none.
-    if notice == Some(channel_notice::YOU_JOINED)
-        && channels.number_of(&event.channel).is_none()
-        && channels.channels.zone_channel_id(&event.channel) == 0
-    {
-        match channels.claim_slot(&event.channel) {
-            Some(slot) => {
-                debug!(
-                    "chat: server confirms channel {:?} joined (slot {slot})",
-                    event.channel
-                );
-            }
-            // All ten slots taken: no number, as in the reference, whose slot allocator also prints
-            // `ERR_TOO_MANY_CHAT_CHANNELS` (`0x199`); here it is only logged.
-            None => warn!(
-                "chat: server confirms channel {:?} joined but all {} slots are taken — it has no \
-                 number, so /N cannot reach it",
-                event.channel,
-                super::edit::MAX_CHANNELS
-            ),
+    let relist = match notice {
+        Some(channel_notice::YOU_JOINED) => {
+            // State 0 (`0x5078b3`), the zone bit (`0x5078d2`), the second word and the flags
+            // (`0x5078e5`, `0x5078eb`), then the relist (`0x5078f3`).
+            channels.confirm_slot(&event.channel);
+            channels.note_zone_channel_joined(&event.channel);
+            channels.note_custom_channel_joined(&event.channel);
+            channels.set_slot_join(&event.channel, event.joined_instance, event.joined_flags);
+            true
         }
-    }
-    // A custom channel's confirmed join enters the chat cache's re-join list, under its number.
-    let joined = notice == Some(channel_notice::YOU_JOINED);
-    if joined {
-        channels.note_custom_channel_joined(&event.channel);
-        // The join writes the notice's flags byte into the record (`0x5078e1`, `0x5078eb`).
-        channels.set_slot_flags(&event.channel, event.joined_flags);
-    }
-    // Every confirmed join relists the channel pane before the notice prints (`0x507880`).
-    (password, joined)
+        Some(channel_notice::YOU_LEFT) => {
+            // The record leaves state 0 (`0x50792c`), so the verbs stop reading it as joined,
+            // then the relist (`0x507a18`), all ahead of the line.
+            channels.suspend_slot(&event.channel);
+            true
+        }
+        _ => false,
+    };
+    (password, relist)
 }
 
-/// The wire names of a leave and a refusal, read before the stamp numbers the line.
+/// The wire names of the records the handler drops after the line, read before the stamp numbers
+/// it.
 struct AfterLine {
-    leaving: Option<String>,
-    refused: Option<String>,
+    dropped: Option<String>,
 }
 
-/// [`deliver`]'s reads just before the line: the wire names of a leave and a refusal, then the
-/// stamp.
+/// [`deliver`]'s reads just before the line: the record the handler drops after it, then the stamp.
 fn deliver_mid(channels: &mut ChannelState, event: &mut ChatEvent) -> AfterLine {
+    use channel_notice as n;
     let notice = event
         .notice_byte()
         .filter(|_| event.kind == Some(ChatEventKind::ChannelNotice));
-    // The wire name, kept before `stamp_channel` decorates arg4 with the slot number.
-    let leaving = (notice == Some(channel_notice::YOU_LEFT)).then(|| event.channel.clone());
-    // 3.3.5a drops the record after a `NOT_IN_AREA` or `NOT_IN_LFG` refusal, so the refused channel
-    // gives its number back.
-    let refused = matches!(
-        notice,
-        Some(channel_notice::NOT_IN_AREA | channel_notice::NOT_IN_LFG)
-    )
-    .then(|| event.channel.clone());
+    // The handler's drop flag (`[ebp-0x14]`): a held leave not suspended (`0x50e358`), a wrong
+    // password (`0x50e3a3`), a ban (`0x50e6df`), a wrong faction (`0x50e85e`) and the two area
+    // refusals (`0x50e931`, `0x50e958`). The wire name is kept before the stamp decorates arg4.
+    let drops = match notice {
+        Some(n::YOU_LEFT) => channels.number_of(&event.channel).is_some() && !event.suspended,
+        Some(n::WRONG_PASSWORD | n::BANNED | n::WRONG_FACTION | n::NOT_IN_AREA | n::NOT_IN_LFG) => {
+            true
+        }
+        _ => false,
+    };
+    let dropped = drops.then(|| event.channel.clone());
     // The channel renders numbered when its slot is known.
     channels.stamp_channel(event);
-    AfterLine { leaving, refused }
+    AfterLine { dropped }
 }
 
-/// [`deliver`]'s writes after the line: a leave frees its slot unless suspended, a refusal frees
-/// its own; whether either relists the channel pane (`0x507900`, `0x507a30` -> `0x505d40`).
-fn deliver_after(
-    channels: &mut ChannelState,
-    event: &ChatEvent,
-    AfterLine { leaving, refused }: AfterLine,
-) -> bool {
-    let mut relist = false;
-    if let Some(name) = leaving {
-        // A suspended leave keeps the record: the reference skips the teardown, so leaving a
-        // capital keeps Trade's number for the re-join.
-        if event.suspended {
-            debug!("chat: channel {name:?} suspended — the record and its number stay");
-        } else {
-            // Cleared in place, never compacted: slot 3 stays 3 when slot 2 empties.
-            let freed = channels.free_slot(&name);
-            debug!("chat: server confirms channel {name:?} left (slot {freed:?} now free)");
-        }
-        // Either leg relists the channel pane (`0x507900`).
-        relist = true;
-    }
-    if let Some(name) = refused {
-        let freed = channels.free_slot(&name);
-        debug!("chat: server refused channel {name:?} (slot {freed:?} now free)");
-        relist = true;
-    }
-    relist
+/// [`deliver`]'s write after the line: the flagged record dropped (`0x50eaa5` -> `0x507a30`), which
+/// relists whether a record was found or not (`0x507a78`). Cleared in place, never compacted.
+fn deliver_after(channels: &mut ChannelState, AfterLine { dropped }: AfterLine) -> bool {
+    let Some(name) = dropped else {
+        return false;
+    };
+    let freed = channels.free_slot(&name);
+    debug!("chat: channel {name:?} record dropped (slot {freed:?} now free)");
+    true
 }
 
 /// The channel list's update (`0x505d40`) with the `World` lent: the pane relists the live records
@@ -1807,7 +1782,7 @@ fn run_step(world: &mut World, script: &mut UiScript, step: Step) {
             let after = deliver_mid(&mut world.resource_mut::<ChannelState>(), &mut event);
             let record = composed_record(&event);
             route_in_world(world, script, &event, record);
-            if deliver_after(&mut world.resource_mut::<ChannelState>(), &event, after) {
+            if deliver_after(&mut world.resource_mut::<ChannelState>(), after) {
                 channels_updated(world);
             }
         }

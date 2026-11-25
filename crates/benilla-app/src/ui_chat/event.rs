@@ -186,6 +186,8 @@ pub(crate) struct ChatEvent {
     pub left_constant: bool,
     /// `YOU_JOINED`'s flags byte, which the join writes into the record's `+0x90` (`0x5078eb`).
     pub joined_flags: u8,
+    /// `YOU_JOINED`'s `u32` after the ChannelID, which the record keeps at `+0x98` (`0x5078e5`).
+    pub joined_instance: u32,
     /// `YOU_LEFT` reads `SUSPENDED`: a slot we did not ask to leave, on a constant channel
     /// (`0x50e31b`, `0x50e324`); set in [`super::feed::deliver`].
     pub suspended: bool,

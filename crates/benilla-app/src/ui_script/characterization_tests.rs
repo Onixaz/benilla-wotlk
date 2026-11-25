@@ -44,6 +44,7 @@ local VERBS = {
     { "taxi", function() return UnitOnTaxi("player") end },
     { "chan1", function() return (select(2, GetChannelName(1))) end },
     { "chann", function() return select("#", GetChannelList()) end },
+    { "chanl", function() return table.concat({ GetChannelList() }, ",") end },
     { "roster1", function() return CHARZ_CHAN and (GetChannelRosterInfo(CHARZ_CHAN, 1)) end },
     { "achcan", function() return CanShowAchievementUI() end },
     { "achcrit", function() return CHARZ_CRIT and (select(4, GetAchievementCriteriaInfo(CHARZ_CRIT))) end },
@@ -13134,6 +13135,22 @@ fn channel_notice(
 }
 
 /// Our `YOU_JOINED` and `YOU_LEFT` for `channel`.
+/// The join verb ahead of its confirm: 12340 claims the record at the join (`0x507c47`), and a
+/// `YOU_JOINED` with no record writes nothing (`0x5078a4`).
+fn join_charz(rig: &mut Rig) {
+    if !rig
+        .app
+        .world()
+        .contains_resource::<crate::net::NetCommands>()
+    {
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        rig.app.insert_resource(crate::net::NetCommands(tx));
+    }
+    super::live::with_live_world(rig.app.world_mut(), |s| s.run("JoinChannelByName('Charz')"))
+        .expect("a VM")
+        .unwrap();
+}
+
 fn joined_notice(channel: &str) -> SessionEvent {
     use benilla_protocol::messages::{channel_notice, ChannelNoticeTail};
     channel_notice(
@@ -13141,6 +13158,7 @@ fn joined_notice(channel: &str) -> SessionEvent {
         channel,
         ChannelNoticeTail::YouJoined {
             flags: 0,
+            instance: 0,
             text: None,
         },
     )
@@ -13160,13 +13178,13 @@ fn channel_order(seen: &[Seen]) -> Vec<String> {
     seen.iter()
         .filter_map(|s| match s.event.as_str() {
             "CHANNEL_UI_UPDATE" | "CHANNEL_COUNT_UPDATE" | "CHANNEL_ROSTER_UPDATE" => {
-                Some(s.line(&["chan1", "chann", "roster1"]))
+                Some(s.line(&["chan1", "chanl", "roster1"]))
             }
             "CHAT_MSG_CHANNEL_NOTICE" => Some(format!(
                 "{} {} | {}",
                 s.event,
                 s.args.split(' ').next().unwrap_or_default(),
-                s.line(&["chan1", "chann"])
+                s.line(&["chan1", "chanl"])
                     .split(" | ")
                     .nth(1)
                     .unwrap_or_default()
@@ -13177,15 +13195,17 @@ fn channel_order(seen: &[Seen]) -> Vec<String> {
         .collect()
 }
 
-/// The join's confirm relists in its handler before the notice line (`0x507880` -> `0x505d40`),
-/// the leave's after it (`0x507900`), and `GetChannelName` and `GetChannelList` read the records
-/// at each event (`0xbcf094`): the leave line still numbers the channel, the relist after it no
-/// longer does. Each fires between the packets around it.
+/// The join's confirm relists in its handler before the notice line (`0x507880` -> `0x505d40`);
+/// the leave marks the record left and relists before its line (`0x507900`: `0x50792c`,
+/// `0x507a18`), then drops it and relists again after (`0x50eaa5` -> `0x507a30`, `0x507a78`), and
+/// `GetChannelName` and `GetChannelList` read the records at each event (`0xbcf094`): a left record
+/// answers neither from the first relist on. Each fires between the packets around it.
 #[test]
 fn a_join_and_a_leave_relist_in_their_handlers_and_read_the_records_live() {
     let Some(mut rig) = Rig::login(&[]) else {
         return;
     };
+    join_charz(&mut rig);
     let seen = rig.packets(
         vec![
             closed_house(),
@@ -13200,11 +13220,12 @@ fn a_join_and_a_leave_relist_in_their_handlers_and_read_the_records_live() {
         channel_order(&seen),
         [
             "|",
-            "CHANNEL_UI_UPDATE | chan1=Charz chann=2 roster1=nil",
-            "CHAT_MSG_CHANNEL_NOTICE YOU_JOINED | chan1=Charz chann=2",
+            "CHANNEL_UI_UPDATE | chan1=Charz chanl=1,Charz roster1=nil",
+            "CHAT_MSG_CHANNEL_NOTICE YOU_JOINED | chan1=Charz chanl=1,Charz",
             "|",
-            "CHAT_MSG_CHANNEL_NOTICE YOU_LEFT | chan1=Charz chann=2",
-            "CHANNEL_UI_UPDATE | chan1=nil chann=0 roster1=nil",
+            "CHANNEL_UI_UPDATE | chan1=nil chanl= roster1=nil",
+            "CHAT_MSG_CHANNEL_NOTICE YOU_LEFT | chan1=nil chanl=",
+            "CHANNEL_UI_UPDATE | chan1=nil chanl= roster1=nil",
             "|",
         ]
     );
@@ -13218,6 +13239,7 @@ fn a_reload_reads_the_joined_channels_with_no_relist() {
     let Some(mut rig) = Rig::login(&[]) else {
         return;
     };
+    join_charz(&mut rig);
     rig.packets(vec![joined_notice("Charz")], 1);
     super::live::with_live_world(rig.app.world_mut(), |s| s.run("ReloadUI()"))
         .expect("a VM")
@@ -13245,6 +13267,7 @@ fn the_roster_fires_at_its_last_name_in_either_packet_order() {
     };
     let (tx, rx) = crossbeam_channel::unbounded();
     rig.app.insert_resource(crate::net::NetCommands(tx));
+    join_charz(&mut rig);
     rig.packets(vec![joined_notice("Charz")], 1);
     // The custom header's one entry: group header, world header, custom header, Charz.
     super::live::with_live_world(rig.app.world_mut(), |s| {
@@ -13273,8 +13296,8 @@ fn the_roster_fires_at_its_last_name_in_either_packet_order() {
         channel_order(&seen),
         [
             "|",
-            "CHANNEL_COUNT_UPDATE 4 1 | chan1=Charz chann=2 roster1=Ann",
-            "CHANNEL_ROSTER_UPDATE 4 1 | chan1=Charz chann=2 roster1=Ann",
+            "CHANNEL_COUNT_UPDATE 4 1 | chan1=Charz chanl=1,Charz roster1=Ann",
+            "CHANNEL_ROSTER_UPDATE 4 1 | chan1=Charz chanl=1,Charz roster1=Ann",
             "|",
         ],
         "the list waits; the answer's handler fires the roster"
@@ -13297,8 +13320,8 @@ fn the_roster_fires_at_its_last_name_in_either_packet_order() {
         channel_order(&seen),
         [
             "|",
-            "CHANNEL_COUNT_UPDATE 4 1 | chan1=Charz chann=2 roster1=Bob",
-            "CHANNEL_ROSTER_UPDATE 4 1 | chan1=Charz chann=2 roster1=Bob",
+            "CHANNEL_COUNT_UPDATE 4 1 | chan1=Charz chanl=1,Charz roster1=Bob",
+            "CHANNEL_ROSTER_UPDATE 4 1 | chan1=Charz chanl=1,Charz roster1=Bob",
             "|",
         ],
         "a cached name: the list's own handler fires the roster"
@@ -13321,6 +13344,7 @@ fn the_roster_and_a_held_line_run_in_registration_order() {
     };
     let (tx, _rx) = crossbeam_channel::unbounded();
     rig.app.insert_resource(crate::net::NetCommands(tx));
+    join_charz(&mut rig);
     rig.packets(vec![joined_notice("Charz")], 1);
     super::live::with_live_world(rig.app.world_mut(), |s| {
         s.run("GetNumDisplayChannels() SetSelectedDisplayChannel(4)")
@@ -13378,12 +13402,14 @@ fn the_join_writes_its_flags_and_an_equal_display_list_fires_nothing() {
     };
     let (tx, _rx) = crossbeam_channel::unbounded();
     rig.app.insert_resource(crate::net::NetCommands(tx));
+    join_charz(&mut rig);
     rig.packets(
         vec![channel_notice(
             channel_notice::YOU_JOINED,
             "Charz",
             ChannelNoticeTail::YouJoined {
                 flags: 0x18,
+                instance: 0,
                 text: None,
             },
         )],
@@ -13423,6 +13449,7 @@ fn a_cached_members_answer_leaves_the_rosters_count() {
     };
     let (tx, _rx) = crossbeam_channel::unbounded();
     rig.app.insert_resource(crate::net::NetCommands(tx));
+    join_charz(&mut rig);
     rig.packets(vec![joined_notice("Charz")], 1);
     super::live::with_live_world(rig.app.world_mut(), |s| {
         s.run("GetNumDisplayChannels() SetSelectedDisplayChannel(4)")

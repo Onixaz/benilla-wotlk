@@ -495,9 +495,15 @@ pub(crate) fn restore_chat_looks(world: &mut World, script: &mut UiScript) {
     });
     // The header's `CHANNELS` re-join at login, as in the reference; zone channels are the walk's.
     // The list holds custom channels only, so each carries id 0; 3.3.5a's re-join is the client's
-    // own, auto 1.
-    if let Some(commands) = commands {
-        for c in parsed.joined {
+    // own, auto 1, a quiet join that claims its record at the saved number first (`0x50819c`).
+    for c in parsed.joined {
+        let claimed = world
+            .get_resource_mut::<super::edit::ChannelState>()
+            .map(|mut ch| ch.claim_for_join(&c.name, c.number));
+        if !matches!(claimed, Some(super::edit::JoinRecord::Claimed(_))) {
+            continue;
+        }
+        if let Some(commands) = &commands {
             let _ = commands.send(ClientCommand::JoinChannel {
                 name: c.name,
                 password: String::new(),

@@ -171,10 +171,16 @@ pub(super) fn send_queued(lua: &Lua) {
 }
 
 /// A channel verb's send, made on the host inside the call; with no host lent the VM records it,
-/// which only its tests read. The caller holds no model borrow.
-fn push(lua: &Lua, cmd: ChannelCommand) {
-    if super::calls::ask_host(lua, &super::HostAsk::Channel(cmd.clone())).is_none() {
-        crate::script::model_mut_of(lua).channel_commands.push(cmd);
+/// which only its tests read. The caller holds no model borrow. `false` when the verb returned
+/// before its work.
+fn push(lua: &Lua, cmd: ChannelCommand) -> bool {
+    match super::calls::ask_host(lua, &super::HostAsk::Channel(cmd.clone())) {
+        Some(super::HostAnswer::Declined) => false,
+        Some(_) => true,
+        None => {
+            crate::script::model_mut_of(lua).channel_commands.push(cmd);
+            true
+        }
     }
 }
 
@@ -197,13 +203,6 @@ pub(crate) fn zone_catalog() -> Vec<ZoneChannelRow> {
     super::read_live(|l| l.zone_channel_catalog()).unwrap_or_default()
 }
 
-fn slot_of(joined: &[Option<String>], name: &str) -> Option<usize> {
-    joined
-        .iter()
-        .position(|c| c.as_deref().is_some_and(|c| c.eq_ignore_ascii_case(name)))
-        .map(|i| i + 1)
-}
-
 /// The name in slot `n` (1-based), `None` out of range or for a freed slot: the reference's lookup
 /// requires the entry's own number to equal `n`, which a leave zeroes, so a left channel's number
 /// answers "not joined" while every channel above it keeps its own.
@@ -214,69 +213,68 @@ fn name_at(joined: &[Option<String>], n: usize) -> Option<&str> {
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
+    // GetChannelName(n | name) (`0x4fe850`): a number, a numeric string included (`lua_isnumber`),
+    // names the record whose own number it is and whose state is 0 (`0x4fe895`, `0x4fe8a3`); a
+    // name finds its record whatever the state (`0x4fe8e4`). Each answers (number, name, `+0x98`),
+    // a miss (0, nil, 0); any other argument is the usage error (`0x4fe938`).
     g.set(
         "GetChannelName",
         lua.create_function(|lua, key: Value| {
-            let model = joined_names();
-            let slot = match &key {
-                // The reference bounds-checks `1 <= n <= count` and answers only a confirmed slot;
-                // `joined` holds only those, so the bound is the whole check.
-                Value::Integer(_) | Value::Number(_) => {
-                    let n = match &key {
-                        Value::Integer(i) => *i,
-                        Value::Number(n) => *n as i64,
-                        _ => unreachable!(),
-                    };
+            let slots = super::channel_pane::live_slots();
+            let found = match &key {
+                Value::Integer(_) | Value::Number(_) | Value::String(_)
+                    if lua.coerce_number(key.clone())?.is_some() =>
+                {
+                    let n = lua.coerce_number(key.clone())?.unwrap_or_default().trunc() as i64;
                     usize::try_from(n)
                         .ok()
-                        .filter(|n| name_at(&model, *n).is_some())
+                        .and_then(|n| n.checked_sub(1))
+                        .and_then(|i| Some((i + 1, slots.get(i)?.as_ref()?)))
+                        .filter(|(_, s)| s.active)
                 }
-                // A numeric string still resolves as a number, as Lua's coercion does in the
-                // reference: `ChatFrame.lua:2113` passes a `gsub` result, `GetChannelName("1")`.
                 Value::String(s) => {
                     let name = s.to_str()?;
-                    match name.trim().parse::<usize>() {
-                        Ok(n) if name_at(&model, n).is_some() => Some(n),
-                        Ok(_) => None,
-                        Err(_) => slot_of(&model, &name),
-                    }
+                    slots.iter().enumerate().find_map(|(i, s)| {
+                        s.as_ref()
+                            .filter(|s| s.name.eq_ignore_ascii_case(&name))
+                            .map(|s| (i + 1, s))
+                    })
                 }
-                _ => None,
+                _ => {
+                    return Err(mlua::Error::RuntimeError(
+                        "Usage: GetChannelName([channelIndex] or [channelName])".into(),
+                    ))
+                }
             };
-
-            let Some(slot) = slot else {
-                // Three values on every path, the name `lua_pushstring(NULL)`, which is nil; an
-                // unconfirmed channel answers the same, as `joined` models.
+            let Some((number, slot)) = found else {
                 return Ok(MultiValue::from_vec(vec![
                     Value::Integer(0),
                     Value::Nil,
                     Value::Integer(0),
                 ]));
             };
-            let name = name_at(&model, slot).unwrap_or_default().to_string();
             Ok(MultiValue::from_vec(vec![
-                Value::Integer(slot as i64),
-                Value::String(lua.create_string(&name)?),
-                // `instanceID`: `YOU_JOINED`'s split index, 0 on vanilla servers; never nil.
-                Value::Integer(0),
+                Value::Integer(number as i64),
+                Value::String(lua.create_string(&slot.name)?),
+                Value::Integer(i64::from(slot.instance)),
             ]))
         })?,
     )?;
 
-    // GetChannelList(): a flat vararg of slot, name pairs in join order, as
-    // `FCFDropDown_LoadChannels` steps it (`FloatingChatFrame.lua:445`); none joined is zero
-    // returns. The slots must match `slot_of`'s, so it agrees with `GetChannelName`.
+    // GetChannelList() (`0x4fe650`): a flat vararg of number, name pairs over the records in state
+    // 0 (`0x4fe67a`, `0x4fe681`), a zone channel by its row's Shortcut and a custom one by its name
+    // (`0x4fe6a0`-`0x4fe6dc`), as `FCFDropDown_LoadChannels` steps it; none is zero returns.
     g.set(
         "GetChannelList",
         lua.create_function(|lua, ()| {
-            let joined = joined_names();
-            let mut out = Vec::with_capacity(joined.len() * 2);
-            // Occupied slots only: the reference skips the cleared entries of its record array.
-            for (i, name) in joined.iter().enumerate() {
-                let Some(name) = name.as_deref() else {
+            let slots = super::channel_pane::live_slots();
+            let mut out = Vec::with_capacity(slots.len() * 2);
+            for (i, slot) in slots.iter().enumerate() {
+                let Some(slot) = slot.as_ref().filter(|s| s.active) else {
                     continue;
                 };
                 out.push(Value::Integer(i as i64 + 1));
+                let name = slot.shortcut.as_deref().unwrap_or(&slot.name);
                 out.push(Value::String(lua.create_string(name)?));
             }
             Ok(MultiValue::from_vec(out))
@@ -532,18 +530,23 @@ fn join_by_name(
     .map(|n| n.trunc() as i64 - 1)
     .and_then(|i| usize::try_from(i).ok())
     .filter(|i| *i < 10);
-    if let Some(i) = window {
-        crate::script::model_mut_of(lua).register_window_channel(i, listed_as, id);
-    }
     let password = if id != 0 { String::new() } else { password };
-    push(
+    // The join finds or claims its record and sends; a failed claim answers nothing and registers
+    // no window (`0x507c51`, `0x50da57`).
+    if !push(
         lua,
         ChannelCommand::Join {
             name: resolved.clone().unwrap_or_else(|| name.clone()),
             password,
             voice,
         },
-    );
+    ) {
+        return Ok(None);
+    }
+    // The window registration comes after the send, held record or new (`0x507cea`-`0x507d11`).
+    if let Some(i) = window {
+        crate::script::model_mut_of(lua).register_window_channel(i, listed_as, id);
+    }
     Ok(Some((i64::from(id), resolved)))
 }
 

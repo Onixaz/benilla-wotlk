@@ -219,19 +219,23 @@ fn cascade_run(
         }
         Cascade::Join => {
             info!("chat: guild recruitment cascade — unguilded in a capital, joining {name:?}");
-            // The slot (by name), window 1's list, then the send, always.
-            match channels.claim_slot(&name) {
-                // No relist: the join (`0x507a80`) does not update the list (`0x505d40`).
-                Some(n) => debug!("chat: {name:?} registered as slot {n}"),
-                None => warn!(
-                    "chat: no free slot for {name:?} — all {} are taken",
-                    super::edit::MAX_CHANNELS
-                ),
+            // The quiet join (`0x507dea` -> `0x507a80`): a held record skips the send, a failed
+            // claim also the window's list, with no line; no relist (`0x505d40`) either way.
+            match channels.claim_for_join(&name, 0) {
+                super::edit::JoinRecord::Claimed(n) => {
+                    debug!("chat: {name:?} registered as slot {n}");
+                    // The client's own join (`0x49eb70`).
+                    let _ =
+                        commands
+                            .0
+                            .send(channels.join_command(name, String::new(), true, false));
+                }
+                super::edit::JoinRecord::Held => {}
+                super::edit::JoinRecord::Full | super::edit::JoinRecord::Refused => {
+                    warn!("chat: no record for {name:?}; not joined");
+                    return Some(None);
+                }
             }
-            // The client's own join (`0x49eb70`).
-            let _ = commands
-                .0
-                .send(channels.join_command(name, String::new(), true, false));
             Some(Some((row.shortcut.clone(), row.id)))
         }
         Cascade::Deferred => None,

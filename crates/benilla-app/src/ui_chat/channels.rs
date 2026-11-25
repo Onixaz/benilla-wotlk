@@ -506,6 +506,7 @@ mod tests {
             state: SlotState::Suspended,
             leave_asked: false,
             flags: 0,
+            instance: 0,
         })
     }
 

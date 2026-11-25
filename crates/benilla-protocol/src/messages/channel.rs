@@ -53,9 +53,13 @@ pub mod channel_notice {
 pub enum ChannelNoticeTail {
     /// The member who joined or left.
     Guid(u64),
-    /// Our channel flags; the `u32` after them is always 0. 3.3.5a may append a second line's
-    /// text (`0x50e220`).
-    YouJoined { flags: u32, text: Option<String> },
+    /// Our channel flags, then the `u32` the record keeps at `+0x98` (`0x50e1fa`, `0x5078e5`),
+    /// `GetChannelName`'s third value. 3.3.5a may append a second line's text (`0x50e220`).
+    YouJoined {
+        flags: u32,
+        instance: u32,
+        text: Option<String>,
+    },
     /// 3.3.5a's leave: whether the channel is a constant one, the `SUSPENDED` gate (`0x50e324`).
     YouLeft { constant: bool },
     /// Nothing follows the channel name.
@@ -92,8 +96,12 @@ pub(super) fn read_channel_notify(r: &mut &[u8]) -> io::Result<ChannelNotify> {
         n::JOINED | n::LEFT => ChannelNoticeTail::Guid(read_u64_le(r)?),
         n::YOU_JOINED => {
             let flags = read_u32_le(r)?;
-            let _reserved = read_u32_le(r)?; // always 0 on the wire
-            ChannelNoticeTail::YouJoined { flags, text: None }
+            let instance = read_u32_le(r)?;
+            ChannelNoticeTail::YouJoined {
+                flags,
+                instance,
+                text: None,
+            }
         }
         n::YOU_LEFT
         | n::WRONG_PASSWORD
@@ -158,13 +166,20 @@ pub(super) fn read_channel_notify_wotlk(r: &mut &[u8]) -> io::Result<ChannelNoti
             let channel = read_cstring(&mut body)?;
             let flags = u32::from(read_u8(&mut body)?);
             let _channel_id = read_u32_le(&mut body)?;
-            let _reserved = read_u32_le(&mut body)?;
+            let instance = read_u32_le(&mut body)?;
             let text = if body.is_empty() {
                 None
             } else {
                 Some(read_cstring(&mut body)?)
             };
-            (channel, ChannelNoticeTail::YouJoined { flags, text })
+            (
+                channel,
+                ChannelNoticeTail::YouJoined {
+                    flags,
+                    instance,
+                    text,
+                },
+            )
         }
         n::YOU_LEFT => {
             let channel = read_cstring(&mut body)?;
@@ -266,13 +281,14 @@ mod tests {
         use channel_notice as n;
         let mut joined = vec![0x0a];
         joined.extend_from_slice(&2u32.to_le_bytes());
-        joined.extend_from_slice(&0u32.to_le_bytes());
+        joined.extend_from_slice(&3u32.to_le_bytes());
         let plain = read_channel_notify_wotlk(&mut body(n::YOU_JOINED, &joined).as_slice())
             .expect("parses");
         assert_eq!(
             plain.tail,
             ChannelNoticeTail::YouJoined {
                 flags: 0x0a,
+                instance: 3,
                 text: None
             }
         );
@@ -284,6 +300,7 @@ mod tests {
             tailed.tail,
             ChannelNoticeTail::YouJoined {
                 flags: 0x0a,
+                instance: 3,
                 text: Some("Welcome".into())
             }
         );

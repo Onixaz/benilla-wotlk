@@ -642,6 +642,7 @@ fn a_mode_change_notice_parks_for_its_member_lines() {
         "World".into(),
         &ChannelNoticeTail::YouJoined {
             flags: 0,
+            instance: 0,
             text: None,
         },
     );
@@ -2874,6 +2875,7 @@ fn a_channel_send_carries_the_numbered_slots_name() {
                 state: SlotState::Suspended,
                 leave_asked: false,
                 flags: 0,
+                instance: 0,
             }),
         ],
         ..Default::default()
@@ -2889,11 +2891,28 @@ fn a_channel_send_carries_the_numbered_slots_name() {
         SendChatMessage("past the end", "CHANNEL", nil, 9)
         SendChatMessage("by name", "CHANNEL", nil, "General - Elwynn Forest")
         SendChatMessage("zero", "CHANNEL", nil, "0")
-        SendChatMessage("none", "CHANNEL")
         SendChatMessage("tell", "WHISPER", nil, "2")
         "#,
     )
     .expect("lua");
+    // No target is the verb's error and the chunk stops there (`0x50d587`, `0x50d302`).
+    for (chunk, error) in [
+        (
+            r#"SendChatMessage("none", "CHANNEL") SendChatMessage("after", "SAY")"#,
+            "SendChatMessage(): Channel send missing channel number",
+        ),
+        (
+            r#"SendChatMessage("empty", "CHANNEL", nil, "") SendChatMessage("after", "SAY")"#,
+            "SendChatMessage(): Channel send missing channel number",
+        ),
+        (
+            r#"SendChatMessage("hi", "WHISPER") SendChatMessage("after", "SAY")"#,
+            "SendChatMessage(): Whisper message missing target player!",
+        ),
+    ] {
+        let err = run_lent(&mut world, chunk).expect_err(chunk);
+        assert!(err.to_string().contains(error), "{chunk}: {err}");
+    }
     let sent: Vec<(ChatKind, Option<String>, String)> = rx
         .try_iter()
         .map(|c| match c {
@@ -2918,6 +2937,224 @@ fn a_channel_send_carries_the_numbered_slots_name() {
             chan("Trade - City", "float"),
             (ChatKind::Whisper, Some("2".into()), "tell".into()),
         ]
+    );
+}
+
+/// The join verb claims a record for any channel, custom ones included, before its send
+/// (`0x507c47`); a held record skips the claim and the send but still answers (`0x507c1b` ->
+/// `0x507cea`); with all ten taken it shows `ERR_TOO_MANY_CHAT_CHANNELS` and answers nothing,
+/// sending nothing (`0x507755`, `0x507c51`, `0x50da57`).
+#[test]
+fn the_join_verb_claims_its_record_or_skips_the_send() {
+    use super::edit::ChannelState;
+    use crate::net::ClientCommand;
+
+    let script = benilla_ui::script::UiScript::new().expect("VM");
+    script
+        .run(
+            r#"
+            ERR_TOO_MANY_CHAT_CHANNELS = "You have joined too many channels."
+            "#,
+        )
+        .expect("lua");
+    let (mut world, rx) = send_world(script);
+    world.init_resource::<crate::sound::MessageSounds>();
+    world.insert_resource(ChannelState::default());
+    let joins = |rx: &crossbeam_channel::Receiver<ClientCommand>| -> Vec<String> {
+        rx.try_iter()
+            .filter_map(|c| match c {
+                ClientCommand::JoinChannel { name, .. } => Some(name),
+                _ => None,
+            })
+            .collect()
+    };
+    let eval = |world: &mut bevy::prelude::World, lua: &str| -> String {
+        crate::ui_script::safe_world::lend(world, |s| s.eval::<String>(lua))
+            .expect("a VM")
+            .expect("lua")
+    };
+    assert_eq!(
+        eval(
+            &mut world,
+            "local n = select('#', JoinChannelByName('Mine'))              return n .. ':' .. GetChannelName('Mine')"
+        ),
+        "2:1",
+        "a custom channel's record is claimed inside the call"
+    );
+    assert_eq!(joins(&rx), vec!["Mine".to_string()]);
+    assert_eq!(
+        eval(
+            &mut world,
+            "return select('#', JoinChannelByName('mine', nil, 1))"
+        ),
+        "2",
+        "a held record answers"
+    );
+    assert_eq!(joins(&rx), Vec::<String>::new(), "and sends nothing");
+    for i in 2..=10 {
+        eval(&mut world, &format!("JoinChannelByName('C{i}') return ''"));
+    }
+    assert_eq!(joins(&rx).len(), 9);
+    run_lent(
+        &mut world,
+        r#"
+        ErrSeen = {}
+        local f = CreateFrame("Frame")
+        f:RegisterEvent("CHAT_MSG_SYSTEM")
+        f:SetScript("OnEvent", function(_, _, text) ErrSeen[#ErrSeen + 1] = text end)
+        "#,
+    )
+    .expect("lua");
+    assert_eq!(
+        eval(
+            &mut world,
+            "return select('#', JoinChannelByName('Eleventh', nil, 2))"
+        ),
+        "0",
+        "a failed claim answers nothing"
+    );
+    assert_eq!(joins(&rx), Vec::<String>::new(), "and sends nothing");
+    assert_eq!(
+        eval(&mut world, "return table.concat(ErrSeen, '|')"),
+        "You have joined too many channels."
+    );
+    assert_eq!(world.resource::<ChannelState>().number_of("Eleventh"), None);
+}
+
+/// `SendChatMessage`'s steps in 12340's order (`0x50d170`): the type lookup before the language
+/// (`0x50d203`, `0x50d28b`), the leader's own lanes (`0x50d516`, `0x50d412`, `0x50d4e9`), the AFK
+/// clear (`0x50d425`), then the dead-or-ghost gate (`0x50d632`-`0x50d684`), then the chatting
+/// tutorial for every type that reaches it, SAY included (`0x50d695`).
+#[test]
+fn the_send_runs_its_steps_in_order() {
+    use crate::net::{ChatKind, ClientCommand};
+
+    let mut script = benilla_ui::script::UiScript::new().expect("VM");
+    script.set_language_table(vec![(7, "Common".into())]);
+    script
+        .run(
+            r#"
+            ERR_CHAT_WHILE_DEAD = "You can't chat when you're dead!"
+            ErrorSeen = {}
+            local f = CreateFrame("Frame")
+            f:RegisterEvent("UI_ERROR_MESSAGE")
+            f:SetScript("OnEvent", function(_, _, text) ErrorSeen[#ErrorSeen + 1] = text end)
+            "#,
+        )
+        .expect("lua");
+    let (mut world, rx) = send_world(script);
+    world.init_resource::<crate::sound::MessageSounds>();
+    world.init_resource::<bevy::prelude::Messages<crate::tutorial::TutorialEvent>>();
+    world.insert_resource(crate::net::SelfGuid(Some(0x7)));
+    world.resource_mut::<crate::ui_party::GroupState>().leader = 0x7;
+    let sent = |rx: &crossbeam_channel::Receiver<ClientCommand>| -> Vec<(ChatKind, String)> {
+        rx.try_iter()
+            .map(|c| match c {
+                ClientCommand::Chat { kind, text, .. } => (kind, text),
+                other => panic!("unexpected command {other:?}"),
+            })
+            .collect()
+    };
+    let tutorials = |world: &mut bevy::prelude::World| -> usize {
+        world
+            .resource_mut::<bevy::prelude::Messages<crate::tutorial::TutorialEvent>>()
+            .drain()
+            .count()
+    };
+
+    // The type is looked up before the language, and the leader lanes are no tokens.
+    for (chunk, error) in [
+        (
+            r#"SendChatMessage("hi", "BOGUS", "Klingon")"#,
+            "Unknown chat type",
+        ),
+        (
+            r#"SendChatMessage("hi", "RAID_LEADER")"#,
+            "Unknown chat type",
+        ),
+        (
+            r#"SendChatMessage("hi", "BATTLEGROUND_LEADER")"#,
+            "Unknown chat type",
+        ),
+        (
+            r#"SendChatMessage("hi", "SAY", "Klingon")"#,
+            "SendChatMessage(): Unknown language",
+        ),
+        (
+            r#"SendChatMessage(nil)"#,
+            "Usage: SendChatMessage(text [,type] [,language] [,targetPlayer])",
+        ),
+    ] {
+        let err = run_lent(&mut world, chunk).expect_err(chunk);
+        assert!(err.to_string().contains(error), "{chunk}: {err}");
+    }
+    assert_eq!(sent(&rx), vec![]);
+
+    // Alive, the leader's group lines take the leader lanes and every send flags the tutorial.
+    run_lent(
+        &mut world,
+        r#"
+        SendChatMessage("p", "party")
+        SendChatMessage("r", "RAID")
+        SendChatMessage("b", "BATTLEGROUND")
+        SendChatMessage("s", "SAY")
+        "#,
+    )
+    .expect("lua");
+    assert_eq!(
+        sent(&rx),
+        vec![
+            (ChatKind::PartyLeader, "p".into()),
+            (ChatKind::RaidLeader, "r".into()),
+            (ChatKind::BattlegroundLeader, "b".into()),
+            (ChatKind::Say, "s".into()),
+        ]
+    );
+    assert_eq!(tutorials(&mut world), 4, "SAY flags it too");
+
+    // Dead: the AFK clear runs first, then SAY, YELL and EMOTE show the refusal and send nothing,
+    // while the exempt lanes still speak.
+    world.spawn((
+        crate::net::SelfPlayer,
+        crate::net::ObjectStore(benilla_protocol::messages::ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 0u32),
+            (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+        ])),
+    ));
+    world.resource_mut::<super::away::AfkMirror>().0 = 2;
+    run_lent(
+        &mut world,
+        r#"
+        SendChatMessage("s", "SAY")
+        SendChatMessage("y", "YELL")
+        SendChatMessage("e", "EMOTE")
+        SendChatMessage("g", "GUILD")
+        SendChatMessage("w", "WHISPER", nil, "Bob")
+        "#,
+    )
+    .expect("lua");
+    assert_eq!(
+        sent(&rx),
+        vec![
+            (ChatKind::Afk, String::new()),
+            (ChatKind::Guild, "g".into()),
+            (ChatKind::Whisper, "w".into()),
+        ]
+    );
+    assert_eq!(
+        system_seen(&world),
+        vec!["You are no longer AFK.".to_string()],
+        "the clear precedes the gate"
+    );
+    let errors: Vec<String> = world
+        .non_send_resource::<benilla_ui::script::UiScript>()
+        .eval("local s = ErrorSeen ErrorSeen = {} return s")
+        .unwrap();
+    assert_eq!(errors, vec!["You can't chat when you're dead!"; 3]);
+    assert_eq!(
+        tutorials(&mut world),
+        2,
+        "a refused line never reaches the tutorial"
     );
 }
 

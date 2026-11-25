@@ -217,12 +217,16 @@ pub(crate) fn answer_in_call(
             let earlier = world
                 .get_resource_or_init::<crate::ui_script::live::UiEvents>()
                 .set_aside();
-            crate::ui_chat::input::run_channel_command(world, cmd);
+            let went_on = crate::ui_chat::input::run_channel_command(world, cmd);
             crate::ui_script::live::fire_handler_events(world);
             world
                 .resource_mut::<crate::ui_script::live::UiEvents>()
                 .put_back(earlier);
-            Some(HostAnswer::Done)
+            Some(if went_on {
+                HostAnswer::Done
+            } else {
+                HostAnswer::Declined
+            })
         }
         // `SendAddonMessage`'s packet (`0x50071f`).
         HostAsk::AddonSend(send) => {

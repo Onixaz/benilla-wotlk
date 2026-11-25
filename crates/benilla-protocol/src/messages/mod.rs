@@ -430,9 +430,8 @@ pub fn faction_language(race: u8) -> u32 {
     }
 }
 /// The `ChatMsg` lanes the client sends as `CMSG_MESSAGECHAT`'s `u32` `type`: `SendChatMessage`'s
-/// name table (`0x4fbb20`), whose type defaults to SAY = 1 (`0x50d1d8`). It has no RAID_LEADER or
-/// BATTLEGROUND_LEADER: the client never sends either. The inbound `u8` field has its own set,
-/// [`CHAT_MSG_SAY`] etc.
+/// name table (`0x4fbb20`), whose type defaults to SAY = 1 (`0x50d1d8`), and the leader lanes the
+/// verb picks past it. The inbound `u8` field has its own set, [`CHAT_MSG_SAY`] etc.
 pub const CHAT_TYPE_SAY: u32 = 0x01;
 pub const CHAT_TYPE_PARTY: u32 = 0x02;
 /// The party leader's `PARTY` line, past the name table (`0x50d516`).
@@ -448,3 +447,11 @@ pub const CHAT_TYPE_AFK: u32 = 0x17;
 pub const CHAT_TYPE_DND: u32 = 0x18;
 pub const CHAT_TYPE_RAID_WARNING: u32 = 0x28;
 pub const CHAT_TYPE_BATTLEGROUND: u32 = 0x2C;
+/// The group leader's `RAID` line (`0x50d412`).
+pub const CHAT_TYPE_RAID_LEADER: u32 = 0x27;
+/// The group leader's `BATTLEGROUND` line (`0x50d4e9`).
+pub const CHAT_TYPE_BATTLEGROUND_LEADER: u32 = 0x2D;
+pub const CHAT_TYPE_BN: u32 = 0x2F;
+pub const CHAT_TYPE_BN_WHISPER: u32 = 0x35;
+pub const CHAT_TYPE_BN_WHISPER_INFORM: u32 = 0x36;
+pub const CHAT_TYPE_BN_CONVERSATION: u32 = 0x37;

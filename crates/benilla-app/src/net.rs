@@ -1027,7 +1027,7 @@ pub(crate) enum ChatKind {
     PartyLeader,
     /// `/ra`; needs a raid (`ChatHandler.cpp:514-536`).
     Raid,
-    /// `/rl`, leader only (`ChatHandler.cpp:538-559`).
+    /// `/ra` from the group leader (`0x50d412`).
     RaidLeader,
     /// `/rw`, leader or assistant only (`ChatHandler.cpp:561-576`).
     RaidWarning,
@@ -1037,7 +1037,7 @@ pub(crate) enum ChatKind {
     Officer,
     /// Needs a battleground group (`ChatHandler.cpp:579-593`).
     Battleground,
-    /// Battleground leader only (`ChatHandler.cpp:595-609`).
+    /// A battleground line from the group leader (`0x50d4e9`).
     BattlegroundLeader,
     /// Toggles AFK, the text the auto-reply if any; it clears DND (`ChatHandler.cpp:611-630`).
     Afk,
@@ -1045,6 +1045,11 @@ pub(crate) enum ChatKind {
     Dnd,
     /// A channel line by name, dropped unless we are on it (`ChatHandler.cpp:255-327`).
     Channel,
+    /// The four Battle.net names of `SendChatMessage`'s table (`0x4fbb20`), sent as typed.
+    Bn,
+    BnWhisper,
+    BnWhisperInform,
+    BnConversation,
 }
 
 impl ChatKind {
@@ -1066,7 +1071,12 @@ impl ChatKind {
             Self::Afk => m::CHAT_TYPE_AFK,
             Self::Dnd => m::CHAT_TYPE_DND,
             Self::Channel => m::CHAT_TYPE_CHANNEL,
-            Self::RaidLeader | Self::BattlegroundLeader => return None,
+            Self::RaidLeader => m::CHAT_TYPE_RAID_LEADER,
+            Self::BattlegroundLeader => m::CHAT_TYPE_BATTLEGROUND_LEADER,
+            Self::Bn => m::CHAT_TYPE_BN,
+            Self::BnWhisper => m::CHAT_TYPE_BN_WHISPER,
+            Self::BnWhisperInform => m::CHAT_TYPE_BN_WHISPER_INFORM,
+            Self::BnConversation => m::CHAT_TYPE_BN_CONVERSATION,
         })
     }
 }
@@ -3310,7 +3320,8 @@ mod tests {
         assert_eq!(lanes, [0x02, 0x03, 0x04, 0x2C]);
     }
 
-    /// The chat bar's lanes: SAY is 1 (`0x50d1d8`), and the party leader's alone of the leader lanes.
+    /// The chat bar's lanes: SAY is 1 (`0x50d1d8`), and the leader lanes the verb picks (`0x50d516`,
+    /// `0x50d412`, `0x50d4e9`).
     #[test]
     fn chat_kinds_take_the_clients_own_wire_type() {
         for (kind, want) in [
@@ -3328,8 +3339,12 @@ mod tests {
             (ChatKind::Dnd, Some(0x18)),
             (ChatKind::RaidWarning, Some(0x28)),
             (ChatKind::Battleground, Some(0x2C)),
-            (ChatKind::RaidLeader, None),
-            (ChatKind::BattlegroundLeader, None),
+            (ChatKind::RaidLeader, Some(0x27)),
+            (ChatKind::BattlegroundLeader, Some(0x2D)),
+            (ChatKind::Bn, Some(0x2F)),
+            (ChatKind::BnWhisper, Some(0x35)),
+            (ChatKind::BnWhisperInform, Some(0x36)),
+            (ChatKind::BnConversation, Some(0x37)),
         ] {
             assert_eq!(kind.chat_type(), want, "{kind:?}");
         }

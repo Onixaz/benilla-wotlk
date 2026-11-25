@@ -37,10 +37,12 @@ pub struct ChannelSlotInfo {
     pub active: bool,
     /// The record's channel flags (`+0x90`), which its last display list carried (`0x503a69`).
     pub flags: u8,
+    /// `+0x98`, the confirmed join's second word (`0x5078e5`): `GetChannelName`'s third value.
+    pub instance: u32,
 }
 
 /// The channel records at the call, read live; none with nothing lent.
-fn live_slots() -> Vec<Option<ChannelSlotInfo>> {
+pub(super) fn live_slots() -> Vec<Option<ChannelSlotInfo>> {
     super::read_live(|l| l.channel_slots()).unwrap_or_default()
 }
 
