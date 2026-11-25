@@ -206,57 +206,6 @@ issues in `NOT_READ` (`crates/benilla-formats/tests/dbc_coverage.rs`), not here.
 | `UISoundLookups` | 12340 loads it and never reads it |
 | `WorldSafeLocs` | read only by the admin `worldport` console command (`0x407210`), not planned (#1119); the graveyard branch of `GetMapLandmarkInfo` (`0x545a30`) never runs, since the landmark builder (`0x546310`) never sets its flag |
 
-## Bugs in 12340
-
-Where 12340's code does something other than what it is written to do, benilla does what the code
-means and records the difference here.
-
-- **World map: an instance's entrance on its continent's zone grid.** For an instance with no
-  `WorldMapArea` row, the current-zone lookup (`0x547170`) carries the `Map.dbc` entrance to its
-  continent and reads the `.zmp` cell under it, to open that zone. Before the read, its range test
-  clamps each grid coordinate to [0, 1], stores it as a float and compares it back with the
-  unrounded value (`0x547649`, `0x547661`). The client's x87 runs at double precision, so the test
-  fails unless the coordinate is exactly a float. None of the 71 entrances that land on a continent
-  passes, so 12340 falls through to the zone walk, finds no zone for the instance's area and opens
-  the continent: Outland in Hellfire Ramparts and the Underbog (`GetCurrentMapAreaID()` 467,
-  `GetCurrentMapZone()` 0). benilla runs the test in single precision, where it passes, and opens
-  the zone the lookup is written to find: Hellfire Peninsula and Zangarmarsh. An instance whose
-  `Map.dbc` entrance is zero (Tempest Keep) opens the cosmic map in both.
-  The Mac build of 12340 opens the zone as benilla does: its copy of the lookup (`0x6286d0`, i386)
-  works each coordinate out in SSE single precision (`0x628f38`–`0x628f65`) and compares the
-  clamped value with it as floats (`0x629485` for x, `0x6295ff` for y), so the cell read at
-  `0x62960e` is reached.
-- **Chat log: a channel notice's line.** While `LoggingChat` is on, the chat add writes each
-  channel notice (`CHAT_MSG_CHANNEL_NOTICE`, `CHAT_MSG_CHANNEL_NOTICE_USER`) to `WoWChatLog.txt`
-  with the global string `CHAT_<TOKEN>_NOTICE` as the format. Earlier it prints the channel's
-  `"%d. %s"` name into a stack buffer (`0x50a44e`); the log arm (`0x50aa65`–`0x50aaa9`) then
-  passes that buffer's address, the sender and the target as the format's arguments. In enUS,
-  `CHAT_YOU_JOINED_NOTICE` is `Joined Channel: |Hchannel:%d|h[%s]|h`, so the `%d` takes the
-  buffer's address and the brackets the sender, which a notice leaves empty: 12340 logs
-  `Joined Channel: |Hchannel:<address>|h[]|h`, with a stack address that changes from run to run.
-  benilla fills every `CHAT_<TOKEN>_NOTICE` in the log the way the chat window fills it for the
-  same event (`ChatFrame.lua`: the channel number, arg8, for `%d` and the channel's display name,
-  arg4, for `[%s]`, then the sender and target for a user notice), so the log reads
-  `Joined Channel: |Hchannel:1|h[1. General - Stormwind City]|h`, the line the player saw.
-- **Honor line: a victim with no side.** The honor-gain line (`0x50b6d0`) names a ranked victim
-  by the global string `PVP_RANK_<rank>_<side>`, printed into a stack buffer at `0x50b789`–`0x50b799`.
-  The side comes from the victim's faction template group: 0 for the `0x4` bit, 1 for the `0x2` bit
-  (`0x50b755`–`0x50b784`). When the template has neither bit, or no record (`0x50b76e`), the code
-  jumps past the print (`0x50b787`) and still looks the buffer up as a global string name
-  (`0x50b7b0`), so 12340 reads whatever the stack held. benilla names such a victim with side 0.
-  Every faction template a server sends for a player carries one of the two bits.
-- **Chat log: a language with no record.** When a line's language is not the active player's
-  default, the log arm prints its `[Language] ` header from the `Languages.dbc` record's name
-  (`0x50abcb`–`0x50abeb`). It reads the name at `0x50abd6` without testing the record, and the
-  lookup returns null for an id outside the table (`0x65c2ae`), so 12340 faults writing that log
-  line. benilla writes an empty name. Every language a server sends in chat has its record.
-- **`GetTradeSkillCooldown` across a clock tick.** The cooldown history keeps a record whose
-  time left, read against the OS clock (`0x807a7f`), is not negative (`0x807ae5`); the verb then
-  reads the clock again (`0x5daa17`) and pushes the end less it as an unsigned count of
-  milliseconds (`0x5daa24`-`0x5daa36`). When the clock ticks past the end between the two reads,
-  the difference is -1 and the verb answers about 4294967 seconds. benilla answers nil for a
-  cooldown already past its end at the call, and 0 at its end's millisecond.
-
 ## The Mac build
 
 On macOS benilla answers as the Mac build of 12340: `IsMacClient()` is 1, the `platform="mac"` rows
@@ -273,3 +222,100 @@ table are the Mac build's.
 | `MovieRecording_IsRecording`, `MovieRecording_IsCompressing`, `MovieRecording_GetProgress`, `MovieRecording_GetTime`, `MovieRecording_GetMovieFullPath`, `MovieRecording_MaxLength` | `0x508910`, `0x508940`, `0x5089a0`, `0x508c00`, `0x508bd0`, `0x508d00` | the idle recorder's values | no movie recording |
 | `MovieRecording_IsCodecSupported` | `0x508b20` | `false` for every codec | no QuickTime |
 | `MusicPlayer_PlayPause`, `MusicPlayer_VolumeUp`, `MusicPlayer_VolumeDown`, `MusicPlayer_BackTrack`, `MusicPlayer_NextTrack` | `0x51c100`, `0x51c150`, `0x51c1a0`, `0x51c1f0`, `0x51c240` | nothing | no music player remote |
+
+## Bugs in 12340
+
+Where 12340's code does something other than what it is written to do, benilla does what the code
+means and records the difference here.
+
+### World map: an instance's entrance on its continent's zone grid
+
+- **12340:** For an instance with no `WorldMapArea` row, the current-zone lookup (`0x547170`)
+  carries the `Map.dbc` entrance to its continent and reads the `.zmp` cell under it, to open that
+  zone. Before the read, its range test clamps each grid coordinate to [0, 1], stores it as a float
+  and compares it back with the unrounded value (`0x547649`, `0x547661`). The client's x87 runs at
+  double precision, so the test fails unless the coordinate is exactly a float. None of the 71
+  entrances that land on a continent passes, so 12340 falls through to the zone walk, finds no zone
+  for the instance's area and opens the continent: Outland in Hellfire Ramparts and the Underbog
+  (`GetCurrentMapAreaID()` 467, `GetCurrentMapZone()` 0).
+- **benilla:** runs the test in single precision, where it passes, and opens the zone the lookup is
+  written to find: Hellfire Peninsula and Zangarmarsh. An instance whose `Map.dbc` entrance is zero
+  (Tempest Keep) opens the cosmic map in both.
+- **The Mac build:** opens the zone as benilla does: its copy of the lookup (`0x6286d0`, i386) works
+  each coordinate out in SSE single precision (`0x628f38`–`0x628f65`) and compares the clamped value
+  with it as floats (`0x629485` for x, `0x6295ff` for y), so the cell read at `0x62960e` is reached.
+
+### Chat log: a channel notice's line
+
+- **12340:** While `LoggingChat` is on, the chat add writes each channel notice
+  (`CHAT_MSG_CHANNEL_NOTICE`, `CHAT_MSG_CHANNEL_NOTICE_USER`) to `WoWChatLog.txt` with the global
+  string `CHAT_<TOKEN>_NOTICE` as the format. Earlier it prints the channel's `"%d. %s"` name into a
+  stack buffer (`0x50a44e`); the log arm (`0x50aa65`–`0x50aaa9`) then passes that buffer's address,
+  the sender and the target as the format's arguments. In enUS, `CHAT_YOU_JOINED_NOTICE` is `Joined
+  Channel: |Hchannel:%d|h[%s]|h`, so the `%d` takes the buffer's address and the brackets the
+  sender, which a notice leaves empty: 12340 logs `Joined Channel: |Hchannel:<address>|h[]|h`, with
+  a stack address that changes from run to run.
+- **benilla:** fills every `CHAT_<TOKEN>_NOTICE` in the log the way the chat window fills it for the
+  same event (`ChatFrame.lua`: the channel number, arg8, for `%d` and the channel's display name,
+  arg4, for `[%s]`, then the sender and target for a user notice), so the log reads `Joined Channel:
+  |Hchannel:1|h[1. General - Stormwind City]|h`, the line the player saw.
+
+### Honor line: a victim with no side
+
+- **12340:** The honor-gain line (`0x50b6d0`) names a ranked victim by the global string
+  `PVP_RANK_<rank>_<side>`, printed into a stack buffer at `0x50b789`–`0x50b799`. The side comes
+  from the victim's faction template group: 0 for the `0x4` bit, 1 for the `0x2` bit
+  (`0x50b755`–`0x50b784`). When the template has neither bit, or no record (`0x50b76e`), the code
+  jumps past the print (`0x50b787`) and still looks the buffer up as a global string name
+  (`0x50b7b0`), so 12340 reads whatever the stack held.
+- **benilla:** names such a victim with side 0. Every faction template a server sends for a player
+  carries one of the two bits.
+
+### Chat log: a language with no record
+
+- **12340:** When a line's language is not the active player's default, the log arm prints its
+  `[Language] ` header from the `Languages.dbc` record's name (`0x50abcb`–`0x50abeb`). It reads the
+  name at `0x50abd6` without testing the record, and the lookup returns null for an id outside the
+  table (`0x65c2ae`), so 12340 faults writing that log line.
+- **benilla:** writes an empty name. Every language a server sends in chat has its record.
+
+### `GetTradeSkillCooldown` across a clock tick
+
+- **12340:** The cooldown history keeps a record whose time left, read against the OS clock
+  (`0x807a7f`), is not negative (`0x807ae5`); the verb then reads the clock again (`0x5daa17`) and
+  pushes the end less it as an unsigned count of milliseconds (`0x5daa24`-`0x5daa36`). When the
+  clock ticks past the end between the two reads, the difference is -1 and the verb answers about
+  4294967 seconds.
+- **benilla:** answers nil for a cooldown already past its end at the call, and 0 at its end's
+  millisecond.
+
+### `EquipItemByName` with a slot name
+
+- **12340:** The verb (`0x51cdb0`) takes its target slot as a number or as a slot name. A number is
+  made 0-based (`0x51cf23`); a name's slot id is used as it is (`0x51cfb4`), so 12340 equips the
+  item one slot past the one named: `HeadSlot` to the neck, `Trinket0Slot` to the second trinket,
+  and `TabardSlot` (19) fails the range test (`0x51cfbf`) with "Invalid inventory dstSlot".
+- **benilla:** makes a name 0-based as it does a number, so a name equips to the slot it names.
+
+### Item tooltip: a token's bind line
+
+- **12340:** The tooltip builder prints a token's (item class 10) bind line only when the requester
+  guid it was handed equals the loot window's source (`0x627ef7`–`0x627f17`), so the loot window
+  (`0x62e638`) shows it. A tooltip built from an id or a link hands it a zero requester (a chat link
+  `0x62dbbc`, an unheld token `0x630750`), which equals the loot source only while no loot window is
+  open, its guid then being 0. So 12340 shows "Binds when picked up" on a linked token, and drops it
+  while any loot window is open.
+- **benilla:** shows it on every tooltip built with a zero requester; a held token, whose requester
+  is the player (`0x630789`), still shows none.
+
+### Inventory verbs with a slot name
+
+- **12340:** The inventory slot reader (`0x5e7c00`) behind `GetInventoryItemLink`,
+  `GetInventoryItemID`, `GetInventoryItemTexture`, `GetInventoryItemQuality`,
+  `GetInventoryItemCount`, `GetInventoryItemBroken`, `SocketInventoryItem`,
+  `ShowInventorySellCursor`, `SetInventoryPortraitTexture` and the other verbs that take a slot
+  makes a number 0-based (`0x5e7c2c`) but keeps a slot name's id (`0x5e7c9e`), so
+  `GetInventoryItemLink("player", "HeadSlot")` reads the neck. `GetInventoryItemsForSlot` does the
+  same in its own read (a number less one at `0x5e95e8`, a name's id kept at `0x5e967f`), listing
+  what fits the slot after the one named.
+- **benilla:** makes a name 0-based in both, as a number is, so a name reads the slot it names.

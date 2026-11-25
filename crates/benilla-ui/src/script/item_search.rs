@@ -274,20 +274,21 @@ fn enchant_use_spell(model: &Model, item_id: u32) -> Option<u32> {
         .find(|&spell| spell != 0)
 }
 
-/// `EquipItemByName`'s target, 0-based: a number less one, or a slot name's doll id with nothing
-/// taken off, one slot higher (`0x51cfb4` against `0x51cf23`), as 12340 runs it.
+/// `EquipItemByName`'s target, 0-based: a number less one (`0x51cf23`), and a slot name's doll id
+/// less one too, where 12340 keeps the id and lands a slot higher (`0x51cfb4`, docs/DEVIATIONS.md).
 fn equip_slot(lua: &Lua, model: &Model, slot: &Value) -> mlua::Result<u32> {
     const INVALID: &str = "EquipItemByName(): Invalid inventory dstSlot";
-    let dst = match lua.coerce_number(slot.clone())? {
-        Some(n) => ftol(n).wrapping_sub(1) as u32,
+    let id = match lua.coerce_number(slot.clone())? {
+        Some(n) => ftol(n),
         None => {
             let name = super::binding_abi::optional_string(lua, slot).unwrap_or_default();
             match super::char_stats::slot_id_by_name(model, &name) {
-                Some(id) => id as u32,
+                Some(id) => id as i32,
                 None => return Err(mlua::Error::runtime(INVALID)),
             }
         }
     };
+    let dst = id.wrapping_sub(1) as u32;
     if dst > 18 {
         return Err(mlua::Error::runtime(INVALID));
     }
@@ -574,26 +575,30 @@ mod tests {
             .collect()
     }
 
-    /// `0x51cf23` against `0x51cfb4`: a number takes one off; a name lands a slot higher.
+    /// A name equips to the slot it names, as its number does (`0x51cf23`); 12340 keeps a name's
+    /// id and lands a slot higher (`0x51cfb4`, docs/DEVIATIONS.md).
     #[test]
-    fn a_slot_name_lands_one_slot_past_its_number() {
+    fn a_slot_name_equips_to_the_slot_its_number_does() {
         let mut s = carrying(25);
-        s.run("EquipItemByName(25, 13)").unwrap();
-        let by_number = ScriptCall::EquipItem {
-            bag: 0,
-            slot: 3,
-            dst: Some(12),
-        };
-        assert_eq!(equips(&mut s), vec![by_number]);
-        s.run("EquipItemByName('Worn', 'Trinket0Slot')").unwrap();
-        let by_name = ScriptCall::EquipItem {
-            bag: 0,
-            slot: 3,
-            dst: Some(13),
-        };
-        assert_eq!(equips(&mut s), vec![by_name]);
-        assert!(s.run("EquipItemByName(25, 'TabardSlot')").is_err());
-        assert!(s.run("EquipItemByName(25, 'NoSuchSlot')").is_err());
+        for (number, name, dst) in [
+            ("1", "'HeadSlot'", 0),
+            ("13", "'Trinket0Slot'", 12),
+            ("19", "'TabardSlot'", 18),
+        ] {
+            let to = ScriptCall::EquipItem {
+                bag: 0,
+                slot: 3,
+                dst: Some(dst),
+            };
+            s.run(&format!("EquipItemByName(25, {number})")).unwrap();
+            assert_eq!(equips(&mut s), vec![to.clone()], "{number}");
+            s.run(&format!("EquipItemByName('Worn', {name})")).unwrap();
+            assert_eq!(equips(&mut s), vec![to], "{name}");
+        }
+        for refused in ["0", "'AmmoSlot'", "20", "'Bag0Slot'", "'NoSuchSlot'"] {
+            let call = format!("EquipItemByName(25, {refused})");
+            assert!(s.run(&call).is_err(), "{refused}");
+        }
     }
 
     /// `0x5d7820`: the free slots in order, into a given table.

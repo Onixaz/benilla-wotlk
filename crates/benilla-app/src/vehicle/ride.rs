@@ -36,6 +36,8 @@ const NO_ANIM: i32 = 506;
 pub(crate) struct SeatRide {
     vehicle: Entity,
     seat: u8,
+    /// The passenger state whose [`SeatPose`] was last written (`3` seated or `4` exit pre-delay).
+    state: u8,
     pub(super) anchor: Entity,
     /// The anchor's local transform as last written.
     local: Transform,
@@ -45,23 +47,76 @@ pub(crate) struct SeatRide {
 #[derive(Component)]
 pub(crate) struct SeatAnchor(Entity);
 
-/// The ride anim a live seated passenger holds (`0x747b20`).
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct SeatPose(pub(crate) u16);
+/// The anims a passenger holds in its current seat state (`0x747b20`, `0x747bd0`), each a
+/// one-shot start before its loop. The lower pair replaces the body's base pick; the upper pair
+/// rides the torso while the seat animates it (`flags & 0x4`), under any one-shot. The start flags
+/// clear on each state change (`0x7489c0`), which a fresh component is; an enter's two states and
+/// an exit's two states are each one.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SeatPose {
+    /// The base's start and loop.
+    pub(crate) lower: [Option<u16>; 2],
+    /// The torso's start and loop.
+    pub(crate) upper: [Option<u16>; 2],
+    /// An exit's end, played once as the passenger stands back on its own (`0x74b9c0`).
+    pub(crate) end: Option<u16>,
+    /// The seat plays the end even falling, swimming or flying (`flags & 0x200000`).
+    pub(crate) end_forced: bool,
+}
 
-/// `0x747b20` in state 3: the seat's ride loop when the seat animates its rider (`flags & 0x2`),
-/// else its start; the start's one-shot lead-in ahead of the loop is not played.
-pub(super) fn ride_anim(seat: &VehicleSeatRec) -> Option<u16> {
-    if seat.flags & 0x2 == 0 {
-        return None;
-    }
-    let anim = match seat.passenger_anims[3] {
-        -1 => seat.passenger_anims[2],
-        loop_ => loop_,
+/// A seat anim column: `-1` and 506, the getters' "no anim", are none.
+fn seat_anim(id: i32) -> Option<u16> {
+    u16::try_from(id).ok().filter(|&a| i32::from(a) != NO_ANIM)
+}
+
+/// The passenger's anims in seat state `state` (`0x747b20`, `0x747bd0`): the enter's (states 1
+/// and 2) where the seat animates the enter (`flags & 0x1`); the ride's (3) where it animates the
+/// ride (`0x2`), with the upper pair under `0x4`; the exit's (4 and 5) where the seat's exit flag
+/// holds (`exit_anims`, `0x74bb60`), always with its end. `None` when the state has none.
+pub(crate) fn seat_pose(seat: &VehicleSeatRec, state: u8, exit_anims: bool) -> Option<SeatPose> {
+    let pair = |start: i32, loop_: i32| [seat_anim(start), seat_anim(loop_)];
+    let a = &seat.passenger_anims;
+    let pose = match state {
+        1 | 2 if seat.flags & 0x1 != 0 => SeatPose {
+            lower: pair(a[0], a[1]),
+            ..SeatPose::default()
+        },
+        3 => SeatPose {
+            lower: if seat.flags & 0x2 != 0 {
+                pair(a[2], a[3])
+            } else {
+                [None; 2]
+            },
+            upper: if seat.flags & 0x4 != 0 {
+                pair(a[4], a[5])
+            } else {
+                [None; 2]
+            },
+            ..SeatPose::default()
+        },
+        4 | 5 => {
+            let end = seat_anim(seat.exit_anims[2]);
+            SeatPose {
+                lower: if exit_anims {
+                    pair(seat.exit_anims[0], seat.exit_anims[1])
+                } else {
+                    [None; 2]
+                },
+                end,
+                end_forced: end.is_some() && seat.flags & 0x20_0000 != 0,
+                ..SeatPose::default()
+            }
+        }
+        _ => return None,
     };
-    u16::try_from(anim)
-        .ok()
-        .filter(|&a| i32::from(a) != NO_ANIM)
+    (pose != SeatPose::default()).then_some(pose)
+}
+
+/// `0x74bb60`: the seat's exit anims play for a unit whose extra flags carry `0x40` under seat flag
+/// `0x8`, for any other under `0x8000`.
+pub(crate) fn plays_exit_anims(seat: &VehicleSeatRec, flags2: u16) -> bool {
+    let flag = if flags2 & 0x40 != 0 { 0x8 } else { 0x8000 };
+    seat.flags & flag != 0
 }
 
 /// `0x7490f0`'s local transform: the seat's turn, roll and pitch on the passenger's facing,
@@ -182,6 +237,7 @@ pub(super) fn ride_seats(
             Option<&BoneAttach>,
             &GlobalTransform,
             Has<TransitAnchor>,
+            Option<&super::aim::MoveFlags2>,
         ),
         Or<(With<Passenger>, With<SeatRide>)>,
     >,
@@ -200,7 +256,8 @@ pub(super) fn ride_seats(
     tables: Res<VehicleTables>,
     creatures: Option<Res<crate::entities::Creatures>>,
 ) {
-    for (entity, net, passenger, rider, ride, own_points, own_tf, in_transit) in &passengers {
+    for (entity, net, passenger, rider, ride, own_points, own_tf, in_transit, flags2) in &passengers
+    {
         // Seated, or in the exit's pre-delay, which holds the seat (`0x74a7f0`).
         let seated = passenger
             .filter(|p| p.state == SEATED || p.state == 4)
@@ -237,7 +294,14 @@ pub(super) fn ride_seats(
                 if let Ok(mut ec) = commands.get_entity(r.anchor) {
                     ec.despawn();
                 }
-                commands.entity(entity).remove::<(SeatRide, SeatPose)>();
+                // An exit's motion owns the anims from here: its transit gives the exit's, in
+                // this frame's commands or an earlier one's, and drops them as it lands. Only a
+                // seat left without one drops the ride's here.
+                if in_transit || passenger.is_some_and(|p| p.state == 5) {
+                    commands.entity(entity).remove::<SeatRide>();
+                } else {
+                    commands.entity(entity).remove::<(SeatRide, SeatPose)>();
+                }
                 continue;
             }
         }
@@ -259,10 +323,26 @@ pub(super) fn ride_seats(
             },
             None => local,
         };
+        let exit_anims = plays_exit_anims(seat, flags2.map_or(0, |f| f.0));
+        let pose = seat_pose(seat, p.state, exit_anims);
         if let Some(r) = ride {
+            let state_changed = r.state != p.state;
             if r.local != local {
                 commands.entity(r.anchor).insert(local);
-                commands.entity(entity).insert(SeatRide { local, ..*r });
+            }
+            if r.local != local || state_changed {
+                commands.entity(entity).insert(SeatRide {
+                    state: p.state,
+                    local,
+                    ..*r
+                });
+            }
+            if state_changed {
+                // Entering the exit's pre-delay (state 4) switches to the exit's anims (`0x747b20`).
+                match pose {
+                    Some(pose) => commands.entity(entity).insert(pose),
+                    None => commands.entity(entity).remove::<SeatPose>(),
+                };
             }
             continue;
         }
@@ -298,17 +378,18 @@ pub(super) fn ride_seats(
             crate::entities::mount::reseat_rig(&mut commands, &mut rig, anchor, false);
         }
         debug!(
-            "vehicle: passenger {entity} seated on its anchor, ride anim {:?}",
-            ride_anim(seat)
+            "vehicle: passenger {entity} seated on its anchor, state {} anim {:?}",
+            p.state, pose
         );
         commands.entity(entity).insert(SeatRide {
             vehicle,
             seat: p.seat,
+            state: p.state,
             anchor,
             local,
         });
-        match ride_anim(seat) {
-            Some(anim) => commands.entity(entity).insert(SeatPose(anim)),
+        match pose {
+            Some(pose) => commands.entity(entity).insert(pose),
             None => commands.entity(entity).remove::<SeatPose>(),
         };
     }
@@ -399,17 +480,54 @@ mod tests {
         );
     }
 
-    /// The ride loop over the start; no ride flag, no anim; 506 is none.
+    /// The ride's start then loop, and the torso's under `0x4`; no ride flag, no base; 506 and
+    /// -1 are none.
     #[test]
-    fn the_ride_anim_is_the_seat_s_loop() {
-        assert_eq!(ride_anim(&seat()), Some(121));
+    fn the_ride_pose_is_the_seat_s_start_and_loop() {
+        let pose = seat_pose(&seat(), SEATED, false).unwrap();
+        assert_eq!(pose.lower, [Some(120), Some(121)]);
+        assert_eq!(pose.upper, [None, None]);
         let mut s = seat();
-        s.passenger_anims[3] = -1;
-        assert_eq!(ride_anim(&s), Some(120));
         s.passenger_anims[2] = NO_ANIM;
-        assert_eq!(ride_anim(&s), None);
+        assert_eq!(
+            seat_pose(&s, SEATED, false).unwrap().lower,
+            [None, Some(121)]
+        );
+        s.flags |= 0x4;
+        s.passenger_anims[4] = -1;
+        s.passenger_anims[5] = 140;
+        assert_eq!(
+            seat_pose(&s, SEATED, false).unwrap().upper,
+            [None, Some(140)]
+        );
         let still = VehicleSeatRec { flags: 0, ..seat() };
-        assert_eq!(ride_anim(&still), None);
+        assert_eq!(seat_pose(&still, SEATED, false), None);
+    }
+
+    /// The enter's pair under `0x1`; the exit's pair under its flag, its end always.
+    #[test]
+    fn the_enter_and_exit_poses_follow_their_flags() {
+        let s = VehicleSeatRec {
+            flags: 0x1 | 0x8000,
+            passenger_anims: [37, 38, -1, -1, -1, -1],
+            exit_anims: [37, 38, 39],
+            ..Default::default()
+        };
+        assert_eq!(seat_pose(&s, 1, false).unwrap().lower, [Some(37), Some(38)]);
+        assert_eq!(seat_pose(&s, 2, false), seat_pose(&s, 1, false));
+        assert!(plays_exit_anims(&s, 0));
+        assert!(!plays_exit_anims(&s, 0x40), "0x40 asks for seat flag 0x8");
+        let exit = seat_pose(&s, 5, true).unwrap();
+        assert_eq!((exit.lower, exit.end), ([Some(37), Some(38)], Some(39)));
+        assert_eq!(seat_pose(&s, 5, false).unwrap().lower, [None, None]);
+        let no_enter = VehicleSeatRec { flags: 0, ..s };
+        assert_eq!(seat_pose(&no_enter, 1, false), None);
+        let forced_without_end = VehicleSeatRec {
+            flags: 0x20_0000,
+            exit_anims: [-1, -1, -1],
+            ..Default::default()
+        };
+        assert_eq!(seat_pose(&forced_without_end, 5, false), None);
     }
 
     /// The passenger's own point lands on the seat's offset, whatever the turn.

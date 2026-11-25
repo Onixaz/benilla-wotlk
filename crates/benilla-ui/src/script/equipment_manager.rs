@@ -927,7 +927,8 @@ fn install_item_verbs(lua: &Lua) -> mlua::Result<()> {
     // GetInventoryItemsForSlot(slot [, table]) (`0x5e95c0`): every held item that fits the
     // 1-based slot, location → entry: the equipment, the backpack and bags, and with a banker the
     // bank. A number outside 1..19 answers nothing; a slot name is its last
-    // `PaperDollItemFrame.dbc` row's number, used 0-based and unbounded (`0x5e967f`).
+    // `PaperDollItemFrame.dbc` row's number less one, unbounded, where 12340 keeps the number and
+    // lists the slot after (`0x5e967f`, docs/DEVIATIONS.md); row 0 is refused (`0x5e9696`).
     g.set(
         "GetInventoryItemsForSlot",
         lua.create_function(|lua, args: MultiValue| {
@@ -946,7 +947,7 @@ fn install_item_verbs(lua: &Lua) -> mlua::Result<()> {
                 (None, Value::String(s)) => {
                     let name = s.to_string_lossy();
                     match super::char_stats::last_slot_id_by_name(&read(lua), &name) {
-                        Some(id) if id != 0 => id,
+                        Some(id) if id != 0 => id - 1,
                         _ => return Err(mlua::Error::runtime(USAGE)),
                     }
                 }
@@ -1393,10 +1394,16 @@ mod tests {
             assert(n == 2, n)
             assert(t[0x100010] == 200)
             assert(t[0x300103] == 201)
-            -- A name is its row number read 0-based, so it lists the slot after its own.
-            assert(GetInventoryItemsForSlot("MainHandSlot")[0x100001] == nil)
-            assert(next(GetInventoryItemsForSlot("HeadSlot")) == nil)
-            assert(GetInventoryItemsForSlot("BackSlot")[0x100010] == 200)
+            -- A name lists the slot it names, as its number does (12340 the slot after, 0x5e967f).
+            local function same(a, b)
+                for k, v in pairs(a) do if b[k] ~= v then return false end end
+                for k, v in pairs(b) do if a[k] ~= v then return false end end
+                return true
+            end
+            assert(GetInventoryItemsForSlot("MainHandSlot")[0x100010] == 200)
+            for name, number in pairs({ MainHandSlot = 16, HeadSlot = 1, BackSlot = 15 }) do
+                assert(same(GetInventoryItemsForSlot(name), GetInventoryItemsForSlot(number)), name)
+            end
             assert(not pcall(GetInventoryItemsForSlot, "AmmoSlot"))
             assert(not pcall(GetInventoryItemsForSlot, "NoSuchSlot"))
             assert(GetInventoryItemsForSlot(25) == nil)

@@ -236,14 +236,15 @@ mod tests {
             0
         );
 
-        // A slot the reader refuses returns, and a name is its row number read 0-based.
+        // A slot the reader refuses returns, and a name reads the slot it names (12340 the slot
+        // after, `0x5e7c9e`, docs/DEVIATIONS.md): the back is empty, the main hand worn.
         s.run("ResetCursor()").unwrap();
-        for refused in ["24", "39", "75", "119", "-1", "'MainHandSlot'"] {
+        for refused in ["24", "39", "75", "119", "-1", "'BackSlot'"] {
             s.run(&format!("ShowInventorySellCursor({refused})"))
                 .unwrap();
             assert_eq!(s.ui_cursor(), None, "{refused}");
         }
-        s.run("ShowInventorySellCursor('BackSlot')").unwrap();
+        s.run("ShowInventorySellCursor('MainHandSlot')").unwrap();
         assert_eq!(s.ui_cursor(), Some(UiCursorMode::Buy));
     }
 

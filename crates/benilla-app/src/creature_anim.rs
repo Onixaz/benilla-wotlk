@@ -1001,6 +1001,14 @@ pub(crate) struct AnimDriver {
     special_idle: Option<u16>,
     /// The [`CastHold::seq`] whose start anim has played out, the cleared start latch.
     start_spent: Option<u64>,
+    /// The seat anims last offered, whose change clears the start flags below (`0x7489c0`).
+    seat: Option<crate::vehicle::SeatPose>,
+    /// The seat's base start has played out (the passenger's flag `0x2`, `0x7484e0`).
+    seat_lower_spent: bool,
+    /// The seat's torso start has played out (flag `0x4`).
+    seat_upper_spent: bool,
+    /// An exit's end, owed once the seat anims are gone (`0x74b9c0`).
+    seat_end: Option<u16>,
     /// Read dead or dying on the last pass (`0x71f560`), for a display swap's replay.
     dead: bool,
 }
@@ -1119,6 +1127,10 @@ impl Default for AnimDriver {
             base_dir: None,
             special_idle: None,
             start_spent: None,
+            seat: None,
+            seat_lower_spent: false,
+            seat_upper_spent: false,
+            seat_end: None,
             dead: false,
         }
     }

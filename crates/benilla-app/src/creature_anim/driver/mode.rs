@@ -27,8 +27,10 @@ pub(super) struct Frame<'a> {
     pub(super) moving: bool,
     pub(super) relaxed: bool,
     pub(super) mounted: bool,
-    /// A live seated passenger's ride anim (`0x747b20`), pinned as the mounted rider's Mount is.
+    /// A passenger's seat anim (`0x747b20`), pinned as the mounted rider's Mount is.
     pub(super) seat_pose: Option<u16>,
+    /// That anim is a start or an exit's end, played once.
+    pub(super) seat_once: Option<u16>,
     pub(super) looting: bool,
     pub(super) engaged: bool,
     pub(super) airborne_frozen: bool,
@@ -68,6 +70,7 @@ pub(super) fn run(
         relaxed,
         mounted,
         seat_pose,
+        seat_once,
         looting,
         engaged,
         airborne_frozen,
@@ -458,6 +461,7 @@ pub(super) fn run(
                         let repeat = if select::is_ranged_load(target)
                             || target == select::LOOT
                             || Some(target) == cast_start
+                            || Some(target) == seat_once
                         {
                             // No watchdog window either, so nothing re-arms them.
                             drv.loop_window = None;
