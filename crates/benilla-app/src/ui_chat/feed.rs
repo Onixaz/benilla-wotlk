@@ -898,7 +898,10 @@ pub(super) fn deliver(
     event: &mut ChatEvent,
 ) {
     let (password, relist) = deliver_before(channels, event);
-    if relist {
+    if let Some(relist) = relist {
+        if relist == Relist::Left {
+            script.channel_left(&event.channel);
+        }
         script.channels_updated();
     }
     if password {
@@ -917,9 +920,18 @@ fn password_request_args(event: &ChatEvent) -> Vec<benilla_ui::script::ScriptVal
     vec![benilla_ui::script::ScriptValue::Str(event.channel.clone())]
 }
 
-/// [`deliver`]'s writes ahead of the line: whether a password request fires before it, and whether
-/// the join (`0x507880`) or the leave (`0x507900`) relists the channels (`0x505d40`).
-fn deliver_before(channels: &mut ChannelState, event: &mut ChatEvent) -> (bool, bool) {
+/// Which held-record write ahead of the line relists the channels (`0x505d40`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Relist {
+    /// The join's confirm (`0x507880`).
+    Joined,
+    /// The leave (`0x507900`), which unselects a selected channel of the record's name first.
+    Left,
+}
+
+/// [`deliver`]'s writes ahead of the line: whether a password request fires before it, and which
+/// of the join or the leave relists.
+fn deliver_before(channels: &mut ChannelState, event: &mut ChatEvent) -> (bool, Option<Relist>) {
     let notice = event
         .notice_byte()
         .filter(|_| event.kind == Some(ChatEventKind::ChannelNotice));
@@ -952,7 +964,7 @@ fn deliver_before(channels: &mut ChannelState, event: &mut ChatEvent) -> (bool, 
     let held = channels.number_of(&event.channel).is_some();
     // With no record, neither the join nor the leave writes or relists (`0x5078a4`, `0x507926`).
     if !held {
-        return (password, false);
+        return (password, None);
     }
     let relist = match notice {
         Some(channel_notice::YOU_JOINED) => {
@@ -962,15 +974,15 @@ fn deliver_before(channels: &mut ChannelState, event: &mut ChatEvent) -> (bool, 
             channels.note_zone_channel_joined(&event.channel);
             channels.note_custom_channel_joined(&event.channel);
             channels.set_slot_join(&event.channel, event.joined_instance, event.joined_flags);
-            true
+            Some(Relist::Joined)
         }
         Some(channel_notice::YOU_LEFT) => {
             // The record leaves state 0 (`0x50792c`), so the verbs stop reading it as joined,
-            // then the relist (`0x507a18`), all ahead of the line.
+            // then the unselect (`0x5079b3`) and the relist (`0x507a18`), all ahead of the line.
             channels.suspend_slot(&event.channel);
-            true
+            Some(Relist::Left)
         }
-        _ => false,
+        _ => None,
     };
     (password, relist)
 }
@@ -1769,8 +1781,14 @@ fn run_step(world: &mut World, script: &mut UiScript, step: Step) {
                 return;
             };
             let (password, relist) = deliver_before(&mut channels, &mut event);
-            if relist {
-                channels_updated(world);
+            if let Some(relist) = relist {
+                let name = &event.channel;
+                crate::ui_script::safe_world::lend(world, |s| {
+                    if relist == Relist::Left {
+                        s.channel_left(name);
+                    }
+                    s.channels_updated();
+                });
             }
             if password {
                 crate::ui_script::safe_world::raise(

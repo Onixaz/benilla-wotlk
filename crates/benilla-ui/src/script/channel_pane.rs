@@ -447,27 +447,26 @@ fn count_value(count: u32) -> Value {
 }
 
 impl super::UiScript {
+    /// The server's leave of the record `name` (`0x507900`): a selected channel of that name is
+    /// unselected, its roster and own flags cleared (`0x5079b3`-`0x507a0f`), ahead of the relist.
+    pub fn channel_left(&mut self, name: &str) {
+        let mut model = self.model_mut();
+        let pane = &mut model.channel_pane;
+        if matches!(&pane.selected, Some((Kind::Channel, s)) if names_equal(s, name)) {
+            pane.selected = None;
+            pane.roster.clear();
+            pane.own_flags = 0;
+        }
+    }
+
     /// The channel list changed (`0x505d40`): the pane relists the live records and fires
-    /// `CHANNEL_UI_UPDATE` (`0x504840` with 1). A selected channel no longer held live is
-    /// unselected, as its leave does (`0x507900`).
+    /// `CHANNEL_UI_UPDATE` (`0x504840` with 1). The selection is never touched here; only the
+    /// server's leave clears it ([`Self::channel_left`]).
     pub fn channels_updated(&mut self) {
         let slots = live_slots();
         {
             let mut model = self.model_mut();
             let model: &mut Model = &mut model;
-            let pane = &mut model.channel_pane;
-            let dropped = match &pane.selected {
-                Some((Kind::Channel, name)) => !slots
-                    .iter()
-                    .flatten()
-                    .any(|s| s.active && names_equal(&s.name, name)),
-                _ => false,
-            };
-            if dropped {
-                pane.selected = None;
-                pane.roster.clear();
-                pane.own_flags = 0;
-            }
             rebuild_list(model, &slots);
         }
         // A host step's relist reads our guid in its turn, with the `World` lent.

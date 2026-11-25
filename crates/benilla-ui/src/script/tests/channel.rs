@@ -445,8 +445,8 @@ fn a_selected_channel_is_watched_and_its_display_list_fills_the_roster() {
     });
 }
 
-/// A name the cache has no record for reads `UNKNOWN` (`0x50505a`); a selected channel that leaves
-/// the slots is unselected (`0x507900`).
+/// A name the cache has no record for reads `UNKNOWN` (`0x50505a`); the server's leave of the
+/// selected channel unselects it ahead of the relist (`0x5079b3`-`0x507a0f`).
 #[test]
 fn an_unnamed_member_reads_unknown_and_a_leave_unselects() {
     let (mut s, mut v) = pane();
@@ -468,12 +468,60 @@ fn an_unnamed_member_reads_unknown_and_a_leave_unselects() {
                 slot("Trade - City", Some("Trade"), false),
             ]
         });
+        s.channel_left("mychan");
         s.channels_updated();
         assert!(s
             .eval::<Option<i64>>("return GetSelectedDisplayChannel()")
             .unwrap()
             .is_none());
         assert_eq!(s.eval::<i64>("return GetNumDisplayChannels()").unwrap(), 5);
+    });
+}
+
+/// The list update (`0x505d40`) and its rebuild (`0x504840`) never touch the selection: a channel
+/// selected while its record is still pending keeps its selection, roster and own flags across a
+/// relist, and a leave of another record keeps it too; only its own leave (`0x5079cd`) clears it.
+#[test]
+fn a_relist_keeps_a_pending_selection_and_only_its_own_leave_clears_it() {
+    let (mut s, mut v) = pane();
+    s.with_live(&mut v, |s| {
+        s.run("SetSelectedDisplayChannel(6)").unwrap();
+        s.display_channel_list("MyChan", 0, &[(OWN, 0x1), (0x40, 0)], |_| true);
+        assert_eq!(
+            s.eval::<i64>("return GetSelectedDisplayChannel()").unwrap(),
+            6
+        );
+        // The record falls back to pending (another join's claim, a voice rebuild): not listed.
+        test_view(|v| {
+            v.channel_slots = vec![
+                slot(GENERAL, Some("General"), true),
+                slot("MyChan", None, false),
+                slot("Trade - City", Some("Trade"), false),
+            ]
+        });
+        s.channel_left(GENERAL);
+        s.channels_updated();
+        // Listed again: the selection, its roster and the owner flag are all still there.
+        test_view(|v| {
+            v.channel_slots = vec![
+                slot(GENERAL, Some("General"), true),
+                slot("MyChan", None, true),
+                slot("Trade - City", Some("Trade"), false),
+            ]
+        });
+        s.channels_updated();
+        assert_eq!(
+            s.eval::<i64>("return GetSelectedDisplayChannel()").unwrap(),
+            6
+        );
+        assert_eq!(s.eval::<i64>("return GetNumChannelMembers(6)").unwrap(), 2);
+        assert_eq!(s.eval::<i64>("return IsDisplayChannelOwner()").unwrap(), 1);
+        s.channel_left("MyChan");
+        s.channels_updated();
+        assert!(s
+            .eval::<Option<i64>>("return GetSelectedDisplayChannel()")
+            .unwrap()
+            .is_none());
     });
 }
 
