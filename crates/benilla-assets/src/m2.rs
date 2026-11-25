@@ -434,8 +434,19 @@ impl AssetLoader for M2ModelLoader {
             let mut graph = AnimationGraph::new();
             let root = graph.root;
             // The pose bake mirrors the graph: update it beside every mask group and `add_clip*`.
+            let key_bones: Vec<(u8, u16)> = (0..35i16)
+                .filter(|&k| k != 26)
+                .filter_map(|k| {
+                    skeleton_raw
+                        .bones
+                        .iter()
+                        .position(|b| b.key_bone == k)
+                        .map(|i| (k as u8, i as u16))
+                })
+                .collect();
             let mut pose = crate::model::PoseSource {
                 bone_masks: vec![0u64; skeleton_raw.bones.len()],
+                key_bones,
                 ..Default::default()
             };
             // Groups 0 and 1 hold every joint outside the right and the left arm, so a node masked

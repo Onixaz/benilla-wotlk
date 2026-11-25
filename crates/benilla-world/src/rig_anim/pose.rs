@@ -193,72 +193,206 @@ struct Active {
     cursor: usize,
 }
 
+/// One active per-key-bone animation slot (`0x756f80`, `0x735820`): plays a sequence clip on a
+/// single key bone's subtree over the rig's base animation.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct KeyBoneAnim {
+    /// M2 `KeyBoneID` (`0..35`, excluding 26).
+    pub key_bone: u8,
+    /// Index into `ModelAnimations.clips` and `PoseSource.clips`.
+    pub clip: usize,
+    /// Current playback time (seconds).
+    pub elapsed: f32,
+    /// Previous frame's playback time (seconds), for scanning clip events (`$VG0`..`$VG8`).
+    pub prev_elapsed: f32,
+    /// Clip duration (seconds).
+    pub duration: f32,
+    /// Whether the clip loops (`true` for seat ride loops) or runs once (`false` for enter/exit).
+    pub looping: bool,
+    /// Whether a one-shot has finished playing.
+    pub finished: bool,
+}
+
+/// Active per-key-bone animations on a rig (`0x756f80`), sparse because only vehicles use them.
+#[derive(Component, Default, Debug)]
+#[component(storage = "SparseSet")]
+pub struct KeyBoneAnims {
+    pub slots: Vec<KeyBoneAnim>,
+}
+
+impl KeyBoneAnims {
+    /// Arm `clip` on `key_bone`, replacing any prior slot on that key bone.
+    pub fn play(&mut self, key_bone: u8, clip: usize, duration: f32, looping: bool) {
+        let slot = KeyBoneAnim {
+            key_bone,
+            clip,
+            elapsed: 0.0,
+            prev_elapsed: 0.0,
+            duration: duration.max(0.0),
+            looping,
+            finished: false,
+        };
+        if let Some(existing) = self.slots.iter_mut().find(|s| s.key_bone == key_bone) {
+            *existing = slot;
+        } else {
+            self.slots.push(slot);
+        }
+    }
+
+    /// Clear `key_bone`'s slot (`0x735820`).
+    pub fn stop(&mut self, key_bone: u8) {
+        self.slots.retain(|s| s.key_bone != key_bone);
+    }
+
+    /// Look up the slot for `key_bone`.
+    pub fn get(&self, key_bone: u8) -> Option<&KeyBoneAnim> {
+        self.slots.iter().find(|s| s.key_bone == key_bone)
+    }
+}
+
+/// Whether `bone` is `root` or descends from `root` in `parents`.
+fn in_rig_subtree(parents: &[i16], mut bone: usize, root: usize) -> bool {
+    for _ in 0..parents.len() {
+        if bone == root {
+            return true;
+        }
+        match parents
+            .get(bone)
+            .copied()
+            .and_then(|p| usize::try_from(p).ok())
+            .filter(|&p| p < bone)
+        {
+            Some(p) => bone = p,
+            None => return false,
+        }
+    }
+    false
+}
+
 /// Pose every live rig where `animate_targets` runs, after `advance_animations`.
 fn evaluate_rig_poses(
-    mut rigs: Query<(&AnimationPlayer, &ModelAnimations, &mut RigPose), Without<AnimParked>>,
+    time: Res<Time>,
+    mut rigs: Query<
+        (
+            &AnimationPlayer,
+            &ModelAnimations,
+            &mut RigPose,
+            Option<&mut KeyBoneAnims>,
+        ),
+        Without<AnimParked>,
+    >,
 ) {
+    let dt = time.delta_secs();
     // Parallel: a rig reads shared clips and writes only its own pose.
-    rigs.par_iter_mut().for_each(|(player, anims, mut rig)| {
-        let src = &anims.pose;
-        // The contributing animations in node order, in one scratch per worker thread.
-        thread_local! {
-            static ACTIVE: std::cell::RefCell<Vec<Active>> =
-                const { std::cell::RefCell::new(Vec::new()) };
-        }
-        ACTIVE.with(|cell| {
-            let mut active = cell.borrow_mut();
-            active.clear();
-            for (&node, anim) in player.playing_animations() {
-                // Bevy's exact gate: a weight of literal 0.0 skips the node (paused does not).
-                if anim.weight() == 0.0 {
-                    continue;
-                }
-                let Some(pn) = src.node(node) else { continue };
-                if src.clips.get(pn.clip as usize).is_none() {
-                    continue;
-                }
-                active.push(Active {
-                    node: node.index(),
-                    clip: pn.clip as usize,
-                    mask: pn.mask,
-                    weight: anim.weight(),
-                    seek: anim.seek_time(),
-                    cursor: 0,
-                });
+    rigs.par_iter_mut()
+        .for_each(|(player, anims, mut rig, key_bones)| {
+            let src = &anims.pose;
+            // The contributing animations in node order, in one scratch per worker thread.
+            thread_local! {
+                static ACTIVE: std::cell::RefCell<Vec<Active>> =
+                    const { std::cell::RefCell::new(Vec::new()) };
             }
-            active.sort_unstable_by_key(|a| a.node);
-            match active.as_mut_slice() {
-                [] => {}
-                [one] => {
-                    // One contribution commits at full value whatever its weight.
-                    rig.pose_dirty = true;
-                    for pb in &src.clips[one.clip].bones {
-                        if src.bone_masks.get(pb.bone as usize).copied().unwrap_or(0) & one.mask
-                            != 0
-                        {
+            ACTIVE.with(|cell| {
+                let mut active = cell.borrow_mut();
+                active.clear();
+                for (&node, anim) in player.playing_animations() {
+                    // Bevy's exact gate: a weight of literal 0.0 skips the node (paused does not).
+                    if anim.weight() == 0.0 {
+                        continue;
+                    }
+                    let Some(pn) = src.node(node) else { continue };
+                    if src.clips.get(pn.clip as usize).is_none() {
+                        continue;
+                    }
+                    active.push(Active {
+                        node: node.index(),
+                        clip: pn.clip as usize,
+                        mask: pn.mask,
+                        weight: anim.weight(),
+                        seek: anim.seek_time(),
+                        cursor: 0,
+                    });
+                }
+                active.sort_unstable_by_key(|a| a.node);
+                match active.as_mut_slice() {
+                    [] => {}
+                    [one] => {
+                        // One contribution commits at full value whatever its weight.
+                        rig.pose_dirty = true;
+                        for pb in &src.clips[one.clip].bones {
+                            if src.bone_masks.get(pb.bone as usize).copied().unwrap_or(0) & one.mask
+                                != 0
+                            {
+                                continue;
+                            }
+                            let Some(tf) = rig.locals.get_mut(pb.bone as usize) else {
+                                continue;
+                            };
+                            if let Some(v) = pb.translation.sample(one.seek) {
+                                tf.translation = v;
+                            }
+                            if let Some(v) = pb.rotation.sample(one.seek) {
+                                tf.rotation = v;
+                            }
+                            if let Some(v) = pb.scale.sample(one.seek) {
+                                tf.scale = v;
+                            }
+                        }
+                    }
+                    many => {
+                        rig.pose_dirty = true;
+                        blend_rig(src, many, &mut rig);
+                    }
+                }
+            });
+            // Per-key-bone overrides (`0x756f80`) layer onto their key bone's subtree.
+            if let Some(mut key_bones) = key_bones {
+                for slot in &mut key_bones.slots {
+                    slot.prev_elapsed = slot.elapsed;
+                    if slot.looping {
+                        if slot.duration > 0.0 {
+                            slot.elapsed = (slot.elapsed + dt) % slot.duration;
+                        }
+                    } else if !slot.finished {
+                        slot.elapsed += dt;
+                        if slot.elapsed >= slot.duration {
+                            slot.elapsed = slot.duration;
+                            slot.finished = true;
+                        }
+                    }
+                    if slot.finished && !slot.looping {
+                        continue;
+                    }
+                    let (Some(root), Some(clip)) =
+                        (src.key_bone(slot.key_bone), src.clips.get(slot.clip))
+                    else {
+                        slot.finished = !slot.looping;
+                        continue;
+                    };
+                    let root = usize::from(root);
+                    let rig = &mut *rig;
+                    for pb in &clip.bones {
+                        let bone = usize::from(pb.bone);
+                        if !in_rig_subtree(&rig.parents, bone, root) {
                             continue;
                         }
-                        let Some(tf) = rig.locals.get_mut(pb.bone as usize) else {
+                        let Some(tf) = rig.locals.get_mut(bone) else {
                             continue;
                         };
-                        if let Some(v) = pb.translation.sample(one.seek) {
+                        rig.pose_dirty = true;
+                        if let Some(v) = pb.translation.sample(slot.elapsed) {
                             tf.translation = v;
                         }
-                        if let Some(v) = pb.rotation.sample(one.seek) {
+                        if let Some(v) = pb.rotation.sample(slot.elapsed) {
                             tf.rotation = v;
                         }
-                        if let Some(v) = pb.scale.sample(one.seek) {
+                        if let Some(v) = pb.scale.sample(slot.elapsed) {
                             tf.scale = v;
                         }
                     }
                 }
-                many => {
-                    rig.pose_dirty = true;
-                    blend_rig(src, many, &mut rig);
-                }
             }
         });
-    });
 }
 
 /// Several animations: merge-walk the bone-sorted clips, folding each property in node order.

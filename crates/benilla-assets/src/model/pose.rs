@@ -117,6 +117,8 @@ pub struct PoseSource {
     pub nodes: Vec<Option<PoseNode>>,
     /// Per bone: the mask-group bits it belongs to (the `add_target_to_mask_group` calls).
     pub bone_masks: Vec<u64>,
+    /// Present key bones `(key_bone_id, skeleton_bone)` for `key_bone_id < 35` (`0x756f80`).
+    pub key_bones: Vec<(u8, u16)>,
 }
 
 impl PoseSource {
@@ -133,6 +135,14 @@ impl PoseSource {
     #[inline]
     pub fn node(&self, node: AnimationNodeIndex) -> Option<PoseNode> {
         self.nodes.get(node.index()).copied().flatten()
+    }
+
+    /// The skeleton bone index for M2 `KeyBoneID` `key_bone_id` (`0..35`), if the model carries it.
+    #[inline]
+    pub fn key_bone(&self, key_bone_id: u8) -> Option<u16> {
+        self.key_bones
+            .iter()
+            .find_map(|&(k, b)| (k == key_bone_id).then_some(b))
     }
 }
 

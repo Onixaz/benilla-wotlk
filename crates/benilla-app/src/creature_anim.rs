@@ -1389,6 +1389,16 @@ fn find_resolved<'a>(
     anims.find(resolved_id(anims, id, catalog))
 }
 
+/// The clip index in `anims.clips` (and `anims.pose.clips`) for `id` after fallback resolution.
+pub(crate) fn resolved_clip_index(
+    anims: &ModelAnimations,
+    id: u16,
+    catalog: Option<&AnimDataCatalog>,
+) -> Option<usize> {
+    let want = resolved_id(anims, id, catalog);
+    anims.clips.iter().position(|c| c.anim_id == want)
+}
+
 #[cfg(test)]
 mod attack_stand_tests {
     use super::*;

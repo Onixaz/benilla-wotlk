@@ -108,35 +108,55 @@ impl Transit {
 }
 
 /// A transport change held for the vehicle's own seat anim (`0x74be10`, `0x748070`): the
-/// reference defers the move that carries it until the vehicle's anim ends, or for the seat's
-/// fixed wait, and never past 3 s. The change then runs as it came, its server cue kept.
+/// reference defers the move that carries it until the vehicle's grab event (`0x747930`, enters),
+/// the vehicle's anim ends, or the seat's fixed wait elapses, and never past 3 s. The change then
+/// runs as it came, its server cue kept.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub(crate) struct TransitWait {
     start_s: f64,
-    /// The fixed wait's end, or `None` to wait for the vehicle's anim.
+    /// The fixed wait's end, or `None` to wait for the grab event / vehicle's anim.
     until_s: Option<f64>,
     vehicle: Entity,
+    /// Seat index for `$VG0`..`$VG8` grab-event matching (`0x747930`).
+    seat: u8,
+    /// Enters listen for grab events (`m_flags & 0x100`, `0x747930`); exits wait for anim end.
+    entering: bool,
+    /// Key-bone slot (`0..35`, excluding 26) for per-bone anims, or `None` for the whole model.
+    key_bone: Option<u8>,
     cue: bool,
 }
 
 /// The longest a transport change waits for the vehicle (`0x748070`).
 const VEHICLE_WAIT_MAX_S: f64 = 3.0;
 
+/// `0x756f80`: a seat's vehicle-anim bone column maps `0..35` (excluding 26) to that M2
+/// `KeyBoneID`, and anything `< 0`, `>= 35`, or `26` to the whole model (`None`).
+pub(crate) fn vehicle_anim_bone(bone: i32) -> Option<u8> {
+    u8::try_from(bone).ok().filter(|&b| b < 35 && b != 26)
+}
+
+/// `0x747930` / `0x757060`: whether `ident` is a vehicle grab event (`$VG0`..`$VG8`) for `seat`
+/// (`'0'` matches any seat; `'1' + seat` matches that seat).
+pub(crate) fn is_grab_event(ident: [u8; 4], seat: u8) -> bool {
+    ident[..3] == *b"$VG"
+        && (ident[3] == b'0' || (ident[3] >= b'1' && ident[3] <= b'8' && seat == ident[3] - b'1'))
+}
+
 /// `0x74be10`'s seat test: the vehicle anim an enter (seat flag `0x400000`, column 33) or an exit
 /// (`0x40000` for a unit whose extra flags carry `0x40`, else `0x80000`; column 34) plays on the
-/// vehicle, an id below `ANIM_COUNT`; and the fixed wait under `0x8000000` (enter) or
+/// vehicle, its bone (`0x756f80`, columns 36-37), and the fixed wait under `0x8000000` (enter) or
 /// `0x10000000` (exit), the seat's delay (columns 39-40) at most 3 s (`0x748070`).
 pub(crate) fn vehicle_wait(
     seat: &VehicleSeatRec,
     entering: bool,
     flags2: u16,
-) -> Option<(u16, Option<f32>)> {
-    let (flag, anim) = if entering {
-        (0x40_0000, seat.vehicle_anims[0])
+) -> Option<(u16, Option<u8>, Option<f32>)> {
+    let (flag, anim, bone) = if entering {
+        (0x40_0000, seat.vehicle_anims[0], seat.vehicle_anim_bones[0])
     } else if flags2 & 0x40 != 0 {
-        (0x4_0000, seat.vehicle_anims[1])
+        (0x4_0000, seat.vehicle_anims[1], seat.vehicle_anim_bones[1])
     } else {
-        (0x8_0000, seat.vehicle_anims[1])
+        (0x8_0000, seat.vehicle_anims[1], seat.vehicle_anim_bones[1])
     };
     let anim = u16::try_from(anim).ok().filter(|&a| a <= 505)?;
     if seat.flags & flag == 0 {
@@ -148,7 +168,11 @@ pub(crate) fn vehicle_wait(
     } else {
         seat.vehicle_exit_anim_delay
     };
-    Some((anim, (seat.flags & fixed_flag != 0).then(|| delay.min(3.0))))
+    Some((
+        anim,
+        vehicle_anim_bone(bone),
+        (seat.flags & fixed_flag != 0).then(|| delay.min(3.0)),
+    ))
 }
 
 /// The pre-delay states' end (`0x74a200`): the seat's delay, at most 10 s.
@@ -229,6 +253,16 @@ pub(super) fn track_passengers(
         group: group.as_deref(),
         tables: &tables,
     };
+    let grab_events: Vec<(Entity, [u8; 4])> = wait
+        .anim_events
+        .as_mut()
+        .map(|ev| {
+            ev.read()
+                .filter(|ev| ev.ident[..3] == *b"$VG")
+                .map(|ev| (ev.entity, ev.ident))
+                .collect()
+        })
+        .unwrap_or_default();
     for (e, guid, rider, held, cue, flags2) in &units {
         let guid = guid.0;
         if cue {
@@ -237,7 +271,7 @@ pub(super) fn track_passengers(
         // A change held for the vehicle's anim waits it out, then runs with its cue.
         let mut cue = cue;
         if let Ok(w) = wait.held.get(e) {
-            if !wait.done(w, now) {
+            if !wait.done(w, now, &grab_events) {
                 continue;
             }
             debug!(
@@ -282,16 +316,21 @@ pub(super) fn track_passengers(
                 .as_ref()
                 .and_then(seat_rec)
                 .and_then(|s| vehicle_wait(s, entering, flags2.map_or(0, |f| f.0)));
-            if let (Some((anim, fixed)), Some(vehicle)) = (pick, vehicle) {
+            if let (Some((anim, key_bone, fixed)), Some(vehicle), Some(side)) =
+                (pick, vehicle, side)
+            {
                 debug!(
                     "vehicle: passenger {guid:#x} waits for its vehicle's anim {anim} \
-                     (fixed {fixed:?}) at {now:.3} s"
+                     (bone {key_bone:?}, fixed {fixed:?}) at {now:.3} s"
                 );
-                wait.play(vehicle, anim);
+                wait.play(&mut commands, vehicle, anim, key_bone);
                 commands.entity(e).insert(TransitWait {
                     start_s: now,
                     until_s: fixed.map(|f| now + f64::from(f)),
                     vehicle,
+                    seat: side.seat,
+                    entering,
+                    key_bone,
                     cue,
                 });
                 continue;
@@ -362,8 +401,8 @@ pub(super) fn track_passengers(
     }
 }
 
-/// The vehicle-anim wait's reads and its play: who waits, the vehicle's animation state, and the
-/// one-shot that plays the seat anim on the vehicle.
+/// The vehicle-anim wait's reads and its play: who waits, the vehicle's animation state, per-bone
+/// slots, grab events, and the one-shot that plays the seat anim on the vehicle.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(super) struct VehicleWaits<'w, 's> {
     held: Query<'w, 's, &'static TransitWait>,
@@ -375,18 +414,39 @@ pub(super) struct VehicleWaits<'w, 's> {
             &'static AnimationPlayer,
             &'static AnimationTransitions,
             &'static benilla_assets::ModelAnimations,
+            Option<&'static mut benilla_world::rig_anim::KeyBoneAnims>,
         ),
     >,
     anim_data: Option<Res<'w, crate::creature_anim::AnimData>>,
+    anim_events: Option<MessageReader<'w, 's, crate::creature_anim::AnimSoundEvent>>,
     seq: Option<ResMut<'w, crate::creature_anim::PlaySeq>>,
     out: Option<MessageWriter<'w, crate::creature_anim::EmoteAnim>>,
 }
 
 impl VehicleWaits<'_, '_> {
-    /// Play the seat's anim on the vehicle (`0x756f80`). Deviation: on the whole model, where the
-    /// reference arms the seat's bone; a bone at or past 35 (the IoC catapult's `-1`) is the whole
-    /// model there too.
-    fn play(&mut self, vehicle: Entity, anim: u16) {
+    /// Play the seat's anim on the vehicle (`0x756f80`): on `key_bone`'s subtree when in `0..35`
+    /// (excluding 26), else on the whole model.
+    fn play(&mut self, commands: &mut Commands, vehicle: Entity, anim: u16, key_bone: Option<u8>) {
+        if let Some(kb) = key_bone {
+            let catalog = self.anim_data.as_deref().map(|d| &d.0);
+            if let Ok((_, _, _, anims, mut bone_anims)) = self.anims.get_mut(vehicle) {
+                if anims.pose.key_bone(kb).is_some() {
+                    if let Some(clip) =
+                        crate::creature_anim::resolved_clip_index(anims, anim, catalog)
+                    {
+                        let duration = anims.clips[clip].duration;
+                        if let Some(kba) = bone_anims.as_deref_mut() {
+                            kba.play(kb, clip, duration, false);
+                        } else {
+                            let mut kba = benilla_world::rig_anim::KeyBoneAnims::default();
+                            kba.play(kb, clip, duration, false);
+                            commands.entity(vehicle).insert(kba);
+                        }
+                    }
+                }
+            }
+            return;
+        }
         let seq = self.seq.as_mut().map_or(0, |s| s.next());
         if let Some(out) = self.out.as_mut() {
             out.write(crate::creature_anim::EmoteAnim {
@@ -399,9 +459,9 @@ impl VehicleWaits<'_, '_> {
         }
     }
 
-    /// The wait is over: its fixed time has passed, or the vehicle's anim has ended (a vehicle
-    /// that never armed it counts as ended after its first frames), or 3 s have.
-    fn done(&self, w: &TransitWait, now: f64) -> bool {
+    /// The wait is over: its fixed time has passed (`0x748070`), a matching `$VG0`..`$VG8` grab
+    /// event fired on an enter (`0x747930`), the vehicle's anim has ended, or 3 s have (`0x7490c0`).
+    fn done(&self, w: &TransitWait, now: f64, grab_events: &[(Entity, [u8; 4])]) -> bool {
         let waited = now - w.start_s;
         if waited >= VEHICLE_WAIT_MAX_S {
             return true;
@@ -409,11 +469,40 @@ impl VehicleWaits<'_, '_> {
         if let Some(until) = w.until_s {
             return now >= until;
         }
+        if let Some(kb) = w.key_bone {
+            let Ok((_, _, _, anims, kba)) = self.anims.get(w.vehicle) else {
+                return waited > 0.1;
+            };
+            let Some(slot) = kba.and_then(|k| k.get(kb)) else {
+                // Inserted via commands on the first frame; if still absent after a frame, done.
+                return waited > 0.1;
+            };
+            if w.entering {
+                if let Some(clip) = anims.clips.get(slot.clip) {
+                    let grabbed = clip.events.iter().any(|ev| {
+                        is_grab_event(ev.ident, w.seat)
+                            && ev.time > slot.prev_elapsed
+                            && ev.time <= slot.elapsed
+                    });
+                    if grabbed {
+                        return true;
+                    }
+                }
+            }
+            return slot.finished;
+        }
+        if w.entering
+            && grab_events
+                .iter()
+                .any(|&(e, ident)| e == w.vehicle && is_grab_event(ident, w.seat))
+        {
+            return true;
+        }
         let catalog = self.anim_data.as_deref().map(|d| &d.0);
         let live = self
             .anims
             .get(w.vehicle)
-            .is_ok_and(|(drv, player, tr, anims)| {
+            .is_ok_and(|(drv, player, tr, anims, _)| {
                 crate::creature_anim::oneshot_is_live(drv, player, tr, anims, catalog)
             });
         // The play lands a frame after it is sent.
@@ -591,12 +680,13 @@ mod tests {
         let seat = VehicleSeatRec {
             flags: 0x7b5b_000b,
             vehicle_anims: [112, 107, 111],
+            vehicle_anim_bones: [-1, -1, -1],
             vehicle_enter_anim_delay: 0.6,
             vehicle_exit_anim_delay: 0.35,
             ..Default::default()
         };
-        assert_eq!(vehicle_wait(&seat, true, 0), Some((112, Some(0.6))));
-        assert_eq!(vehicle_wait(&seat, false, 0), Some((107, Some(0.35))));
+        assert_eq!(vehicle_wait(&seat, true, 0), Some((112, None, Some(0.6))));
+        assert_eq!(vehicle_wait(&seat, false, 0), Some((107, None, Some(0.35))));
         assert_eq!(
             vehicle_wait(&seat, false, 0x40),
             None,
@@ -605,6 +695,7 @@ mod tests {
         let driver = VehicleSeatRec {
             flags: 0x7310_8c0b,
             vehicle_anims: [-1, 107, 111],
+            vehicle_anim_bones: [-1, -1, -1],
             ..Default::default()
         };
         assert_eq!(vehicle_wait(&driver, true, 0), None);
@@ -612,10 +703,31 @@ mod tests {
         let unfixed = VehicleSeatRec {
             flags: 0x40_0000,
             vehicle_anims: [112, -1, -1],
+            vehicle_anim_bones: [4, -1, -1],
             vehicle_enter_anim_delay: 9.0,
             ..Default::default()
         };
-        assert_eq!(vehicle_wait(&unfixed, true, 0), Some((112, None)));
+        assert_eq!(vehicle_wait(&unfixed, true, 0), Some((112, Some(4), None)));
+    }
+
+    /// `0x756f80` maps bones `0..35` (excluding 26) to that key bone and everything else to whole
+    /// model; `0x747930` matches `$VG0` for any seat and `$VG1`..`$VG8` for seats 0..7.
+    #[test]
+    fn vehicle_bone_mapping_and_grab_events_match_reference() {
+        assert_eq!(vehicle_anim_bone(-1), None);
+        assert_eq!(vehicle_anim_bone(0), Some(0));
+        assert_eq!(vehicle_anim_bone(25), Some(25));
+        assert_eq!(vehicle_anim_bone(26), None);
+        assert_eq!(vehicle_anim_bone(34), Some(34));
+        assert_eq!(vehicle_anim_bone(35), None);
+
+        assert!(is_grab_event(*b"$VG0", 0));
+        assert!(is_grab_event(*b"$VG0", 3));
+        assert!(is_grab_event(*b"$VG1", 0));
+        assert!(!is_grab_event(*b"$VG1", 1));
+        assert!(is_grab_event(*b"$VG2", 1));
+        assert!(is_grab_event(*b"$VG8", 7));
+        assert!(!is_grab_event(*b"$VT0", 0));
     }
 
     use std::sync::Arc;

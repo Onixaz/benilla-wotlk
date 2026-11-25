@@ -767,14 +767,16 @@ fn drive_unit(
         mv.stand_state = 0;
     }
     // A live passenger holds its seat state's anims (`0x7385c0`), out of any stand state.
-    // A vehicle's seat ride loop holds its base as a passenger's ride loop does.
+    // A vehicle's whole-model seat ride loop holds its base as a passenger's ride loop does.
     let seat = seat_pose
         .copied()
         .or_else(|| {
-            seat_loop.map(|l| crate::vehicle::SeatPose {
-                lower: [None, Some(l.0)],
-                ..Default::default()
-            })
+            seat_loop
+                .and_then(crate::vehicle::VehicleSeatLoop::active_anim)
+                .map(|anim| crate::vehicle::SeatPose {
+                    lower: [None, Some(anim)],
+                    ..Default::default()
+                })
         })
         .filter(|_| !dead);
     if seat.is_some() {
