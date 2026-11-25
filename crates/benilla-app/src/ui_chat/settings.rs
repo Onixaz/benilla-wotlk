@@ -472,9 +472,16 @@ pub(crate) fn restore_chat_looks(world: &mut World, script: &mut UiScript) {
         // The custom re-join list, seated here, then moved only by a confirmed join or a leave.
         channels.custom = parsed.joined.clone();
     }
+    // The mode line's inline setter: a moved latch is stored and, with the chat ready, a move to
+    // 1 runs the cascade (`0x5087b5`-`0x5087dd`).
+    let mode = i32::from(parsed.guild_recruitment_auto);
+    let moved = script.guild_recruitment_mode() != mode;
+    script.set_guild_recruitment_mode(mode);
+    if moved && mode == 1 {
+        super::recruitment::update_guild_status(world, script);
+    }
     // The events read the client through the lent `World`.
     crate::ui_script::live::lend_world(world, script, |script| {
-        script.set_guild_recruitment_mode(u8::from(parsed.guild_recruitment_auto));
         script.set_chat_colors(parsed.colors);
         script.set_chat_window_looks(parsed.looks);
         // `UPDATE_CHAT_WINDOWS` once, then `UPDATE_CHAT_COLOR` for every registry entry, file or
@@ -520,6 +527,8 @@ pub(crate) fn restore_chat_looks(world: &mut World, script: &mut UiScript) {
             });
         }
     }
+    // The load ends in the chat's zone update (`0x5093b9`-`0x5093c3`).
+    super::recruitment::zone_update(world, script);
 }
 
 /// The reference's chat-settings save (`0x4ffda0`) at the UI shutdown: the whole file,
@@ -540,7 +549,8 @@ pub(crate) fn save_to_account_data(world: &mut World) {
                         &script.chat_colors(),
                         &channels.custom,
                         zone_mask,
-                        script.guild_recruitment_mode() != 0,
+                        // AUTO is the latch at 1 alone (`0x4fd392`).
+                        script.guild_recruitment_mode() == 1,
                     )
                 })
             }
@@ -1112,7 +1122,6 @@ POSITION "
         world.init_resource::<crate::ui_script::ReloadUiPending>();
         world.init_resource::<super::super::edit::ChannelState>();
         world.init_resource::<super::super::channels::ZoneChannelWalk>();
-        world.init_resource::<super::super::recruitment::GuildRecruitmentCascade>();
         world.init_resource::<Messages<crate::net::DisconnectedMessage>>();
         world.init_resource::<ChatWindowFile>();
         crate::ui_script::setup_script(&mut world);

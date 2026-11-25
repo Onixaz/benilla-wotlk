@@ -384,7 +384,7 @@ pub(crate) struct Model {
     pub(crate) channel_commands: Vec<super::channel::ChannelCommand>,
     /// The recruitment auto-join latch, the chat's guild-recruitment mode: 0 `STANDARD`, 1 `AUTO`.
     /// Boots at 1, as the reference writes `AUTO` for an untouched option.
-    pub(crate) guild_recruitment_mode: u8,
+    pub(crate) guild_recruitment_mode: i32,
     /// The recruitment mode moved: the chat cache's dirty signal.
     pub(crate) guild_recruitment_changed: bool,
     /// `DoEmote` calls queued.

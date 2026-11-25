@@ -566,6 +566,7 @@ fn reset_chat_windows_sets_the_auto_join_rows_zone_bits_in_the_call() {
         resolved: Some(format!("C{id} - Elwynn Forest")),
         listed: true,
         auto_join,
+        guild_recruitment: false,
     };
     let mut v = TestView {
         zone_channels: vec![row(1, true), row(2, true), row(3, false), row(22, true)],

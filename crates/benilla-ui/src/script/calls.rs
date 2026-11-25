@@ -76,6 +76,9 @@ pub enum HostAsk {
     /// The join's profanity test on its typed name (`0x50d9c7` -> `0x509a50`, forced on): `Declined`
     /// after `ERR_PROFANE_CHAT_NAME` shows (`0x50d9d8`), else `Done`.
     ProfaneChannelName(String),
+    /// `guildRecruitmentChannel`'s change callback (`0x512750`): the mode setter on the value's
+    /// integer (`0x51275f` -> `0x508260`), its cascade or leave run in the call.
+    GuildRecruitmentMode(i32),
 }
 
 /// What the host answered a [`HostAsk`].

@@ -1378,6 +1378,7 @@ mod record_tests {
                     resolved: Some("General - Elwynn Forest".into()),
                     listed: true,
                     auto_join: false,
+                    guild_recruitment: false,
                 },
                 ZoneChannelRow {
                     id: 2,
@@ -1385,6 +1386,7 @@ mod record_tests {
                     resolved: None,
                     listed: false,
                     auto_join: false,
+                    guild_recruitment: false,
                 },
             ],
             ..Default::default()

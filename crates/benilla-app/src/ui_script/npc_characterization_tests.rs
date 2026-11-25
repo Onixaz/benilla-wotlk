@@ -704,6 +704,55 @@ fn our_guild_id_watch_runs_before_the_stamp_drops_the_record() {
     );
 }
 
+/// Our guild id's watch runs the guild-recruitment cascade after its guild change and in the same update (`0x6e1bd9`, `0x6e1beb`): leaving the guild under AUTO with the chat ready signals `UPDATE_CHAT_WINDOWS` after `TABARD_CANSAVE_CHANGED`; another player's watch runs no cascade (`0x6e1be5`).
+#[test]
+fn our_guild_id_watch_runs_the_recruitment_cascade_after_its_guild_change() {
+    let Some(mut rig) = Rig::login(&guild_master()) else {
+        return;
+    };
+    let events = &["TABARD_CANSAVE_CHANGED", "UPDATE_CHAT_WINDOWS"];
+    rig.app
+        .world_mut()
+        .insert_resource(crate::ui_chat::ZoneChannelWalk::ready_in(0));
+    const OTHER: u64 = 0x11;
+    rig.packets(vec![player_in(OTHER, 7)], 2);
+    let seen = rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: OTHER,
+            fields: ObjectFields::from_pairs(&[(benilla_protocol::field::FIELD_PLAYER_GUILDID, 8)]),
+        }],
+        2,
+    );
+    assert_eq!(pin(&seen, events, &[]), ["TABARD_CANSAVE_CHANGED"]);
+    // The next packet's watch fires after it: the cascade ran in the update's own turn.
+    let seen = rig.packets(
+        vec![
+            self_values(&[(benilla_protocol::field::FIELD_PLAYER_GUILDID, 0)]),
+            self_values(&[(
+                benilla_protocol::field::FIELD_PLAYER_WATCHED_FACTION_INDEX,
+                3,
+            )]),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(
+            &seen,
+            &[
+                "TABARD_CANSAVE_CHANGED",
+                "UPDATE_CHAT_WINDOWS",
+                "UPDATE_FACTION"
+            ],
+            &[]
+        ),
+        [
+            "TABARD_CANSAVE_CHANGED",
+            "UPDATE_CHAT_WINDOWS",
+            "UPDATE_FACTION player"
+        ]
+    );
+}
+
 /// A stamp moving twice before its guild's answer: the second drop runs the first ask's callback unfound (`0x67a610` -> `0x67a61f` -> `0x67a533`), which the walk skips (`0x6e1b93`), so the answer walks once.
 #[test]
 fn a_pending_stamp_ask_dropped_with_its_record_never_walks() {

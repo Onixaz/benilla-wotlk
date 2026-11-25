@@ -53,6 +53,8 @@ pub(crate) struct CvarChanged {
     pub(crate) name: String,
     pub(crate) old: String,
     pub(crate) new: String,
+    /// A script's write, whose callbacks with a host side ran inside its call.
+    pub(crate) from_vm: bool,
 }
 
 impl CvarChanged {
@@ -308,6 +310,7 @@ impl Cvars {
             name: name.clone(),
             old,
             new: value.to_string(),
+            from_vm,
         });
         if !from_vm && !self.rows[i].hidden {
             self.outbox.push((name, value.to_string()));
@@ -371,6 +374,7 @@ impl Cvars {
                 name: row.name.clone(),
                 old,
                 new: staged.clone(),
+                from_vm: false,
             });
             self.outbox.push((row.name.clone(), staged));
             moved += 1;
@@ -462,6 +466,7 @@ impl Cvars {
                 name: row.name.clone(),
                 old,
                 new: value.clone(),
+                from_vm: false,
             });
         }
         self.file = file;
@@ -527,6 +532,7 @@ impl Cvars {
                         name,
                         old,
                         new: value,
+                        from_vm: false,
                     });
                 }
                 None => {
@@ -2482,7 +2488,8 @@ mod tests {
             vec![CvarChanged {
                 name: "gxVSync".into(),
                 old: "1".into(),
-                new: "0".into()
+                new: "0".into(),
+                from_vm: false,
             }]
         );
         assert!(cvars.dirty);

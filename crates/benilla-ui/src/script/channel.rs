@@ -16,6 +16,9 @@ pub struct ZoneChannelRow {
     pub listed: bool,
     /// `flags & 1`, a channel `ResetChatWindows` joins back.
     pub auto_join: bool,
+    /// `flags & 0x20000`, the `GUILD_REQ` row whose typed Shortcut resets the guild-recruitment
+    /// latch in a manual join or leave (`0x507bd9`, `0x509513`).
+    pub guild_recruitment: bool,
 }
 
 /// A channel verb's ask, drained by the app into its `CMSG_*`: the stock `ChatFrame.lua` slash
@@ -116,14 +119,14 @@ impl super::UiScript {
         drain_field!(self, channel_commands)
     }
 
-    /// The guild-recruitment auto-join latch: `0` STANDARD, `1` AUTO.
-    pub fn guild_recruitment_mode(&self) -> u8 {
+    /// The guild-recruitment latch (`[0xac7a3c]`): `1` AUTO, any other value STANDARD.
+    pub fn guild_recruitment_mode(&self) -> i32 {
         self.model_ref().guild_recruitment_mode
     }
 
     /// Seat the latch from the chat cache at login. A host write is not a player gesture, so it
     /// does not arm [`Self::take_guild_recruitment_change`]: a login must not save what it read.
-    pub fn set_guild_recruitment_mode(&mut self, mode: u8) {
+    pub fn set_guild_recruitment_mode(&mut self, mode: i32) {
         let mut model = self.model_mut();
         model.guild_recruitment_mode = mode;
         model.guild_recruitment_changed = false;
@@ -134,10 +137,9 @@ impl super::UiScript {
         drain_field!(self, guild_recruitment_changed)
     }
 
-    /// The chat's guild-recruitment mode setter, called with `fromJoin = 0` (`0x508260`), the
-    /// `guildRecruitmentChannel` callback's call (`0x512750`): a moved latch, which the chat cache
-    /// saves. Returns whether it moved; the caller runs the cascade on 1 and the leave on 0.
-    pub fn set_guild_recruitment_mode_from_cvar(&mut self, mode: u8) -> bool {
+    /// The mode setter's store (`0x508260`): an unmoved latch is a no-op (`0x50826c`), a moved one
+    /// is stored (`0x508275`). Returns whether it moved; the caller runs what follows the store.
+    pub fn set_guild_recruitment_mode_from_cvar(&mut self, mode: i32) -> bool {
         let mut model = self.model_mut();
         if model.guild_recruitment_mode == mode {
             return false;
@@ -358,6 +360,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .to_string(),
                 _ => return Err(mlua::Error::runtime(r#"Usage: LeaveChannelByName("name")"#)),
             };
+            // The Shortcut compare reads the typed key, never the number leg's name (`0x50948e`).
+            let row = zone_catalog()
+                .into_iter()
+                .find(|r| r.shortcut.eq_ignore_ascii_case(&key));
             // The number leg: the record at that number, held in state 0, or nothing.
             let key = match super::cvars::sstr_to_int(&key) {
                 0 => key,
@@ -374,19 +380,23 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     }
                 }
             };
-            let row = zone_catalog()
-                .into_iter()
-                .find(|r| r.shortcut.eq_ignore_ascii_case(&key));
-            let (wire, strip_key) = match row {
+            let (wire, strip_key, guild_row) = match row {
                 Some(ZoneChannelRow { resolved: None, .. }) => return Ok(()),
                 Some(ZoneChannelRow {
                     resolved: Some(r),
                     shortcut,
+                    guild_recruitment,
                     ..
-                }) => (r, shortcut),
-                None => (key.clone(), key),
+                }) => (r, shortcut, guild_recruitment),
+                None => (key.clone(), key, false),
             };
-            crate::script::model_mut_of(lua).strip_window_channel(&strip_key);
+            let mut model = crate::script::model_mut_of(lua);
+            // The verb's manual leave on the `GUILD_REQ` row stores STANDARD (`0x50950d`-`0x509525`).
+            if guild_row {
+                manual_reset(&mut model);
+            }
+            model.strip_window_channel(&strip_key);
+            drop(model);
             push(lua, ChannelCommand::Leave { name: wire });
             Ok(())
         })?,
@@ -504,6 +514,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
+/// A manual join or leave typed as the `GUILD_REQ` row's Shortcut: the latch to STANDARD.
+fn manual_reset(model: &mut super::Model) {
+    if model.guild_recruitment_mode != 0 {
+        model.guild_recruitment_mode = 0;
+        model.guild_recruitment_changed = true;
+    }
+}
+
 /// The joins' shared body: `name` resolved against the zone catalog by Shortcut, the window
 /// registration and the queued [`ChannelCommand::Join`], a matched row's password dropped. `None`
 /// is a refusal that sends nothing: a space in the name, or a row with no zone text.
@@ -535,8 +553,16 @@ fn join_by_name(
             id,
             resolved,
             shortcut,
+            guild_recruitment,
             ..
-        }) => (id, resolved, shortcut),
+        }) => {
+            // The verb's manual join on the `GUILD_REQ` row stores STANDARD through the mode
+            // setter's join leg, which leaves nothing and signals nothing (`0x507bd9`-`0x507bea`).
+            if guild_recruitment {
+                manual_reset(&mut crate::script::model_mut_of(lua));
+            }
+            (id, resolved, shortcut)
+        }
     };
     // The reference takes the frame number less one (a missing one reads -1) and skips a window
     // registration for anything outside the ten chat windows.
@@ -582,6 +608,7 @@ mod command_tests {
                 resolved: Some("General - Elwynn Forest".into()),
                 listed: true,
                 auto_join: false,
+                guild_recruitment: false,
             },
             ZoneChannelRow {
                 id: 2,
@@ -589,6 +616,7 @@ mod command_tests {
                 resolved: None,
                 listed: false,
                 auto_join: false,
+                guild_recruitment: false,
             },
         ]
     }
@@ -696,6 +724,67 @@ mod command_tests {
             // The joins went out whatever the frame argument: five, as this catalog's Trade is the
             // nil leg, which registers nothing either.
             assert_eq!(s.take_channel_commands().len(), 5);
+        });
+    }
+
+    /// The manual verbs reset the guild-recruitment latch only when the typed key is the
+    /// `GUILD_REQ` row's Shortcut (`0x509494`, `0x50950d`-`0x509525`; `0x507b19`,
+    /// `0x507bd9`-`0x507bea`): a number naming its record, or the composed name, leaves it AUTO.
+    #[test]
+    fn only_the_typed_shortcut_resets_the_guild_recruitment_latch() {
+        let mut s = UiScript::new().unwrap();
+        let recruitment = ZoneChannelRow {
+            id: 25,
+            shortcut: "GuildRecruitment".into(),
+            resolved: Some("GuildRecruitment - City".into()),
+            listed: true,
+            auto_join: false,
+            guild_recruitment: true,
+        };
+        let mut view = crate::script::live::TestView {
+            zone_channels: vec![recruitment],
+            channel_slots: vec![Some(crate::script::ChannelSlotInfo {
+                name: "GuildRecruitment - City".into(),
+                shortcut: None,
+                active: true,
+                flags: 0,
+                instance: 0,
+            })],
+            ..Default::default()
+        };
+        s.with_live(&mut view, |s| {
+            s.set_guild_recruitment_mode(1);
+            s.run("LeaveChannelByName('1') LeaveChannelByName(1)")
+                .unwrap();
+            assert_eq!(
+                s.take_channel_commands(),
+                vec![
+                    ChannelCommand::Leave {
+                        name: "GuildRecruitment - City".into()
+                    };
+                    2
+                ]
+            );
+            assert_eq!(s.guild_recruitment_mode(), 1, "the number leg: AUTO kept");
+            s.run("LeaveChannelByName('GuildRecruitment - City')")
+                .unwrap();
+            assert_eq!(
+                s.guild_recruitment_mode(),
+                1,
+                "the composed name: AUTO kept"
+            );
+            s.run("JoinChannelByName('GuildRecruitment - City')")
+                .unwrap();
+            assert_eq!(
+                s.guild_recruitment_mode(),
+                1,
+                "a custom-name join: AUTO kept"
+            );
+            s.run("JoinChannelByName('guildrecruitment')").unwrap();
+            assert_eq!(s.guild_recruitment_mode(), 0, "the typed Shortcut's join");
+            s.set_guild_recruitment_mode(1);
+            s.run("LeaveChannelByName('GUILDRECRUITMENT')").unwrap();
+            assert_eq!(s.guild_recruitment_mode(), 0, "the typed Shortcut's leave");
         });
     }
 

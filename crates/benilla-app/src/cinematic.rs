@@ -84,6 +84,12 @@ impl Cinematic {
         self.playing.is_some()
     }
 
+    /// A trigger waits on the world (`[0xc9eaac]`, `0x6e2f73`), read by the zone text's update
+    /// (`0x520677`).
+    pub(crate) fn is_waiting(&self) -> bool {
+        self.pending.is_some()
+    }
+
     /// The shot on screen: `(run, shot index, narration sound id)`, keyed on [`Playing::run`] so a
     /// re-trigger counts as a new shot.
     pub(crate) fn playing_shot(&self) -> Option<(u64, usize, u32)> {
@@ -578,6 +584,12 @@ fn feed_ui(
         },
         vec![],
     );
+    // The end's chat zone update follows its event (`0x51d7d8`, `0x51d915`).
+    if !playing {
+        if let Some(ui) = script.queue() {
+            ui.world(crate::ui_chat::zone_update_after_cinematic);
+        }
+    }
 }
 
 /// Each Lua `OpeningCinematic()` is one empty `CMSG_OPENING_CINEMATIC`; the server answers, if at

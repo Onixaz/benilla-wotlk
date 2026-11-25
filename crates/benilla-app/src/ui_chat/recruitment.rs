@@ -3,12 +3,11 @@
 //! guild-recruitment mode) and once the chat is ready (`[0xbcefe8]`), with the active player held
 //! and the `GUILD_REQ` row found (`0x4fe260`): a guilded player leaves a held record and an
 //! unguilded one with no record joins it, the row's Shortcut composed as the channel verbs compose
-//! it; both then signal `UPDATE_CHAT_WINDOWS`. It runs at the end of each zone update (`0x508254`),
-//! from the mode setter's move to 1 (`0x508282`), at the active player's guild id change
-//! (`0x6e1beb`) and at every player object's init, the active player's and any other's
+//! it; both then signal `UPDATE_CHAT_WINDOWS`. Each caller runs it in its own step: the zone
+//! update's tail (`0x508254`), the mode setter's move to 1 (`0x508282`), the chat cache's mode line
+//! (`0x5087dd`), the active player's guild id handler (`0x6e1beb`) and every player object's init
 //! (`0x6e82c5`).
 
-#[cfg(test)]
 use benilla_ui::script::UiScript;
 use bevy::prelude::*;
 
@@ -18,104 +17,146 @@ use crate::net::{NetCommands, ObjectStore, SelfPlayer};
 use super::channels::ZoneChannelWalk;
 use super::edit::ChannelState;
 
-/// The cascade's own state: whether a run is owed, and the guild id its watcher last saw.
-#[derive(Resource, Default)]
-pub(crate) struct GuildRecruitmentCascade {
-    /// A run is owed by one of its callers.
-    pending: bool,
-    /// The last `PLAYER_GUILDID` seen; `None` makes the first sight a change.
-    last_guild_id: Option<u32>,
-    /// A `guildRecruitmentChannel` move the cascade system applies, as it owns the VM.
-    cvar: Option<u8>,
+/// Whether the chat is ready (`[0xbcefe8]`), set by the first zone update's walk (`0x508249`).
+fn ready(world: &World) -> bool {
+    world
+        .get_resource::<ZoneChannelWalk>()
+        .is_some_and(ZoneChannelWalk::ready)
 }
 
-impl GuildRecruitmentCascade {
-    /// One of the cascade's callers ran: a zone update, the mode setter, a player's init.
-    pub(crate) fn request(&mut self) {
-        self.pending = true;
-    }
+/// The VM's handle from the `World`, for a step that holds none; `None` with no VM, where there is
+/// no chat to act on.
+fn world_vm(world: &World) -> Option<UiScript> {
+    world
+        .get_non_send_resource::<UiScript>()
+        .map(UiScript::share)
+}
 
-    /// The active player's guild id handler (`0x6e1bb0`): a moved id runs the cascade (`0x6e1beb`).
-    pub(super) fn observe_guild_id(&mut self, guild_id: u32) -> bool {
-        if self.last_guild_id == Some(guild_id) {
-            return false;
-        }
-        self.last_guild_id = Some(guild_id);
-        self.pending = true;
-        true
-    }
-
-    /// Session end: forget the owed run, the last guild id and a queued CVar move.
-    pub(super) fn clear_session(&mut self) {
-        self.pending = false;
-        self.last_guild_id = None;
-        self.cvar = None;
+/// The cascade (`0x507d30`) as a step of its caller, on the `World`'s VM.
+pub(crate) fn update_guild_status_step(world: &mut World) {
+    if let Some(mut vm) = world_vm(world) {
+        update_guild_status(world, &mut vm);
     }
 }
 
-/// `guildRecruitmentChannel`'s change callback (`0x512750`), queued for
-/// [`guild_recruitment_cascade`]. Before the chat cache seats the latch it is dropped: the restore
-/// overwrites the mode (`0x508320`).
-pub(crate) fn on_cvar(
-    ev: On<crate::cvars::CvarChanged>,
-    mut state: ResMut<GuildRecruitmentCascade>,
-    channels: Res<ChannelState>,
-) {
-    if ev.is("guildRecruitmentChannel") && channels.zone_mask.is_some() {
-        state.cvar = Some(ev.num().clamp(0.0, 255.0) as u8);
-    }
-}
-
-/// The cascade after the zone walk, the tail of the zone update. It calls Lua only with the
-/// `World` lent: the mode latch and the join's window entry are read and written so, the leave's
-/// strip is a plain model write, and `UPDATE_CHAT_WINDOWS` fires in its turn.
-pub(super) fn guild_recruitment_cascade(world: &mut World) {
-    if world
-        .get_non_send_resource::<benilla_ui::script::UiScript>()
-        .is_none()
-    {
+/// The cascade on `vm`, the calling VM's handle: its gates and its join or leave, then
+/// `UPDATE_CHAT_WINDOWS` with the `World` lent, its listeners run in the caller (`0x81b530`).
+pub(crate) fn update_guild_status(world: &mut World, vm: &mut UiScript) {
+    // AUTO (`0x507d36`) and the ready flag (`0x507d43`), read at the call.
+    if vm.guild_recruitment_mode() != 1 || !ready(world) {
         return;
     }
-    // The mode setter (`0x508260`), called with 0: unmoved is a no-op (`0x50826c`), and before the
-    // chat is ready it only stores the mode (`0x50826e`); then 1 runs the cascade (`0x508282`) and
-    // 0 leaves the channel and refreshes the windows (`0x50828d`-`0x5082ab`).
-    let mode = world
-        .get_resource_mut::<GuildRecruitmentCascade>()
-        .and_then(|mut s| s.cvar.take());
-    if let Some(mode) = mode {
-        let moved = crate::ui_script::safe_world::lend(world, |s| {
-            s.set_guild_recruitment_mode_from_cvar(mode)
-        });
-        let ready = world
-            .get_resource::<ZoneChannelWalk>()
-            .is_some_and(ZoneChannelWalk::ready);
-        if moved == Some(true) && ready {
-            if mode == 1 {
-                world.resource_mut::<GuildRecruitmentCascade>().request();
-            } else if let Ok(Some(relist)) = world.run_system_cached(cvar_leave) {
-                if relist {
-                    crate::ui_script::safe_world::lend(world, |s| s.channels_updated());
-                }
-                crate::ui_script::safe_world::raise(world, "UPDATE_CHAT_WINDOWS", vec![]);
-            }
-        }
+    if let Ok(Some(ran)) = world.run_system_cached_with(cascade_run, vm.share()) {
+        signal_chat_windows(world, vm, ran);
     }
-    let auto = crate::ui_script::safe_world::lend(world, |s| s.guild_recruitment_mode() == 1)
-        .unwrap_or(false);
-    let Ok(Some(ran)) = world.run_system_cached_with(cascade_run, auto) else {
-        return;
-    };
-    crate::ui_script::safe_world::lend(world, |s| {
+}
+
+/// What ends an acting cascade or the setter's leave, with the `World` lent: the join's window
+/// entry or the leave's relist (`0x509680`), then `UPDATE_CHAT_WINDOWS`, its listeners run in the
+/// caller (`0x507db3`, `0x507df6`, `0x5082ab`).
+fn signal_chat_windows(world: &mut World, vm: &mut UiScript, ran: CascadeRan) {
+    crate::ui_script::safe_world::lend_to(world, vm, |s| {
         match ran {
             CascadeRan::Joined(Some((shortcut, id))) => {
                 s.register_chat_window_channel(0, &shortcut, id);
             }
-            // The leave's relist comes inside it, ahead of the event (`0x509680`).
             CascadeRan::Left { relist: true } => s.channels_updated(),
             _ => {}
         }
         s.fire_event("UPDATE_CHAT_WINDOWS", vec![]);
     });
+}
+
+/// The mode setter (`0x508260`) from `guildRecruitmentChannel`'s callback (`0x512750`), which
+/// passes `fromJoin` 0, on the calling VM: unmoved is a no-op (`0x50826c`), a move is stored
+/// (`0x508275`) and before the chat is ready that is all (`0x50826e`); then 1 runs the cascade
+/// (`0x508282`) and any other value leaves the row's channel and refreshes the windows
+/// (`0x50828d`-`0x5082ab`).
+pub(crate) fn set_mode_from_cvar(world: &mut World, vm: &mut UiScript, mode: i32) {
+    if !vm.set_guild_recruitment_mode_from_cvar(mode) || !ready(world) {
+        return;
+    }
+    if mode == 1 {
+        update_guild_status(world, vm);
+        return;
+    }
+    if let Ok(Some(relist)) = world.run_system_cached_with(cvar_leave, vm.share()) {
+        signal_chat_windows(world, vm, CascadeRan::Left { relist });
+    }
+}
+
+/// A host-side `guildRecruitmentChannel` move (a config fold, the console): the callback on the
+/// `World`'s VM; a script's `SetCVar` ran it in its call.
+pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut commands: Commands) {
+    if ev.from_vm || !ev.is("guildRecruitmentChannel") {
+        return;
+    }
+    let mode = benilla_ui::script::sstr_to_int(&ev.new);
+    commands.queue(move |world: &mut World| {
+        if let Some(mut vm) = world_vm(world) {
+            set_mode_from_cvar(world, &mut vm, mode);
+        }
+    });
+}
+
+/// The chat's zone update (`0x508090`) as a step of its caller, on the `World`'s VM.
+pub(crate) fn zone_update_step(world: &mut World) {
+    if let Some(mut vm) = world_vm(world) {
+        zone_update(world, &mut vm);
+    }
+}
+
+/// The active player's flags handler on a landing: the zone update unless a cinematic runs
+/// (`0x728ff9`-`0x729002`).
+pub(crate) fn zone_update_on_landing(world: &mut World) {
+    if !world
+        .get_resource::<crate::cinematic::Cinematic>()
+        .is_some_and(crate::cinematic::Cinematic::is_playing)
+    {
+        zone_update_step(world);
+    }
+}
+
+/// The cinematic's end, past `CINEMATIC_STOP`: the zone update with the active player held and
+/// off a taxi (`0x51d8e2`-`0x51d915`).
+pub(crate) fn zone_update_after_cinematic(world: &mut World) {
+    let flags = world
+        .query_filtered::<&ObjectStore, With<SelfPlayer>>()
+        .iter(world)
+        .next()
+        .map(|s| s.0.unit_flags());
+    if zone_text_runs_zone_update(flags, false, false) {
+        zone_update_step(world);
+    }
+}
+
+/// Whether the zone text's update on a new, non-empty zone text runs the chat's zone update
+/// (`0x5205f0`-`0x520680`): with the active player held (`0x520656`), off a taxi (`0x52066a`), no
+/// cinematic running (`0x52066c`) and no trigger waiting on the world (`0x52067e`); `flags` is the
+/// active player's flags word.
+pub(crate) fn zone_text_runs_zone_update(
+    flags: Option<u32>,
+    cinematic: bool,
+    waiting: bool,
+) -> bool {
+    flags.is_some_and(|f| f & UNIT_FLAG_TAXI_FLIGHT == 0) && !cinematic && !waiting
+}
+
+/// `UNIT_FIELD_FLAGS` bit `0x100000`, taxi flight.
+const UNIT_FLAG_TAXI_FLIGHT: u32 = 0x10_0000;
+
+/// The zone update once the walk has run: with the chat cache loaded (`[0xbcefe4]`, `0x50809f`)
+/// it ends in the cascade, at once for a ready chat (`0x5080ca` -> `0x508254`) and for an empty
+/// zone text (`0x5080ac`), where an unready chat returns in the cascade (`0x507d43`). Before the
+/// chat is ready the update is the walk, [`super::channels::zone_channel_walk`], which ends in the
+/// cascade itself.
+pub(crate) fn zone_update(world: &mut World, vm: &mut UiScript) {
+    let loaded = world
+        .get_resource::<ChannelState>()
+        .is_some_and(|c| c.zone_mask.is_some());
+    if loaded && ready(world) {
+        update_guild_status(world, vm);
+    }
 }
 
 /// What an acting cascade run did, for the events that follow it.
@@ -129,11 +170,11 @@ enum CascadeRan {
 /// The mode setter's leave at 0 (`0x50828d` -> `0x5093f0`), with the row found: `None` without
 /// one, else whether the leave freed a record and relists.
 fn cvar_leave(
+    In(mut vm): In<UiScript>,
     mut channels: ResMut<ChannelState>,
     areas: Option<Res<AreaTableRes>>,
     zone: Option<Res<crate::area::ZoneIds>>,
     commands: Res<NetCommands>,
-    mut vm: NonSendMut<benilla_ui::script::UiScript>,
 ) -> Option<bool> {
     let row = channels
         .channels
@@ -159,31 +200,18 @@ fn cvar_leave(
     )
 }
 
-/// One run of the cascade under the `auto` latch (`0x507d30`): `None` when it returns before
-/// acting, else what it did ahead of `UPDATE_CHAT_WINDOWS`.
+/// One run of the cascade past its AUTO and ready gates, on the calling VM: `None` when it
+/// returns before acting, else what it did ahead of `UPDATE_CHAT_WINDOWS`.
 fn cascade_run(
-    In(auto): In<bool>,
-    mut state: ResMut<GuildRecruitmentCascade>,
+    In(mut vm): In<UiScript>,
     mut channels: ResMut<ChannelState>,
-    walk: Res<ZoneChannelWalk>,
     (areas, zone): (Option<Res<AreaTableRes>>, Option<Res<crate::area::ZoneIds>>),
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
-    (commands, mut vm): (Res<NetCommands>, NonSendMut<benilla_ui::script::UiScript>),
+    commands: Res<NetCommands>,
 ) -> Option<CascadeRan> {
-    // The active player's guild id handler, for as long as the object is held.
-    let guild_id = self_q.iter().next().map(|s| s.0.player_guild_id());
-    if let Some(id) = guild_id {
-        state.observe_guild_id(id);
-    }
-    if !std::mem::take(&mut state.pending) {
-        return None;
-    }
-    // AUTO (`0x507d36`), the ready flag (`0x507d43`), the active player (`0x507d70`), the
-    // `GUILD_REQ` row (`0x507d7d`).
-    if !auto || !walk.ready() {
-        return None;
-    }
-    let guild_id = guild_id?;
+    // The active player (`0x507d70`), its guild id read off its descriptor at the call
+    // (`0x507d8a`), then the `GUILD_REQ` row (`0x507d7d`).
+    let guild_id = self_q.iter().next()?.0.player_guild_id();
     let row = channels
         .channels
         .rows()
@@ -254,7 +282,7 @@ fn cascade_run(
 fn cascade_leave(
     channels: &mut ChannelState,
     commands: &NetCommands,
-    vm: &mut benilla_ui::script::UiScript,
+    vm: &mut UiScript,
     row: &benilla_formats::ChatChannelRow,
     areas: Option<&AreaTableRes>,
     zone: u32,
@@ -413,39 +441,37 @@ mod tests {
         assert_eq!(channels.number_of("GuildRecruitment - City"), None);
     }
 
-    #[test]
-    fn the_watcher_fires_on_first_sight_and_on_change() {
-        let mut c = GuildRecruitmentCascade::default();
-        assert!(!c.pending);
-        assert!(c.observe_guild_id(0), "first sight, even of 'no guild'");
-        assert!(c.pending);
-        c.pending = false;
-        assert!(!c.observe_guild_id(0), "unchanged");
-        assert!(!c.pending);
-        assert!(c.observe_guild_id(42), "joined a guild");
-        assert!(c.pending);
-        c.clear_session();
-        assert!(!c.pending);
-        assert!(c.observe_guild_id(42), "a new session sees it fresh");
-    }
-
-    /// An app running the cascade for an unguilded active player in `zone`, the chat ready.
-    fn cascade_app(zone: u32) -> (App, crossbeam_channel::Receiver<crate::net::ClientCommand>) {
-        let mut app = App::new();
+    /// A `World` for an unguilded active player in `zone`, the chat ready and AUTO, with a VM whose
+    /// `UPDATE_CHAT_WINDOWS` listener records window 1's first channel; `guildRecruitmentChannel`
+    /// is registered, as the CVar table seeds it.
+    fn cascade_world(
+        zone: u32,
+    ) -> (
+        World,
+        crossbeam_channel::Receiver<crate::net::ClientCommand>,
+    ) {
+        let mut world = World::new();
         let (tx, rx) = crossbeam_channel::unbounded();
-        app.insert_resource(NetCommands(tx))
-            .insert_resource(areas())
-            .insert_resource(crate::area::ZoneIds { zone, area: zone })
-            .insert_resource(channels())
-            .insert_resource(ZoneChannelWalk::ready_in(zone))
-            .init_resource::<GuildRecruitmentCascade>()
-            .init_resource::<crate::ui_script::live::UiEvents>()
-            .add_systems(Update, guild_recruitment_cascade);
-        app.world_mut().spawn((
+        world.insert_resource(NetCommands(tx));
+        world.insert_resource(areas());
+        world.insert_resource(crate::area::ZoneIds { zone, area: zone });
+        world.insert_resource(channels());
+        world.insert_resource(ZoneChannelWalk::ready_in(zone));
+        world.init_resource::<crate::ui_script::live::UiEvents>();
+        world.spawn((
             SelfPlayer,
             ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[])),
         ));
         let mut script = UiScript::new().expect("VM");
+        script.seed_cvars(vec![benilla_ui::script::SeededCvar {
+            name: "guildRecruitmentChannel".into(),
+            value: "1".into(),
+            default: "1".into(),
+            device_default: None,
+            latched: false,
+            per_account: true,
+            per_character: false,
+        }]);
         script.set_guild_recruitment_mode(1);
         script
             .run(
@@ -453,8 +479,8 @@ mod tests {
                  f:SetScript('OnEvent', function() SEEN[#SEEN + 1] = tostring((GetChatWindowChannels(1))) end)",
             )
             .unwrap();
-        app.insert_non_send_resource(script);
-        (app, rx)
+        world.insert_non_send_resource(script);
+        (world, rx)
     }
 
     fn joins(rx: &crossbeam_channel::Receiver<crate::net::ClientCommand>) -> Vec<String> {
@@ -466,11 +492,34 @@ mod tests {
             .collect()
     }
 
-    fn seen(app: &App) -> String {
-        app.world()
+    fn leaves(rx: &crossbeam_channel::Receiver<crate::net::ClientCommand>) -> Vec<String> {
+        rx.try_iter()
+            .filter_map(|c| match c {
+                crate::net::ClientCommand::LeaveChannel { name, .. } => Some(name),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn seen(world: &World) -> String {
+        world
             .non_send_resource::<UiScript>()
             .eval("return table.concat(SEEN, ',')")
             .unwrap()
+    }
+
+    /// `chunk` run on the `World`'s VM with the `World` lent, as a script runs.
+    fn run(world: &mut World, chunk: &str) {
+        crate::ui_script::safe_world::lend(world, |s| s.run(chunk).expect("the chunk runs"));
+    }
+
+    fn set_guild_id(world: &mut World, id: u32) {
+        let mut q = world.query_filtered::<&mut ObjectStore, With<SelfPlayer>>();
+        let mut store = q.single_mut(world).expect("our player");
+        store.0 = benilla_protocol::ObjectFields::from_pairs(&[(
+            benilla_protocol::field::FIELD_PLAYER_GUILDID,
+            id,
+        )]);
     }
 
     /// The join arm writes the record and window 1's list, then signals `UPDATE_CHAT_WINDOWS`
@@ -478,10 +527,10 @@ mod tests {
     /// a capital the Shortcut composes with the city record's name.
     #[test]
     fn the_joins_listener_reads_the_windows_new_entry() {
-        let (mut app, rx) = cascade_app(CAPITAL);
-        app.update();
+        let (mut world, rx) = cascade_world(CAPITAL);
+        update_guild_status_step(&mut world);
         assert_eq!(
-            seen(&app),
+            seen(&world),
             "GuildRecruitment",
             "the listener reads the joined entry"
         );
@@ -492,45 +541,171 @@ mod tests {
     /// join composes with the zone text, as the verbs compose (`0x507b94`).
     #[test]
     fn outside_a_capital_the_join_takes_the_zone_text() {
-        let (mut app, rx) = cascade_app(FOREST);
-        app.update();
+        let (mut world, rx) = cascade_world(FOREST);
+        update_guild_status_step(&mut world);
         assert_eq!(joins(&rx), ["GuildRecruitment - Elwynn Forest"]);
-        assert_eq!(seen(&app), "GuildRecruitment");
+        assert_eq!(seen(&world), "GuildRecruitment");
     }
 
-    /// Any player object's init runs the cascade (`0x6e82c5`): with the record held it does
-    /// nothing (`0x507dc6`); once the record is gone, a remote player's arrival joins again.
+    /// Each caller runs the cascade at its own step (`0x6e82c5`): with the record held it does
+    /// nothing (`0x507dc6`); once the record is gone, the next caller joins again.
     #[test]
-    fn a_players_init_reruns_the_cascade() {
-        let (mut app, rx) = cascade_app(CAPITAL);
-        app.update();
+    fn each_caller_runs_the_cascade_once() {
+        let (mut world, rx) = cascade_world(CAPITAL);
+        update_guild_status_step(&mut world);
         assert_eq!(joins(&rx).len(), 1);
-        app.world_mut()
-            .resource_mut::<GuildRecruitmentCascade>()
-            .request();
-        app.update();
+        update_guild_status_step(&mut world);
         assert!(joins(&rx).is_empty(), "the record is held: nothing");
-        assert_eq!(seen(&app), "GuildRecruitment", "and no event either");
-        app.world_mut()
+        assert_eq!(seen(&world), "GuildRecruitment", "and no event either");
+        world
             .resource_mut::<ChannelState>()
             .free_slot("GuildRecruitment - City");
-        app.world_mut()
-            .resource_mut::<GuildRecruitmentCascade>()
-            .request();
-        app.update();
+        update_guild_status_step(&mut world);
         assert_eq!(joins(&rx), ["GuildRecruitment - City"]);
+    }
+
+    /// The guild id is read off the active player's descriptor at the call (`0x507d8a`): a guilded
+    /// player leaves the held record, then the event fires (`0x507da7`, `0x507db3`).
+    #[test]
+    fn a_guilded_player_leaves_the_held_record_at_the_call() {
+        let (mut world, rx) = cascade_world(CAPITAL);
+        update_guild_status_step(&mut world);
+        assert_eq!(joins(&rx).len(), 1);
+        set_guild_id(&mut world, 42);
+        update_guild_status_step(&mut world);
+        assert_eq!(leaves(&rx), ["GuildRecruitment - City"]);
+        assert_eq!(
+            seen(&world),
+            "GuildRecruitment,nil",
+            "the strip ran before the event"
+        );
     }
 
     /// Before the chat is ready (`0x507d43`) or under STANDARD (`0x507d36`) a run does nothing and
     /// is not kept for later: each caller runs the cascade once.
     #[test]
     fn a_run_before_the_ready_flag_is_spent() {
-        let (mut app, rx) = cascade_app(CAPITAL);
-        app.insert_resource(ZoneChannelWalk::default());
-        app.update();
+        let (mut world, rx) = cascade_world(CAPITAL);
+        world.insert_resource(ZoneChannelWalk::default());
+        update_guild_status_step(&mut world);
         assert!(joins(&rx).is_empty());
-        app.insert_resource(ZoneChannelWalk::ready_in(CAPITAL));
-        app.update();
-        assert!(joins(&rx).is_empty(), "the earlier run is not retried");
+        world.insert_resource(ZoneChannelWalk::ready_in(CAPITAL));
+        world
+            .non_send_resource_mut::<UiScript>()
+            .set_guild_recruitment_mode(0);
+        update_guild_status_step(&mut world);
+        assert!(joins(&rx).is_empty(), "STANDARD: nothing");
+        assert_eq!(seen(&world), "");
+    }
+
+    /// `SetCVar("guildRecruitmentChannel", ...)` runs its callback inside the call (`0x51275f`):
+    /// 0 leaves the row's channel and fires `UPDATE_CHAT_WINDOWS` before `SetCVar` returns
+    /// (`0x50829f`, `0x5082ab`); 1 runs the cascade there (`0x508282`); an unmoved value is a no-op
+    /// (`0x50826c`).
+    #[test]
+    fn set_cvar_runs_the_mode_setter_inside_the_call() {
+        let (mut world, rx) = cascade_world(CAPITAL);
+        update_guild_status_step(&mut world);
+        assert_eq!(joins(&rx).len(), 1);
+        run(
+            &mut world,
+            "SetCVar('guildRecruitmentChannel', '0') AFTER_LEAVE = table.concat(SEEN, ',')",
+        );
+        let after: String = world
+            .non_send_resource::<UiScript>()
+            .eval("return AFTER_LEAVE")
+            .unwrap();
+        assert_eq!(
+            after, "GuildRecruitment,nil",
+            "the event fired inside SetCVar"
+        );
+        assert_eq!(leaves(&rx), ["GuildRecruitment - City"]);
+        assert_eq!(
+            world
+                .non_send_resource::<UiScript>()
+                .guild_recruitment_mode(),
+            0
+        );
+        run(&mut world, "SetCVar('guildRecruitmentChannel', '0')");
+        assert_eq!(seen(&world), "GuildRecruitment,nil", "unmoved: nothing");
+        world
+            .resource_mut::<ChannelState>()
+            .free_slot("GuildRecruitment - City");
+        run(
+            &mut world,
+            "SetCVar('guildRecruitmentChannel', '1') AFTER_JOIN = #SEEN",
+        );
+        let after: i64 = world
+            .non_send_resource::<UiScript>()
+            .eval("return AFTER_JOIN")
+            .unwrap();
+        assert_eq!(after, 3, "the cascade's event fired inside SetCVar");
+        assert_eq!(joins(&rx), ["GuildRecruitment - City"]);
+    }
+
+    /// Before the chat is ready the setter only stores the latch (`0x508275`, `0x50826e`).
+    #[test]
+    fn set_cvar_before_the_ready_flag_only_stores() {
+        let (mut world, rx) = cascade_world(CAPITAL);
+        world.insert_resource(ZoneChannelWalk::default());
+        run(&mut world, "SetCVar('guildRecruitmentChannel', '0')");
+        assert_eq!(
+            world
+                .non_send_resource::<UiScript>()
+                .guild_recruitment_mode(),
+            0
+        );
+        assert!(leaves(&rx).is_empty());
+        assert_eq!(seen(&world), "");
+    }
+
+    /// The zone update ends in the cascade once the chat cache is loaded (`0x50809f`) and the chat
+    /// ready (`0x5080ca`); a landing skips it while a cinematic runs (`0x728ff9`), and a cinematic's
+    /// end skips it on a taxi (`0x51d913`).
+    #[test]
+    fn the_zone_updates_callers_run_the_cascade() {
+        let (mut world, rx) = cascade_world(CAPITAL);
+        world.resource_mut::<ChannelState>().zone_mask = None;
+        zone_update_step(&mut world);
+        assert!(joins(&rx).is_empty(), "the chat cache is not loaded");
+        world.resource_mut::<ChannelState>().zone_mask = Some(0);
+        world.insert_resource(crate::cinematic::Cinematic::playing_for_test());
+        zone_update_on_landing(&mut world);
+        assert!(joins(&rx).is_empty(), "a cinematic runs");
+        world.insert_resource(crate::cinematic::Cinematic::default());
+        zone_update_on_landing(&mut world);
+        assert_eq!(joins(&rx), ["GuildRecruitment - City"], "the landing's run");
+        world
+            .resource_mut::<ChannelState>()
+            .free_slot("GuildRecruitment - City");
+        let mut q = world.query_filtered::<&mut ObjectStore, With<SelfPlayer>>();
+        q.single_mut(&mut world).unwrap().0 = benilla_protocol::ObjectFields::from_pairs(&[(
+            benilla_protocol::field::FIELD_UNIT_FLAGS,
+            UNIT_FLAG_TAXI_FLIGHT,
+        )]);
+        zone_update_after_cinematic(&mut world);
+        assert!(joins(&rx).is_empty(), "still on a taxi");
+        q.single_mut(&mut world).unwrap().0 = benilla_protocol::ObjectFields::from_pairs(&[]);
+        zone_update_after_cinematic(&mut world);
+        assert_eq!(
+            joins(&rx),
+            ["GuildRecruitment - City"],
+            "the cinematic end's run"
+        );
+    }
+
+    /// The zone text's update runs the chat's zone update only with the active player held, off a
+    /// taxi, with no cinematic running and none waiting on the world (`0x520656`-`0x52067e`).
+    #[test]
+    fn the_zone_text_gates_its_zone_update() {
+        assert!(zone_text_runs_zone_update(Some(0), false, false));
+        assert!(!zone_text_runs_zone_update(None, false, false));
+        assert!(!zone_text_runs_zone_update(
+            Some(UNIT_FLAG_TAXI_FLIGHT),
+            false,
+            false
+        ));
+        assert!(!zone_text_runs_zone_update(Some(0), true, false));
+        assert!(!zone_text_runs_zone_update(Some(0), false, true));
     }
 }

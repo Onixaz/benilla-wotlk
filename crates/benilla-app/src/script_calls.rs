@@ -262,6 +262,18 @@ pub(crate) fn answer_in_call(
                 HostAnswer::Done
             },
         ),
+        // `guildRecruitmentChannel`'s callback inside its `SetCVar` (`0x51275f` -> `0x508260`).
+        HostAsk::GuildRecruitmentMode(mode) => {
+            let earlier = world
+                .get_resource_or_init::<crate::ui_script::live::UiEvents>()
+                .set_aside();
+            crate::ui_chat::set_guild_recruitment_mode(world, &mut UiScript::in_call(lua), mode);
+            crate::ui_script::live::fire_handler_events(world);
+            world
+                .resource_mut::<crate::ui_script::live::UiEvents>()
+                .put_back(earlier);
+            Some(HostAnswer::Done)
+        }
         // `SendAddonMessage`'s packet (`0x50071f`).
         HostAsk::AddonSend(send) => {
             crate::ui_chat::input::send_addon_message(world, send);

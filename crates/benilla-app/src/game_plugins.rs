@@ -1969,8 +1969,6 @@ pub(crate) mod schedule_tests {
         /// Filled only by a server reply to a click in the interface, or (noted in the reason)
         /// another player's act on us, which meets the login burst only by coincidence.
         PlayerRoundTrip,
-        /// Consumed in the window or not, the state is re-asked or re-derived once the UI is up.
-        SelfHealing,
         /// The publication is driven by a `VmMemo` diff, so a new VM re-derives and re-fires it.
         MemoLatched,
         /// Documented at the line as intentional.
@@ -2000,8 +1998,8 @@ pub(crate) mod schedule_tests {
          "`sends` exist only after Lua acknowledged, cleared or reset a flag, and go to the wire"),
         ("ui_chat.rs", "end_session_chat", Because::Deliberate,
          "the session end in `OnExit(InWorld)`: it empties the chat log and clears the game VM's windows, publishing nothing a VM waits for"),
-        ("ui_chat/recruitment.rs", "guild_recruitment_cascade", Because::SelfHealing,
-         "`pending` is set by the cascade's callers (a zone update, the mode setter, a player object's init, the guild id watcher) and spent by its next run, gates or not"),
+        ("ui_chat/recruitment.rs", "signal_chat_windows", Because::Deliberate,
+         "never scheduled: it ends the cascade or the mode setter inside its caller's step (a handler, the walk, a `SetCVar` call), as 12340 signals `UPDATE_CHAT_WINDOWS` there (`0x507db3`, `0x507df6`, `0x5082ab`)"),
         ("ui_gm_ticket.rs", "feed_gm_ticket", Because::MemoLatched,
          "`feed.vm: VmMemo<FedTicket>` counters restart per VM while `state.answers` keeps counting, so the latest answer is re-fired"),
         ("ui_inspect.rs", "feed_inspect", Because::MemoLatched,

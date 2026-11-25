@@ -118,7 +118,7 @@ pub(super) fn install_console_exec(lua: &Lua) -> mlua::Result<()> {
                 .cvars
                 .contains_key(&name.to_ascii_lowercase());
             if is_cvar && !value.is_empty() {
-                super::cvars::set_callback(lua, name);
+                super::cvars::set_callback(lua, name, value);
                 let mut model = crate::script::model_mut_of(lua);
                 super::cvars::write_cvar(&mut model, name, value.to_string());
             } else {

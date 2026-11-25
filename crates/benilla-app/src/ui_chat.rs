@@ -51,6 +51,9 @@ pub(crate) use away::AfkMirror;
 pub(crate) use broadcast::Broadcast;
 /// The channel records, mask and zone catalog the channel verbs read at the call.
 pub(crate) use channels::ChannelLive;
+/// The guild-recruitment cascade and the zone update's tail, run by their callers' steps.
+#[cfg(test)]
+pub(crate) use channels::ZoneChannelWalk;
 /// The zone walk's steps, which the characterization pins apply directly.
 #[cfg(test)]
 pub(crate) use channels::{apply_walk, WalkStep};
@@ -70,7 +73,11 @@ pub(crate) use feed::{
 pub(crate) use frames::{
     add_chat_line_in_call, add_chat_line_now, add_combat_line_now, ChatWindows,
 };
-pub(crate) use recruitment::GuildRecruitmentCascade;
+pub(crate) use recruitment::{
+    set_mode_from_cvar as set_guild_recruitment_mode, update_guild_status_step,
+    zone_text_runs_zone_update, zone_update_after_cinematic, zone_update_on_landing,
+    zone_update_step,
+};
 /// The per-character chat cache's restore, called from the world-entry UI load: its two events
 /// must precede the session's first chat line and `PLAYER_LOGIN`.
 pub(crate) use settings::restore_chat_looks;
@@ -93,7 +100,6 @@ impl Plugin for UiChatPlugin {
             .init_resource::<frames::ChatWindows>()
             .init_resource::<edit::ChannelState>()
             .init_resource::<channels::ZoneChannelWalk>()
-            .init_resource::<recruitment::GuildRecruitmentCascade>()
             .init_resource::<language::ChatLanguages>()
             // These DBC loads must follow `AssetSet::Open`: before it there is no chain, and each
             // silently loads nothing.
@@ -140,14 +146,12 @@ impl Plugin for UiChatPlugin {
             // The zone-channel auto-join, which vmangos leaves to the client. The disconnect clear
             // runs first, so a same-frame drop cannot leave the walk diffing stale membership.
             // After `AreaAuthoritySet`, since a stale area joins and leaves the wrong channels. The
-            // guild-recruitment cascade follows the walk: it is the tail of the zone-channel
-            // refresh.
+            // walk ends in the guild-recruitment cascade, the zone update's tail.
             .add_systems(
                 Update,
                 (
                     channels::end_session_channels_on_disconnect,
-                    channels::auto_join_zone_channels.in_set(crate::char_select::InWorldGated),
-                    recruitment::guild_recruitment_cascade.in_set(crate::char_select::InWorldGated),
+                    channels::zone_channel_walk.in_set(crate::char_select::InWorldGated),
                 )
                     .chain()
                     .in_set(crate::ui_script::UiPaint)

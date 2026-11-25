@@ -183,23 +183,6 @@ fn engine_verbs(
     out
 }
 
-/// A manual join or leave of `GuildRecruitment` turns its auto-join option off: the join and the
-/// leave clear it when the `ChatChannels.dbc` row has `flags & 0x20000` and the caller passes its
-/// flag, which the Lua bindings do and the cascade's own calls do not.
-fn manual_join_or_leave(
-    channels: &super::edit::ChannelState,
-    script: &mut benilla_ui::script::UiScript,
-    wire_name: &str,
-) {
-    let guild_row = channels
-        .channels
-        .row_for_name(wire_name)
-        .is_some_and(|r| r.is_guild_recruitment());
-    if guild_row && script.reset_guild_recruitment_mode() {
-        info!("chat: manual {wire_name:?} — auto-join guild recruitment channel switched off");
-    }
-}
-
 /// The lines a [`chat_arm`] adds, which [`drain_chat_input`] adds in its turn once the arm returns.
 #[derive(Resource, Default)]
 pub(crate) struct ArmLines(Vec<super::ChatLine>);
@@ -991,7 +974,6 @@ pub(crate) fn channel_arm(
             voice,
             permanent,
         } => {
-            manual_join_or_leave(&channels, &mut script, &name);
             // The record is found or claimed before the send, with no relist (`0x507a80`).
             match channels.claim_for_join(&name, 0) {
                 super::edit::JoinRecord::Claimed(n) => {
@@ -1007,9 +989,8 @@ pub(crate) fn channel_arm(
         }
         C::Leave { name } => {
             // `LeaveChannelByName` past its name (the binding resolved a number and composed a
-            // Shortcut). Only this path clears the zone mask and the custom re-join list.
-            // The mode reset reads the name before any record (`0x50951c`).
-            manual_join_or_leave(&channels, &mut script, &name);
+            // Shortcut, the guild-recruitment latch's reset with it). Only this path clears the
+            // zone mask and the custom re-join list.
             // The verb's leave sends only for a record in state 0, under the record's own name
             // (`0x5095b0`, `0x5095b8`-`0x5095c4`, `0x509600`).
             let Some(name) = channels

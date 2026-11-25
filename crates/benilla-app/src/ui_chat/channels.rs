@@ -15,7 +15,6 @@ use crate::area::AreaTableRes;
 use crate::net::NetCommands;
 
 use super::edit::{ChannelState, SlotState};
-use super::recruitment::GuildRecruitmentCascade;
 
 /// `AreaTable.dbc` flag `0x08`, the walk's city gate, set on the six capitals; vmangos names it
 /// `AREA_FLAG_SLAVE_CAPITAL`, "Allow trade channel" (`DBCEnums.h:58`).
@@ -45,15 +44,11 @@ pub(crate) struct ZoneChannelWalk {
     /// The top-level zone the session's one walk ran for, the reference's registered flag; `None`
     /// walks from scratch.
     at: Option<u32>,
-    /// The zone the walk may act on this frame, the reference's `ds:`, read by the walk and the
-    /// guild-recruitment cascade; `None` while a gate holds.
+    /// The zone the walk may act on this frame, the reference's `ds:`; `None` while a gate holds.
     pub(super) zone_id: Option<u32>,
     /// A character session is live: without it the logout frame, still `InWorld` with `at` just
     /// cleared, would join the zone being left.
     live: bool,
-    /// The zone the last zone update ran for (`[0xbceff0]`, `0x5080c5`): a new one is a zone update,
-    /// whose tail runs the guild-recruitment cascade (`0x508254`).
-    updated_for: Option<u32>,
 }
 
 impl ZoneChannelWalk {
@@ -65,12 +60,11 @@ impl ZoneChannelWalk {
 
     /// A session whose walk ran in `zone`, the chat ready.
     #[cfg(test)]
-    pub(super) fn ready_in(zone: u32) -> Self {
+    pub(crate) fn ready_in(zone: u32) -> Self {
         ZoneChannelWalk {
             at: Some(zone),
             zone_id: Some(zone),
             live: true,
-            updated_for: Some(zone),
         }
     }
 
@@ -79,20 +73,14 @@ impl ZoneChannelWalk {
         self.at = None;
         self.zone_id = None;
         self.live = false;
-        self.updated_for = None;
     }
 }
 
 /// End the channel session: the server leaves every channel with the session, so the next one
 /// starts in none. The verbs read the records live, so nothing reaches the VM. The mask stays, as
 /// it belongs to the character's file.
-fn end_channel_session(
-    channels: &mut ChannelState,
-    walk: &mut ZoneChannelWalk,
-    cascade: &mut GuildRecruitmentCascade,
-) {
+fn end_channel_session(channels: &mut ChannelState, walk: &mut ZoneChannelWalk) {
     walk.clear_session();
-    cascade.clear_session();
     channels.joined.clear();
 }
 
@@ -100,9 +88,8 @@ fn end_channel_session(
 pub(super) fn end_session_channels(
     mut channels: ResMut<ChannelState>,
     mut walk: ResMut<ZoneChannelWalk>,
-    mut cascade: ResMut<GuildRecruitmentCascade>,
 ) {
-    end_channel_session(&mut channels, &mut walk, &mut cascade);
+    end_channel_session(&mut channels, &mut walk);
 }
 
 /// The other session end, a dead socket: a recoverable drop never leaves `InWorld`, but the
@@ -110,13 +97,12 @@ pub(super) fn end_session_channels(
 pub(super) fn end_session_channels_on_disconnect(
     mut channels: ResMut<ChannelState>,
     mut walk: ResMut<ZoneChannelWalk>,
-    mut cascade: ResMut<GuildRecruitmentCascade>,
     mut disconnects: MessageReader<crate::net::DisconnectedMessage>,
 ) {
     if disconnects.read().next().is_none() {
         return;
     }
-    end_channel_session(&mut channels, &mut walk, &mut cascade);
+    end_channel_session(&mut channels, &mut walk);
 }
 
 /// What the channel verbs read and write at the call: the channel records, the `ZONECHANNELS`
@@ -444,7 +430,18 @@ fn zone_is_settled(player: Option<&crate::player::Player>) -> bool {
     player.is_some_and(|p| p.active && !p.settling)
 }
 
-/// The walk, run once per session. It composes from the real zone name, the `GetRealZoneText`
+/// The zone update before the chat is ready: the walk, then its tail, the ready flag
+/// (`0x508249`) and the guild-recruitment cascade (`0x508254`), in one step.
+pub(super) fn zone_channel_walk(world: &mut World) {
+    if world
+        .run_system_cached(auto_join_zone_channels)
+        .unwrap_or(false)
+    {
+        super::recruitment::update_guild_status_step(world);
+    }
+}
+
+/// The walk, run once per session; whether it walked. It composes from the real zone name, the `GetRealZoneText`
 /// cache, never the display text, which the indoor override renames.
 ///
 /// The reference calls its walk from each zone-text update, which acts only until its registered
@@ -462,9 +459,9 @@ pub(super) fn auto_join_zone_channels(
         Option<Res<crate::player::Player>>,
         Option<Res<crate::cinematic::Cinematic>>,
     ),
-    (mut walk, mut cascade): (ResMut<ZoneChannelWalk>, ResMut<GuildRecruitmentCascade>),
+    mut walk: ResMut<ZoneChannelWalk>,
     mut entered: MessageReader<crate::net::EnteredWorldMessage>,
-) {
+) -> bool {
     let (player, cinematic) = (&body.0, &body.1);
     // World entry arms the walk; the session-end edges disarm it.
     if entered.read().next().is_some() {
@@ -491,25 +488,20 @@ pub(super) fn auto_join_zone_channels(
         .map(|row| (row.name.clone(), row.flags & AREA_FLAG_TRADE_CHANNEL != 0));
 
     let (Some(zone_id), Some((zone_name, in_city)), Some(areas)) = (zone_id, zone, areas) else {
-        return; // nothing to walk against yet
+        return false; // nothing to walk against yet
     };
     if channels.zone_mask.is_none() {
-        return; // the mask is not seated: the reference's ready-flag bail
-    }
-    // A zone update: the zone the update runs for (`0x5080c5`), whose tail runs the cascade
-    // (`0x508254`), registered or not.
-    if walk.updated_for != Some(zone_id) {
-        walk.updated_for = Some(zone_id);
-        cascade.request();
+        return false; // the mask is not seated: the reference's ready-flag bail
     }
     if walk.at.is_some() {
-        return; // registered: later zones are the server's to move (`0x508090`)
+        return false; // registered: later zones are the server's to move (`0x508090`)
     }
 
     let steps = plan_walk(&channels, &zone_name, in_city, city_word(&areas.0));
     apply_walk(&steps, &mut channels, &commands);
     // The ready flag (`0x508249`), ahead of the cascade the update ends with.
     walk.at = Some(zone_id);
+    true
 }
 
 /// Every `ChatChannels.dbc` row as the VM needs it: the id, the Shortcut the verbs match a typed
@@ -531,6 +523,7 @@ pub(crate) fn zone_channel_catalog(
             resolved: compose(r, zone_name, capital, city),
             listed: !r.is_city_only() || in_city,
             auto_join: r.flags & 1 != 0,
+            guild_recruitment: r.is_guild_recruitment(),
         })
         .collect()
 }
@@ -656,11 +649,9 @@ mod tests {
             joined("LocalDefense - Tanaris"),
         ];
         let mut walk = ZoneChannelWalk::ready_in(440);
-        let mut cascade = GuildRecruitmentCascade::default();
-        cascade.observe_guild_id(7);
 
         // No VM in a unit test: the mirror leg is the one line this cannot reach.
-        end_channel_session(&mut channels, &mut walk, &mut cascade);
+        end_channel_session(&mut channels, &mut walk);
 
         assert_eq!(walk.at, None, "the next entry re-walks from scratch");
         assert_eq!(walk.zone_id, None);
@@ -674,11 +665,6 @@ mod tests {
             channels.zone_mask,
             Some(SEED),
             "the mask is the character's file, not the session's"
-        );
-        assert!(
-            cascade.observe_guild_id(7),
-            "the cascade's watcher forgot the guild id, so the next login's first sight of it is \
-             a change again — the reference's player-create trigger"
         );
     }
 
