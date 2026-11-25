@@ -661,6 +661,30 @@ pub(crate) struct VehicleFade {
     pub(crate) whole: f32,
 }
 
+/// The facing a vehicle passenger's camera is relative to while its seat's camera transition runs
+/// ([`CameraControl::vehicle_chase`]): it turns from `start` to `target` (the mover's facing when
+/// `None`) by the cosine ease of `progress` (`0x75a1c0`, `0x5fffd0`), all radians but `progress`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct VehicleChase {
+    pub(crate) start: f32,
+    pub(crate) target: Option<f32>,
+    pub(crate) progress: f32,
+}
+
+impl VehicleChase {
+    /// The facing the camera is relative to, given the mover's.
+    pub(crate) fn facing(&self, mover: f32) -> f32 {
+        let target = self.target.unwrap_or(mover);
+        let eased = 0.5 - (self.progress.clamp(0.0, 1.0) * std::f32::consts::PI).cos() * 0.5;
+        self.start + eased * wrap_pi(target - self.start)
+    }
+
+    /// How far that facing trails the mover's: the camera's yaw, kept on the mover's, turns by it.
+    pub(crate) fn lag(&self, mover: f32) -> f32 {
+        wrap_pi(self.facing(mover) - mover)
+    }
+}
+
 /// `0x606f90`'s vehicle fade: the cosine ramp from gone to whole over the
 /// camera's distance to the model past the near plane.
 pub(crate) fn vehicle_fade_alpha(fade: &VehicleFade, eye: Vec3, nearclip: f32) -> f32 {
@@ -747,6 +771,11 @@ pub(crate) struct CameraControl {
     /// in place of the self window, and the vehicle fades with us (`0x606f90`). Written by the
     /// seat camera.
     pub(crate) vehicle_fade: Option<VehicleFade>,
+    /// A vehicle seat's camera transition under way: the facing the camera is relative to, which
+    /// the reference sweeps from the passenger's to the vehicle's with the passenger's motion
+    /// (`0x75a1c0`, read by `0x604490`). This camera's yaw follows the mover, so the view turns by
+    /// the facing's lag behind it. Written by the seat camera.
+    pub(crate) vehicle_chase: Option<VehicleChase>,
     /// The vehicle the fade last reached, to hand back opaque.
     pub(super) vehicle_faded: Option<Entity>,
     /// The vehicle zoom is on (`0x600590`): a 50 yd default max, its own saved distance.
@@ -769,10 +798,11 @@ impl CameraControl {
 
     /// A vehicle seat's zoom (`0x74c0e0`): on the enter the preferred distance, raised or lowered
     /// as the seat allows, held within `(min, max)`, the distance before kept; on the exit that
-    /// distance back. Each request is applied once.
+    /// distance back. A `duration` above 0 glides there over it (`0x5ffb70`), else at the move
+    /// speed. Each request is applied once.
     pub(super) fn apply_vehicle_zoom(
         &mut self,
-        (count, zoom): (u32, super::camera_zoom::VehicleZoom),
+        (count, zoom, duration): (u32, super::camera_zoom::VehicleZoom, f32),
         (min, max): (f32, f32),
     ) {
         use super::camera_zoom::VehicleZoom;
@@ -799,15 +829,22 @@ impl CameraControl {
                 let target = target.max(min).min(max);
                 if (target - current).abs() > 0.001 {
                     self.vehicle_exit_zoom.get_or_insert(current);
-                    self.target_distance = target;
+                    self.zoom_to(target, duration);
                 }
             }
             VehicleZoom::Leave => {
                 if let Some(d) = self.vehicle_exit_zoom.take() {
-                    self.target_distance = d;
+                    self.zoom_to(d, duration);
                 }
             }
         }
+    }
+
+    /// Head the zoom for `target`: over `duration` seconds where it is above 0 (`0x5ffb70`), else
+    /// at the wheel's move speed.
+    fn zoom_to(&mut self, target: f32, duration: f32) {
+        self.target_distance = target;
+        self.zoom_glide = (duration > 0.0).then(|| (target - self.distance).abs() / duration);
     }
 
     /// A seat's exit has a distance to restore.
@@ -1501,7 +1538,11 @@ pub(super) fn seat_camera(
     // The ground tilt is part of the arm's pitch, unlike the bias: the reference clamps
     // `[cam+0xf4] + [cam+0x108]` to ±89° before the basis is built.
     let arm_pitch = (cam.pitch + rig.terrain_tilt.pitch()).clamp(-CAM_PITCH_LIMIT, CAM_PITCH_LIMIT);
-    let arm_rotation = Quat::from_euler(EulerRot::YXZ, cam.yaw, arm_pitch, 0.0);
+    // A seat's camera transition turns the whole view by its facing's lag behind the mover's: the
+    // reference adds that facing to its relative yaw (`0x604490`), this camera already holds the
+    // mover's.
+    let yaw = cam.yaw + rig.vehicle_chase.map_or(0.0, |c| c.lag(follow.face_yaw));
+    let arm_rotation = Quat::from_euler(EulerRot::YXZ, yaw, arm_pitch, 0.0);
     // Not re-clamped: the bias is composed after that clamp, bounded only by its own one-sided
     // accumulate (`SmartPivot::route_pitch`) and ±89° at the body hand-off.
     // A vehicle's pitch offset turns the view before the bias does (`0x606f90`). The reference
@@ -1512,7 +1553,7 @@ pub(super) fn seat_camera(
     let rotation = if look_pitch == arm_pitch {
         arm_rotation
     } else {
-        Quat::from_euler(EulerRot::YXZ, cam.yaw, look_pitch, 0.0)
+        Quat::from_euler(EulerRot::YXZ, yaw, look_pitch, 0.0)
     };
     // `Transform::forward()` is exactly `rotation * -Z`; computed here so the write can be gated.
     let cam_fwd = arm_rotation * Vec3::NEG_Z;

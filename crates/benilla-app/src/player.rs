@@ -81,7 +81,7 @@ pub(crate) struct WorldClickSet;
 // The private camera and `state` items are re-imported for the modules beside this one, which
 // name them `super::X`.
 pub(crate) use camera::{
-    clamp_pivot, head_height, pivot_ceiling, CameraControl, CameraPivot, VehicleFade,
+    clamp_pivot, head_height, pivot_ceiling, CameraControl, CameraPivot, VehicleChase, VehicleFade,
 };
 use camera::{model_pivot_height, run_look_session, CollisionArm, FlyCam, LookButton};
 use camera_zoom::{apply_zoom_scroll, CAM_DIST_DEFAULT};
