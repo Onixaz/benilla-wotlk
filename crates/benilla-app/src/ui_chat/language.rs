@@ -6,8 +6,6 @@
 //! `hash % 300 < skill`. The fold runs spell → language over known spells only (on spell add): five
 //! spells declare Common, so the inverse would map Common to Old Tongue.
 
-use std::collections::HashMap;
-
 use benilla_formats::LanguageWords;
 use bevy::prelude::*;
 
@@ -27,39 +25,14 @@ const ALWAYS_UNIVERSAL: [u8; 4] = [
     benilla_protocol::messages::CHAT_MSG_RAID_BOSS_EMOTE,
 ];
 
-/// The garble word pool and the character's fluency per language.
+/// The garble word pool, `LanguageWords.dbc`.
 #[derive(Resource, Default)]
 pub(crate) struct ChatLanguages {
-    /// `LanguageWords.dbc`; while `None`, nothing garbles.
+    /// While `None`, nothing garbles.
     words: Option<LanguageWords>,
-    /// language id → this character's skill in it. Absent = 0 = never understood.
-    skill: HashMap<u32, u32>,
-    /// `PLAYER_FLAGS & 0x8`: a GM reads every line plain, with no `[Language]` header.
-    gm: bool,
-    /// With no local player a line is copied verbatim, not garbled for want of skill.
-    have_player: bool,
 }
 
 impl ChatLanguages {
-    /// This character's skill in `language`, the garble's second argument.
-    pub(crate) fn skill(&self, language: u32) -> u32 {
-        self.skill.get(&language).copied().unwrap_or(0)
-    }
-
-    /// Whether the viewer is a GM; the spam filter reads the same bit.
-    pub(crate) fn is_gm(&self) -> bool {
-        self.gm
-    }
-
-    /// The language a line renders as after the chat display's exemptions; 0 renders plain, no
-    /// header.
-    pub(crate) fn effective_language(&self, chat_type: u8, language: u32) -> u32 {
-        if self.gm || !self.have_player || ALWAYS_UNIVERSAL.contains(&chat_type) {
-            return 0;
-        }
-        language
-    }
-
     /// A readable's text in `language` as a reader at `skill` sees it (`0x505930` with both flags
     /// set, as `0x589e90` calls it): `<…>` spans and punctuation stay.
     pub(crate) fn translate(&self, language: u32, skill: u32, text: &str) -> String {
@@ -75,12 +48,65 @@ impl ChatLanguages {
         }
     }
 
-    /// The line as this character hears it: unchanged for language 0, fluency, or no word pool.
-    pub(crate) fn garble(&self, language: u32, text: &str) -> String {
+    /// The line as a hearer at `skill` sees it: unchanged for language 0, fluency, or no word pool.
+    fn garble(&self, language: u32, skill: u32, text: &str) -> String {
         let Some(words) = self.words.as_ref() else {
             return text.to_string();
         };
-        benilla_formats::garble_chat(words, language, self.skill(language), text)
+        benilla_formats::garble_chat(words, language, skill, text)
+    }
+}
+
+/// The add's reads of the active player, made at its call: the GM bit of its descriptor and its
+/// skill in a line's language, never a copy kept between frames.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct Hearer<'w, 's> {
+    langs: Res<'w, ChatLanguages>,
+    player: Query<'w, 's, &'static ObjectStore, With<SelfPlayer>>,
+    actions: Option<Res<'w, PlayerActions>>,
+    spells: Option<Res<'w, Spells>>,
+    lines: Option<Res<'w, SkillLines>>,
+}
+
+impl Hearer<'_, '_> {
+    /// The active player's descriptor, `None` with none (`0x50a3ad`).
+    fn player(&self) -> Option<&ObjectStore> {
+        self.player.iter().next()
+    }
+
+    /// The GM bit of the active player's `PLAYER_FLAGS`, read at the call: it drops the garble
+    /// (`0x50a3bd`-`0x50a3cc`) and exempts the spam filter (`0x50a68a`-`0x50a699`).
+    pub(crate) fn is_gm(&self) -> bool {
+        self.player()
+            .is_some_and(|p| p.0.player_flags() & PLAYER_FLAGS_GM != 0)
+    }
+
+    /// The language a line renders as: 0 for the narration types (`0x50a273`-`0x50a28a`) and for a
+    /// GM hearer (`0x50a3d2`); any other keeps the wire's, with no active player too (`0x50a465`).
+    pub(crate) fn effective_language(&self, chat_type: u8, language: u32) -> u32 {
+        if ALWAYS_UNIVERSAL.contains(&chat_type) || self.is_gm() {
+            return 0;
+        }
+        language
+    }
+
+    /// The line as this character hears it: garbled at its skill in the language read at the call
+    /// (`0x50a472` -> `0x6e0640`), whole for language 0 or with no active player (`0x50a45b`-`0x50a465`).
+    pub(crate) fn garble(&self, language: u32, text: &str) -> String {
+        let Some(player) = self.player().filter(|_| language != 0) else {
+            return text.to_string();
+        };
+        let skill = match (
+            self.actions.as_deref(),
+            self.spells.as_deref(),
+            self.lines.as_deref(),
+        ) {
+            (Some(actions), Some(spells), Some(lines)) => {
+                language_skill(player, &actions.spells, spells, lines, language)
+            }
+            _ => 0,
+        };
+        self.langs.garble(language, skill, text)
     }
 }
 
@@ -108,80 +134,24 @@ pub(crate) fn load_language_words(
     }
 }
 
-/// Recompute the per-language skill map and the GM bit when the spell book, the catalogs or our
-/// descriptor change; the reference keeps the same map at spell add.
-pub(crate) fn feed_language_skills(
-    mut langs: ResMut<ChatLanguages>,
-    actions: Option<Res<PlayerActions>>,
-    spells: Option<Res<Spells>>,
-    skill_lines: Option<Res<SkillLines>>,
-    self_q: Query<Ref<ObjectStore>, With<SelfPlayer>>,
-) {
-    let Ok(store) = self_q.single() else {
-        // No body: every line renders plain.
-        if !langs.skill.is_empty() || langs.gm || langs.have_player {
-            langs.skill.clear();
-            langs.gm = false;
-            langs.have_player = false;
-        }
-        return;
-    };
-    let inputs_moved = store.is_changed()
-        || actions.as_ref().is_some_and(|a| a.is_changed())
-        || spells.as_ref().is_some_and(|s| s.is_changed())
-        || skill_lines.as_ref().is_some_and(|l| l.is_changed());
-    if !inputs_moved && langs.have_player {
-        return;
-    }
-    let gm = store.0.player_flags() & PLAYER_FLAGS_GM != 0;
-
-    let mut skill = HashMap::new();
-    if let (Some(actions), Some(spells), Some(lines)) = (actions, spells, skill_lines) {
-        let (race, class) = crate::spell::race_class(Some(&*store));
-        for &known in &actions.spells {
-            let Some(language) = spells.catalog.declared_language(known) else {
-                continue;
-            };
-            let Some(line) = lines.catalog.spell_to_line(known, race, class) else {
-                // Spell 25674 declares Draconic but has no `SkillLineAbility` row, so Draconic is
-                // never understood.
-                continue;
-            };
-            // The later spell id wins, as the reference's plain store `[lang] = spellId` over the
-            // sorted initial spell batch.
-            skill.insert(language, skill_value(&store, line));
-        }
-    }
-
-    if skill != langs.skill || gm != langs.gm || !langs.have_player {
-        // Logged on change: a wrong gate looks like plain chat, and `gm=true` means nothing
-        // garbles.
-        let mut named: Vec<String> = skill.iter().map(|(l, v)| format!("{l}:{v}")).collect();
-        named.sort();
-        info!("ui_chat: language fluency {{{}}} gm={gm}", named.join(" "));
-        langs.skill = skill;
-        langs.gm = gm;
-        langs.have_player = true;
-    }
-}
-
-/// Keep `this.defaultLanguage` at the faction tongue `GetDefaultLanguage()` answers, which the
-/// `[Language]` header test in [`super::frames::compose`] reads.
-pub(super) fn feed_default_language(
-    mut windows: ResMut<super::frames::ChatWindows>,
-    langs: Option<Res<crate::ui_unit::DefaultLanguagesRes>>,
-    self_q: Query<&ObjectStore, With<SelfPlayer>>,
-) {
-    let name = self_q
-        .iter()
+/// The active player's default language id read at the call (`0x6d5e70`: the race byte of the
+/// player's descriptor, its `ChrRaces` base language, 0 with no record); `None` with no active
+/// player, which the log's header test reads at `0x50abbe`.
+pub(crate) fn default_language_id(world: &mut World) -> Option<u32> {
+    let race = world
+        .query_filtered::<&ObjectStore, With<SelfPlayer>>()
+        .iter(world)
         .next()
-        .and_then(|store| store.0.unit_race())
-        .zip(langs.as_ref())
-        .and_then(|(race, langs)| langs.0.name(u32::from(race), 0))
-        .unwrap_or_default();
-    if windows.default_language != name {
-        windows.default_language = name.to_string();
-    }
+        .map(|store| store.0.unit_race())?;
+    Some(
+        match (
+            race,
+            world.get_resource::<crate::ui_unit::DefaultLanguagesRes>(),
+        ) {
+            (Some(race), Some(langs)) => langs.0.id(u32::from(race)),
+            _ => 0,
+        },
+    )
 }
 
 /// Our skill in `language` at the call (`0x6e0640`): the last known spell declaring it, its skill line's value; 0 with none.
@@ -227,29 +197,58 @@ mod tests {
         CHAT_MSG_SAY, CHAT_MSG_SYSTEM,
     };
 
-    fn langs(skill: &[(u32, u32)], gm: bool) -> ChatLanguages {
-        ChatLanguages {
-            words: None,
-            skill: skill.iter().copied().collect(),
-            gm,
-            have_player: true,
-        }
+    /// Run `f` over the add's reads of the active player, as the add makes them at its call.
+    fn hear<T: Send + Sync + 'static>(
+        world: &mut World,
+        f: impl Fn(&Hearer) -> T + Send + Sync + 'static,
+    ) -> T {
+        use bevy::ecs::system::RunSystemOnce;
+        world.init_resource::<ChatLanguages>();
+        world.run_system_once(move |h: Hearer| f(&h)).unwrap()
     }
 
+    fn player(world: &mut World, flags: u32) -> Entity {
+        world
+            .spawn((
+                SelfPlayer,
+                ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+                    benilla_protocol::field::FIELD_PLAYER_FLAGS,
+                    flags,
+                )])),
+            ))
+            .id()
+    }
+
+    /// With no active player the wire's language stays (`0x50a465` skips only the garble), so
+    /// arg3 and the log still name it; nothing garbles and no GM bit is read.
     #[test]
-    fn no_local_player_renders_every_line_plainly() {
-        let mut l = langs(&[(7, 300)], false);
-        l.have_player = false;
-        assert_eq!(l.effective_language(CHAT_MSG_SAY, 1), 0);
-        assert_eq!(l.effective_language(CHAT_MSG_MONSTER_SAY, 7), 0);
+    fn no_active_player_keeps_the_language_and_skips_the_garble() {
+        let mut world = World::new();
+        assert_eq!(
+            hear(&mut world, |h| h.effective_language(CHAT_MSG_SAY, 1)),
+            1
+        );
+        assert!(!hear(&mut world, |h| h.is_gm()));
+        assert_eq!(
+            hear(&mut world, |h| h.garble(1, "hello there")),
+            "hello there"
+        );
     }
 
     #[test]
     fn the_narration_types_are_always_universal() {
-        let l = langs(&[], false);
+        let mut world = World::new();
+        player(&mut world, 0);
         // Speech keeps its language...
-        assert_eq!(l.effective_language(CHAT_MSG_SAY, 1), 1);
-        assert_eq!(l.effective_language(CHAT_MSG_MONSTER_SAY, 1), 1);
+        assert_eq!(
+            hear(&mut world, |h| h.effective_language(CHAT_MSG_SAY, 1)),
+            1
+        );
+        assert_eq!(
+            hear(&mut world, |h| h
+                .effective_language(CHAT_MSG_MONSTER_SAY, 1)),
+            1
+        );
         // ...narration does not, whatever the wire said.
         for t in [
             CHAT_MSG_EMOTE,
@@ -257,28 +256,84 @@ mod tests {
             CHAT_MSG_MONSTER_EMOTE,
             CHAT_MSG_RAID_BOSS_EMOTE,
         ] {
-            assert_eq!(l.effective_language(t, 1), 0, "chat type {t:#x}");
+            assert_eq!(
+                hear(&mut world, move |h| h.effective_language(t, 1)),
+                0,
+                "chat type {t:#x}"
+            );
         }
     }
 
+    /// The GM bit is read off the descriptor at the call (`0x50a3bd`-`0x50a3cc`): a flags write
+    /// earlier in the same frame is what the next line sees, with no feed between.
     #[test]
-    fn gm_mode_makes_every_line_universal() {
-        let l = langs(&[], true);
-        assert_eq!(l.effective_language(CHAT_MSG_SAY, 1), 0);
-        assert_eq!(l.effective_language(CHAT_MSG_MONSTER_SAY, 7), 0);
+    fn the_gm_bit_is_read_from_the_active_player_at_the_call() {
+        let mut world = World::new();
+        let me = player(&mut world, 0);
+        assert_eq!(
+            hear(&mut world, |h| h.effective_language(CHAT_MSG_SAY, 1)),
+            1
+        );
+        world.get_mut::<ObjectStore>(me).unwrap().0 = benilla_protocol::ObjectFields::from_pairs(
+            &[(benilla_protocol::field::FIELD_PLAYER_FLAGS, PLAYER_FLAGS_GM)],
+        );
+        assert!(hear(&mut world, |h| h.is_gm()));
+        assert_eq!(
+            hear(&mut world, |h| h.effective_language(CHAT_MSG_SAY, 1)),
+            0
+        );
+        assert_eq!(
+            hear(&mut world, |h| h
+                .effective_language(CHAT_MSG_MONSTER_SAY, 7)),
+            0
+        );
     }
 
-    #[test]
-    fn an_unlisted_language_is_never_understood() {
-        let l = langs(&[(7, 300)], false);
-        assert_eq!(l.skill(7), 300);
-        assert_eq!(l.skill(1), 0, "Orcish, which this character never learned");
-        assert_eq!(l.skill(8), 0, "Demonic, which nobody can learn in 5875");
-    }
-
+    /// With no known spell declaring the language the skill is 0 (`0x6e0640` finds no entry);
+    /// with no word pool the line still renders whole rather than blank.
     #[test]
     fn a_missing_pool_renders_plainly_rather_than_blanking_chat() {
-        let l = langs(&[], false);
-        assert_eq!(l.garble(1, "hello there"), "hello there");
+        let mut world = World::new();
+        player(&mut world, 0);
+        assert_eq!(
+            hear(&mut world, |h| h.garble(1, "hello there")),
+            "hello there"
+        );
+    }
+
+    /// The log header's default language is read at the call (`0x50abc2` -> `0x6d5e70`): no
+    /// active player is `None`, a player created this frame answers its race's base language at
+    /// once, and a race with no `ChrRaces` record answers 0.
+    #[test]
+    fn the_default_language_is_read_from_the_active_player_at_the_call() {
+        let mut world = World::new();
+        world.insert_resource(crate::ui_unit::DefaultLanguagesRes(
+            benilla_formats::DefaultLanguages::from_rows(&[(1, 7, "Common"), (2, 1, "Orcish")]),
+        ));
+        assert_eq!(default_language_id(&mut world), None);
+        // `UNIT_FIELD_BYTES_0` byte 0 is the race.
+        const BYTES_0: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_0;
+        let player = world
+            .spawn((
+                SelfPlayer,
+                ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(BYTES_0, 2)])),
+            ))
+            .id();
+        assert_eq!(default_language_id(&mut world), Some(1));
+        // Another character on the same session: the new race, with no frame between.
+        world.entity_mut(player).despawn();
+        let human = world
+            .spawn((
+                SelfPlayer,
+                ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(BYTES_0, 1)])),
+            ))
+            .id();
+        assert_eq!(default_language_id(&mut world), Some(7));
+        world.entity_mut(human).despawn();
+        world.spawn((
+            SelfPlayer,
+            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(BYTES_0, 99)])),
+        ));
+        assert_eq!(default_language_id(&mut world), Some(0));
     }
 }

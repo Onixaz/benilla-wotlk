@@ -218,7 +218,7 @@ pub(crate) struct LogOut<'w> {
     text: MessageWriter<'w, CombatTextSpawn>,
     feedback: MessageWriter<'w, UnitCombatFeedback>,
     center: MessageWriter<'w, CombatTextEvent>,
-    pub(crate) chat: ResMut<'w, crate::ui_chat::ChatLog>,
+    pub(crate) chat: ResMut<'w, crate::ui_script::live::UiEvents>,
 }
 
 impl LogOut<'_> {

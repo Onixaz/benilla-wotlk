@@ -3,6 +3,7 @@
 //! filled with the map's name and shown as `CHAT_MSG_SYSTEM`), and the steps of a dynamic-difficulty
 //! change (`SMSG_CHANGEPLAYER_DIFFICULTY_RESULT`, `0x52c460`).
 
+use crate::ui_chat::ChatSink as _;
 use bevy::prelude::*;
 
 use benilla_assets::{AssetSet, LockRecover, WorldAssets};
@@ -13,7 +14,7 @@ use benilla_protocol::{SessionEvent, SessionEventKind};
 use crate::net::NetHandlerApp;
 use crate::ui_action::signals::SignalSink;
 use crate::ui_action::{FillArg, UiError};
-use crate::ui_chat::{ChatEvent, ChatEventKind, ChatLog};
+use crate::ui_chat::{ChatEvent, ChatEventKind};
 
 /// The refusals waiting for the feed: `(map, reason, arg)`.
 #[derive(Resource, Default)]
@@ -167,7 +168,6 @@ fn difficulty_refusal(result: DifficultyChangeResult) -> Option<UiError> {
 fn feed_difficulty_notices(
     mut script: crate::ui_script::InTurn,
     mut notices: ResMut<DifficultyNotices>,
-    mut chat: ResMut<ChatLog>,
 ) {
     let Some(mut script) = script.turn() else {
         return;
@@ -175,7 +175,7 @@ fn feed_difficulty_notices(
     for notice in std::mem::take(&mut notices.0) {
         match notice {
             DifficultyNotice::Line(text) => {
-                chat.push_event(ChatEvent::text_only(ChatEventKind::System, text));
+                script.push_event(ChatEvent::text_only(ChatEventKind::System, text));
             }
             DifficultyNotice::Changed(dynamic) => {
                 script.fire_event("PLAYER_DIFFICULTY_CHANGED", Vec::new());
@@ -240,11 +240,12 @@ fn abort_text(
 fn feed_transfer_aborts(
     mut script: crate::ui_script::InTurn,
     mut aborts: ResMut<TransferAborts>,
-    mut chat: ResMut<ChatLog>,
     maps: Option<Res<benilla_assets::MapCatalogRes>>,
     difficulties: Res<MapDifficulties>,
 ) {
-    let Some(script) = script.turn() else { return };
+    let Some(mut script) = script.turn() else {
+        return;
+    };
     if aborts.0.is_empty() {
         return;
     }
@@ -268,7 +269,7 @@ fn feed_transfer_aborts(
             continue;
         };
         let text = benilla_ui::strings::fill(&template, &[benilla_ui::strings::Arg::S(name)]);
-        chat.push_event(ChatEvent::text_only(ChatEventKind::System, text));
+        script.push_event(ChatEvent::text_only(ChatEventKind::System, text));
     }
 }
 

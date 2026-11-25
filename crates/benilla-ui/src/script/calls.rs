@@ -63,6 +63,8 @@ pub enum HostAsk {
     BindAutoEquip { bag: i64, slot: u32 },
     /// `EquipPendingItem`, `CancelPendingEquip` and `ConfirmBindOnUse`: the answers given so far run now (`0x6e01a0`, `0x7093f0`).
     BindAnswers,
+    /// The message display's chat arm: `text` through the chat add on `chat_type` (`0x521814` -> `0x509dd0`).
+    ChatLine { chat_type: u8, text: String },
 }
 
 /// What the host answered a [`HostAsk`].

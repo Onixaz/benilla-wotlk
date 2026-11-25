@@ -1,13 +1,14 @@
 //! The progression lines the combat-log module also handles: the XP number and line, the
 //! exploration toast and jingle, and the level-up block.
 
+use crate::ui_chat::ChatSink as _;
 use bevy::prelude::*;
 
 use benilla_protocol::messages::{ExplorationXp, LevelUpInfo, XpGain};
 
 use crate::combat_text::CombatTextSpawn;
 use crate::net::{GuidIndex, ObjectStore, SelfGuid};
-use crate::ui_chat::{ChatLog, XpLine, REST_STATE_KEYS};
+use crate::ui_chat::{XpLine, REST_STATE_KEYS};
 use crate::ui_unit::RestStates;
 
 /// `SMSG_LOG_XPGAIN`: `"XP: %d"` over self, category 4, the one emitter that skips Gate A, for kill
@@ -18,7 +19,7 @@ pub(super) fn xp_gain(
     me: Option<Entity>,
     line: XpLine,
     text: &mut MessageWriter<CombatTextSpawn>,
-    chat_log: &mut ChatLog,
+    chat_log: &mut crate::ui_script::live::UiEvents,
 ) {
     if let (Some(me), false) = (me, matches!(line, XpLine::Loss { .. })) {
         text.write(CombatTextSpawn {
@@ -97,7 +98,7 @@ pub(super) fn exploration_xp(
     self_guid: &SelfGuid,
     stores: &Query<&ObjectStore>,
     sound_out: &mut MessageWriter<crate::net::ServerSoundMessage>,
-    chat_log: &mut ChatLog,
+    chat_log: &mut crate::ui_script::live::UiEvents,
 ) {
     let Some(name) = area_table.and_then(|t| t.0.name(x.area_id)) else {
         warn!(
@@ -142,27 +143,61 @@ fn exploration_line_xp(xp: u32, player_flags: Option<u32>) -> u32 {
     }
 }
 
-/// `SMSG_LEVELUP_INFO`: the level-gated tutorials, then `PLAYER_LEVEL_UP`, the event's one fire
-/// site (`0x6e3691`), parked for `ui_unit` to fire whatever the level field does. The ding's visual
-/// rides the `UNIT_FIELD_LEVEL` change watcher, not this packet.
-pub(super) fn level_up(
-    l: LevelUpInfo,
-    chat_log: &mut ChatLog,
+/// `SMSG_LEVELUP_INFO`'s level-gated tutorials, ahead of its event.
+pub(super) fn level_tutorials(
+    level: u32,
     tutorials: Option<&mut MessageWriter<crate::tutorial::TutorialEvent>>,
 ) {
     if let Some(t) = tutorials {
-        for id in crate::tutorial::level_triggers(l.level) {
+        for id in crate::tutorial::level_triggers(level) {
             t.write(crate::tutorial::TutorialEvent::trigger(id));
         }
     }
-    // Stock `ChatFrame_OnEvent` prints the block from the event; nothing here prints it, or it
-    // shows twice.
-    chat_log.push_level_up(l);
+}
+
+/// `SMSG_LEVELUP_INFO`'s `PLAYER_LEVEL_UP`, raised in the handler, the event's one fire site
+/// (`0x6e3691`), whatever the level field does: its nine `%d`s are the level, health, the first
+/// power gain, a talent point at level 10 or more, then the five stats. Stock `ChatFrame_OnEvent`
+/// prints the block from the event. The ding's visual rides the `UNIT_FIELD_LEVEL` change watcher.
+pub(super) fn level_up(l: LevelUpInfo, ui: &mut crate::ui_script::live::UiEvents) {
+    let args = [
+        l.level as i32,
+        l.health,
+        l.powers[0],
+        i32::from(l.level >= 10),
+    ]
+    .into_iter()
+    .chain(l.stats)
+    .map(|v| benilla_ui::script::ScriptValue::Int(i64::from(v)))
+    .collect();
+    ui.fire("PLAYER_LEVEL_UP", args);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `SMSG_LEVELUP_INFO` raises `PLAYER_LEVEL_UP` in its handler (`0x6e3691`), its nine numbers in
+    /// order: level, health, the first power gain, the talent point from 10, the five stats.
+    #[test]
+    fn a_level_up_raises_its_event_in_the_handler() {
+        let mut ui = crate::ui_script::live::UiEvents::default();
+        let ding = |level| LevelUpInfo {
+            level,
+            health: 22,
+            powers: [15, 0, 0, 0, 0, 0, 0],
+            stats: [0, 1, 2, 3, 0],
+        };
+        level_up(ding(9), &mut ui);
+        level_up(ding(10), &mut ui);
+        assert_eq!(
+            ui.lines(),
+            [
+                "PLAYER_LEVEL_UP 9 22 15 0 0 1 2 3 0",
+                "PLAYER_LEVEL_UP 10 22 15 1 0 1 2 3 0"
+            ]
+        );
+    }
 
     fn xp(victim: u64, xp_type: u8, refer_a_friend: bool) -> XpGain {
         XpGain {

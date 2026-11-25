@@ -53,6 +53,7 @@ pub(crate) fn enter_world_on_self_create(
     net: Res<NetCommands>,
     mut cascades: MessageWriter<WorldEnterCascadeMessage>,
     reload: Option<ResMut<crate::ui_script::ReloadEntry>>,
+    mut clock: ResMut<super::PlayedClock>,
 ) {
     // A create's world entry runs outside any UI reload (`0xbd0790` clear).
     if !created.is_empty() {
@@ -67,8 +68,10 @@ pub(crate) fn enter_world_on_self_create(
                 &format!("SET_ACTIVE_MOVER guid={:#x} (self create)", guid.0),
             );
         }
-        // The player's constructor seeds the played clock with an unshown ask (`0x6e6e27`), ahead
-        // of the mover.
+        // The player's constructor unseeds the played clock (`0x6e6dfe`), so it reads 0 until this
+        // player's answer (`0x6cf443`), then seeds it with an unshown ask (`0x6e6e27`), ahead of
+        // the mover.
+        clock.0 = None;
         let _ = net.0.send(ClientCommand::PlayedTime { show: false });
         let _ = net.0.send(ClientCommand::SetActiveMover { guid: guid.0 });
         cascades.write(WorldEnterCascadeMessage);

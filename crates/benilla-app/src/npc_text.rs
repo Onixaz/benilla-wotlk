@@ -13,7 +13,7 @@
 use bevy::prelude::*;
 
 use crate::names::NameCache;
-use crate::net::{Guid, GuidIndex, NetCommands, ObjectStore, SelfPlayer};
+use crate::net::{Guid, NetCommands, ObjectStore, SelfPlayer};
 
 /// The unit a `$`-macro expands against: the self player, or the speaker at the reference's four
 /// chat sites.
@@ -44,8 +44,8 @@ pub(crate) fn substitute(text: &str, ctx: &MacroContext) -> String {
 }
 
 /// [`substitute`] plus the reference's return flag, `true` when no token failed (no subject, or a
-/// token outside the set). Panels ignore it; chat must not, since the reference's chat path drops
-/// or defers a line rather than show a `$`.
+/// token outside the set). Panels ignore it; chat keeps the unparsed text on a failure
+/// (`0x50a17d`).
 pub(crate) fn substitute_checked(text: &str, ctx: &MacroContext) -> (String, bool) {
     let subject = ctx.subject;
     let mut clean = true;
@@ -183,39 +183,6 @@ pub(crate) fn player_identity(
         race: store.0.unit_race().unwrap_or(0),
         class: store.0.unit_class().unwrap_or(0),
         gender: store.0.unit_gender().unwrap_or(0),
-    })
-}
-
-/// The chat feed's [`Subject`] for any guid: the object manager's descriptors, else the name cache.
-/// Guid 0 has no subject.
-pub(crate) fn subject_for_guid(
-    guid: u64,
-    index: &GuidIndex,
-    stores: &Query<&ObjectStore>,
-    names: &NameCache,
-    commands: &NetCommands,
-) -> Option<Subject> {
-    if guid == 0 {
-        return None;
-    }
-    let store = index.0.get(&guid).and_then(|e| stores.get(*e).ok());
-    let name = names.resolve_unit(guid, store, commands)?.to_string();
-    if let Some(store) = store {
-        return Some(Subject {
-            name,
-            race: store.0.unit_race().unwrap_or(0),
-            class: store.0.unit_class().unwrap_or(0),
-            gender: store.0.unit_gender().unwrap_or(0),
-        });
-    }
-    // A creature lands on zeros, so `$R` and `$C` emit nothing; the reference's non-player arm
-    // emits the unit's name, which is not built.
-    let (race, class, gender) = names.player_traits(guid).unwrap_or((0, 0, 0));
-    Some(Subject {
-        name,
-        race,
-        class,
-        gender,
     })
 }
 

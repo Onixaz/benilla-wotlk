@@ -2,6 +2,7 @@
 //! into the VM, fire the party events on their edges, and turn the Lua [`PartyRequest`] intents
 //! into `CMSG_*` sends. The state and its lines live in the parent module.
 
+use crate::ui_chat::ChatSink as _;
 use benilla_protocol::messages::{
     member_status, GroupLootInfo, GroupMemberEntry, PartyMemberStatsInfo, GROUP_MEMBER_ASSISTANT,
     GROUP_MEMBER_MAIN_ASSIST, GROUP_MEMBER_MAIN_TANK,
@@ -157,25 +158,16 @@ pub(super) fn feed_party(
         crate::ui_arena::ArenaInstance,
     ),
     mut fed: Local<crate::ui_script::VmMemo<FedParty>>,
-    mut chat: ResMut<crate::ui_chat::ChatLog>,
 ) {
     let Some(mut script) = script.turn() else {
         return;
     };
     let (fed, vm_reset) = fed.get_reset(&script);
     let edges = FieldEdges::collect(&mut edges);
-    // The initiator's 30 s timer and the lines it and the packets composed, pushed as system chat
-    // ahead of the gate: the timer runs on the frame clock, which the gate does not watch.
-    script.ready_check_tick();
-    for line in script
-        .take_ready_check_lines()
-        .into_iter()
-        .chain(script.take_party_lines())
-    {
-        chat.push_event(crate::ui_chat::ChatEvent::text_only(
-            crate::ui_chat::ChatEventKind::System,
-            line,
-        ));
+    // The initiator's 30 s timer ahead of the gate: it runs on the frame clock, which the gate
+    // does not watch, and its close adds its line through the chat add (`0x5735bc`, `0x573602`).
+    if script.ready_check_due() {
+        script.lent(|s| s.ready_check_tick());
     }
     let chr = tables.classes();
     let types = tables.types(&names);
@@ -679,7 +671,6 @@ pub(super) fn feed_marks(
     mut script: crate::ui_script::InTurn,
     group: Res<GroupState>,
     mut notices: ResMut<super::GroupNotices>,
-    mut chat: ResMut<crate::ui_chat::ChatLog>,
     mut fed: Local<crate::ui_script::VmMemo<FedMarks>>,
 ) {
     let Some(mut script) = script.turn() else {
@@ -707,17 +698,17 @@ pub(super) fn feed_marks(
         return;
     }
     let pending = std::mem::take(&mut notices.target_icons);
-    let get = |key: &str| {
+    let get = |script: &crate::ui_script::VmTurn, key: &str| {
         let text = script.lua().globals().get::<String>(key).ok();
         text.filter(|t| !t.is_empty())
     };
-    let Some(template) = get("TARGET_ICON_SET") else {
+    let Some(template) = get(&script, "TARGET_ICON_SET") else {
         return;
     };
     for notice in pending {
         let target = notice
             .target
-            .or_else(|| get("UNKNOWNOBJECT"))
+            .or_else(|| get(&script, "UNKNOWNOBJECT"))
             .unwrap_or_default();
         let text = benilla_ui::strings::fill(
             &template,
@@ -728,7 +719,7 @@ pub(super) fn feed_marks(
                 benilla_ui::strings::Arg::S(&target),
             ],
         );
-        chat.push_event(crate::ui_chat::ChatEvent::text_only(
+        script.push_event(crate::ui_chat::ChatEvent::text_only(
             crate::ui_chat::ChatEventKind::TargetIcons,
             text,
         ));
@@ -2867,7 +2858,7 @@ mod tests {
             .run(r#"TARGET_ICON_SET = "[%s|%s] %d on %s" UNKNOWNOBJECT = "Unknown""#)
             .unwrap();
         world.insert_non_send_resource(script);
-        world.init_resource::<crate::ui_chat::ChatLog>();
+        world.init_resource::<crate::ui_script::live::UiEvents>();
         let notice = |icon, target: Option<&str>| super::super::TargetIconNotice {
             setter: "Aldwyn".into(),
             icon,
@@ -2879,7 +2870,9 @@ mod tests {
         world.init_resource::<GroupState>();
         world.run_system_once(feed_marks).unwrap();
         assert_eq!(
-            world.resource::<crate::ui_chat::ChatLog>().pending_lines(),
+            world
+                .resource::<crate::ui_script::live::UiEvents>()
+                .chat_texts(),
             [
                 "[Aldwyn|Aldwyn] 8 on Brisca",
                 "[Aldwyn|Aldwyn] 1 on Unknown"

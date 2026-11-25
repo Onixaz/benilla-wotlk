@@ -16,6 +16,7 @@
 //! composed, after its item record and the winner's name (`0x6fb700`, `0x6fb470`), and makes its
 //! loot window slot lootable again at once (`0x6dc770`).
 
+use crate::ui_chat::ChatSink as _;
 use benilla_protocol::messages::{LootAllPassed, LootRoll, LootRollWon, RollAnnounce};
 use bevy::prelude::*;
 
@@ -27,7 +28,9 @@ use crate::items::{Items, RecordWait, RecordWaits};
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, ObjectStore, SelfGuid, SelfPlayer};
 use crate::ui_action::signals::SignalSink;
-use crate::ui_chat::{ChatEvent, ChatEventKind, ChatLog};
+#[cfg(test)]
+use crate::ui_chat::ChatLog;
+use crate::ui_chat::{ChatEvent, ChatEventKind};
 
 /// The frames up at once (`0x6fb180`, `0x6fb2c0`: `[0xca0694] < 4`).
 const MAX_SHOWN_ROLLS: u32 = 4;
@@ -678,7 +681,6 @@ pub(crate) fn finish_line(world: &mut World, line_id: u32) {
             Option<Res<crate::items::Enchants>>,
         ),
          script: Option<NonSend<benilla_ui::script::UiScript>>,
-         mut chat: ResMut<ChatLog>,
          mut ui: ResMut<crate::ui_script::live::UiEvents>| {
             let Some(i) = rolls.lines.iter().position(|l| l.id == line_id) else {
                 return;
@@ -703,10 +705,19 @@ pub(crate) fn finish_line(world: &mut World, line_id: u32) {
                 &get,
             );
             if let Some(text) = text {
-                chat.push_event(ChatEvent::text_only(ChatEventKind::Loot, text));
+                ui.push_event(ChatEvent::text_only(ChatEventKind::Loot, text));
             }
+            // The roll closes after its line's listeners ran (`0x6fb937`, then `0x6fb953`).
             if let Some(roll_id) = node.closes {
-                rolls.close(roll_id, &mut *ui);
+                ui.world(move |world| {
+                    use crate::ui_script::live::UiEvents;
+                    if !world.contains_resource::<UiEvents>() {
+                        return;
+                    }
+                    world.resource_scope(|world, mut rolls: Mut<LootRolls>| {
+                        rolls.close(roll_id, &mut *world.resource_mut::<UiEvents>());
+                    });
+                });
             }
         },
         line_id,

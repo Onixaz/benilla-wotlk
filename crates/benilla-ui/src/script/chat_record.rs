@@ -161,11 +161,10 @@ fn can_complain(model: &Model, guid: u64) -> bool {
 }
 
 impl super::UiScript {
-    /// Record a chat line as its event fires.
-    pub fn record_chat(&mut self, record: ChatRecord) {
-        let mut model = self.model_mut();
-        let player = model.unit("player").map_or(0, |u| u.guid);
-        model.chat_records.record(record, player);
+    /// Record a chat line as its event fires, with the active player's guid the add passes
+    /// (`0x50a3ad`, read at `0x4fddf2`), 0 with none.
+    pub fn record_chat(&mut self, record: ChatRecord, player: u64) {
+        self.model_mut().chat_records.record(record, player);
     }
 
     /// Push the complaint system's status.
@@ -310,7 +309,7 @@ mod tests {
     #[test]
     fn complaints_need_the_system_on() {
         let mut s = UiScript::new().unwrap();
-        s.record_chat(line(0x01, 7, "Bob", "hi", 1));
+        s.record_chat(line(0x01, 7, "Bob", "hi", 1), 1);
         let can: Option<i32> = s.eval("return CanComplainChat(1)").unwrap();
         assert_eq!(can, None);
         assert!(s.eval::<()>("CanComplainChat()").is_err());

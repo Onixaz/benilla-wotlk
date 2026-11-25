@@ -8,7 +8,6 @@
 use bevy::prelude::*;
 
 use super::event::{ChatEvent, ChatEventKind};
-use super::feed::ChatLog;
 
 /// The reference's optimistic mirror of our `PLAYER_FLAGS` AFK bit: written at command time,
 /// reconciled from the descriptor, reseeded at world enter. A `u32` tested for non-zero: the
@@ -138,8 +137,8 @@ fn fill_one(template: &str, arg: &str) -> String {
     out
 }
 
-/// Push one of the four lines into the chat log as `CHAT_MSG_SYSTEM`.
-pub(crate) fn push_system(chat: &mut ChatLog, line: String) {
+/// Add one of the four lines as `CHAT_MSG_SYSTEM`, in the caller's turn.
+pub(crate) fn push_system(chat: &mut impl super::ChatSink, line: String) {
     chat.push_event(ChatEvent::text_only(ChatEventKind::System, line));
 }
 
@@ -179,7 +178,6 @@ pub(crate) fn movement_clears_afk(
     cvars: Res<crate::cvars::Cvars>,
     mut script: crate::ui_script::InTurn,
     commands: Res<crate::net::NetCommands>,
-    mut chat: ResMut<ChatLog>,
     mut mirror: ResMut<AfkMirror>,
 ) {
     use crate::bindings::Input;
@@ -200,11 +198,10 @@ pub(crate) fn movement_clears_afk(
     if !moved {
         return;
     }
-    let line = script
-        .turn()
-        .and_then(|s| super::combat::global_string(&s, "CLEARED_AFK"))
-        .unwrap_or_default();
-    push_system(&mut chat, line);
+    if let Some(mut script) = script.turn() {
+        let line = super::combat::global_string(&script, "CLEARED_AFK").unwrap_or_default();
+        push_system(&mut script, line);
+    }
     mirror.0 = 0;
     // The AFK clear's own packet: the empty `0x14` the command path sends.
     let _ = commands.0.send(crate::net::ClientCommand::Chat {

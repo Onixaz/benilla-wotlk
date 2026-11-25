@@ -424,7 +424,9 @@ fn chat_type_info_matches_the_host_color_table() {
         ("OPENING", K::Opening, 30),
         ("TARGETICONS", K::TargetIcons, 53),
     ];
-    assert_eq!(PAIRS.len(), K::ALL.len(), "every kind is listed");
+    // `0x32` fires no event, and the stock UI has no row for it.
+    let named = K::ALL.iter().filter(|&&k| k != K::ArenaPoints).count();
+    assert_eq!(PAIRS.len(), named, "every kind is listed");
 
     let s = chat_frame();
     for (name, kind, want_id) in PAIRS {
@@ -515,7 +517,8 @@ fn fired_event_names_are_all_chat_type_info_keys() {
     use crate::ui_chat::{event_name, ChatEventKind as K};
 
     let s = chat_frame();
-    for &kind in K::ALL {
+    // A type whose event slot has no name fires nothing (`0x32`).
+    for &kind in K::ALL.iter().filter(|&&k| !event_name(k).is_empty()) {
         let name = event_name(kind);
         let key = name
             .strip_prefix("CHAT_MSG_")

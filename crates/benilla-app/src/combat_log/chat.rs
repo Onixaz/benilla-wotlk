@@ -1,8 +1,10 @@
 //! The chat lines 3.3.5a still prints beside its combat log, queued for their names; the wording
 //! law is [`crate::ui_chat::combat`].
 
+use crate::items::RecordWait;
 use crate::ui_chat::combat::{self, Fills, Named, PendingCombat};
-use crate::ui_chat::{ChatEventKind, ChatLog};
+use crate::ui_chat::ChatEventKind;
+use crate::ui_chat::ChatSink as _;
 use benilla_ui::script::ScriptValue;
 
 /// A line whose subject is `subject`, keyed on it being the player.
@@ -22,36 +24,52 @@ fn line(
         subject: if me { 0 } else { subject },
         fills,
         named,
-        tries: 0,
     }
 }
 
-/// The tradeskill-create line (`0x50bd90`): the created item, `CHAT_MSG_TRADESKILLS`.
-pub(crate) fn tradeskill_create(log: &mut ChatLog, me: Option<u64>, caster: u64, item: u32) {
+/// The tradeskill-create line (`0x50bd90`): the created item, `CHAT_MSG_TRADESKILLS`. An uncached
+/// item asks its record with `0x4fb970`, which composes the line again on a found answer.
+pub(crate) fn tradeskill_create(
+    log: &mut crate::ui_script::live::UiEvents,
+    me: Option<u64>,
+    caster: u64,
+    item: u32,
+) {
     log.push_combat(line(
         ChatEventKind::Tradeskills,
         combat::TRADESKILL_LOG,
         me,
         caster,
         Fills::default(),
-        Named::Item(item),
+        Named::Item(item, Some(RecordWait::TradeskillLine(caster))),
     ));
 }
 
-/// The feed-pet line (`0x50baf0`): the food, `CHAT_MSG_PET_INFO`.
-pub(crate) fn feed_pet(log: &mut ChatLog, me: Option<u64>, caster: u64, item: u32) {
+/// The feed-pet line (`0x50baf0`): the food, `CHAT_MSG_PET_INFO`. An uncached item asks its
+/// record with `0x4fb950`, which composes the line again on a found answer.
+pub(crate) fn feed_pet(
+    log: &mut crate::ui_script::live::UiEvents,
+    me: Option<u64>,
+    caster: u64,
+    item: u32,
+) {
     log.push_combat(line(
         ChatEventKind::PetInfo,
         combat::FEEDPET_LOG,
         me,
         caster,
         Fills::default(),
-        Named::Item(item),
+        Named::Item(item, Some(RecordWait::FeedPetLine(caster))),
     ));
 }
 
 /// The dismiss-pet line (`0x50bcc0`): the pet, `CHAT_MSG_PET_INFO`.
-pub(crate) fn dismiss_pet(log: &mut ChatLog, me: Option<u64>, caster: u64, pet: u64) {
+pub(crate) fn dismiss_pet(
+    log: &mut crate::ui_script::live::UiEvents,
+    me: Option<u64>,
+    caster: u64,
+    pet: u64,
+) {
     log.push_combat(line(
         ChatEventKind::PetInfo,
         combat::SPELLDISMISSPET,
@@ -65,7 +83,7 @@ pub(crate) fn dismiss_pet(log: &mut ChatLog, me: Option<u64>, caster: u64, pet: 
 /// The pet-happiness line (`0x50bbf0`), the happiness drain in place of its entry: the pet and
 /// the shown amount, `CHAT_MSG_PET_INFO`.
 pub(crate) fn happiness_drain(
-    log: &mut ChatLog,
+    log: &mut crate::ui_script::live::UiEvents,
     me: Option<u64>,
     caster: u64,
     pet: u64,
@@ -94,14 +112,14 @@ pub(crate) enum Opened {
 
 /// The open-lock line (`0x50dde0`, `0x50deb0`): the spell and what it opened, `CHAT_MSG_OPENING`.
 pub(crate) fn open_lock(
-    log: &mut ChatLog,
+    log: &mut crate::ui_script::live::UiEvents,
     me: Option<u64>,
     caster: u64,
     spell: String,
     opened: Opened,
 ) {
     let (named, text) = match opened {
-        Opened::Item(entry) => (Named::Item(entry), String::new()),
+        Opened::Item(entry) => (Named::Item(entry, None), String::new()),
         Opened::GameObject(name) => (Named::Ready, name),
     };
     log.push_combat(line(

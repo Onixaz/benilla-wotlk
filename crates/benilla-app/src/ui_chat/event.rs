@@ -73,6 +73,9 @@ pub(crate) enum ChatEventKind {
     Opening,
     /// `CHAT_MSG_TARGETICONS`, a raid mark set (`0x50b0f0`).
     TargetIcons,
+    /// Type `0x32`, the turn-in's arena award (`0x6d0ff4`): its event slot has no name, so the
+    /// line raises nothing and only its log line shows.
+    ArenaPoints,
 }
 
 impl ChatEventKind {
@@ -132,6 +135,7 @@ impl ChatEventKind {
             K::PetInfo,
             K::Opening,
             K::TargetIcons,
+            K::ArenaPoints,
         ]
     };
 }
@@ -162,6 +166,8 @@ pub(crate) struct ChatEvent {
     pub text: String,
     pub sender: String,
     pub language: String,
+    /// arg3's language id, 0 for none: the log's header tests it against the player's default.
+    pub language_id: u32,
     pub channel: String,
     pub target: String,
     pub flag: String,
@@ -298,6 +304,8 @@ pub(crate) fn event_name(kind: ChatEventKind) -> &'static str {
         K::PetInfo => "CHAT_MSG_PET_INFO",
         K::Opening => "CHAT_MSG_OPENING",
         K::TargetIcons => "CHAT_MSG_TARGETICONS",
+        // Event slot 658 (`0x9fbe80`) is never named.
+        K::ArenaPoints => "",
     }
 }
 
@@ -356,12 +364,21 @@ pub(crate) fn notice_token(
     })
 }
 
+/// The kind's name in the chat type table (`0x9fb430` for `0x32`), which its event carries after
+/// `CHAT_MSG_` where it has one.
+pub(crate) fn type_name(kind: ChatEventKind) -> &'static str {
+    match kind {
+        ChatEventKind::ArenaPoints => "ARENA_POINTS",
+        _ => event_name(kind)
+            .strip_prefix("CHAT_MSG_")
+            .unwrap_or_default(),
+    }
+}
+
 /// The kind's row in the shipped default colour table (`0x9fa558`), which the chat bubble and the
 /// edit box header tint with; the window's line colour is `ChatTypeInfo`'s.
 pub(crate) fn default_color(kind: ChatEventKind) -> [u8; 3] {
-    let key = event_name(kind)
-        .strip_prefix("CHAT_MSG_")
-        .unwrap_or_default();
+    let key = type_name(kind);
     benilla_ui::script::default_chat_color(key)
         .unwrap_or_else(|| panic!("{key} is a fixed row of the reference's chat type table"))
 }
@@ -426,44 +443,49 @@ pub(crate) fn kind_of_wire(chat_type: u8) -> Option<ChatEventKind> {
     })
 }
 
+/// The 3.3.5a type a composed line of `kind` hands the add (`0x509dd0`'s second argument): the lane
+/// whose event is the kind's, the arena-points line its unnamed `0x32` (`0x6d0ff4`); a whisper is 7,
+/// ahead of the foreign whisper's 8 the handler rewrites to it (`0x50bfc7`).
+pub(crate) fn wotlk_type_of_kind(kind: ChatEventKind) -> Option<u8> {
+    use benilla_protocol::messages::{wotlk_chat_type as w, wotlk_chat_type_shared};
+    if kind == ChatEventKind::ArenaPoints {
+        return Some(w::ARENA_POINTS);
+    }
+    (w::SYSTEM..=w::TARGETICONS)
+        .find(|&t| wotlk_chat_type_shared(t).and_then(kind_of_wire) == Some(kind))
+}
+
 /// The arg6 flag token for a wire chat-tag byte (vmangos `Player::GetChatTag`), read as
 /// `CHAT_FLAG_<flag>`.
 pub(crate) fn flag_of_tag(chat_tag: u8) -> &'static str {
     use benilla_protocol::messages::chat_tag as t;
-    match chat_tag {
-        t::AFK => "AFK",
-        t::DND => "DND",
-        t::GM => "GM",
-        _ => "",
-    }
-}
-
-/// The language names by wire id, in the running locale, for the `[Language]` header. Language 0
-/// has no `Languages.dbc` row, so the stock `arg3 ~= "Universal"` test never fires: an empty arg3
-/// is what suppresses the header (`ChatFrame.lua:1442`).
-pub(crate) fn language_name(id: u32) -> &'static str {
-    let english = match id {
-        1 => "Orcish",
-        2 => "Darnassian",
-        3 => "Taurahe",
-        6 => "Dwarvish",
-        7 => "Common",
-        8 => "Demonic",
-        9 => "Titan",
-        10 => "Thalassian",
-        11 => "Draconic",
-        12 => "Kalimag",
-        13 => "Gnomish",
-        14 => "Troll",
-        33 => "Gutterspeak",
-        _ => return "", // 0, Universal, and unknown ids: no header
-    };
-    crate::locale_names::language(id).unwrap_or(english)
+    // The first bit set in the handler's order (`0x50c070`-`0x50c09a`).
+    [
+        (t::DEV, "DEV"),
+        (t::GM, "GM"),
+        (t::DND, "DND"),
+        (t::AFK, "AFK"),
+    ]
+    .into_iter()
+    .find(|(bit, _)| chat_tag & bit != 0)
+    .map_or("", |(_, flag)| flag)
 }
 
 #[cfg(test)]
 mod line_args_tests {
     use super::*;
+
+    /// 3.3.5a's tag bits read as one flag, DEV over GM over DND over AFK (`0x50c070`-`0x50c09a`).
+    #[test]
+    fn the_chat_tag_reads_its_highest_flag() {
+        assert_eq!(flag_of_tag(0x00), "");
+        assert_eq!(flag_of_tag(0x01), "AFK");
+        assert_eq!(flag_of_tag(0x03), "DND");
+        assert_eq!(flag_of_tag(0x04), "GM");
+        assert_eq!(flag_of_tag(0x07), "GM");
+        assert_eq!(flag_of_tag(0x14), "DEV");
+        assert_eq!(flag_of_tag(0x08), "");
+    }
 
     fn say(sender_guid: u64) -> ChatEvent {
         ChatEvent {

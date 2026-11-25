@@ -12,7 +12,7 @@ use bevy::prelude::*;
 
 use crate::combat_text::CombatTextSpawn;
 use crate::net::{GuidIndex, NetHandlerApp, ObjectStore, SelfGuid, ServerSoundMessage};
-use crate::ui_chat::ChatLog;
+use crate::ui_chat::ChatSink as _;
 use crate::ui_unit::CombatTextEvent;
 
 pub(crate) mod chat;
@@ -360,7 +360,7 @@ struct Progress<'w, 's> {
     self_guid: Res<'w, SelfGuid>,
     stores: Query<'w, 's, &'static ObjectStore>,
     text: MessageWriter<'w, CombatTextSpawn>,
-    chat: ResMut<'w, ChatLog>,
+    chat: ResMut<'w, crate::ui_script::live::UiEvents>,
     center: MessageWriter<'w, CombatTextEvent>,
 }
 
@@ -411,16 +411,17 @@ fn on_exploration_xp(
 
 fn on_level_up(
     In(ev): In<SessionEvent>,
-    mut chat: ResMut<ChatLog>,
+    mut ui: ResMut<crate::ui_script::live::UiEvents>,
     mut tutorials: Option<MessageWriter<crate::tutorial::TutorialEvent>>,
 ) {
     if let SessionEvent::LevelUp(lv) = ev {
-        progress::level_up(lv, &mut chat, tutorials.as_mut());
+        progress::level_tutorials(lv.level, tutorials.as_mut());
+        progress::level_up(lv, &mut ui);
     }
 }
 
-/// An honor award: the line (name-resolved, so it queues) and the `HONOR_GAINED` number. A
-/// dishonorable kill carries negative honor, passed signed.
+/// An honor award: the line (its victim's name read in the call) and the `HONOR_GAINED` number.
+/// A dishonorable kill carries negative honor, passed signed.
 fn on_pvp_credit(In(ev): In<SessionEvent>, mut p: Progress) {
     if let SessionEvent::PvpCredit(credit) = ev {
         p.chat.push_pvp_credit(

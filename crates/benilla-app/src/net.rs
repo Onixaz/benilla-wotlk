@@ -105,7 +105,6 @@ impl Plugin for NetPlugin {
             .init_resource::<ServerWallClock>()
             .init_resource::<Reputations>()
             .init_resource::<HomeBind>()
-            .init_resource::<PlayedTimeAnswer>()
             .init_resource::<PlayedClock>()
             .init_resource::<Proficiencies>()
             .init_resource::<ControlFlag>()
@@ -816,14 +815,8 @@ impl Reputations {
 #[derive(Resource, Default)]
 pub(crate) struct HomeBind(pub(crate) Option<u32>);
 
-/// The undelivered `/played` answer (`SMSG_PLAYED_TIME`): total seconds and seconds this level.
-/// One slot: the server sends one reply per request.
-#[derive(Resource, Default)]
-pub(crate) struct PlayedTimeAnswer(pub(crate) Option<(u32, u32)>);
-
 /// The played clock's seed (`0x6cf470`): every `SMSG_PLAYED_TIME`'s total, shown or not, and when
-/// it came, which the refund and trade windows count against. The feed stamps it on the `GetTime`
-/// clock for the VM.
+/// it came, which the refund and trade windows count against, read at the call.
 #[derive(Resource, Default)]
 pub(crate) struct PlayedClock(pub(crate) Option<(u32, Instant)>);
 
@@ -2519,9 +2512,16 @@ pub(crate) enum ClientCommand {
     DelMute {
         guid: u64,
     },
-    /// `CMSG_CHAT_IGNORED`: the server still delivers ignored chat, so the client drops it and
-    /// reports, and the sender hears they are ignored.
+    /// `CMSG_CHAT_IGNORED` (`0x500180`): the server still delivers ignored chat, so the client
+    /// drops it and reports, and the sender hears they are ignored; `reason` 0 for an ignored
+    /// sender (`0x50c186`), 1 for a commentator's refused whisper (`0x50c134`).
     ChatIgnored {
+        guid: u64,
+        reason: u8,
+    },
+    /// `CMSG_CHAT_FILTERED`: a whisper the spam filter dropped, reported with its sender
+    /// (`0x50a6c4`-`0x50a718`).
+    ChatFiltered {
         guid: u64,
     },
     /// `CMSG_WHO`, the `/who` filter parsed into wire fields as `SendWho` builds them.

@@ -618,7 +618,8 @@ pub(crate) use lifecycle::load_ingame_ui_on_world_entry;
 pub(crate) use lifecycle::shutdown_on_exit;
 #[cfg(test)]
 pub(crate) use lifecycle::{
-    finish_ui_load, install_boot_vm, is_emote_token_line, seat_from_roster, shutdown_ui_state,
+    finish_ui_load, install_boot_vm, is_emote_token_line, run_leave_world_sweep, seat_from_roster,
+    shutdown_ui_state,
 };
 
 /// `GetFramerate()`'s host half: FPS on `Time<Real>`, smoothed by a one-second pole; how the

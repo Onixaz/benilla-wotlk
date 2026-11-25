@@ -172,24 +172,32 @@ impl Default for TextFilterSwitches {
     }
 }
 
-/// The 14 player-authored chat types the reference masks (`.rdata`); any other type, a monster's
-/// yell included, is never masked.
-pub(crate) const PROFANITY_MASKED_CHAT_TYPES: &[u8] = &[
-    0x00, // SAY
-    0x01, // PARTY
-    0x02, // RAID
-    0x03, // GUILD
-    0x04, // OFFICER
-    0x05, // YELL
-    0x06, // WHISPER
-    0x07, // WHISPER_INFORM
-    0x08, // EMOTE
-    0x0e, // CHANNEL
-    0x14, // AFK
-    0x15, // DND
-    0x58, // RAID_WARNING
-    0x5c, // BATTLEGROUND
-];
+/// The add's types the mask arm takes, its table walked 18 entries deep (`0x50a621`-
+/// `0x50a62f`), in 3.3.5a numbering: the player-authored types and the system line; any other type,
+/// a monster's yell included, is never masked.
+pub(crate) const PROFANITY_MASKED_CHAT_TYPES: &[u8] = {
+    use benilla_protocol::messages::wotlk_chat_type as w;
+    &[
+        w::SAY,
+        w::PARTY,
+        w::PARTY_LEADER,
+        w::RAID,
+        w::RAID_LEADER,
+        w::GUILD,
+        w::OFFICER,
+        w::YELL,
+        w::WHISPER,
+        w::WHISPER_INFORM,
+        w::EMOTE,
+        w::CHANNEL,
+        w::AFK,
+        w::DND,
+        w::RAID_WARNING,
+        w::BATTLEGROUND,
+        w::BATTLEGROUND_LEADER,
+        w::SYSTEM,
+    ]
+};
 
 /// The compiled lists and the rotating mask index.
 #[derive(Resource)]
@@ -521,7 +529,7 @@ mod tests {
     }
 }
 
-/// The chat chokepoint's view of the two filters, one [`SystemParam`] to keep `feed_chat` under
+/// The chat chokepoint's view of the two filters, one [`SystemParam`] to keep the chat add under
 /// Bevy's sixteen-parameter limit.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct ChatTextFilter<'w> {
@@ -531,25 +539,30 @@ pub(crate) struct ChatTextFilter<'w> {
 
 impl ChatTextFilter<'_> {
     /// Arm 1: whether to drop the line. In the reference's order: not `CHAT_MSG_FILTERED`, no
-    /// `"GM"` tag, a non-GM viewer, `spamFilter` on, then the predicate. Every exit, a GM viewer's
-    /// included, still reaches the mask arm.
+    /// `"GM"` or `"DEV"` flag, a non-GM viewer, `spamFilter` on, not a system line (`0x50a6a7`),
+    /// then the predicate. Every exit, a GM viewer's included, still reaches the mask arm.
     pub(crate) fn should_drop(
         &self,
-        chat_type: u8,
-        chat_tag: u8,
+        add_type: u8,
+        flag: &str,
         viewer_is_gm: bool,
         text: &str,
     ) -> bool {
-        use benilla_protocol::messages::{chat_tag as tag, CHAT_MSG_FILTERED};
-        if chat_type == CHAT_MSG_FILTERED || chat_tag == tag::GM || viewer_is_gm {
+        use benilla_protocol::messages::wotlk_chat_type as w;
+        // The add's 3.3.5a type (`0x50a617`): a filtered line skips (`0x50a63a`), as does a `"GM"`
+        // or `"DEV"` flag (`0x50a65e`, `0x50a676`), a GM viewer (`0x50a696`) and a system line
+        // (`0x50a6a7`).
+        let staff = flag == "GM" || flag == "DEV";
+        if add_type == w::FILTERED || staff || viewer_is_gm || add_type == w::SYSTEM {
             return false;
         }
         self.filter.is_spam(self.switches.spam, text)
     }
 
-    /// Arm 2: mask the line if its type is in the reference's table; the CVar is the masker's own.
-    pub(crate) fn mask_chat(&mut self, chat_type: u8, text: &mut String) {
-        if !PROFANITY_MASKED_CHAT_TYPES.contains(&chat_type) {
+    /// Arm 2: mask the line if the add's 3.3.5a type is in the reference's table (`0x50a621`); the
+    /// CVar is the masker's own.
+    pub(crate) fn mask_chat(&mut self, add_type: u8, text: &mut String) {
+        if !PROFANITY_MASKED_CHAT_TYPES.contains(&add_type) {
             return;
         }
         self.filter.mask(self.switches.profanity, text);

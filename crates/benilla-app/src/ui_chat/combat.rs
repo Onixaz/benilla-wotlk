@@ -313,7 +313,6 @@ pub(crate) struct PendingCombat {
     pub subject: u64,
     pub fills: Fills,
     pub named: Named,
-    pub tries: u16,
 }
 
 /// What still has to be looked up before a line's [`Slot::Named`] can be filled.
@@ -321,8 +320,9 @@ pub(crate) struct PendingCombat {
 pub(crate) enum Named {
     /// The text is already in [`Fills::named`], or the family has no `Named` slot.
     Ready,
-    /// An item entry, through the item cache.
-    Item(u32),
+    /// An item entry, through the item cache, with the callback its composer asks an uncached
+    /// record with: none for the open-lock line (`0x50ec7f`), which then prints nothing.
+    Item(u32, Option<crate::items::RecordWait>),
     /// A unit guid, through the name cache.
     Unit(u64),
 }
@@ -336,7 +336,6 @@ pub(crate) fn ready(kind: ChatEventKind, family: Family, fills: Fills) -> Pendin
         subject: 0,
         fills,
         named: Named::Ready,
-        tries: 0,
     }
 }
 

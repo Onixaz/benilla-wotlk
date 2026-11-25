@@ -65,10 +65,13 @@ pub const CHAT_MSG_COMBAT_XP_GAIN: u8 = 0x70;
 pub const CHAT_MSG_COMBAT_HONOR_GAIN: u8 = 0x71;
 pub const CHAT_MSG_COMBAT_FACTION_CHANGE: u8 = 0x72;
 pub const CHAT_MSG_TARGETICONS: u8 = 0x73;
+/// 3.3.5a's Battle.net lane (`0x2F`), past the shared numbering: only its addon lines reach the
+/// add's `CHAT_MSG_ADDON`, its own event having no name.
+pub const CHAT_MSG_BATTLENET: u8 = 0x74;
 
-/// The only chat types the 1.12 client runs its `$`-macro expander over; the rest reach the frame
-/// verbatim. This is the wire gate; the re-expansion after a name query omits `0x5A`.
-pub const MACRO_EXPANDED_TYPES: [u8; 8] = [
+/// The chat types the add runs its `$`-macro parser over (`0x50a120`-`0x50a157`), the two
+/// achievement types aside; the rest reach the frame verbatim.
+pub const MACRO_EXPANDED_TYPES: [u8; 10] = [
     CHAT_MSG_MONSTER_SAY,        // 0x0B
     CHAT_MSG_MONSTER_YELL,       // 0x0C
     CHAT_MSG_MONSTER_EMOTE,      // 0x0D
@@ -76,7 +79,9 @@ pub const MACRO_EXPANDED_TYPES: [u8; 8] = [
     CHAT_MSG_BG_SYSTEM_NEUTRAL,  // 0x52
     CHAT_MSG_BG_SYSTEM_ALLIANCE, // 0x53
     CHAT_MSG_BG_SYSTEM_HORDE,    // 0x54
-    CHAT_MSG_RAID_BOSS_EMOTE,    // 0x5A, wire gate only
+    CHAT_MSG_RAID_BOSS_WHISPER,  // 0x59
+    CHAT_MSG_RAID_BOSS_EMOTE,    // 0x5A
+    CHAT_MSG_MONSTER_PARTY,      // 0x61
 ];
 
 /// The battleground system lines: one guid, the macro subject (`BuildChatPacket`'s `default:`).
@@ -84,12 +89,16 @@ pub const CHAT_MSG_BG_SYSTEM_NEUTRAL: u8 = 0x52;
 pub const CHAT_MSG_BG_SYSTEM_ALLIANCE: u8 = 0x53;
 pub const CHAT_MSG_BG_SYSTEM_HORDE: u8 = 0x54;
 
-/// vmangos `PlayerChatTag`; the server picks GM over DND over AFK (`Player.cpp:1757-1767`).
+/// 3.3.5a's chat tag bits, which the message handler reads as one flag, DEV over GM over DND
+/// over AFK (`0x50c070`-`0x50c09a`).
 pub mod chat_tag {
     pub const NONE: u8 = 0;
-    pub const AFK: u8 = 1;
-    pub const DND: u8 = 2;
-    pub const GM: u8 = 3;
+    pub const AFK: u8 = 0x01;
+    pub const DND: u8 = 0x02;
+    pub const GM: u8 = 0x04;
+    /// A commentator, whose whisper the handler gates on our contacts (`0x50c0e2`).
+    pub const COMMENTATOR: u8 = 0x08;
+    pub const DEV: u8 = 0x10;
 }
 
 /// One decoded chat line.
@@ -105,6 +114,9 @@ pub struct ChatMessage {
     pub target_guid: u64,
     /// The inline speaker name of the monster shapes; player names come from the name query.
     pub sender_name: Option<String>,
+    /// The receiver's inline name, sent when its guid is neither 0, a player nor a pet; the add
+    /// takes it over any cache for the `$`-macros (`0x50c2df`-`0x50c30e`).
+    pub receiver_name: Option<String>,
     /// The channel name, on `CHAT_MSG_CHANNEL` only.
     pub channel: Option<String>,
     pub text: String,
@@ -112,10 +124,14 @@ pub struct ChatMessage {
     pub chat_tag: u8,
     /// The achievement a `$a` names, on the two achievement lanes (0 elsewhere).
     pub achievement: u32,
-    /// The 3.3.5a type byte as it came, 0 on a line built client-side.
+    /// The 3.3.5a type byte as it came, 0 on a line built client-side; the handler passes a
+    /// foreign whisper on to the add as `WHISPER` (`0x50bfc7`).
     pub wire_type: u8,
     /// The `u32` after the sender guid, which a chat complaint echoes (`0x50dfd0`).
     pub sender_word: u32,
+    /// Read off `SMSG_GM_MESSAGECHAT`: the add's arg14 (set at `0x50ebc6`), which keeps the passed
+    /// name when the world-entry walk adds the line again (`0x50af8e`).
+    pub gm: bool,
 }
 
 impl ChatMessage {
@@ -216,7 +232,7 @@ pub fn wotlk_chat_type_shared(wire: u8) -> Option<u8> {
         w::GUILD => CHAT_MSG_GUILD,
         w::OFFICER => CHAT_MSG_OFFICER,
         w::YELL => CHAT_MSG_YELL,
-        // A foreign whisper fires the plain whisper's event (`0x9fbe80` slots 7 and 8).
+        // The handler passes a foreign whisper on as a whisper (`0x50bfc7`).
         w::WHISPER | w::WHISPER_FOREIGN => CHAT_MSG_WHISPER,
         w::WHISPER_INFORM => CHAT_MSG_WHISPER_INFORM,
         w::EMOTE => CHAT_MSG_EMOTE,
@@ -288,6 +304,7 @@ pub(super) fn read_message_chat_wotlk(r: &mut &[u8], gm: bool) -> io::Result<Opt
     let sender_guid = read_u64_le(r)?;
     let sender_word = read_u32_le(r)?;
     let mut sender_name = None;
+    let mut receiver_name = None;
     let mut channel = None;
     let target_guid;
     match wire_type {
@@ -302,7 +319,7 @@ pub(super) fn read_message_chat_wotlk(r: &mut &[u8], gm: bool) -> io::Result<Opt
             sender_name = Some(read_len_string(r)?);
             target_guid = read_u64_le(r)?;
             if names_receiver(target_guid) {
-                let _receiver_name = read_len_string(r)?;
+                receiver_name = Some(read_len_string(r)?);
             }
         }
         w::WHISPER_FOREIGN => {
@@ -312,7 +329,7 @@ pub(super) fn read_message_chat_wotlk(r: &mut &[u8], gm: bool) -> io::Result<Opt
         w::BG_SYSTEM_NEUTRAL | w::BG_SYSTEM_ALLIANCE | w::BG_SYSTEM_HORDE => {
             target_guid = read_u64_le(r)?;
             if target_guid != 0 && !client_is_player(target_guid) {
-                let _receiver_name = read_len_string(r)?;
+                receiver_name = Some(read_len_string(r)?);
             }
         }
         w::ACHIEVEMENT | w::GUILD_ACHIEVEMENT => {
@@ -335,7 +352,10 @@ pub(super) fn read_message_chat_wotlk(r: &mut &[u8], gm: bool) -> io::Result<Opt
     } else {
         0
     };
-    let Some(chat_type) = wotlk_chat_type_shared(wire_type) else {
+    // A Battle.net addon line still reaches the add's addon branch (`0x509fd8`).
+    let addon_lane = (wire_type == w::BATTLENET && language == super::LANGUAGE_ADDON)
+        .then_some(CHAT_MSG_BATTLENET);
+    let Some(chat_type) = wotlk_chat_type_shared(wire_type).or(addon_lane) else {
         return Ok(None);
     };
     Ok(Some(ChatMessage {
@@ -344,12 +364,14 @@ pub(super) fn read_message_chat_wotlk(r: &mut &[u8], gm: bool) -> io::Result<Opt
         sender_guid,
         target_guid,
         sender_name,
+        receiver_name,
         channel,
         text,
         chat_tag,
         achievement,
         wire_type,
         sender_word,
+        gm,
     }))
 }
 
@@ -430,6 +452,29 @@ mod tests {
         assert_eq!(msg.chat_type, CHAT_MSG_PARTY_LEADER);
         assert_eq!(msg.sender_guid, 0x77);
         assert_eq!(msg.text, "pull!");
+        assert!(!msg.gm);
+    }
+
+    /// `SMSG_GM_MESSAGECHAT` carries the sender's name ahead of the receiver and marks the line
+    /// as the add's arg14 (`0x50ebc6`).
+    #[test]
+    fn a_gm_line_reads_its_name_and_is_marked() {
+        let mut body = vec![wotlk_chat_type::SAY];
+        body.extend_from_slice(&0u32.to_le_bytes());
+        body.extend_from_slice(&0x77u64.to_le_bytes());
+        body.extend_from_slice(&0u32.to_le_bytes());
+        body.extend_from_slice(&4u32.to_le_bytes());
+        body.extend_from_slice(b"Ann\0");
+        body.extend_from_slice(&0x77u64.to_le_bytes());
+        body.extend_from_slice(&3u32.to_le_bytes());
+        body.extend_from_slice(b"hi\0");
+        body.push(4);
+        let msg = read_message_chat_wotlk(&mut body.as_slice(), true)
+            .expect("parses")
+            .expect("a lane");
+        assert_eq!(msg.sender_name.as_deref(), Some("Ann"));
+        assert_eq!(msg.text, "hi");
+        assert!(msg.gm);
     }
 
     fn line(wire: u8) -> Vec<u8> {
@@ -479,5 +524,51 @@ mod tests {
                 assert!(wotlk_chat_type_shared(wire).is_some(), "{wire:#04x}");
             }
         }
+    }
+
+    /// A Battle.net line in the addon language reaches the add's addon branch (`0x509fd8`) on its
+    /// own lane; in any other language it reads to nothing.
+    #[test]
+    fn a_battlenet_addon_line_keeps_its_lane() {
+        let read = |language: u32| {
+            let mut body = vec![wotlk_chat_type::BATTLENET];
+            body.extend_from_slice(&language.to_le_bytes());
+            body.extend_from_slice(&0x77u64.to_le_bytes());
+            body.extend_from_slice(&0u32.to_le_bytes());
+            body.extend_from_slice(&4u32.to_le_bytes());
+            body.extend_from_slice(b"Ann\0");
+            body.extend_from_slice(&0u64.to_le_bytes());
+            body.extend_from_slice(&6u32.to_le_bytes());
+            body.extend_from_slice(b"A\tsync\0");
+            body.push(0);
+            read_message_chat_wotlk(&mut body.as_slice(), false).expect("parses")
+        };
+        let msg = read(super::super::LANGUAGE_ADDON).expect("an addon line");
+        assert_eq!(msg.chat_type, CHAT_MSG_BATTLENET);
+        assert_eq!(msg.text, "A\tsync");
+        assert_eq!(read(0), None);
+    }
+
+    #[test]
+    fn a_foreign_whisper_keeps_its_type_for_the_handler() {
+        let mut body = vec![wotlk_chat_type::WHISPER_FOREIGN];
+        body.extend_from_slice(&0u32.to_le_bytes());
+        body.extend_from_slice(&0x77u64.to_le_bytes());
+        body.extend_from_slice(&0u32.to_le_bytes());
+        body.extend_from_slice(&4u32.to_le_bytes());
+        body.extend_from_slice(b"Ann ");
+        body.extend_from_slice(&0x55u64.to_le_bytes());
+        body.extend_from_slice(&3u32.to_le_bytes());
+        body.extend_from_slice(b"hi ");
+        body.push(0);
+        let msg = read_message_chat_wotlk(&mut body.as_slice(), false)
+            .expect("parses")
+            .expect("a line");
+        assert_eq!(msg.chat_type, CHAT_MSG_WHISPER);
+        assert_eq!(msg.wire_type, wotlk_chat_type::WHISPER_FOREIGN);
+        assert_eq!(msg.sender_guid, 0x77);
+        assert_eq!(msg.sender_name.as_deref(), Some("Ann"));
+        assert_eq!(msg.target_guid, 0x55);
+        assert_eq!(msg.text, "hi");
     }
 }

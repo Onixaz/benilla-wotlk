@@ -4,6 +4,7 @@
 //! moves and dance-cache answers are read and dropped: nothing built reads them, as `PlayDance` is
 //! not.
 
+use crate::ui_chat::ChatSink as _;
 #[cfg(test)]
 use benilla_ui::script::UiScript;
 use std::time::{Duration, Instant};
@@ -21,7 +22,7 @@ use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, NetHandlerApp, NetStatus, SelfGuid};
 use crate::ui_action::signals::SignalSink;
 use crate::ui_action::{FillArg, UiError};
-use crate::ui_chat::{ChatEvent, ChatEventKind, ChatLog};
+use crate::ui_chat::{ChatEvent, ChatEventKind};
 use crate::ui_script::live::UiEvents;
 use crate::ui_script::{UiDrain, UiFeed};
 
@@ -350,7 +351,11 @@ fn on_dance_cache(In(ev): In<SessionEvent>) {
 
 /// `SMSG_MOTD` (`0x551660`): each line a `CHAT_MSG_SYSTEM` line whose arg6 is `"MOTD"`, the lines
 /// kept for `KBSystem_GetMOTD`, then `KNOWLEDGE_BASE_SYSTEM_MOTD_UPDATED`.
-fn on_motd(In(ev): In<SessionEvent>, mut motd: ResMut<KbMotd>, mut chat: ResMut<ChatLog>) {
+fn on_motd(
+    In(ev): In<SessionEvent>,
+    mut motd: ResMut<KbMotd>,
+    mut chat: ResMut<crate::ui_script::live::UiEvents>,
+) {
     if let SessionEvent::Motd(lines) = ev {
         debug!("net: message of the day, {} line(s)", lines.len());
         for line in &lines {
@@ -441,12 +446,15 @@ fn server_first_line(
         sender_guid: a.guid,
         target_guid: a.guid,
         sender_name: Some(a.name.clone()),
+        receiver_name: None,
         channel: None,
         text,
         chat_tag: 0,
         achievement: a.achievement,
-        wire_type: 0,
+        // The add takes the line as type `0x30` (`0x50b0cd`).
+        wire_type: benilla_protocol::messages::wotlk_chat_type::ACHIEVEMENT,
         sender_word: 0,
+        gm: false,
     })
 }
 
@@ -520,7 +528,6 @@ fn feed_notices(
     net: Res<NetCommands>,
     self_guid: Res<SelfGuid>,
     objects: crate::net::Objects,
-    mut chat: ResMut<ChatLog>,
     mut pushed: Local<crate::ui_script::VmMemo<(Option<i32>, u64)>>,
 ) {
     let Some(mut script) = script.turn() else {
@@ -539,12 +546,16 @@ fn feed_notices(
         script.fire_event("KNOWLEDGE_BASE_SYSTEM_MOTD_UPDATED", Vec::new());
     }
     if !firsts.0.is_empty() {
-        let lua = script.lua();
-        let get = |key: &str| benilla_ui::strings::global(lua, key);
-        for a in std::mem::take(&mut firsts.0) {
-            if let Some(msg) = server_first_line(&get, &a) {
-                chat.push_wire(msg);
-            }
+        let msgs: Vec<_> = {
+            let lua = script.lua();
+            let get = |key: &str| benilla_ui::strings::global(lua, key);
+            std::mem::take(&mut firsts.0)
+                .iter()
+                .filter_map(|a| server_first_line(&get, a))
+                .collect()
+        };
+        for msg in msgs {
+            script.push_wire(msg);
         }
     }
 
@@ -596,7 +607,7 @@ fn feed_notices(
             )
         };
         if let Some(text) = text {
-            chat.push_event(ChatEvent::text_only(ChatEventKind::System, text));
+            script.push_event(ChatEvent::text_only(ChatEventKind::System, text));
         }
     }
 }
@@ -608,7 +619,6 @@ fn drain_level_grant(
     mut grant: ResMut<LevelGrant>,
     net: Res<NetCommands>,
     names: Res<NameCache>,
-    mut chat: ResMut<crate::ui_chat::ChatLog>,
     mut waiting: Local<crate::ui_script::VmMemo<Vec<(u8, u64)>>>,
     mut echo: Option<ResMut<crate::console::ConsoleEcho>>,
     mut pending: ResMut<crate::spell::PendingCast>,
@@ -661,11 +671,15 @@ fn drain_level_grant(
             R::ReportPvpAfk(guid) => {
                 let _ = net.0.send(ClientCommand::ReportPvpAfk { guid });
                 if let Some(name) = names.peek(guid) {
-                    let get = |key: &str| script.lua().globals().get::<String>(key).ok();
-                    if let Some(format) = get("REPORT_PVP_AFK_SENT") {
+                    let format = script
+                        .lua()
+                        .globals()
+                        .get::<String>("REPORT_PVP_AFK_SENT")
+                        .ok();
+                    if let Some(format) = format {
                         use benilla_ui::strings::{fill, Arg};
                         crate::ui_chat::away::push_system(
-                            &mut chat,
+                            &mut script,
                             fill(&format, &[Arg::S(name)]),
                         );
                     }
@@ -707,8 +721,8 @@ mod tests {
         app.add_plugins(MinimalPlugins)
             .init_resource::<NameCache>()
             .init_resource::<crate::cvars::Cvars>()
-            .init_resource::<crate::ui_chat::ChatWindows>()
-            .init_resource::<ChatLog>();
+            .init_resource::<crate::ui_chat::ChatWindows>();
+        let _wire = crate::ui_chat::insert_add_resources(app.world_mut());
         // A fixture's registration, out of the built client's census.
         let register = <App as NetHandlerApp>::net_handler;
         register(&mut app, SessionEventKind::Notice, on_notice);
@@ -1016,9 +1030,14 @@ mod tests {
         assert_eq!((line.text.as_str(), line.flag.as_str()), ("Hello", "MOTD"));
         let mut w = World::new();
         w.init_resource::<KbMotd>();
-        w.init_resource::<ChatLog>();
+        w.init_resource::<UiEvents>();
         w.run_system_once_with(on_motd, SessionEvent::Motd(vec!["a".into(), "b".into()]))
             .unwrap();
+        assert_eq!(
+            w.resource::<UiEvents>().chat_texts(),
+            ["a", "b"],
+            "each line added in the handler's turn"
+        );
         let motd = w.resource::<KbMotd>();
         assert_eq!(
             (motd.text.as_str(), motd.generation, motd.owed),

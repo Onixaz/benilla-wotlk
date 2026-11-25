@@ -111,6 +111,7 @@ fn rig() -> App {
         .init_resource::<super::entries::CombatLogBackdate>()
         .init_resource::<DamageTextGates>()
         .init_resource::<crate::ui_chat::ChatLog>()
+        .init_resource::<crate::ui_script::live::UiEvents>()
         .add_message::<CombatTextSpawn>()
         .add_message::<UnitCombatFeedback>()
         .add_message::<CombatTextEvent>();

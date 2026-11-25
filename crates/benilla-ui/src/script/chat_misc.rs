@@ -92,13 +92,7 @@ impl super::UiScript {
         (model.logging_chat, model.logging_combat)
     }
 
-    /// Whether a logging flag moved since the last drain: the app's cue to open or close its logs.
-    pub fn take_logging_changes(&mut self) -> bool {
-        drain_field!(self, logging_changed)
-    }
-
-    /// Set both flags without a cue: a reload's carry, or a log the app could not open, which
-    /// clears its flag (`0x4fbcba`).
+    /// Set both flags: a reload's carry.
     pub fn set_logging_flags(&mut self, chat: bool, combat: bool) {
         let mut model = self.model_mut();
         (model.logging_chat, model.logging_combat) = (chat, combat);
@@ -162,14 +156,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // SendSystemMessage(text) (`0x50d8a0`): one `CHAT_MSG_SYSTEM` line, through the chat log the
-    // line ids live in, so it fires at that frame's feed where the reference fires inside the call.
+    // SendSystemMessage(text) (`0x50d8a0`): one system line through the host's chat add inside
+    // the call (`0x50d8f3`), its `CHAT_MSG_SYSTEM` raised before the verb returns.
     g.set(
         "SendSystemMessage",
         lua.create_function(|lua, text: Value| {
             let text =
                 super::binding_abi::string_arg(lua, text, "Usage: SendSystemMessage(\"message\")")?;
-            crate::script::model_mut_of(lua).party_lines.push(text);
+            super::ui_errors::add_chat_text(lua, 0, &text);
             Ok(())
         })?,
     )?;
@@ -211,24 +205,26 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `0x4fbc60`: any argument sets the flag (`0x815500`, default on), then the flag reads 1 or nil.
+    // `0x4fbc60`: any argument sets the flag (`0x815500`, default on, `0x4fbc7c`); a flag set on a
+    // log not yet open opens it in the call (`0x4fbcb1`) and clears again when it cannot
+    // (`0x4fbcba`); then the flag reads 1 or nil. With no host there is no file to open.
     for (name, chat) in [("LoggingChat", true), ("LoggingCombat", false)] {
         g.set(
             name,
             lua.create_function(move |lua, args: MultiValue| {
-                let mut model = crate::script::model_mut_of(lua);
-                let slot = if chat {
-                    &mut model.logging_chat
-                } else {
-                    &mut model.logging_combat
-                };
                 if !args.is_empty() {
-                    let on = super::binding_abi::bool_or_default(args.front(), true);
-                    if *slot != on {
-                        *slot = on;
-                        model.logging_changed = true;
+                    let mut on = super::binding_abi::bool_or_default(args.front(), true);
+                    if on && super::write_live(|l| l.open_log(chat)).flatten() == Some(false) {
+                        on = false;
+                    }
+                    let mut model = crate::script::model_mut_of(lua);
+                    if chat {
+                        model.logging_chat = on;
+                    } else {
+                        model.logging_combat = on;
                     }
                 }
+                let model = crate::script::model_mut_of(lua);
                 let on = if chat {
                     model.logging_chat
                 } else {
@@ -246,6 +242,32 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 mod tests {
     use super::*;
     use crate::script::{SelectionRequest, UiScript};
+
+    /// `SendSystemMessage` adds its system line through the host's chat add inside the call
+    /// (`0x50d8f3`): its `CHAT_MSG_SYSTEM` fires before the next statement runs.
+    #[test]
+    fn send_system_message_adds_its_line_inside_the_call() {
+        let s = UiScript::new().unwrap();
+        s.run(
+            r#"
+            Log = {}
+            local f = CreateFrame("Frame")
+            f:RegisterEvent("CHAT_MSG_SYSTEM")
+            f:SetScript("OnEvent", function(_, e, a1) Log[#Log + 1] = e .. ":" .. a1 end)
+            "#,
+        )
+        .unwrap();
+        let mut view = crate::script::live::TestView::default();
+        crate::script::live::lending(&mut view, || {
+            s.run(r#"SendSystemMessage("hello") Log[#Log + 1] = "after""#)
+                .unwrap();
+        });
+        assert_eq!(
+            s.eval::<Vec<String>>("return Log").unwrap(),
+            ["CHAT_MSG_SYSTEM:hello", "after"]
+        );
+        assert_eq!(view.chat_lines, [(0, "hello".into())]);
+    }
 
     #[test]
     fn do_emote_queues_the_uppercased_token_and_a_non_empty_target() {
@@ -371,15 +393,8 @@ mod tests {
         );
         assert_eq!(s.eval::<i64>("return LoggingChat()").unwrap(), 1);
         assert_eq!(s.logging_flags(), (true, false));
-        assert!(s.take_logging_changes());
         s.run("LoggingCombat(1) LoggingChat(false)").unwrap();
         assert_eq!(s.logging_flags(), (false, true));
-        assert!(s.take_logging_changes());
-        s.run("LoggingCombat(true)").unwrap();
-        assert!(
-            !s.take_logging_changes(),
-            "a write that moves nothing cues nothing"
-        );
         assert!(
             s.eval::<bool>("return LoggingCombat(nil) == nil").unwrap(),
             "an explicit nil is an argument, read as off"
@@ -387,5 +402,24 @@ mod tests {
         assert!(s.eval::<bool>("return LoggingChat('on') == 1").unwrap());
         s.set_logging_flags(false, true);
         assert_eq!(s.logging_flags(), (false, true));
+    }
+
+    /// The setter opens the log inside the call (`0x4fbcb1`), and a log that cannot open clears
+    /// the flag it set (`0x4fbcba`), so the verb reads nil.
+    #[test]
+    fn the_logging_setter_opens_its_log_in_the_call_and_clears_on_a_failed_open() {
+        let mut s = UiScript::new().unwrap();
+        let mut view = crate::script::live::TestView::default();
+        let on = s.with_live(&mut view, |s| {
+            s.eval::<i64>("return LoggingChat(1)").unwrap()
+        });
+        assert_eq!(on, 1);
+        assert_eq!(view.logs_opened, (true, false), "opened in the call");
+        view.log_open_fails = true;
+        let off = s.with_live(&mut view, |s| {
+            s.eval::<bool>("return LoggingCombat(1) == nil").unwrap()
+        });
+        assert!(off, "a failed open reads nil");
+        assert_eq!(s.logging_flags(), (true, false));
     }
 }

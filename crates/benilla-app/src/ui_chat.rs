@@ -1,6 +1,6 @@
-//! The chat system: [`event`] is the internal `CHAT_MSG_*` currency, [`feed`] turns every source
-//! into events with names resolved once, [`frames`] routes them through the `ChatFrame_OnEvent`
-//! composer to the docked windows, and [`input`] is the outbound side over [`commands`]' table of
+//! The chat system: [`event`] is the internal `CHAT_MSG_*` currency, [`feed`] is the chat add that
+//! builds each line in its caller's turn, [`frames`] raises its `CHAT_MSG_*` for the stock
+//! `ChatFrame_OnEvent` and writes the chat log, and [`input`] is the outbound side over [`commands`]' table of
 //! every `/command`, built from the reference's own alias strings.
 
 use bevy::prelude::*;
@@ -9,6 +9,8 @@ use crate::ui_script::{UiDrain, UiFeed};
 
 #[cfg(test)]
 mod ace_gate_tests;
+#[cfg(test)]
+mod add_tests;
 /// `/afk` and `/dnd`: the optimistic AFK mirror and the implicit clear that every other chat send
 /// and every movement press carries.
 pub(crate) mod away;
@@ -57,10 +59,14 @@ pub(crate) use edit::ChannelState;
 #[cfg(test)]
 pub(crate) use event::event_name;
 pub(crate) use event::{default_color, ChatEvent, ChatEventKind};
-pub(crate) use feed::{ChatLog, XpLine, REST_STATE_KEYS};
+#[cfg(test)]
+pub(crate) use feed::insert_add_resources;
+pub(crate) use feed::{
+    add_now, enter_world, name_landed, ChatLine, ChatLog, ChatSink, XpLine, REST_STATE_KEYS,
+};
 /// The chat windows and the message display's in-call add, for the verbs' live view.
 pub(crate) use frames::{
-    add_chat_line, add_chat_line_now, add_combat_line_now, kind_of_type, ChatWindows,
+    add_chat_line_in_call, add_chat_line_now, add_combat_line_now, ChatWindows,
 };
 /// The per-character chat cache's restore, called from the world-entry UI load: its two events
 /// must precede the session's first chat line and `PLAYER_LOGIN`.
@@ -99,50 +105,22 @@ impl Plugin for UiChatPlugin {
             )
             // The slash-command table needs the VM's globals and the emote catalog, both `Startup`.
             .add_systems(PostStartup, commands::build_slash_commands)
-            // The language gate's feeds, ahead of the chat drain and the calls that read them.
+            // The garble word pool, ahead of the packet drain and the calls that read it.
             .add_systems(
                 Update,
-                (
-                    language::load_language_words,
-                    language::feed_language_skills,
-                    language::feed_default_language,
-                )
-                    .before(feed::feed_chat)
+                language::load_language_words
+                    .before(crate::net::apply_net_updates)
                     // Ahead of every call into Lua, whose item-text verbs read the tables at the call.
                     .before(crate::ui_script::UiPress),
-            )
-            // Before the drain, so a broadcast lands on the frame it decodes.
-            .add_systems(
-                Update,
-                broadcast::feed_broadcasts
-                    .in_set(crate::ui_script::UiFeed)
-                    .before(feed::feed_chat),
-            )
-            // Only against the in-game VM: the drain takes the whole queue and fires every line, so
-            // a VM with no ChatFrame destroys them. After the unit and guild feeds, as in the
-            // reference: login-burst chat is queued behind a latch and drains after `PLAYER_LOGIN`
-            // and `PLAYER_ENTERING_WORLD`, while `GUILD_MOTD` fires on arrival, so the guild line
-            // precedes the welcome.
-            .add_systems(
-                Update,
-                feed::feed_chat
-                    .in_set(UiFeed)
-                    .after(crate::ui_unit::UnitFeed)
-                    .after(crate::ui_guild::GuildFeed)
-                    .run_if(crate::ui_script::ingame_ui_up),
             )
             // The last-input stamp, ungated and ahead of the UI pass: the reference stamps raw
             // input before dispatch, so a key the chat box swallows still counts.
             .add_systems(Update, idle::stamp_input.before(crate::ui_script::UiPress))
-            // A fresh VM's joined-channel mirror, before the feed so its first line is numbered.
+            // A fresh VM's joined-channel mirror.
             .add_systems(
                 Update,
-                channels::seed_channels
-                    .in_set(crate::ui_script::UiFeed)
-                    .before(feed::feed_chat),
+                channels::seed_channels.in_set(crate::ui_script::UiFeed),
             )
-            // `RequestTimePlayed()` -> `CMSG_PLAYED_TIME`; `SMSG_PLAYED_TIME` -> `TIME_PLAYED_MSG`.
-            .add_systems(Update, feed::played_time_bridge.in_set(UiFeed))
             // The channel pane's roster names, as the name cache answers them.
             .add_systems(Update, net::feed_channel_roster_names.in_set(UiFeed))
             .add_systems(
@@ -204,13 +182,21 @@ impl Plugin for UiChatPlugin {
     }
 }
 
-/// The chat session end: the undrained feed, which outlives the Lua state, and both windows'
-/// lines. The Lua state is itself replaced at the session end, as the reference destroys its own
-/// at logout.
-///
-/// Deviation: not run on benilla's same-character reconnect, which the reference lacks (it
-/// returns to the login screen), so the window keeps its scrollback there.
+/// The chat session end (`0x529172` -> `0x5072b0`): both logs closed and both logging flags
+/// zeroed, the held lines and both windows' lines dropped. It runs at every exit from the world,
+/// the unattended reconnect's re-entry included (an exit to the same state), as the reference's
+/// disconnect leaves its game UI.
 fn end_session_chat(world: &mut World) {
+    // Each log closed and its flag zeroed (`0x5072cb`-`0x5072d6`).
+    if let Some(mut windows) = world.get_resource_mut::<ChatWindows>() {
+        windows.logs.0.close();
+    }
+    if let Some(mut file) = world.get_resource_mut::<logging::CombatLogFile>() {
+        file.0.close();
+    }
+    if let Some(mut script) = world.get_non_send_resource_mut::<benilla_ui::script::UiScript>() {
+        script.set_logging_flags(false, false);
+    }
     let mut log = std::mem::take(&mut *world.resource_mut::<ChatLog>());
     // The windows' `Clear` runs Lua: the `World` is lent for it.
     crate::ui_script::safe_world::lend(world, |script| end_chat_session(Some(script), &mut log))

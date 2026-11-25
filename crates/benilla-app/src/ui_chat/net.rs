@@ -2,12 +2,15 @@
 //! chat. `SMSG_NOTIFICATION` and `SMSG_AREA_TRIGGER_MESSAGE` are mostly `UIErrorsFrame` toasts,
 //! shown in the handler's turn through [`TextSink`].
 
-use benilla_protocol::messages::{ChatMessage, CHAT_MSG_WHISPER};
+use crate::ui_chat::ChatSink as _;
+use benilla_protocol::messages::ChatMessage;
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
 
 use super::{Broadcast, ChatEvent, ChatEventKind, ChatLog};
-use crate::net::{ClientCommand, NetCommands, NetHandlerApp, PlayedTimeAnswer, ServerSaidMessage};
+use crate::net::{
+    ClientCommand, GuidIndex, NetCommands, NetHandlerApp, SelfGuid, ServerSaidMessage,
+};
 use crate::ui_action::signals::SignalSink;
 use crate::ui_action::{TextSink, UiError};
 use crate::ui_script::live::UiEvents;
@@ -37,13 +40,18 @@ pub(super) fn register(app: &mut App) {
 
 fn on_chat(
     In(ev): In<SessionEvent>,
-    mut chat_log: ResMut<ChatLog>,
+    mut chat_log: ResMut<crate::ui_script::live::UiEvents>,
     social: Res<SocialState>,
+    mut log: ResMut<ChatLog>,
+    (self_guid, guids): (Res<SelfGuid>, Res<GuidIndex>),
     commands: Res<NetCommands>,
     mut server_said: MessageWriter<ServerSaidMessage>,
 ) {
     if let SessionEvent::Chat(m) = ev {
-        chat(m, &mut chat_log, &social, &commands, &mut server_said);
+        let me = self_guid.0.filter(|g| guids.0.contains_key(g));
+        if let Some(line) = chat(m, &social, me, &mut log, &commands, &mut server_said) {
+            chat_log.push_line(line);
+        }
     }
 }
 
@@ -60,9 +68,7 @@ fn on_channel_list(In(ev): In<SessionEvent>, world: &mut World) {
         return;
     };
     if !display {
-        if let Some(mut chat_log) = world.get_resource_mut::<ChatLog>() {
-            channel_list(channel, &members, &mut chat_log);
-        }
+        super::feed::add(world, channel_list(channel, &members).into());
         return;
     }
     debug!(
@@ -160,8 +166,9 @@ fn on_chat_not_in_party(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
     }
 }
 
-/// The four world broadcasts, parked for [`super::broadcast`]'s resolve pass.
-fn on_broadcast(In(ev): In<SessionEvent>, mut chat_log: ResMut<ChatLog>) {
+/// The world broadcasts (`0x50c3c0`, `0x50c850`, `0x50c980`): each resolves against the joined
+/// channels and the player's zone as it lands and adds its lines in the handler's turn.
+fn on_broadcast(In(ev): In<SessionEvent>, world: &mut World) {
     let b = match ev {
         SessionEvent::ZoneUnderAttack { area_id } => Broadcast::ZoneUnderAttack { area_id },
         SessionEvent::DefenseMessage { zone_id, text } => Broadcast::Defense { zone_id, text },
@@ -170,7 +177,19 @@ fn on_broadcast(In(ev): In<SessionEvent>, mut chat_log: ResMut<ChatLog>) {
         }
         _ => return,
     };
-    broadcast(b, &mut chat_log);
+    // A defense broadcast outside the defense channels prints nothing, so the log is its only trace.
+    info!("net: world broadcast — {b:?}");
+    let template = world
+        .get_non_send_resource::<benilla_ui::script::UiScript>()
+        .and_then(|s| super::combat::global_string(s, "ZONE_UNDER_ATTACK"));
+    match world.run_system_cached_with(super::broadcast::broadcast_lines, (b, template)) {
+        Ok(lines) => {
+            for line in lines {
+                super::feed::add(world, line.into());
+            }
+        }
+        Err(e) => warn!("chat: the broadcast was not resolved: {e}"),
+    }
 }
 
 /// `SMSG_CHAT_RESTRICTED` (`0x6e3cb9`): the kind picks its line through `0x6e44d0`; past 3,
@@ -193,31 +212,46 @@ fn on_chat_restricted(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
     }
 }
 
-fn on_toast(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>, mut chat_log: ResMut<ChatLog>) {
+fn on_toast(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
     match ev {
-        SessionEvent::Notification { text } => notification(&text, &mut *ui, &mut chat_log),
+        SessionEvent::Notification { text } => {
+            if let Some(line) = notification(&text, &mut *ui) {
+                ui.push_event(line);
+            }
+        }
         SessionEvent::AreaTriggerMessage { text } => area_trigger_message(text, &mut *ui),
         _ => {}
     }
 }
 
-/// Fill the mailbox `feed::played_time_bridge` fires as `TIME_PLAYED_MSG`, whose stock handler
-/// prints the chat lines; the breakdown goes to the console (`0x401400`-`0x40144c`), the log here.
+/// `SMSG_PLAYED_TIME` (`0x401390`): the played clock's seed, and for a shown answer the console
+/// breakdown (`0x401400`-`0x40144c`, the log here) then `TIME_PLAYED_MSG(total, level)` raised in
+/// the handler (`0x401463`), whose stock handler prints the chat lines.
 fn on_played_time(
     In(ev): In<SessionEvent>,
-    mut answer: ResMut<PlayedTimeAnswer>,
     mut clock: ResMut<crate::net::PlayedClock>,
+    mut ui: ResMut<UiEvents>,
+    active: Query<(), With<crate::net::SelfPlayer>>,
 ) {
     if let SessionEvent::PlayedTime { total, level, show } = ev {
         debug!("net: played time {total} s (level {level} s, shown {show})");
-        clock.0 = Some((total, std::time::Instant::now()));
+        // Only the active player's clock is seeded (`0x4013c6`-`0x4013f1`).
+        if !active.is_empty() {
+            clock.0 = Some((total, std::time::Instant::now()));
+        }
         // Only a shown answer prints and fires `TIME_PLAYED_MSG` (`0x4013f6`).
         if show {
-            answer.0 = Some((total, level));
             info!(
                 "console: total time played {}, this level {}",
                 played_breakdown(total),
                 played_breakdown(level)
+            );
+            ui.fire(
+                "TIME_PLAYED_MSG",
+                vec![
+                    benilla_ui::script::ScriptValue::Int(i64::from(total)),
+                    benilla_ui::script::ScriptValue::Int(i64::from(level)),
+                ],
             );
         }
     }
@@ -225,7 +259,7 @@ fn on_played_time(
 
 fn on_channel_notify(
     In(ev): In<SessionEvent>,
-    mut chat_log: ResMut<ChatLog>,
+    mut chat_log: ResMut<crate::ui_script::live::UiEvents>,
     social: Res<SocialState>,
 ) {
     if let SessionEvent::ChannelNotify {
@@ -251,7 +285,7 @@ fn on_channel_notify(
 /// `MSG_RANDOM_ROLL` (`0x6e37af`): an ignored roller's roll shows nothing (`0x6e3801`).
 fn on_random_roll(
     In(ev): In<SessionEvent>,
-    mut chat_log: ResMut<ChatLog>,
+    mut chat_log: ResMut<crate::ui_script::live::UiEvents>,
     social: Res<SocialState>,
 ) {
     if let SessionEvent::RandomRoll {
@@ -274,84 +308,151 @@ fn on_session_end(In(_): In<SessionEvent>, mut chat_log: ResMut<ChatLog>) {
     chat_log.clear_session();
 }
 
-/// A spoken line (`SMSG_MESSAGECHAT`). System lines (`0x0A`), the server's answers to GM
-/// commands, log at `info!` and go out as [`ServerSaidMessage`]; other chat logs at `debug!`.
+/// A spoken line (`SMSG_MESSAGECHAT`, `0x50be70`): the line the handler adds, `None` for one it
+/// drops. System lines (`0x0A`), the server's answers to GM commands, log at `info!` and go out as
+/// [`ServerSaidMessage`]; other chat logs at `debug!`. `me` is the active player's guid while its
+/// object exists (`0x50bea4`).
 fn chat(
-    m: ChatMessage,
-    chat_log: &mut ChatLog,
+    mut m: ChatMessage,
     social: &SocialState,
+    me: Option<u64>,
+    log: &mut ChatLog,
     net_commands: &NetCommands,
     server_said: &mut MessageWriter<ServerSaidMessage>,
-) {
-    // Addon traffic: 1.12 has no addon opcode or chat type, so `LANG_ADDON` on any lane is the
-    // whole test. The line never renders; it fires `CHAT_MSG_ADDON` once the sender's name
-    // resolves. An ignored sender's fires nothing, as the reference drops ignored lines first, and
-    // needs no `CMSG_CHAT_IGNORED`: vmangos refuses addon whispers (`ChatHandler.cpp:84-103`).
+) -> Option<super::ChatLine> {
+    use benilla_protocol::messages::wotlk_chat_type as w;
     if m.is_addon() {
-        if !social.is_ignored(m.sender_guid) {
-            debug!(
-                "net: addon chat [{:#04x}] from {:#x}: {:?} (suppressed — not a chat line)",
-                m.chat_type, m.sender_guid, m.text
-            );
-            if benilla_assets::trace::enabled() {
-                // `<-` inbound; the outbound drain writes `->` under the same tag.
-                benilla_assets::trace::line(
-                    "addon",
-                    &format!("<- [{:#04x}] {:?}", m.chat_type, m.text),
-                );
-            }
-            chat_log.push_addon(&m.text, m.chat_type, m.sender_guid);
-        }
-        return;
-    }
-    if m.chat_type == 0x0A {
-        info!("net: server says — {}", m.text);
-        // Also as a message: server state with no descriptor field (god mode) has no other tell.
-        server_said.write(ServerSaidMessage {
-            text: m.text.clone(),
-        });
-    } else {
-        debug!("net: chat [{:#04x}] {}", m.chat_type, m.text);
-    }
-    // On the trace clock too, so a `.gps` answer lines up with the movement trace.
-    if benilla_assets::trace::enabled() {
-        benilla_assets::trace::line(
-            "sys",
-            &format!("[{:#04x}] {}", m.chat_type, m.text.replace('\n', " ⏎ ")),
+        debug!(
+            "net: addon chat [{:#04x}] from {:#x}: {:?}",
+            m.chat_type, m.sender_guid, m.text
         );
+        if benilla_assets::trace::enabled() {
+            // `<-` inbound; the outbound drain writes `->` under the same tag.
+            benilla_assets::trace::line(
+                "addon",
+                &format!("<- [{:#04x}] {:?}", m.chat_type, m.text),
+            );
+        }
+    } else {
+        if m.chat_type == 0x0A {
+            info!("net: server says — {}", m.text);
+            // Also as a message: server state with no descriptor field (god mode) has no other tell.
+            server_said.write(ServerSaidMessage {
+                text: m.text.clone(),
+            });
+        } else {
+            debug!("net: chat [{:#04x}] {}", m.chat_type, m.text);
+        }
+        // On the trace clock too, so a `.gps` answer lines up with the movement trace.
+        if benilla_assets::trace::enabled() {
+            benilla_assets::trace::line(
+                "sys",
+                &format!("[{:#04x}] {}", m.chat_type, m.text.replace('\n', " ⏎ ")),
+            );
+        }
     }
-    // An ignored speaker is dropped silently (the ignore list); a dropped whisper also
-    // sends `CMSG_CHAT_IGNORED`, so the sender hears "is ignoring you". Whisper echoes, ignore
-    // notices and restricted lines still post (`0x50c195`-`0x50c19d`).
-    if social.is_ignored(m.sender_guid) {
-        if m.chat_type == CHAT_MSG_WHISPER {
+    match m.wire_type {
+        // The monster and Battle.net arm drops a line whose receiver is ignored (`0x50c34a`-`0x50c35b`).
+        w::MONSTER_SAY
+        | w::MONSTER_YELL
+        | w::RAID_BOSS_EMOTE
+        | w::RAID_BOSS_WHISPER
+        | w::MONSTER_EMOTE
+        | w::MONSTER_WHISPER
+        | w::MONSTER_PARTY
+        | w::BATTLENET => {
+            m.chat_tag = 0;
+            if social.is_ignored(m.target_guid) {
+                return None;
+            }
+        }
+        // A foreign whisper from an ignored sender is dropped with no reply (`0x50bfba`-`0x50bfc1`);
+        // the rest go on as a whisper (`0x50bfc7`), past the default arm (`0x50bfcb`).
+        w::WHISPER_FOREIGN => {
+            m.chat_tag = 0;
+            if social.is_ignored(m.sender_guid) {
+                return None;
+            }
+            m.wire_type = w::WHISPER;
+        }
+        // The battleground and achievement arms test no ignore (`0x50c289`, `0x50c20e`).
+        w::BG_SYSTEM_NEUTRAL
+        | w::BG_SYSTEM_ALLIANCE
+        | w::BG_SYSTEM_HORDE
+        | w::ACHIEVEMENT
+        | w::GUILD_ACHIEVEMENT => m.chat_tag = 0,
+        _ => {
+            if !default_arm(&m, social, me, log, net_commands) {
+                return None;
+            }
+        }
+    }
+    Some(super::ChatLine::Wire { msg: m })
+}
+
+/// The handler's default arm past its read (`0x50c070`-`0x50c19f`): whether the line goes on to
+/// the add. Only this arm reads the chat tag into the add's flag (`0x50c070`); the other arms
+/// leave the flag `""` (`0x50be9d`), so [`chat`] clears their tag.
+fn default_arm(
+    m: &ChatMessage,
+    social: &SocialState,
+    me: Option<u64>,
+    log: &mut ChatLog,
+    net_commands: &NetCommands,
+) -> bool {
+    use benilla_protocol::messages::{chat_tag, wotlk_chat_type as w};
+    const ADDON: u32 = benilla_protocol::messages::LANGUAGE_ADDON;
+    let sender = m.sender_guid;
+    // A whisper enters its sender in the source history (`0x50c0cc`), its echo its receiver in the
+    // destination history (`0x50c0bd`).
+    match m.wire_type {
+        w::WHISPER | w::BATTLENET => log.record_whisper_source(sender),
+        w::WHISPER_INFORM => log.record_whisper_dest(sender),
+        _ => {}
+    }
+    // A commentator's whisper (tag `0x8` without `0x4`) from anyone but us, a friend or one we
+    // whispered is refused with reason 1 and dropped (`0x50c0da`-`0x50c14b`).
+    let commentator = m.chat_tag & chat_tag::COMMENTATOR != 0 && m.chat_tag & chat_tag::GM == 0;
+    if matches!(m.wire_type, w::WHISPER | w::BATTLENET)
+        && commentator
+        && m.language != ADDON
+        && me != Some(sender)
+        && !social.is_friend(sender)
+        && !log.whispered(sender)
+    {
+        let _ = net_commands.0.send(ClientCommand::ChatIgnored {
+            guid: sender,
+            reason: 1,
+        });
+        return false;
+    }
+    // An ignored sender's line is dropped unless the tag says GM (`0x50c160`-`0x50c16d`): a
+    // whisper replies with reason 0 first, an addon one aside (`0x50c176`-`0x50c18a`); its echo,
+    // the ignore notice and a restricted line still post (`0x50c195`-`0x50c19f`).
+    if social.is_ignored(sender) && m.chat_tag & chat_tag::GM == 0 {
+        if m.wire_type == w::WHISPER {
+            if m.language == ADDON {
+                return false;
+            }
             let _ = net_commands.0.send(ClientCommand::ChatIgnored {
-                guid: m.sender_guid,
+                guid: sender,
+                reason: 0,
             });
         }
-        use benilla_protocol::messages as msg;
-        if ![
-            msg::CHAT_MSG_WHISPER_INFORM,
-            msg::CHAT_MSG_IGNORED,
-            msg::CHAT_MSG_RESTRICTED,
-        ]
-        .contains(&m.chat_type)
-        {
-            return;
-        }
+        return matches!(m.wire_type, w::WHISPER_INFORM | w::IGNORED | w::RESTRICTED);
     }
-    chat_log.push_wire(m);
+    true
 }
 
 /// The `/chatlist` roster (`SMSG_CHANNEL_LIST`). Members arrive as guids and are not resolved, so
 /// the line gives their count where the reference lists their names.
-fn channel_list(channel: String, members: &[(u64, u8)], chat_log: &mut ChatLog) {
+fn channel_list(channel: String, members: &[(u64, u8)]) -> ChatEvent {
     let mut ev = ChatEvent::text_only(
         ChatEventKind::ChannelList,
         format!("{} member(s)", members.len()),
     );
     ev.channel = channel;
-    chat_log.push_event(ev);
+    ev
 }
 
 /// A whisper target is offline: message 241, `ERR_CHAT_PLAYER_NOT_FOUND_S`, with the server's
@@ -416,7 +517,7 @@ fn notice_route(text: &str) -> NoticeRoute<'_> {
 /// `SMSG_NOTIFICATION` (`0x401280`): the error-display line, the console and a chat line as the
 /// text's prefix says ([`notice_route`]). vmangos sends `.gm on` as both a system line and a
 /// notification (`Objects/Player.cpp:2676-2677`).
-fn notification(text: &str, errors: &mut dyn TextSink, chat_log: &mut ChatLog) {
+fn notification(text: &str, errors: &mut dyn TextSink) -> Option<ChatEvent> {
     let route = notice_route(text);
     info!("net: notification — {}", route.text);
     match route.toast {
@@ -429,9 +530,7 @@ fn notification(text: &str, errors: &mut dyn TextSink, chat_log: &mut ChatLog) {
         .and_then(|t| u8::try_from(t).ok())
         .and_then(benilla_protocol::messages::wotlk_chat_type_shared)
         .and_then(super::event::kind_of_wire);
-    if let Some(kind) = kind {
-        chat_log.push_event(ChatEvent::text_only(kind, route.text.to_string()));
-    }
+    kind.map(|kind| ChatEvent::text_only(kind, route.text.to_string()))
 }
 
 /// An area trigger's refusal (`SMSG_AREA_TRIGGER_MESSAGE`, `0x2b8`): the yellow `UIErrorsFrame`
@@ -439,13 +538,6 @@ fn notification(text: &str, errors: &mut dyn TextSink, chat_log: &mut ChatLog) {
 fn area_trigger_message(text: String, errors: &mut dyn TextSink) {
     info!("net: area-trigger message — {text}");
     errors.text_line(MsgKind::Info, text);
-}
-
-/// Park a world broadcast for `ui_chat::broadcast`'s resolve pass, logged: a defense broadcast
-/// outside the defense channels prints nothing, so the log is its only trace.
-fn broadcast(b: Broadcast, chat_log: &mut ChatLog) {
-    info!("net: world broadcast — {b:?}");
-    chat_log.push_broadcast(b);
 }
 
 /// One played time as days, hours, minutes and seconds, for the console line.
@@ -470,13 +562,266 @@ mod tests {
             sender_guid: 0x21,
             target_guid: 0x21,
             sender_name: None,
+            receiver_name: None,
             channel: None,
             text: text.to_string(),
             chat_tag: 0,
             achievement: 0,
             wire_type: 0,
             sender_word: 0,
+            gm: false,
         }
+    }
+
+    /// A line of 3.3.5a type `wire` from `sender` to `receiver`, as the decoder hands it over.
+    fn a_line(wire: u8, sender: u64, receiver: u64, tag: u8) -> ChatMessage {
+        ChatMessage {
+            chat_type: benilla_protocol::messages::wotlk_chat_type_shared(wire)
+                .expect("a shared type"),
+            sender_guid: sender,
+            target_guid: receiver,
+            chat_tag: tag,
+            wire_type: wire,
+            ..a_party_line(0, "hi")
+        }
+    }
+
+    /// The handler over `m`: the line it hands the add, and the `CMSG_CHAT_IGNORED` replies it
+    /// sent as `(guid, reason)`.
+    fn hear(
+        m: ChatMessage,
+        social: &SocialState,
+        log: &mut ChatLog,
+        me: Option<u64>,
+    ) -> (Option<ChatMessage>, Vec<(u64, u8)>) {
+        let mut world = World::new();
+        world.init_resource::<Messages<ServerSaidMessage>>();
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let commands = NetCommands(tx);
+        let mut state =
+            bevy::ecs::system::SystemState::<MessageWriter<ServerSaidMessage>>::new(&mut world);
+        let mut server_said = state.get_mut(&mut world);
+        let line = chat(m, social, me, log, &commands, &mut server_said).map(|l| match l {
+            super::super::ChatLine::Wire { msg } => msg,
+            _ => panic!("the handler hands the add a wire line"),
+        });
+        let replies = rx
+            .try_iter()
+            .filter_map(|c| match c {
+                ClientCommand::ChatIgnored { guid, reason } => Some((guid, reason)),
+                _ => None,
+            })
+            .collect();
+        (line, replies)
+    }
+
+    fn ignoring(guids: &[u64]) -> SocialState {
+        let mut social = SocialState::default();
+        social.set_ignores_for_test(guids.to_vec());
+        social
+    }
+
+    /// The monster and Battle.net arm tests the receiver, never the sender (`0x50c34a`-`0x50c35b`).
+    #[test]
+    fn a_monster_line_drops_on_an_ignored_receiver() {
+        use benilla_protocol::messages::wotlk_chat_type as w;
+        let social = ignoring(&[0x21]);
+        let mut log = ChatLog::default();
+        for wire in [w::MONSTER_SAY, w::MONSTER_WHISPER, w::RAID_BOSS_EMOTE] {
+            let (line, replies) = hear(a_line(wire, 0x22, 0x21, 0), &social, &mut log, None);
+            assert!(line.is_none(), "type {wire:#x}: the receiver is ignored");
+            assert!(replies.is_empty());
+            let (line, _) = hear(a_line(wire, 0x21, 0x22, 0), &social, &mut log, None);
+            assert!(
+                line.is_some(),
+                "type {wire:#x}: an ignored sender still speaks"
+            );
+        }
+    }
+
+    /// The achievement and battleground arms test no ignore (`0x50c20e`, `0x50c289`).
+    #[test]
+    fn an_ignored_players_achievement_and_battleground_lines_show() {
+        use benilla_protocol::messages::wotlk_chat_type as w;
+        let social = ignoring(&[0x21]);
+        let mut log = ChatLog::default();
+        for wire in [
+            w::ACHIEVEMENT,
+            w::GUILD_ACHIEVEMENT,
+            w::BG_SYSTEM_NEUTRAL,
+            w::BG_SYSTEM_HORDE,
+        ] {
+            let (line, _) = hear(a_line(wire, 0x21, 0x21, 0), &social, &mut log, None);
+            assert!(line.is_some(), "type {wire:#x}");
+        }
+    }
+
+    /// The default arm: a GM-tagged ignored sender still speaks (`0x50c169`); an ignored whisper
+    /// replies with reason 0 (`0x50c186`), an addon whisper with none (`0x50c17a`); an echo, an
+    /// ignore notice and a restricted line still post (`0x50c195`-`0x50c19f`).
+    #[test]
+    fn the_default_arm_drops_an_ignored_sender_bar_a_gm() {
+        use benilla_protocol::messages::{chat_tag, wotlk_chat_type as w};
+        let social = ignoring(&[0x21]);
+        let mut log = ChatLog::default();
+        let (line, _) = hear(a_line(w::SAY, 0x21, 0, 0), &social, &mut log, None);
+        assert!(line.is_none());
+        let (line, replies) = hear(
+            a_line(w::SAY, 0x21, 0, chat_tag::GM),
+            &social,
+            &mut log,
+            None,
+        );
+        assert!(line.is_some(), "a GM tag lifts the ignore");
+        assert!(replies.is_empty());
+        let (line, replies) = hear(a_line(w::WHISPER, 0x21, 0, 0), &social, &mut log, None);
+        assert!(line.is_none());
+        assert_eq!(replies, [(0x21, 0)]);
+        let addon = ChatMessage {
+            language: LANGUAGE_ADDON,
+            ..a_line(w::WHISPER, 0x21, 0, 0)
+        };
+        let (line, replies) = hear(addon, &social, &mut log, None);
+        assert!(line.is_none());
+        assert!(replies.is_empty(), "an addon whisper gets no reply");
+        for wire in [w::WHISPER_INFORM, w::IGNORED, w::RESTRICTED] {
+            let (line, replies) = hear(a_line(wire, 0x21, 0, 0), &social, &mut log, None);
+            assert!(line.is_some(), "type {wire:#x}");
+            assert!(replies.is_empty());
+        }
+    }
+
+    /// A foreign whisper from an ignored sender is dropped with no reply (`0x50bfba`-`0x50bfc1`);
+    /// another goes on as a whisper with no flag (`0x50bfc7`, `0x50bfcb`).
+    #[test]
+    fn a_foreign_whisper_is_dropped_silently_when_ignored() {
+        use benilla_protocol::messages::{chat_tag, wotlk_chat_type as w};
+        let social = ignoring(&[0x21]);
+        let mut log = ChatLog::default();
+        let (line, replies) = hear(
+            a_line(w::WHISPER_FOREIGN, 0x21, 0, 0),
+            &social,
+            &mut log,
+            None,
+        );
+        assert!(line.is_none());
+        assert!(replies.is_empty(), "no CMSG_CHAT_IGNORED");
+        let (line, _) = hear(
+            a_line(w::WHISPER_FOREIGN, 0x22, 0, chat_tag::GM),
+            &social,
+            &mut log,
+            None,
+        );
+        let line = line.expect("a stranger's foreign whisper shows");
+        assert_eq!(line.wire_type, w::WHISPER);
+        assert_eq!(
+            line.chat_tag, 0,
+            "the flag is decoded only in the default arm"
+        );
+        assert!(
+            log.whisper_sources().is_empty(),
+            "nor is it entered in the history"
+        );
+    }
+
+    /// Only the default arm reads the tag into the flag (`0x50c070`): a monster line's is `""`.
+    #[test]
+    fn the_flag_is_read_in_the_default_arm_alone() {
+        use benilla_protocol::messages::{chat_tag, wotlk_chat_type as w};
+        let social = SocialState::default();
+        let mut log = ChatLog::default();
+        let (line, _) = hear(
+            a_line(w::SAY, 0x21, 0, chat_tag::GM),
+            &social,
+            &mut log,
+            None,
+        );
+        assert_eq!(line.unwrap().chat_tag, chat_tag::GM);
+        for wire in [w::MONSTER_SAY, w::ACHIEVEMENT, w::BG_SYSTEM_ALLIANCE] {
+            let (line, _) = hear(a_line(wire, 0x21, 0, chat_tag::GM), &social, &mut log, None);
+            assert_eq!(line.unwrap().chat_tag, 0, "type {wire:#x}");
+        }
+    }
+
+    /// A commentator's whisper (tag `0x8`, no `0x4`) from someone we never whispered, not a friend
+    /// and not us, is refused with reason 1 and dropped (`0x50c0da`-`0x50c14b`).
+    #[test]
+    fn a_commentators_whisper_needs_a_contact() {
+        use benilla_protocol::messages::{chat_tag, wotlk_chat_type as w};
+        let com = chat_tag::COMMENTATOR;
+        let mut social = SocialState::default();
+        let mut log = ChatLog::default();
+        let (line, replies) = hear(a_line(w::WHISPER, 0x21, 0, com), &social, &mut log, None);
+        assert!(line.is_none());
+        assert_eq!(replies, [(0x21, 1)]);
+        // A GM tag, an addon line or another type passes.
+        let (line, _) = hear(
+            a_line(w::WHISPER, 0x21, 0, com | chat_tag::GM),
+            &social,
+            &mut log,
+            None,
+        );
+        assert!(line.is_some());
+        let addon = ChatMessage {
+            language: LANGUAGE_ADDON,
+            ..a_line(w::WHISPER, 0x21, 0, com)
+        };
+        assert!(hear(addon, &social, &mut log, None).0.is_some());
+        assert!(hear(a_line(w::SAY, 0x21, 0, com), &social, &mut log, None)
+            .0
+            .is_some());
+        // Ourselves.
+        assert!(hear(
+            a_line(w::WHISPER, 0x21, 0, com),
+            &social,
+            &mut log,
+            Some(0x21)
+        )
+        .0
+        .is_some());
+        // A friend.
+        social.set_friends_for_test(&[0x21]);
+        assert!(
+            hear(a_line(w::WHISPER, 0x21, 0, com), &social, &mut log, None)
+                .0
+                .is_some()
+        );
+        // One our whisper reached: its echo enters the destination history (`0x50c0bd`).
+        let social = SocialState::default();
+        let (line, replies) = hear(a_line(w::WHISPER, 0x22, 0, com), &social, &mut log, None);
+        assert!(line.is_none());
+        assert_eq!(replies, [(0x22, 1)]);
+        hear(
+            a_line(w::WHISPER_INFORM, 0x22, 0, 0),
+            &social,
+            &mut log,
+            None,
+        );
+        let (line, replies) = hear(a_line(w::WHISPER, 0x22, 0, com), &social, &mut log, None);
+        assert!(line.is_some());
+        assert!(replies.is_empty());
+    }
+
+    /// Each history moves a repeated guid to the front and drops its oldest past its depth, 16 for
+    /// the sources (`0x4fb710`) and 128 for the destinations (`0x4fb820`); guid 0 enters neither.
+    #[test]
+    fn the_whisper_histories_keep_the_newest() {
+        let mut log = ChatLog::default();
+        for g in 1..=17 {
+            log.record_whisper_source(g);
+        }
+        assert_eq!(log.whisper_sources(), (2..=17).rev().collect::<Vec<_>>());
+        log.record_whisper_source(9);
+        assert_eq!(log.whisper_sources()[..3], [9, 17, 16]);
+        assert_eq!(log.whisper_sources().len(), 16);
+        log.record_whisper_source(0);
+        assert_eq!(log.whisper_sources()[0], 9);
+        for g in 1..=129 {
+            log.record_whisper_dest(g);
+        }
+        assert!(!log.whispered(1), "the oldest fell off at 128");
+        assert!(log.whispered(2) && log.whispered(129));
+        assert!(!log.whispered(0));
     }
 
     /// Run one inbound line through the real arm body and report whether it reached the chat log.
@@ -492,22 +837,27 @@ mod tests {
         world.insert_resource(NetCommands(tx));
         world.insert_resource(SocialState::default());
         world.insert_resource(ChatLog::default());
-        world
+        let line = world
             .run_system_once(
-                move |mut chat_log: ResMut<ChatLog>,
-                      social: Res<SocialState>,
+                move |social: Res<SocialState>,
+                      mut log: ResMut<ChatLog>,
                       net_commands: Res<NetCommands>,
                       mut server_said: MessageWriter<ServerSaidMessage>| {
                     chat(
                         m.clone(),
-                        &mut chat_log,
                         &social,
+                        None,
+                        &mut log,
                         &net_commands,
                         &mut server_said,
-                    );
+                    )
                 },
             )
             .unwrap();
+        // Outside the world the add queues the line (`0x509f48`).
+        if let Some(line) = line {
+            super::super::feed::add_now(&mut world, line);
+        }
         world.resource::<ChatLog>().pending_len()
     }
 
@@ -536,22 +886,27 @@ mod tests {
         world.insert_resource(SocialState::default());
         world.insert_resource(ChatLog::default());
         let m = a_party_line(LANGUAGE_ADDON, "Quiver\tVERSION:3.1.4");
-        world
+        let line = world
             .run_system_once(
-                move |mut chat_log: ResMut<ChatLog>,
-                      social: Res<SocialState>,
+                move |social: Res<SocialState>,
+                      mut log: ResMut<ChatLog>,
                       net_commands: Res<NetCommands>,
                       mut server_said: MessageWriter<ServerSaidMessage>| {
                     chat(
                         m.clone(),
-                        &mut chat_log,
                         &social,
+                        None,
+                        &mut log,
                         &net_commands,
                         &mut server_said,
-                    );
+                    )
                 },
             )
             .unwrap();
+        // Outside the world the add queues the line (`0x509f48`).
+        if let Some(line) = line {
+            super::super::feed::add_now(&mut world, line);
+        }
         let log = world.resource::<ChatLog>();
         assert_eq!(
             log.pending_addons(),
@@ -590,8 +945,8 @@ mod tests {
         );
 
         let mut errors: Vec<(String, MsgKind)> = Vec::new();
-        let mut log = ChatLog::default();
-        notification("GM mode is ON", &mut errors, &mut log);
+        let mut log = Vec::new();
+        log.extend(notification("GM mode is ON", &mut errors));
         assert_eq!(
             errors,
             [(
@@ -600,7 +955,7 @@ mod tests {
             )],
             "the SendNotification half is the RED toast, never a second line"
         );
-        assert_eq!(log.pending_len(), 0);
+        assert!(log.is_empty());
     }
 
     /// `0x4012ac`-`0x401371`: each prefix's surfaces, with the prefix cut from the text.
@@ -626,13 +981,13 @@ mod tests {
     #[test]
     fn a_hash_notification_writes_a_chat_line_of_its_type() {
         let mut errors: Vec<(String, MsgKind)> = Vec::new();
-        let mut log = ChatLog::default();
-        notification("~#^1hello", &mut errors, &mut log);
-        notification("~#plain system", &mut errors, &mut log);
-        notification("~#^/", &mut errors, &mut log);
+        let mut log = Vec::new();
+        log.extend(notification("~#^1hello", &mut errors));
+        log.extend(notification("~#plain system", &mut errors));
+        log.extend(notification("~#^/", &mut errors));
         assert!(errors.is_empty());
         assert_eq!(
-            log.pending_len(),
+            log.len(),
             2,
             "type 1 (say) and type 0 (system); -1 has no lane"
         );
@@ -666,7 +1021,7 @@ mod tests {
     #[test]
     fn an_ignored_players_roll_is_dropped() {
         let mut world = World::new();
-        world.insert_resource(ChatLog::default());
+        world.init_resource::<UiEvents>();
         let mut social = SocialState::default();
         social.set_ignores_for_test(vec![0x21]);
         world.insert_resource(social);
@@ -680,7 +1035,7 @@ mod tests {
             world.run_system_once_with(on_random_roll, ev).unwrap();
         }
         assert_eq!(
-            world.resource::<ChatLog>().pending_len(),
+            world.resource_mut::<UiEvents>().take_chat().len(),
             1,
             "only 0x22's roll queues"
         );
@@ -742,5 +1097,28 @@ mod tests {
             .unwrap();
         crate::ui_script::live::fire_handler_events(&mut world);
         assert!(owner(&world), "our row carries the owner bit");
+    }
+
+    /// The answer seeds the active player's clock alone (`0x4013c6`-`0x4013f1`): with no active
+    /// player it is dropped, and the clock still reads 0.
+    #[test]
+    fn a_played_answer_seeds_only_the_active_players_clock() {
+        let mut world = World::new();
+        world.init_resource::<crate::net::PlayedClock>();
+        world.init_resource::<UiEvents>();
+        let answer = || SessionEvent::PlayedTime {
+            total: 3_600,
+            level: 60,
+            show: false,
+        };
+        world
+            .run_system_once_with(on_played_time, answer())
+            .unwrap();
+        assert_eq!(world.resource::<crate::net::PlayedClock>().now(), 0);
+        world.spawn(crate::net::SelfPlayer);
+        world
+            .run_system_once_with(on_played_time, answer())
+            .unwrap();
+        assert_eq!(world.resource::<crate::net::PlayedClock>().now(), 3_600);
     }
 }

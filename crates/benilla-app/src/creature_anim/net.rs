@@ -2,6 +2,7 @@
 //! streamed unit. The swing record and the environmental-damage log also feed
 //! [`crate::combat_log`], whose handlers are registered first and so run first.
 
+use crate::ui_chat::ChatSink as _;
 use benilla_protocol::messages::{AttackSwingError, AttackerState, EnvironmentalDamageLog};
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
@@ -134,7 +135,8 @@ fn on_text_emote(
     In(ev): In<SessionEvent>,
     index: Res<GuidIndex>,
     mut out: MessageWriter<EmoteMessage>,
-    mut chat_log: ResMut<crate::ui_chat::ChatLog>,
+    mut chat_log: ResMut<crate::ui_script::live::UiEvents>,
+    social: Option<Res<crate::ui_social::SocialState>>,
 ) {
     if let SessionEvent::TextEmote {
         guid,
@@ -143,6 +145,8 @@ fn on_text_emote(
         target_name,
     } = ev
     {
+        // An ignored performer's text emote shows nothing (`0x5040cc`).
+        let ignored = social.is_some_and(|s| s.is_ignored(guid));
         self::text_emote(
             guid,
             text_emote,
@@ -150,7 +154,7 @@ fn on_text_emote(
             target_name,
             &index,
             &mut out,
-            &mut chat_log,
+            (!ignored).then_some(&mut *chat_log),
         );
     }
 }
@@ -425,7 +429,7 @@ fn text_emote(
     target_name: String,
     index: &GuidIndex,
     out: &mut MessageWriter<EmoteMessage>,
-    chat_log: &mut crate::ui_chat::ChatLog,
+    chat_log: Option<&mut crate::ui_script::live::UiEvents>,
 ) {
     if benilla_assets::trace::enabled() {
         benilla_assets::trace::line(
@@ -441,7 +445,9 @@ fn text_emote(
             file_index,
         },
     });
-    chat_log.push_text_emote(guid, text_emote, target_name);
+    if let Some(chat_log) = chat_log {
+        chat_log.push_text_emote(guid, text_emote, target_name);
+    }
 }
 
 /// `SMSG_EMOTE`: an `Emotes.dbc` id to play on a unit (NPC scripts, a `/`-emote's animation).
