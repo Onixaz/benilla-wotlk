@@ -56,8 +56,8 @@ pub(super) fn load_server_messages(mut commands: Commands, assets: Option<Res<Wo
 
 /// The joined channels a defense broadcast about `subject_zone` reaches, in slot order. With
 /// `player_zone` unknown only non-`ZONE_DEP` rows pass, as with the reference's unset zone. Only a
-/// slot in state 0 counts (`0x50c45e`, `0x50c8d6`): a renamed or suspended one is skipped; a
-/// join-sent slot still reads as joined (#1470).
+/// slot in state 0 counts (`0x50c45e`, `0x50c8d6`): a join-sent, renamed or suspended one is
+/// skipped.
 pub(crate) fn defense_targets(
     channels: &ChannelState,
     subject_zone: u32,
@@ -253,14 +253,17 @@ mod tests {
         );
     }
 
-    /// Only a slot in state 0 hears it (`0x50c45e`, `0x50c8d6`): a renamed or suspended one is
-    /// skipped.
+    /// Only a slot in state 0 hears it (`0x50c45e`, `0x50c8d6`): a join-sent, renamed or suspended
+    /// one is skipped.
     #[test]
     fn a_renamed_or_suspended_slot_hears_no_broadcast() {
         use crate::ui_chat::edit::SlotState;
         let mut s = state(&["LocalDefense - Westfall", "WorldDefense"]);
         s.joined[0].as_mut().unwrap().state = SlotState::Renamed;
         s.joined[1].as_mut().unwrap().state = SlotState::Suspended;
+        assert!(defense_targets(&s, WESTFALL, Some(WESTFALL)).is_empty());
+        s.joined[0].as_mut().unwrap().state = SlotState::Pending;
+        s.joined[1].as_mut().unwrap().state = SlotState::Pending;
         assert!(defense_targets(&s, WESTFALL, Some(WESTFALL)).is_empty());
         s.joined[1].as_mut().unwrap().state = SlotState::Joined;
         assert_eq!(

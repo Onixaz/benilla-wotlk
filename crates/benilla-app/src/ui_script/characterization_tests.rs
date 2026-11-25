@@ -13545,12 +13545,96 @@ fn a_join_verb_and_the_walks_rename_claim_records_with_no_relist() {
         fired(&rig.take(), &["CHANNEL_UI_UPDATE"]).is_empty(),
         "the walk's rename relists nothing"
     );
+    // The name leg finds the record whatever its state (`0x4fe8e4`).
     let renamed = super::live::with_live_world(rig.app.world_mut(), |s| {
-        s.eval::<String>(&format!("return select(2, GetChannelName({number}))"))
+        s.eval::<i64>("return (GetChannelName('General - Westfall'))")
     })
     .expect("a VM")
     .unwrap();
-    assert_eq!(renamed, "General - Westfall", "the record read at the call");
+    assert_eq!(renamed, number, "the record read at the call");
+}
+
+/// The join's record is in state 1 until its `YOU_JOINED` (`0x5077a7`, `0x5078b3`): the number leg
+/// misses (`0x4fe8a3`), the name leg finds it (`0x4fe8e4`), `GetChannelList` and `ListChannels`
+/// skip it (`0x4fe681`, `0x50db1a`), a `CHANNEL` send to its number goes nowhere (`0x50d565`) and
+/// `LeaveChannelByName` sends nothing (`0x5095b8`); the confirm makes each read it.
+#[test]
+fn a_join_awaiting_its_confirm_reads_as_joined_by_nothing() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    join_charz(&mut rig);
+    rx.try_iter().for_each(drop);
+    const READ: &str = "local n, name, i = GetChannelName(1)
+        local byname = GetChannelName('Charz')
+        return table.concat({ n, tostring(name), i, byname, select('#', GetChannelList()) }, ',')";
+    let read = |rig: &mut Rig| {
+        super::live::with_live_world(rig.app.world_mut(), |s| s.eval::<String>(READ))
+            .expect("a VM")
+            .unwrap()
+    };
+    let lines = |rig: &mut Rig| {
+        super::live::with_live_world(rig.app.world_mut(), |s| {
+            s.run(
+                "LINES = {} local f = CreateFrame('Frame') f:RegisterEvent('CHAT_MSG_CHANNEL_LIST')
+                 f:SetScript('OnEvent', function(_, _, text) LINES[#LINES + 1] = text end)
+                 ListChannels() f:UnregisterAllEvents()",
+            )?;
+            s.eval::<String>("return table.concat(LINES, '|')")
+        })
+        .expect("a VM")
+        .unwrap()
+    };
+    let sends = |rig: &mut Rig| {
+        super::live::with_live_world(rig.app.world_mut(), |s| {
+            s.run("SendChatMessage('hi', 'CHANNEL', nil, 1) LeaveChannelByName('Charz')")
+        })
+        .expect("a VM")
+        .unwrap();
+        rx.try_iter()
+            .filter(|c| {
+                matches!(
+                    c,
+                    crate::net::ClientCommand::LeaveChannel { .. }
+                        | crate::net::ClientCommand::Chat { .. }
+                )
+            })
+            .count()
+    };
+    // A member's join shows only on a record in state 0, and asks no name before (`0x4fdf19`).
+    const ANN: u64 = 0x51;
+    let member = || {
+        channel_notice(
+            benilla_protocol::messages::channel_notice::JOINED,
+            "Charz",
+            benilla_protocol::messages::ChannelNoticeTail::Guid(ANN),
+        )
+    };
+    let seen = rig.packets(vec![member()], 1);
+    assert!(fired(&seen, &["CHAT_MSG_CHANNEL_JOIN"]).is_empty());
+    assert!(
+        !rx.try_iter()
+            .any(|c| matches!(c, crate::net::ClientCommand::NameQuery { guid: ANN })),
+        "the pending record's member notice ends before the name ask"
+    );
+    assert_eq!(read(&mut rig), "0,nil,0,1,0", "pending: only the name leg");
+    assert_eq!(lines(&mut rig), "", "ListChannels skips the pending record");
+    assert_eq!(
+        sends(&mut rig),
+        0,
+        "neither the send nor the leave goes out"
+    );
+    rig.packets(vec![joined_notice("Charz"), name_answer(ANN, "Ann")], 1);
+    let seen = rig.packets(vec![member()], 1);
+    assert_eq!(
+        fired(&seen, &["CHAT_MSG_CHANNEL_JOIN"]),
+        ["CHAT_MSG_CHANNEL_JOIN"]
+    );
+    assert_eq!(read(&mut rig), "1,Charz,0,1,2", "confirmed: every leg");
+    assert_eq!(lines(&mut rig), "[1. Charz] ");
+    assert_eq!(sends(&mut rig), 2, "the send and the leave go out");
 }
 
 /// A combat line's uncached item: the tradeskill line asks its record with its callback and shows

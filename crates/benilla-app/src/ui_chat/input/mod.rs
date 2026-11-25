@@ -1008,7 +1008,18 @@ pub(crate) fn channel_arm(
             let Some(name) = channels.leave_target(&name) else {
                 return ArmOutcome::Done;
             };
+            // The mode reset reads the name before any record (`0x50951c`).
             manual_join_or_leave(&channels, &mut script, &name);
+            // The verb's leave sends only for a record in state 0, under the record's own name
+            // (`0x5095b0`, `0x5095b8`-`0x5095c4`, `0x509600`).
+            let Some(name) = channels
+                .leave_record(&name)
+                .and_then(|n| channels.slot(n))
+                .filter(|s| s.state == super::edit::SlotState::Joined)
+                .map(|s| s.name.clone())
+            else {
+                return ArmOutcome::Done;
+            };
             channels.note_zone_channel_left(&name);
             channels.note_custom_channel_left(&name);
             channels.note_leave_asked(&name);

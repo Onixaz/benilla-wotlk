@@ -257,6 +257,7 @@ fn on_channel_notify(
     In(ev): In<SessionEvent>,
     mut chat_log: ResMut<crate::ui_script::live::UiEvents>,
     social: Res<SocialState>,
+    channels: Res<super::edit::ChannelState>,
 ) {
     if let SessionEvent::ChannelNotify {
         notice,
@@ -264,6 +265,14 @@ fn on_channel_notify(
         tail,
     } = ev
     {
+        use benilla_protocol::messages::channel_notice as n;
+        // A member's join or leave shows only on a record in state 0, found by name; any other
+        // ends the handler before the name is asked (`0x50e1b0` -> `0x4fdee0`, `0x4fdf19`).
+        if matches!(notice, n::JOINED | n::LEFT)
+            && channels.slot_state(&channel) != Some(super::edit::SlotState::Joined)
+        {
+            return;
+        }
         // An invite from an ignored or non-player guid is dropped whole (`0x50e76b`,
         // `0x50e778`-`0x50e798`).
         if notice == benilla_protocol::messages::channel_notice::INVITE {

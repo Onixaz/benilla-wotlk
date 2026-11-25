@@ -939,7 +939,7 @@ mod tests {
         apply_steps(&steps, &mut c);
         assert_eq!(
             c.slot_state("General - Westfall"),
-            Some(SlotState::Joined),
+            Some(SlotState::Pending),
             "3 → 1, not 2"
         );
     }

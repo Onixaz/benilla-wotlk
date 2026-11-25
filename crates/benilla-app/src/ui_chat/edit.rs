@@ -141,10 +141,14 @@ pub(crate) struct ChannelSlot {
 /// `ChatFrame_OnEvent`'s `YOU_LEFT` branch deletes the window's channel registration.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum SlotState {
-    /// `0` (confirmed) and `1` (join sent) in one: the reference's walk sends a LEAVE only from 0,
-    /// so an unconfirmed slot here sends one the server answers "Not on channel".
+    /// `0`, confirmed by the server's `YOU_JOINED` (`0x5078b3`): the only state the number legs,
+    /// the channel list, a `CHANNEL` send and `ListChannels` read (`0x4fe8a3`, `0x4fe681`,
+    /// `0x50d565`, `0x50db1a`).
     #[default]
     Joined,
+    /// `1`, the join's claim (`0x5077a7`) awaiting its `YOU_JOINED`: found by name (`0x4fe8e4`)
+    /// and by ChannelID, read as joined by nothing.
+    Pending,
     /// `2`, renamed with its re-join pending: the confirming `YOU_JOINED` carries the `YOU_CHANGED`
     /// token, "Changed Channel: [%s]".
     Renamed,
@@ -163,6 +167,14 @@ impl ChannelSlot {
             leave_asked: false,
             flags: 0,
             instance: 0,
+        }
+    }
+
+    /// The join's new record, in state 1 until its `YOU_JOINED` (`0x5077a7`).
+    pub(crate) fn pending(name: &str) -> Self {
+        ChannelSlot {
+            state: SlotState::Pending,
+            ..Self::joined(name)
         }
     }
 }
@@ -316,10 +328,10 @@ impl ChannelState {
         let n = self.number_of(old)?;
         let slot = self.joined[n as usize - 1].as_mut()?;
         slot.name = new.to_string();
-        // `(old == 3) ? 1 : 2`. A suspended slot comes back as a pending join, our `Joined`, so its
-        // notice reads `YOU_JOINED`; any other is a rename awaiting its re-join.
+        // `(old == 3) ? 1 : 2`. A suspended slot comes back as a pending join, so its notice reads
+        // `YOU_JOINED`; any other is a rename awaiting its re-join.
         slot.state = if slot.state == SlotState::Suspended {
-            SlotState::Joined
+            SlotState::Pending
         } else {
             SlotState::Renamed
         };
@@ -412,7 +424,7 @@ impl ChannelState {
                         .channels
                         .row_for_name(&s.name)
                         .map(|r| r.shortcut.clone()),
-                    active: s.state != SlotState::Suspended,
+                    active: s.state == SlotState::Joined,
                     flags: s.flags,
                     instance: s.instance,
                 })
@@ -500,8 +512,32 @@ impl ChannelState {
                 self.joined.len() - 1
             }
         };
-        self.joined[i] = Some(ChannelSlot::joined(name));
+        // State 1 until the server's `YOU_JOINED` (`0x5077a7`, `0x5078b3`).
+        self.joined[i] = Some(ChannelSlot::pending(name));
         JoinRecord::Claimed(i as u32 + 1)
+    }
+
+    /// The leave's record (`0x509562`-`0x5095ae`): a zone channel's found by its ChannelID, a
+    /// custom one's by name; its 1-based number.
+    pub(crate) fn leave_record(&self, name: &str) -> Option<u32> {
+        let id = self.channels.zone_channel_id(name);
+        if id == 0 {
+            return self.number_of(name);
+        }
+        self.joined
+            .iter()
+            .position(|s| {
+                s.as_ref()
+                    .is_some_and(|s| self.channels.zone_channel_id(&s.name) == id)
+            })
+            .map(|i| i as u32 + 1)
+    }
+
+    /// The record numbered `n` (1-based).
+    pub(crate) fn slot(&self, n: u32) -> Option<&ChannelSlot> {
+        self.joined
+            .get(usize::try_from(n).ok()?.checked_sub(1)?)?
+            .as_ref()
     }
 
     /// Free the slot holding `name` in place, so no other channel renumbers.
