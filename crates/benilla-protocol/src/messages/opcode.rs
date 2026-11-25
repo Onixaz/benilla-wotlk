@@ -369,6 +369,9 @@ pub const CMSG_PET_ACTION: u16 = 0x0175; // 373
 /// A cast whose caster is not the active player, the pet's client-targeted or possessed casts
 /// (the pending-cast send, `0x80b315`).
 pub const CMSG_PET_CAST_SPELL: u16 = 0x01F0; // 496
+/// A trajectory cast's final aim, sent when its cast time ends or its animation releases the
+/// missile (`0x6fd6b0`).
+pub const CMSG_UPDATE_MISSILE_TRAJECTORY: u16 = 0x0462; // 1122
 /// A pet bar drag: one or two `(position, packed)` pairs, told apart by body size alone.
 pub const CMSG_PET_SET_ACTION: u16 = 0x0174; // 372
 /// Set a pet spell's autocast bit to a given value (the right-click).

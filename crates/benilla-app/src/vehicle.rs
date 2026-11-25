@@ -24,7 +24,7 @@ mod shot;
 mod targeting;
 mod transit;
 
-pub(crate) use shot::{TrajectoryCast, TrajectoryCasts};
+pub(crate) use shot::{LocalTrajectoryGos, TrajectoryCast, TrajectoryCasts};
 
 pub(crate) use passenger::{Passenger, TransitionCue, SEATED};
 pub(crate) use ride::SeatPose;
@@ -155,6 +155,7 @@ impl Plugin for VehiclePlugin {
             .init_resource::<aim::VehicleAim>()
             .init_resource::<SeatStop>()
             .init_resource::<shot::TrajectoryCasts>()
+            .init_resource::<shot::LocalTrajectoryGos>()
             .init_resource::<targeting::TrajectoryTargeting>()
             .init_resource::<VehicleSignals>()
             .add_message::<EnteredWorldMessage>()

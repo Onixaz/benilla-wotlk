@@ -506,6 +506,18 @@ impl CastLadder<'_, '_> {
                 return;
             }
         }
+        // The not-ready leg, ahead of the power leg (`0x739650`): a cast as another unit reads that
+        // unit's cooldowns, the pet's history for the pet.
+        if self
+            .pet_bar
+            .as_deref()
+            .is_some_and(|bar| bar.cooldowns.not_ready(spell_id, 0, Some(d), now))
+        {
+            debug!("ui_pet: pet cast {spell_id} refused locally — not ready");
+            self.press
+                .push_local(spell_id, CastCommit::Pet { caster: pet }.not_ready_reason());
+            return;
+        }
         if let Some(store) = ctx.rel.self_store {
             if !super::usable::can_afford(d, store, &self.spell_mods) {
                 self.press.push_local(spell_id, 0x4d);
