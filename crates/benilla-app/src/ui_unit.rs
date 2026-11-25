@@ -1358,25 +1358,39 @@ pub(crate) fn push_npc_unit(
         .as_ref()
         .and_then(|i| i.0.get(&guid))
         .and_then(|&e| stores.get(e).ok())
-        .map(|store| npc_state(&held, store, guid, go_templates.as_deref()))
+        .map(|store| npc_state(&held, store, guid, go_templates.as_deref(), None))
     {
         script.set_unit("npc", Some(state));
     }
 }
 
-/// The `"npc"` snapshot: a unit's as any held unit's; a GameObject is no unit to the getters (`UnitExists` asks its targetable slot `0x60c2f8`, which answers 0 for a GameObject, `0x8e5250`) and `UnitName` reads its template's name, `""` until cached (`0x60e838` -> `0x70cdf0`).
+/// The `"npc"` and `"questnpc"` snapshot: a unit's as any held unit's; a GameObject or item is no unit to the getters (`UnitExists` asks its targetable slot `0x60c2f8`, which answers 0 for a non-unit, `0x8e5250`) and `UnitName` reads its template's name, `""` until cached (`0x60e838` -> `0x70cdf0`).
 fn npc_state(
     held: &held::HeldUnits,
     store: &ObjectStore,
     guid: u64,
     go_templates: Option<&crate::go_templates::GameObjectTemplates>,
+    items: Option<&crate::items::Items>,
 ) -> UnitState {
-    if store.0.is_unit() || !benilla_protocol::guid::is_gameobject(guid) {
+    use benilla_protocol::guid::{is_gameobject, is_item};
+    if store.0.is_unit() || !(is_gameobject(guid) || is_item(guid)) {
         return held.state(store, guid);
     }
-    let name = go_templates
-        .and_then(|t| t.get(guid))
-        .map_or_else(String::new, |t| t.name.clone());
+    // `UnitName` (`0x60e740`) reads a GameObject's template name and an item's cached template
+    // name; neither is a unit to `UnitExists`.
+    let name = if is_gameobject(guid) {
+        go_templates
+            .and_then(|t| t.get(guid))
+            .map_or_else(String::new, |t| t.name.clone())
+    } else {
+        store
+            .0
+            .object_entry()
+            .filter(|e| *e != 0)
+            .zip(items)
+            .and_then(|(e, i)| i.template(e, 0, held.commands))
+            .map_or_else(String::new, |t| t.name.clone())
+    };
     UnitState {
         guid,
         name: Some(name),
@@ -1398,6 +1412,8 @@ struct Interactions<'w> {
     target: Option<Res<'w, crate::ui_session::InteractTarget>>,
     /// The open questgiver window, the `"questnpc"` source (`0x6081b0`).
     giver: Option<NonSend<'w, crate::ui_quest::QuestGiver>>,
+    /// An item questgiver's name.
+    items: Option<Res<'w, crate::items::Items>>,
 }
 
 /// The selection setter's tail after its write (`0x524bf0`): the getters then read the new
@@ -1705,6 +1721,7 @@ fn feed_units(
             store,
             guid,
             interact.go_templates.as_deref(),
+            None,
         ))
     });
     // Closing the window must clear the token, so the memo is written here, not only read. No
@@ -1729,14 +1746,31 @@ fn feed_units(
     }
 
     // `"questnpc"`: the questgiver window's source (`0x6081b0`), which `QuestFrame_SetPortrait`
-    // titles the window with. A GameObject or item source is held like a unit.
+    // titles the window with. It resolves through the same getters as `"npc"`, so a GameObject
+    // giver (a wanted poster) has a name but no `UnitExists`, and the frame shows its book icon.
     let quest_npc = interact
         .giver
         .as_deref()
         .and_then(crate::ui_quest::QuestGiver::quest_npc)
         .and_then(|guid| {
-            let entity = *index.as_deref()?.0.get(&guid)?;
-            Some(held.state(stores.all.get(entity).ok()?, guid))
+            let Some(entity) = index.as_deref().and_then(|i| i.0.get(&guid).copied()) else {
+                // An unheld sharer still exists as a group member (`0x60c2a0`): read the roster.
+                return crate::ui_party::unheld_group_state(
+                    held.group,
+                    guid,
+                    held.self_store
+                        .and_then(|store| faction_group(store, held.factions)),
+                    held.classes,
+                    held.types,
+                );
+            };
+            Some(npc_state(
+                &held,
+                stores.all.get(entity).ok()?,
+                guid,
+                interact.go_templates.as_deref(),
+                interact.items.as_deref(),
+            ))
         });
     let quest_npc_dirty = match (&quest_npc, memo.last.get("questnpc")) {
         (Some(cur), Some(prev)) => cur != prev,
