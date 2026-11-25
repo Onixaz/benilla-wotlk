@@ -16,9 +16,9 @@
 //!   not read;
 //! - the walk and run states (49-60) are not entered: they need the base-speed test, and no 12340
 //!   package lists them;
-//! - the animation feed reads the driver's requested base and overlay ids, not the three played
-//!   sequences after their fallback, and never a variation, so Stand's and SwimIdle's alternate
-//!   states (41, 42) are not entered.
+//! - the animation feed reads the driver's requested mount, base and overlay ids, not the three
+//!   played sequences after their fallback, and never a variation, so Stand's and SwimIdle's
+//!   alternate states (41, 42) are not entered.
 //!
 //! GameObject packages (a transport's states 2-5, a door's 71-74) are not built.
 
@@ -159,11 +159,11 @@ struct UnitEffects {
     /// Bit `n`: state `n` entered (82 states).
     states: u128,
     loops: Vec<LiveLoop>,
-    /// The state each animation slot last entered (base, overlay, unused).
+    /// The state each animation slot last entered (mount, base, overlay).
     slot_states: [u32; 3],
     /// The movement flags and animation ids last fed, so a feed runs on a change.
     fed_flags: u32,
-    fed_anims: (Option<u16>, Option<u16>),
+    fed_anims: [Option<u16>; 3],
 }
 
 impl UnitEffects {
@@ -175,7 +175,7 @@ impl UnitEffects {
             loops: Vec::new(),
             slot_states: [0; 3],
             fed_flags: flags,
-            fed_anims: (None, None),
+            fed_anims: [None; 3],
         };
         m.enter(cat, state::STARTED, cues);
         m.enter(cat, state::STILL, cues);
@@ -402,7 +402,7 @@ impl UnitEffects {
 }
 
 /// The package a unit's display carries: the mount's display first, as the reference's
-/// `+0xb44 ?: +0xb40` (`0x725df0`); 0 for none or a package with no row.
+/// `+0x9c0 ?: +0x9d4` / `UNIT_FIELD_DISPLAYID` (`0x725df0`); 0 for none or a package with no row.
 fn package_of(cat: &ObjectEffectCatalog, display: Option<u32>) -> u32 {
     display
         .and_then(|d| cat.package_for_display(d))
@@ -415,21 +415,24 @@ fn package_of(cat: &ObjectEffectCatalog, display: Option<u32>) -> u32 {
 /// (culled out of range or never opened), as the per-frame update keeps it playing (`0x6f39b0`).
 #[allow(clippy::type_complexity)] // one Bevy system's full input set
 fn run_object_effects(
-    units: Query<(
-        Entity,
-        &NetEntity,
-        &Transform,
-        Option<&MountChild>,
-        Option<&AnimDriver>,
+    units: Query<
         (
-            Option<&MovementState>,
-            Option<&RemoteMotion>,
-            Option<&Spline>,
-            Has<CreatureSwimming>,
-            Option<&UnitMoveModes>,
+            Entity,
+            &NetEntity,
+            &Transform,
+            Option<&MountChild>,
+            Option<&AnimDriver>,
+            (
+                Option<&MovementState>,
+                Option<&RemoteMotion>,
+                Option<&Spline>,
+                Has<CreatureSwimming>,
+                Option<&UnitMoveModes>,
+            ),
         ),
-    )>,
-    mounts: Query<&NetEntity, With<MountBody>>,
+        Without<MountBody>,
+    >,
+    mounts: Query<(&NetEntity, Option<&AnimDriver>), With<MountBody>>,
     mut managers: Local<EntityHashMap<UnitEffects>>,
     effects: Res<ObjectEffects>,
     kits: Option<ResMut<SoundKits>>,
@@ -451,10 +454,8 @@ fn run_object_effects(
         if !matches!(net.kind, EntityKind::Unit | EntityKind::Player) {
             continue;
         }
-        let display = mount_child
-            .and_then(|mc| mounts.get(mc.0).ok())
-            .and_then(|m| m.display_id)
-            .or(net.display_id);
+        let mount = mount_child.and_then(|mc| mounts.get(mc.0).ok());
+        let display = mount.and_then(|(m, _)| m.display_id).or(net.display_id);
         let package = package_of(cat, display);
         let flags = unify(movement, remote, spline, swim, modes).flags;
         cues.clear();
@@ -472,10 +473,12 @@ fn run_object_effects(
                 m.fed_flags = flags;
                 m.movement(cat, flags, &mut cues);
             }
-            let anims = driver.map_or((None, None), |d| d.playing());
+            let (base, overlay) = driver.map_or((None, None), |d| d.playing());
+            let mount_anim = mount.and_then(|(_, d)| d).and_then(|d| d.playing().0);
+            let anims = [mount_anim, base, overlay];
             if m.fed_anims != anims {
                 m.fed_anims = anims;
-                m.animation(cat, [anims.0, anims.1, None], &mut cues);
+                m.animation(cat, anims, &mut cues);
             }
         }
         play_cues(
