@@ -114,6 +114,16 @@ fn unwrap_yaw(from: f32, mut to: f32) -> f32 {
     to
 }
 
+/// The facing a motion turns the passenger to (`0x747a30` reads the unit's): on the enter its
+/// facing on the vehicle, its local facing plus the vehicle's, which the unit's own frame does not
+/// carry until it sits; on the exit the unit's own.
+fn motion_facing(entering: bool, vehicle_yaw: Option<f32>, local: f32, own: f32) -> f32 {
+    match vehicle_yaw.filter(|_| entering) {
+        Some(vehicle) => vehicle + local,
+        None => own,
+    }
+}
+
 /// A transform's yaw about +Y.
 fn yaw_of(t: &GlobalTransform) -> f32 {
     t.compute_transform().rotation.to_euler(EulerRot::YXZ).0
@@ -253,7 +263,11 @@ pub(super) fn ride_transits(
         } else {
             let b = blend(seat, entering, linear);
             let lift = arc(t.gravity, t.arc_scale, total, b);
-            let target = unwrap_yaw(from.1, yaw_of(own));
+            let vehicle_yaw = transforms.get(vehicle).ok().map(yaw_of);
+            let target = unwrap_yaw(
+                from.1,
+                motion_facing(entering, vehicle_yaw, facing, yaw_of(own)),
+            );
             (
                 from.0.lerp(to, b) + Vec3::Y * lift,
                 from.1 + (target - from.1) * b,
@@ -365,6 +379,23 @@ mod tests {
         s.flags = 0x60;
         assert!((blend(&s, true, 0.5) - 0.5).abs() < 1.0e-6);
         assert_eq!(blend(&s, false, 0.5), 0.5, "the exit's bits are others");
+    }
+
+    /// The enter turns the passenger to its facing on the vehicle through the whole motion; its
+    /// own frame still holds the facing it jumped from.
+    #[test]
+    fn the_enter_turns_to_the_facing_on_the_vehicle() {
+        assert_eq!(motion_facing(true, Some(1.0), 0.25, 0.0), 1.25);
+        assert_eq!(
+            motion_facing(false, Some(1.0), 0.25, -0.5),
+            -0.5,
+            "the exit's own"
+        );
+        assert_eq!(
+            motion_facing(true, None, 0.25, -0.5),
+            -0.5,
+            "no vehicle frame"
+        );
     }
 
     #[test]
