@@ -319,3 +319,24 @@ means and records the difference here.
   same in its own read (a number less one at `0x5e95e8`, a name's id kept at `0x5e967f`), listing
   what fits the slot after the one named.
 - **benilla:** makes a name 0-based in both, as a number is, so a name reads the slot it names.
+
+### `ListChannels`: the line's length check
+
+- **12340:** `ListChannels` (`0x50dae0`) prints each joined channel as `[%d. %s] ` and packs it
+  into a 3000-byte line, adding the line as `CHAT_MSG_CHANNEL_LIST` first when the entry would not
+  fit. The fit test (`0x50db51`–`0x50db63`) takes the length of the string at the line's address
+  plus the entry's length, where it means the line's length plus the entry's length. While the line
+  is shorter than the entry, that reads past the line's end into stack bytes nothing wrote, so
+  whether 12340 adds the line before that entry (an empty one, at the first) depends on what the
+  stack held; once the line is longer, the test passes later than the 3000-byte limit means.
+- **benilla:** compares the line's length plus the entry's length with 3000. Ten channels never
+  reach it, so benilla lists them all on one line.
+
+### Group chat: the battleground test with no map record
+
+- **12340:** `SendChatMessage`'s `PARTY` check asks whether the current map is a battleground or
+  an arena (`0x572f50`, `InstanceType` 3 or 4). When the map id is outside `Map.dbc`'s range
+  (`0x572f5d`, `0x572f65` → `0x572f88`) or its row is missing (`0x572f74`), it still reads the
+  instance type through the null record (`0x572f7c`), so 12340 faults. In the world the current
+  map is always a `Map.dbc` row, so the fault is not reached.
+- **benilla:** treats a map with no record as neither.
