@@ -66,7 +66,7 @@ fn a_monster_say_reads_the_inline_names() {
     body.extend(b"Wolf\0");
     body.extend(creature.to_le_bytes()); // receiver: a creature, so its name follows
     body.extend(5u32.to_le_bytes());
-    body.extend(b"Wolf\0");
+    body.extend(b"Pack\0");
     body.extend(4u32.to_le_bytes());
     body.extend(b"Grr\0");
     body.push(0);
@@ -74,6 +74,8 @@ fn a_monster_say_reads_the_inline_names() {
     assert_eq!(tail, 0);
     assert_eq!(m.chat_type, CHAT_MSG_MONSTER_SAY);
     assert_eq!(m.sender_name.as_deref(), Some("Wolf"));
+    // Kept for the add, which takes it over any cache (`0x50c2df`-`0x50c30e`).
+    assert_eq!(m.receiver_name.as_deref(), Some("Pack"));
     assert_eq!((m.sender_guid, m.target_guid), (creature, creature));
     assert_eq!(m.text, "Grr");
 }

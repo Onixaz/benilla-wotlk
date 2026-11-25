@@ -45,11 +45,6 @@ impl InTurn<'_> {
     pub(crate) fn is_some(&self) -> bool {
         self.vm.is_some()
     }
-
-    /// Whether the VM was inserted since this system last ran: a new session's.
-    pub(crate) fn is_added(&self) -> bool {
-        self.vm.as_ref().is_some_and(|vm| vm.is_added())
-    }
 }
 
 /// The VM's model while a system raises in turn: it derefs to the VM, every event raised through

@@ -56,11 +56,7 @@ impl super::UiScript {
             crate::messages::MsgKind::Chat => {
                 if !text.is_empty() {
                     let chat_type = crate::messages::by_key(key).map_or(0, |r| r.chat_type);
-                    if let Some(text) = self.add_chat_text(chat_type, text) {
-                        crate::script::model_mut_of(self.lua())
-                            .chat_lines
-                            .push((chat_type, text));
-                    }
+                    self.add_chat_text(chat_type, text);
                 }
                 return;
             }
@@ -70,25 +66,13 @@ impl super::UiScript {
         }
     }
 
-    /// The display's chat arm for a resolved line (`0x521814` -> `0x509dd0`): added to the chat log on `chat_type` in the caller's turn, its event fired with the `World` lent (`0x50a8a5`, `0x4fdd5c`); inside a host step's turn it is added at that step's raise. With no chat log lent the text comes back for the app's chat feed.
-    pub fn add_chat_text(&mut self, chat_type: u8, text: String) -> Option<String> {
+    /// The display's chat arm for a resolved line (`0x521814` -> `0x509dd0`): added through the chat add on `chat_type` in the caller's turn, inside a host step's turn at that step's raise.
+    pub fn add_chat_text(&mut self, chat_type: u8, text: String) {
         if super::world_loan::in_turn(self.lua()) {
-            super::world_loan::in_turn_or_now(self, move |s| {
-                if let Some(text) = s.add_chat_text(chat_type, text) {
-                    crate::script::model_mut_of(s.lua())
-                        .chat_lines
-                        .push((chat_type, text));
-                }
-            });
-            return None;
+            super::world_loan::in_turn_or_now(self, move |s| s.add_chat_text(chat_type, text));
+            return;
         }
-        match super::write_live(|l| l.add_chat_line(chat_type, &text)) {
-            Some(Some((event, args))) => {
-                self.fire_event(event, args);
-                None
-            }
-            _ => Some(text),
-        }
+        add_chat_text(self.lua(), chat_type, &text);
     }
 
     /// The keys of every line the display showed, in order, taken: the app's tests' record.
@@ -98,11 +82,6 @@ impl super::UiScript {
             .into_iter()
             .map(|(key, _)| key)
             .collect()
-    }
-
-    /// The chat-kind lines [`Self::show_text`] could not add with nothing lent, by chat type, taken.
-    pub fn take_chat_lines(&mut self) -> Vec<(u8, String)> {
-        std::mem::take(&mut crate::script::model_mut_of(self.lua()).chat_lines)
     }
 }
 
@@ -183,11 +162,28 @@ fn add_chat_line(lua: &Lua, key: &'static str, args: &[crate::strings::Arg<'_>])
     add_chat_text(lua, chat_type, &text);
 }
 
-/// Add `text` to the chat log on `chat_type` inside the call (`0x509dd0`), firing its event once
-/// the host lets go.
+/// Add `text` through the host's chat add on `chat_type` inside the call (`0x509dd0`), which
+/// records it and raises its event before returning (`0x50a8a5`, `0x50a8d5`); a lent view alone
+/// records it and the event fires here.
 pub(crate) fn add_chat_text(lua: &Lua, chat_type: u8, text: &str) {
-    if let Some(Some((event, args))) = super::write_live(|l| l.add_chat_line(chat_type, text)) {
-        super::tick::fire_event_into(lua, event, args);
+    let ask = super::calls::HostAsk::ChatLine {
+        chat_type,
+        text: text.to_string(),
+    };
+    if super::calls::ask_host(lua, &ask).is_some() {
+        return;
+    }
+    match super::write_live(|l| l.add_chat_line(chat_type, text)) {
+        Some(Some((event, args))) => super::tick::fire_event_into(lua, event, args),
+        Some(None) => {}
+        // Every caller adds in its own turn with the host lent (`0x509dd0` runs inside the caller),
+        // so a line with nothing lent has no add to reach: a hard failure in a debug build.
+        None if cfg!(debug_assertions) => {
+            panic!("a chat line was added with no host lent, outside the add's caller: {text:?}")
+        }
+        None => crate::script::model_mut_of(lua).warn_host_only(format!(
+            "a chat line was added with no host lent and is lost: {text:?}"
+        )),
     }
 }
 
@@ -357,8 +353,11 @@ mod show_now_tests {
             .globals()
             .set("ERR_RECEIVE_ITEM_S", "You receive item: %s.")
             .unwrap();
-        super::show_now_s(s.lua(), "ERR_RECEIVE_ITEM_S", "Linen".into());
-        s.show_text("ERR_RECEIVE_ITEM_S", "You receive item: Linen.".into());
+        let mut view = crate::script::live::TestView::default();
+        crate::script::live::lending(&mut view, || {
+            super::show_now_s(s.lua(), "ERR_RECEIVE_ITEM_S", "Linen".into());
+            s.show_text("ERR_RECEIVE_ITEM_S", "You receive item: Linen.".into());
+        });
         assert_eq!(
             s.take_message_sounds(),
             ["ERR_RECEIVE_ITEM_S", "ERR_RECEIVE_ITEM_S"]
@@ -367,7 +366,7 @@ mod show_now_tests {
 
     /// Every row of the catalog (`0xac8af0`) shows inside the call: a red or yellow line fires its
     /// event, a chat line is added to the lent chat log on the row's chat type and fires its event
-    /// there (#1306). With no chat log lent a chat line adds nothing.
+    /// there (#1306).
     #[test]
     fn every_catalog_row_shows_inside_the_call() {
         use crate::messages::{MsgKind, CATALOG};
@@ -398,11 +397,22 @@ mod show_now_tests {
                     };
                     assert_eq!(fired, [event], "{}", r.key);
                     assert_eq!(view.chat_lines, [(r.chat_type, "text".into())], "{}", r.key);
-                    s.run("Log = {}").unwrap();
-                    super::show_now(s.lua(), r.key);
-                    assert!(log(&s).is_empty(), "{}", r.key);
                 }
             }
         }
+    }
+
+    /// The add runs inside its caller (`0x509dd0`), so a chat line shown with nothing lent has no
+    /// add to reach and fails a debug build instead of waiting for a later frame.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "a chat line was added with no host lent")]
+    fn a_chat_line_with_nothing_lent_fails() {
+        let s = crate::script::UiScript::new().unwrap();
+        s.lua()
+            .globals()
+            .set("ERR_RECEIVE_ITEM_S", "You receive item: %s.")
+            .unwrap();
+        super::show_now_s(s.lua(), "ERR_RECEIVE_ITEM_S", "Linen".into());
     }
 }

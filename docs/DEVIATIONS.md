@@ -205,6 +205,18 @@ means and records the difference here.
   works each coordinate out in SSE single precision (`0x628f38`–`0x628f65`) and compares the
   clamped value with it as floats (`0x629485` for x, `0x6295ff` for y), so the cell read at
   `0x62960e` is reached.
+- **Chat log: a channel notice's line.** While `LoggingChat` is on, the chat add writes each
+  channel notice (`CHAT_MSG_CHANNEL_NOTICE`, `CHAT_MSG_CHANNEL_NOTICE_USER`) to `WoWChatLog.txt`
+  with the global string `CHAT_<TOKEN>_NOTICE` as the format. Earlier it prints the channel's
+  `"%d. %s"` name into a stack buffer (`0x50a44e`); the log arm (`0x50aa65`–`0x50aaa9`) then
+  passes that buffer's address, the sender and the target as the format's arguments. In enUS,
+  `CHAT_YOU_JOINED_NOTICE` is `Joined Channel: |Hchannel:%d|h[%s]|h`, so the `%d` takes the
+  buffer's address and the brackets the sender, which a notice leaves empty: 12340 logs
+  `Joined Channel: |Hchannel:<address>|h[]|h`, with a stack address that changes from run to run.
+  benilla fills every `CHAT_<TOKEN>_NOTICE` in the log the way the chat window fills it for the
+  same event (`ChatFrame.lua`: the channel number, arg8, for `%d` and the channel's display name,
+  arg4, for `[%s]`, then the sender and target for a user notice), so the log reads
+  `Joined Channel: |Hchannel:1|h[1. General - Stormwind City]|h`, the line the player saw.
 
 ## The Mac build
 

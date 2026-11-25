@@ -1526,27 +1526,6 @@ fn feed_units(
     {
         script.set_billing_time_rested(entered);
     }
-    // Ahead of the gate too: `PLAYER_LEVEL_UP` from `SMSG_LEVELUP_INFO` alone (`0x6e3691`), its
-    // nine `%d`s: level, health, the first power gain, a talent point at level 10 or more, the
-    // five stats.
-    let level_ups = if sink.chat.has_level_ups() {
-        sink.chat.take_level_ups()
-    } else {
-        Vec::new()
-    };
-    for l in level_ups {
-        let args = [
-            l.level as i32,
-            l.health,
-            l.powers[0],
-            i32::from(l.level >= 10),
-        ]
-        .into_iter()
-        .chain(l.stats)
-        .map(|v| ScriptValue::Int(i64::from(v)))
-        .collect();
-        script.fire_event("PLAYER_LEVEL_UP", args);
-    }
     let chr = tables.classes();
     let types = tables.types(&names);
     let (memo, vm_reset) = feed.vm.get_reset(&script);
@@ -1885,6 +1864,11 @@ fn feed_units(
             gate.audit("feed_units", "the PLAYER_ENTERING_WORLD arm");
             crate::ui_script::fire_armed_player_login(&mut script);
             script.fire_event("PLAYER_ENTERING_WORLD", vec![]);
+            // The chat's entry after the event (`0x5281b3`): the lines queued outside the world are added.
+            deferred.queue(|world: &mut World| {
+                crate::ui_script::live::fire_handler_events(world);
+                crate::ui_chat::enter_world(world);
+            });
             // The quest log's entry (`0x5281db`), the pet step (`0x5281fe`), then the faction list's world entry (`0x528208` -> `0x5d2bc0`): its fold's and its sort's `UPDATE_FACTION` (`0x5d1bfa`) with the player seated, re-showing the XP bar the pre-player `SMSG_INITIALIZE_FACTIONS` fire hid at a 0 maximum.
             crate::ui_quest_log::rows::queue_enter_world(&mut deferred);
             deferred.queue(|world: &mut World| {

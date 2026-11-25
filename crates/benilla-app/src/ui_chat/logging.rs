@@ -1,9 +1,11 @@
 //! The `LoggingChat`/`LoggingCombat` files, `WoWChatLog.txt` and `WoWCombatLog.txt`: the stock
-//! `/chatlog` and `/combatlog` flip the VM's flag and print the notice (`ChatFrame.lua:675-695`);
-//! this appends to `Logs\` each chat line as the window shows it, every `COMBAT_` kind included,
-//! and each combat-log entry as `0x74e880` packs it (`0x4fb3c0`), as SLog lines: stamped
-//! `M/D HH:MM:SS.mmm` in local time, two spaces, the text, CRLF. A file that fails to open clears
-//! its flag (`0x4fbcba`), after Lua already printed "enabled".
+//! `/chatlog` and `/combatlog` flip the VM's flag and print the notice (`ChatFrame.lua:675-695`),
+//! and the verb opens its file inside the call (`0x4fbcb1`); this appends to `Logs\` each chat line
+//! the add composes for the log while the flag is on (`0x50a975`), and each combat-log entry as
+//! `0x74e880` packs it (`0x4fb3c0`), as log lines: stamped `M/D HH:MM:SS.mmm` in local time, two
+//! spaces, the text, CRLF. A file that fails to open clears its flag (`0x4fbcba`), after Lua
+//! already printed "enabled". A flag turned off leaves its file open, as the verb never closes it;
+//! the session end closes both (`0x5072b0`).
 
 use std::io::Write as _;
 
@@ -20,6 +22,11 @@ impl LogFile {
         Self { name, file: None }
     }
 
+    /// Whether the file is open: the add composes its line only then (`0x50a975`).
+    pub(crate) fn is_open(&self) -> bool {
+        self.file.is_some()
+    }
+
     /// Append a line's bytes as they are, when the file is open.
     pub(crate) fn record(&mut self, line: &[u8]) {
         if let Some(file) = self.file.as_mut() {
@@ -32,13 +39,14 @@ impl LogFile {
         }
     }
 
-    /// Open or close the file; false when it should be open and cannot be. Without a state folder
-    /// (a hermetic capture) it stays closed and the flag stands.
-    fn set(&mut self, on: bool) -> bool {
-        if !on {
-            self.file = None;
-            return true;
-        }
+    /// Close the file: the session end (`0x5072b0`).
+    pub(crate) fn close(&mut self) {
+        self.file = None;
+    }
+
+    /// Open the file when it is not open yet (`0x4fbc95`, `0x4fbcb1`); false when it cannot be.
+    /// Without a state folder (a hermetic capture) it stays closed and the flag stands.
+    pub(crate) fn open(&mut self) -> bool {
         if self.file.is_some() {
             return true;
         }
@@ -82,7 +90,7 @@ impl LogFile {
     }
 }
 
-/// `WoWChatLog.txt`, kept on the chat windows since every line passes [`super::frames::route`].
+/// `WoWChatLog.txt`, kept on the chat windows, which the chat add writes (`0x50a975`).
 pub(crate) struct ChatLogFile(pub(crate) LogFile);
 
 impl Default for ChatLogFile {
@@ -96,12 +104,9 @@ impl Default for ChatLogFile {
 pub(crate) struct CombatLogFile(pub(crate) LogFile);
 
 impl CombatLogFile {
-    /// Append an entry's line, opening the file first when the flag moved this frame ahead of
-    /// [`sync_chat_logging`], as `LoggingCombat` opens it in the call (`0x4fbcb1`).
+    /// Append an entry's line to the file `LoggingCombat` opened in its call (`0x4fbcb1`).
     pub(crate) fn record(&mut self, line: &[u8]) {
-        if self.0.set(true) {
-            self.0.record(line);
-        }
+        self.0.record(line);
     }
 }
 
@@ -201,36 +206,8 @@ fn local_fields(secs: i64) -> LocalTime {
     }
 }
 
-/// The VM's two flags → the two files, on the frame either flag moves or a new session's VM
-/// starts with both off, as a logout closes them (`0x5072b0`).
-pub(super) fn sync_chat_logging(
-    mut script: crate::ui_script::InTurn,
-    mut windows: ResMut<super::frames::ChatWindows>,
-    mut combat_file: ResMut<CombatLogFile>,
-) {
-    let added = script.is_added();
-    let Some(mut script) = script.turn() else {
-        return;
-    };
-    if !script.take_logging_changes() && !added {
-        return;
-    }
-    let (chat, combat) = script.logging_flags();
-    let opened = (windows.logs.0.set(chat), combat_file.0.set(combat));
-    if opened != (true, true) {
-        script.set_logging_flags(chat && opened.0, combat && opened.1);
-    }
-}
-
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<CombatLogFile>();
-    app.add_systems(
-        Update,
-        // After the UI tick, so a flag Lua moved is read the same frame.
-        sync_chat_logging
-            .in_set(crate::ui_script::UiDrain)
-            .in_set(crate::char_select::InWorldGated),
-    );
 }
 
 #[cfg(all(test, unix))]

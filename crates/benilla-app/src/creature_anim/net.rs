@@ -2,6 +2,7 @@
 //! streamed unit. The swing record and the environmental-damage log also feed
 //! [`crate::combat_log`], whose handlers are registered first and so run first.
 
+use crate::ui_chat::ChatSink as _;
 use benilla_protocol::messages::{AttackSwingError, AttackerState, EnvironmentalDamageLog};
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
@@ -134,7 +135,7 @@ fn on_text_emote(
     In(ev): In<SessionEvent>,
     index: Res<GuidIndex>,
     mut out: MessageWriter<EmoteMessage>,
-    mut chat_log: ResMut<crate::ui_chat::ChatLog>,
+    mut chat_log: ResMut<crate::ui_script::live::UiEvents>,
 ) {
     if let SessionEvent::TextEmote {
         guid,
@@ -425,7 +426,7 @@ fn text_emote(
     target_name: String,
     index: &GuidIndex,
     out: &mut MessageWriter<EmoteMessage>,
-    chat_log: &mut crate::ui_chat::ChatLog,
+    chat_log: &mut crate::ui_script::live::UiEvents,
 ) {
     if benilla_assets::trace::enabled() {
         benilla_assets::trace::line(

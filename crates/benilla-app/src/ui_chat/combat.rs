@@ -313,7 +313,6 @@ pub(crate) struct PendingCombat {
     pub subject: u64,
     pub fills: Fills,
     pub named: Named,
-    pub tries: u16,
 }
 
 /// What still has to be looked up before a line's [`Slot::Named`] can be filled.
@@ -336,7 +335,6 @@ pub(crate) fn ready(kind: ChatEventKind, family: Family, fills: Fills) -> Pendin
         subject: 0,
         fills,
         named: Named::Ready,
-        tries: 0,
     }
 }
 

@@ -1,5 +1,5 @@
-//! The world broadcasts that print in chat, resolved from their wire ids once the catalogs, the
-//! joined channels and the player's zone are at hand, a pass before the chat drain.
+//! The world broadcasts that print in chat, resolved from their wire ids against the catalogs, the
+//! joined channels and the player's zone as their handlers run.
 //!
 //! The two defense broadcasts print as senderless `CHAT_MSG_CHANNEL` lines in language 0, once per
 //! joined channel whose `ChatChannels.dbc` row has `DEFENSE` (`0x10000`); a `ZONE_DEP` (`0x2`) row
@@ -20,7 +20,6 @@ use crate::area::AreaTableRes;
 
 use super::edit::ChannelState;
 use super::event::{ChatEvent, ChatEventKind};
-use super::feed::ChatLog;
 
 /// `ServerMessages.dbc`, read once at startup: the shutdown and restart sentences.
 #[derive(Resource)]
@@ -91,83 +90,71 @@ fn parent_zone(areas: &AreaTableRes, id: u32) -> Option<u32> {
     Some(if row.zone_id == 0 { id } else { row.zone_id })
 }
 
-/// Resolve the parked broadcasts into chat events, before [`super::feed::feed_chat`] so each
-/// lands the frame it decodes.
-pub(super) fn feed_broadcasts(
-    mut log: ResMut<ChatLog>,
-    mut script: crate::ui_script::InTurn,
+/// One broadcast's lines, resolved as its handler runs: the channels joined and the player's zone
+/// at the packet, `template` the VM's `ZONE_UNDER_ATTACK` string.
+pub(super) fn broadcast_lines(
+    In((item, template)): In<(Broadcast, Option<String>)>,
     channels: Res<ChannelState>,
     areas: Option<Res<AreaTableRes>>,
     messages: Option<Res<ServerMessages>>,
     world: benilla_world::world_point::WorldPoint,
-) {
-    if log.broadcasts_pending() == 0 {
-        return;
-    }
-    // The format string lives in the VM, so the queue waits for one; it clears at session end.
-    let Some(script) = script.turn() else { return };
-    // The player's zone, as the reference keeps it; `top_zone` is the single-hop parent on 5875
-    // data.
+) -> Vec<ChatEvent> {
+    // The player's zone, as the reference keeps it; `top_zone` is the single-hop parent.
     let player_zone = areas
         .as_ref()
         .and_then(|a| world.area().and_then(|leaf| a.0.top_zone(leaf)));
-    for item in log.take_broadcasts() {
-        match item {
-            Broadcast::ZoneUnderAttack { area_id } => {
-                // No catalog, template or row: with no name there is no line.
-                let Some((areas, fmt)) = areas
-                    .as_ref()
-                    .zip(super::combat::global_string(&script, "ZONE_UNDER_ATTACK"))
-                else {
-                    continue;
-                };
-                let (Some(name), Some(zone)) = (areas.0.name(area_id), parent_zone(areas, area_id))
-                else {
-                    debug!("chat: ZONE_UNDER_ATTACK for unknown area {area_id}");
-                    continue;
-                };
-                let text = zone_under_attack_line(&fmt, name);
-                push_channel_lines(&mut log, &channels, zone, player_zone, &text);
-            }
-            Broadcast::Defense { zone_id, text } => {
-                // The wire text stands on its own, so an unresolvable zone only costs the remap.
-                let zone = areas
-                    .as_ref()
-                    .and_then(|a| parent_zone(a, zone_id))
-                    .unwrap_or(zone_id);
-                push_channel_lines(&mut log, &channels, zone, player_zone, &text);
-            }
-            Broadcast::Server { message_type, text } => {
-                let Some(messages) = messages.as_ref() else {
-                    debug!("chat: SMSG_SERVER_MESSAGE {message_type} dropped: no catalog");
-                    continue;
-                };
-                log.push_event(ChatEvent::text_only(
-                    ChatEventKind::System,
-                    messages.0.compose(message_type, &text),
-                ));
-            }
+    match item {
+        Broadcast::ZoneUnderAttack { area_id } => {
+            // No catalog, template or row: with no name there is no line.
+            let Some((areas, fmt)) = areas.as_ref().zip(template) else {
+                return Vec::new();
+            };
+            let (Some(name), Some(zone)) = (areas.0.name(area_id), parent_zone(areas, area_id))
+            else {
+                debug!("chat: ZONE_UNDER_ATTACK for unknown area {area_id}");
+                return Vec::new();
+            };
+            let text = zone_under_attack_line(&fmt, name);
+            channel_lines(&channels, zone, player_zone, &text)
+        }
+        Broadcast::Defense { zone_id, text } => {
+            // The wire text stands on its own, so an unresolvable zone only costs the remap.
+            let zone = areas
+                .as_ref()
+                .and_then(|a| parent_zone(a, zone_id))
+                .unwrap_or(zone_id);
+            channel_lines(&channels, zone, player_zone, &text)
+        }
+        Broadcast::Server { message_type, text } => {
+            let Some(messages) = messages.as_ref() else {
+                debug!("chat: SMSG_SERVER_MESSAGE {message_type} dropped: no catalog");
+                return Vec::new();
+            };
+            vec![ChatEvent::text_only(
+                ChatEventKind::System,
+                messages.0.compose(message_type, &text),
+            )]
         }
     }
 }
 
 /// One `CHAT_MSG_CHANNEL` line per defense channel reached, with no sender or language: the
 /// handlers push NULL for both, hence the bare colon of `[LocalDefense] : text`.
-fn push_channel_lines(
-    log: &mut ChatLog,
+fn channel_lines(
     channels: &ChannelState,
     zone: u32,
     player_zone: Option<u32>,
     text: &str,
-) {
-    for channel in defense_targets(channels, zone, player_zone) {
-        log.push_event(ChatEvent {
+) -> Vec<ChatEvent> {
+    defense_targets(channels, zone, player_zone)
+        .into_iter()
+        .map(|channel| ChatEvent {
             kind: Some(ChatEventKind::Channel),
             text: text.to_string(),
             channel,
             ..Default::default()
-        });
-    }
+        })
+        .collect()
 }
 
 #[cfg(test)]

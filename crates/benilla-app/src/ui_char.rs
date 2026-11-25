@@ -296,7 +296,7 @@ pub(crate) fn skill_value_watch(world: &mut World, slot: u8, old: u16) {
             fire_skill_stat_events(&mut ui);
         }
         crate::ui_script::live::in_turn(world, rebuild_skills);
-        // The display at its step (`0x6da5b4`, `0x6da5d9`); its `CHAT_MSG_SKILL` still fires from the chat feed (#1416).
+        // The display at its step (`0x6da5b4`, `0x6da5d9`), its `CHAT_MSG_SKILL` added inside it (`0x52183c`).
         if let Some(line) = skill_line(world, skill_id, race, class, old, read) {
             match world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
                 Some(mut ui) => crate::ui_action::show_in_turn(&mut ui, "skills", line),
