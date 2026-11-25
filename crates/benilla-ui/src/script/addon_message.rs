@@ -114,6 +114,12 @@ fn validate_escapes(text: &mut String) -> Result<(), ()> {
     Ok(())
 }
 
+/// [`validate_escapes`] as `SendChatMessage`'s walk runs it on its line (`0x50d6ff`-`0x50d7ae`):
+/// whether the line passes, `text` cut at an unclosed `|c`.
+pub fn chat_escapes_valid(text: &mut String) -> bool {
+    validate_escapes(text).is_ok()
+}
+
 /// `lua_tostring` with the reference's NULL-to-empty replacement: strings and numbers coerce,
 /// anything else is `""`.
 fn lua_tostring(lua: &Lua, v: &Value) -> mlua::Result<String> {

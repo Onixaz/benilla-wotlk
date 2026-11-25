@@ -165,6 +165,8 @@ pub const FIELD_PLAYER_QUEST_LOG_1_1: u16 = UNIT_END + 0xa;
 pub const FIELD_PLAYER_VISIBLE_ITEM_1_ENTRYID: u16 = UNIT_END + 0x87;
 /// Read at player block `+0x2b4` (`0x51b3b0`).
 pub const FIELD_PLAYER_CHOSEN_TITLE: u16 = UNIT_END + 0xad;
+/// Read at player block `+0x2b8` beside the drunk byte (`0x4ffd88`, `0x4f7290`).
+pub const FIELD_PLAYER_FAKE_INEBRIATION: u16 = UNIT_END + 0xae;
 /// 23 guids: equipment 0-18, bags 19-22.
 pub const FIELD_PLAYER_INV_SLOT_HEAD: u16 = UNIT_END + 0xb0;
 /// 16 backpack guids, player slots 23-38.

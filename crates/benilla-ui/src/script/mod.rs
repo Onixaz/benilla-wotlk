@@ -304,7 +304,7 @@ mod zone_text;
 pub use action::{ActionIcon, ActionSlot, ActionState, ActionUse};
 pub use addon::AddOnInfo;
 pub use addon_enable::{EnableHash, EnableLists};
-pub use addon_message::{AddonDistribution, AddonSend};
+pub use addon_message::{chat_escapes_valid, AddonDistribution, AddonSend};
 pub use arena_team::{
     ArenaTeamMemberRef, ArenaTeamMemberView, ArenaTeamRecordView, ArenaTeamRequest,
     ArenaTeamSlotView,
@@ -375,6 +375,7 @@ pub use duel::DuelRequest;
 pub use follow::FollowRequest;
 pub use gm_ticket::{GmTicketIntent, SurveySubmission, SurveyTables};
 pub use gossip::{GossipOptionView, GossipQuestRow, GossipRead};
+pub use guild::truncate_new_lines;
 pub use guild::{
     GuildEventView, GuildMemberInfo, GuildRankEdit, GuildRankInfo, GuildRequest, GuildState,
     LastOnline, UnitGuild, MAX_RANKS, MIN_RANKS, RANK_RIGHT_BITS,

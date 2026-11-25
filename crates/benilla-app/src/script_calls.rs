@@ -222,7 +222,8 @@ pub(crate) fn answer_in_call(
             let earlier = world
                 .get_resource_or_init::<crate::ui_script::live::UiEvents>()
                 .set_aside();
-            let refused = crate::ui_chat::input::send_chat_message(world, send);
+            let refused =
+                crate::ui_chat::input::send_chat_message(world, &UiScript::in_call(lua), send);
             crate::ui_script::live::fire_handler_events(world);
             world
                 .resource_mut::<crate::ui_script::live::UiEvents>()

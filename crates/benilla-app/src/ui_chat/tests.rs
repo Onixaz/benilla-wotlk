@@ -3219,6 +3219,74 @@ fn no_active_player_returns_first_and_the_line_walks_as_utf8() {
     assert_eq!(sent, vec![ChatKind::Say, ChatKind::Say]);
 }
 
+/// `SendChatMessage`'s line passes past the tutorial flag (`0x50d6ac`-`0x50d7ae`): `%t` names the
+/// target from the name cache with no query and `%f` with no focus is `FOCUS_TOKEN_NOT_FOUND`
+/// (`0x577d00`); a line break cuts the line (`0x50d6f7`); `||` passes, an unclosed `|c` cuts at its
+/// `|` (`0x50d7a9`), and any other escape is the verb's Lua error with nothing sent (`0x50d7b1`).
+#[test]
+fn the_line_passes_name_tokens_cut_lines_and_walk_escapes() {
+    use crate::net::ClientCommand;
+
+    let script = benilla_ui::script::UiScript::new().expect("VM");
+    script
+        .run(r#"FOCUS_TOKEN_NOT_FOUND = "<no focus>" TARGET_TOKEN_NOT_FOUND = "<no target>""#)
+        .expect("lua");
+    let (mut world, rx) = send_world(script);
+    world.init_resource::<crate::target::Selection>();
+    let sent = |rx: &crossbeam_channel::Receiver<ClientCommand>| -> Vec<String> {
+        rx.try_iter()
+            .map(|c| match c {
+                ClientCommand::Chat { text, .. } => text,
+                other => panic!("unexpected command {other:?}"),
+            })
+            .collect()
+    };
+
+    run_lent(&mut world, r#"SendChatMessage("at %t, %f")"#).expect("lua");
+    assert_eq!(sent(&rx), vec!["at <no target>, <no focus>"]);
+
+    // A player target out of view: the name cache's record, read with no query.
+    world
+        .resource_mut::<crate::names::NameCache>()
+        .insert_player(0x42, "Tom".into(), None);
+    world.resource_mut::<crate::target::Selection>().guid = Some(0x42);
+    run_lent(
+        &mut world,
+        r#"SendChatMessage("hi %T 50%") SendChatMessage("a\\nb") SendChatMessage("x\ny")"#,
+    )
+    .expect("lua");
+    assert_eq!(sent(&rx), vec!["hi Tom 50%", "a", "x"]);
+
+    run_lent(
+        &mut world,
+        r#"SendChatMessage("a || b") SendChatMessage("|cffff0000red|r ok") SendChatMessage("cut |cffff0000 here")"#,
+    )
+    .expect("lua");
+    assert_eq!(
+        sent(&rx),
+        vec!["a || b", "|cffff0000red|r ok", "cut "],
+        "a closed colour passes; an unclosed one cuts at its pipe"
+    );
+
+    for chunk in [
+        r#"SendChatMessage("|Tfoo|t")"#,
+        r#"SendChatMessage("trail |")"#,
+        r#"SendChatMessage("|cff00ff00 ok|r |r")"#,
+    ] {
+        let err = run_lent(&mut world, chunk).expect_err(chunk);
+        assert!(
+            err.to_string()
+                .contains("SendChatMessage(): Invalid escape code in chat message"),
+            "{chunk}: {err}"
+        );
+    }
+    assert_eq!(
+        sent(&rx),
+        Vec::<String>::new(),
+        "a bad escape sends nothing"
+    );
+}
+
 /// [`lead_a_raid`] on a borrowed state.
 fn lead_a_raid_rows(g: &mut crate::ui_party::GroupState, leader: u64) {
     g.in_group = true;

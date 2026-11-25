@@ -8,6 +8,7 @@ use crate::ui_chat::ChatSink as _;
 use bevy::prelude::*;
 
 mod parse;
+mod send_text;
 #[cfg(test)]
 pub(super) use parse::lua_quoted_string;
 pub(super) use parse::{parse_line, ParsedChat};
@@ -1569,9 +1570,11 @@ pub(crate) fn set_afk(world: &mut World, msg: &str) {
 
 /// `SendChatMessage`'s body inside the call (`0x50d170`), past the binding's type, empty-line and
 /// language reads. No slash grammar runs here: an addon sending `"/dance"` says six characters.
-/// Every line it adds is added in the call; a `Some` is the verb's Lua error.
+/// Every line it adds is added in the call; a `Some` is the verb's Lua error. `vm` is the calling
+/// VM's handle.
 pub(crate) fn send_chat_message(
     world: &mut World,
+    vm: &benilla_ui::script::UiScript,
     mut send: benilla_ui::script::ChatSend,
 ) -> Option<&'static str> {
     use super::edit::SendType as T;
@@ -1723,6 +1726,10 @@ pub(crate) fn send_chat_message(
             id: crate::tutorial::id::CHATTING,
         });
     }
+    // The line's passes (`0x50d6ac`-`0x50d7ae`); a bad escape is the verb's error (`0x50d7b1`).
+    let Some(text) = send_text::sent_line(world, vm, &text) else {
+        return Some(send_text::INVALID_ESCAPE);
+    };
     send_chat(world, wire, send.target, text, send.language);
     None
 }

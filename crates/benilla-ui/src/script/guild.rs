@@ -342,7 +342,7 @@ fn scrubbed_rank_name(name: &str) -> String {
 }
 
 /// The newline truncation (`0x7e1640`): a CR, an LF, or a `\n` or `|n` escape ends the text.
-fn truncate_new_lines(text: &str) -> &str {
+pub fn truncate_new_lines(text: &str) -> &str {
     let bytes = text.as_bytes();
     let cut = (0..bytes.len()).find(|&i| match bytes[i] {
         b'\r' | b'\n' => true,
