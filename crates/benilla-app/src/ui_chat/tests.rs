@@ -2081,10 +2081,11 @@ fn the_talk_gesture_reads_the_plaintext_not_the_garbled_line() {
 fn the_party_leader_sends_the_leader_lane() {
     use super::input::party_lane;
     use crate::net::ChatKind as K;
-    assert_eq!(party_lane(K::Party, 7, Some(7)), K::PartyLeader);
-    assert_eq!(party_lane(K::Party, 7, Some(8)), K::Party);
-    assert_eq!(party_lane(K::Party, 0, Some(8)), K::Party);
-    assert_eq!(party_lane(K::Say, 7, Some(7)), K::Say);
+    assert_eq!(party_lane(K::Party, true), K::PartyLeader);
+    assert_eq!(party_lane(K::Raid, true), K::RaidLeader);
+    assert_eq!(party_lane(K::Battleground, true), K::BattlegroundLeader);
+    assert_eq!(party_lane(K::Party, false), K::Party);
+    assert_eq!(party_lane(K::Say, true), K::Say);
 }
 
 /// A speaker whose `UNIT_FIELD_FLAGS` hold `0x20000000` (Polymorph, Kidney Shot, ...) plays no talk
@@ -2708,7 +2709,21 @@ fn send_world(
     world.init_resource::<super::away::AfkMirror>();
     world.init_resource::<crate::cvars::Cvars>();
     world.init_resource::<crate::ui_party::GroupState>();
+    // The verb returns before its arguments with no active player (`0x50d1ab`).
+    world.spawn((
+        crate::net::SelfPlayer,
+        crate::net::ObjectStore(benilla_protocol::messages::ObjectFields::default()),
+    ));
     (world, rx)
+}
+
+/// Replace the active player's descriptor that [`send_world`] spawned.
+fn set_self_store(world: &mut bevy::prelude::World, fields: benilla_protocol::ObjectFields) {
+    let me = world
+        .query_filtered::<bevy::prelude::Entity, bevy::prelude::With<crate::net::SelfPlayer>>()
+        .single(world)
+        .unwrap();
+    world.entity_mut(me).insert(crate::net::ObjectStore(fields));
 }
 
 /// Run `lua` with the `World` lent, as every call into Lua runs.
@@ -2867,13 +2882,13 @@ fn the_afk_mark_clears_a_standing_dnd_in_text_first() {
     use crate::net::ChatKind;
 
     let (mut world, rx) = send_world(benilla_ui::script::UiScript::new().expect("VM"));
-    world.spawn((
-        crate::net::SelfPlayer,
-        crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+    set_self_store(
+        &mut world,
+        benilla_protocol::ObjectFields::from_pairs(&[(
             benilla_protocol::field::FIELD_PLAYER_FLAGS,
             0x4,
-        )])),
-    ));
+        )]),
+    );
     run_lent(&mut world, r#"SendChatMessage("brb", "AFK")"#).expect("lua");
     assert_eq!(
         system_seen(&world),
@@ -2904,6 +2919,44 @@ fn the_afk_mark_clears_a_standing_dnd_in_text_first() {
     );
 }
 
+/// Speak `language` through the comprehend branch of the skill test (`0x6e0699`-`0x6e0751`): the
+/// `UNIT_FIELD_FLAGS_2` bit `0x8` and a held aura of type 244 on it.
+fn comprehend(world: &mut bevy::prelude::World, language: i32) {
+    const TONGUE: u32 = 90_000;
+    let mut spells = crate::ui_action::Spells::empty_for_tests();
+    spells.catalog = benilla_formats::SpellCatalog::from_displays(
+        [(
+            TONGUE,
+            benilla_formats::SpellDisplay {
+                effect_apply_aura: [244, 0, 0],
+                effect_misc_value: [language, 0, 0],
+                ..Default::default()
+            },
+        )]
+        .into_iter()
+        .collect(),
+    );
+    world.insert_resource(spells);
+    world.init_resource::<crate::ui_action::PlayerActions>();
+    world.insert_resource(crate::ui_spellbook::SkillLines {
+        catalog: std::sync::Arc::new(benilla_formats::SkillLineCatalog::from_lines([])),
+    });
+    set_self_store(
+        world,
+        benilla_protocol::ObjectFields::from_pairs(&[(
+            benilla_protocol::field::FIELD_UNIT_FLAGS_2,
+            0x8,
+        )]),
+    );
+    let me = world
+        .query_filtered::<bevy::prelude::Entity, bevy::prelude::With<crate::net::SelfPlayer>>()
+        .single(world)
+        .unwrap();
+    world
+        .entity_mut(me)
+        .insert(crate::unit_auras::UnitAuras::of(0, &[(0, TONGUE, 1)]));
+}
+
 /// `SendChatMessage`'s language inside the call: the id the binding resolved rides every type's
 /// packet but AFK's, whose AFK mark never reads it.
 #[test]
@@ -2913,6 +2966,7 @@ fn a_named_language_rides_the_chat_command() {
     let mut script = benilla_ui::script::UiScript::new().expect("VM");
     script.set_language_table(vec![(2, "Darnassian".into()), (7, "Common".into())]);
     let (mut world, rx) = send_world(script);
+    comprehend(&mut world, 2);
     run_lent(
         &mut world,
         r#"
@@ -3106,6 +3160,212 @@ fn the_join_verb_claims_its_record_or_skips_the_send() {
     assert_eq!(world.resource::<ChannelState>().number_of("Eleventh"), None);
 }
 
+/// A raid led by `leader` whose subgroup holds one other member, so the party test passes too.
+fn lead_a_raid(world: &mut bevy::prelude::World, leader: u64) {
+    lead_a_raid_rows(
+        &mut world.resource_mut::<crate::ui_party::GroupState>(),
+        leader,
+    );
+}
+
+/// `SendChatMessage`'s first gates and its UTF-8 test: with no active player it returns before any
+/// argument, its usage error included (`0x50d18b`-`0x50d1ab`); a bad lead or trail byte is the
+/// UTF-8 error (`0x50d244`), while a sequence the line's end cuts, and an overlong form, walk valid
+/// (`0x47bd40`).
+#[test]
+fn no_active_player_returns_first_and_the_line_walks_as_utf8() {
+    use crate::net::{ChatKind, ClientCommand};
+
+    let (mut world, rx) = send_world(benilla_ui::script::UiScript::new().expect("VM"));
+    let me = world
+        .query_filtered::<bevy::prelude::Entity, bevy::prelude::With<crate::net::SelfPlayer>>()
+        .single(&world)
+        .unwrap();
+    world.entity_mut(me).despawn();
+    run_lent(
+        &mut world,
+        r#"SendChatMessage(nil) SendChatMessage("hi", "BOGUS") SendChatMessage("\255")"#,
+    )
+    .expect("no active player: nothing is read");
+    assert_eq!(rx.try_iter().count(), 0);
+
+    world.spawn((
+        crate::net::SelfPlayer,
+        crate::net::ObjectStore(benilla_protocol::messages::ObjectFields::default()),
+    ));
+    for chunk in [
+        r#"SendChatMessage("a\255b")"#,
+        r#"SendChatMessage("\195x")"#,
+    ] {
+        let err = run_lent(&mut world, chunk).expect_err(chunk);
+        assert!(
+            err.to_string()
+                .contains("SendChatMessage(): Chat message must be UTF-8 text"),
+            "{chunk}: {err}"
+        );
+    }
+    run_lent(
+        &mut world,
+        r#"SendChatMessage("ok\195") SendChatMessage("\192\128")"#,
+    )
+    .expect("a cut sequence and an overlong form pass");
+    let sent: Vec<ChatKind> = rx
+        .try_iter()
+        .map(|c| match c {
+            ClientCommand::Chat { kind, .. } => kind,
+            other => panic!("unexpected command {other:?}"),
+        })
+        .collect();
+    assert_eq!(sent, vec![ChatKind::Say, ChatKind::Say]);
+}
+
+/// [`lead_a_raid`] on a borrowed state.
+fn lead_a_raid_rows(g: &mut crate::ui_party::GroupState, leader: u64) {
+    g.in_group = true;
+    g.group_type = 1;
+    g.leader = leader;
+    g.own_flags = 0;
+    g.members = vec![benilla_protocol::messages::GroupMemberEntry {
+        name: "Bob".into(),
+        guid: 0x99,
+        status: 1,
+        flags: 0,
+        roles: 0,
+    }];
+}
+
+/// `SendChatMessage`'s refusals ahead of the AFK clear (`0x50d417`), each in its call with no packet
+/// and the AFK left standing: the language skill (`0x50d2b0` -> `ERR_CANT_SPEAK_LANGAGE`), PARTY
+/// outside a party and a battleground raid (`0x50d31e`-`0x50d340`), RAID_WARNING from a raid's
+/// plain member (`0x50d386`) and outside any group (`0x50d3a2`), RAID and BATTLEGROUND with no raid
+/// (`0x50d3cc`-`0x50d3dd`). A party leader with no raid gets `ERR_NOT_IN_RAID`, never `0x27`.
+#[test]
+fn the_group_and_language_refusals_return_before_the_afk_clear() {
+    use crate::net::{ChatKind, ClientCommand};
+
+    let mut script = benilla_ui::script::UiScript::new().expect("VM");
+    script.set_language_table(vec![(1, "Orcish".into()), (2, "Darnassian".into())]);
+    script
+        .run(
+            r#"
+            ERR_CANT_SPEAK_LANGAGE = "You can't speak that language."
+            ERR_NOT_IN_GROUP = "You aren't in a party."
+            ERR_NOT_LEADER = "You are not the party leader."
+            ERR_NOT_IN_RAID = "You are not in a raid group"
+            ERR_NOT_IN_BATTLEGROUND = "You aren't in a Battleground."
+            ErrorSeen = {}
+            local f = CreateFrame("Frame")
+            f:RegisterEvent("UI_ERROR_MESSAGE")
+            f:RegisterEvent("CHAT_MSG_SYSTEM")
+            f:SetScript("OnEvent", function(_, _, text) ErrorSeen[#ErrorSeen + 1] = text end)
+            "#,
+        )
+        .expect("lua");
+    let (mut world, rx) = send_world(script);
+    world.init_resource::<crate::sound::MessageSounds>();
+    world.init_resource::<bevy::prelude::Messages<crate::tutorial::TutorialEvent>>();
+    world.insert_resource(crate::net::SelfGuid(Some(0x7)));
+    world.insert_resource(super::away::AfkMirror(2));
+    // We comprehend Darnassian alone, so Orcish is refused.
+    comprehend(&mut world, 2);
+    let sent = |rx: &crossbeam_channel::Receiver<ClientCommand>| -> Vec<(ChatKind, String)> {
+        rx.try_iter()
+            .map(|c| match c {
+                ClientCommand::Chat { kind, text, .. } => (kind, text),
+                other => panic!("unexpected command {other:?}"),
+            })
+            .collect()
+    };
+    let errors = |world: &bevy::prelude::World| -> Vec<String> {
+        world
+            .non_send_resource::<benilla_ui::script::UiScript>()
+            .eval("local s = ErrorSeen ErrorSeen = {} return s")
+            .unwrap()
+    };
+
+    // No group: every group type refuses; a named language we lack refuses first.
+    run_lent(
+        &mut world,
+        r#"
+        SendChatMessage("l", "PARTY", "Orcish")
+        SendChatMessage("p", "PARTY")
+        SendChatMessage("w", "RAID_WARNING")
+        SendChatMessage("r", "RAID")
+        SendChatMessage("b", "BATTLEGROUND")
+        "#,
+    )
+    .expect("lua");
+    assert_eq!(
+        errors(&world),
+        vec![
+            "You can't speak that language.",
+            "You aren't in a party.",
+            "You aren't in a party.",
+            "You are not in a raid group",
+            "You aren't in a Battleground.",
+        ]
+    );
+    assert_eq!(sent(&rx), vec![], "no refused line reaches the wire");
+    system_seen(&world);
+    assert!(world.resource::<super::away::AfkMirror>().is_afk());
+    assert_eq!(
+        world
+            .resource_mut::<bevy::prelude::Messages<crate::tutorial::TutorialEvent>>()
+            .drain()
+            .count(),
+        0,
+        "no tutorial"
+    );
+
+    // A party we lead, no raid: RAID is refused, never the 0x27 lane; PARTY takes 0x33 and
+    // RAID_WARNING passes outside a raid.
+    {
+        let mut g = world.resource_mut::<crate::ui_party::GroupState>();
+        lead_a_raid_rows(&mut g, 0x7);
+        g.group_type = 0;
+    }
+    run_lent(&mut world, r#"SendChatMessage("r", "RAID")"#).expect("lua");
+    assert_eq!(errors(&world), vec!["You are not in a raid group"]);
+    assert_eq!(sent(&rx), vec![]);
+    assert!(world.resource::<super::away::AfkMirror>().is_afk());
+    run_lent(
+        &mut world,
+        r#"SendChatMessage("p", "PARTY") SendChatMessage("w", "RAID_WARNING")"#,
+    )
+    .expect("lua");
+    assert_eq!(
+        sent(&rx),
+        vec![
+            (ChatKind::Afk, String::new()),
+            (ChatKind::PartyLeader, "p".into()),
+            (ChatKind::RaidWarning, "w".into()),
+        ]
+    );
+    assert_eq!(errors(&world), vec!["You are no longer AFK."]);
+
+    // A raid we do not lead: RAID_WARNING needs an officer; an assistant passes.
+    lead_a_raid(&mut world, 0x99);
+    run_lent(&mut world, r#"SendChatMessage("w", "RAID_WARNING")"#).expect("lua");
+    assert_eq!(errors(&world), vec!["You are not the party leader."]);
+    assert_eq!(sent(&rx), vec![]);
+    world
+        .resource_mut::<crate::ui_party::GroupState>()
+        .own_flags |= benilla_protocol::messages::GROUP_MEMBER_ASSISTANT;
+    run_lent(
+        &mut world,
+        r#"SendChatMessage("w", "RAID_WARNING") SendChatMessage("r", "RAID")"#,
+    )
+    .expect("lua");
+    assert_eq!(
+        sent(&rx),
+        vec![
+            (ChatKind::RaidWarning, "w".into()),
+            (ChatKind::Raid, "r".into()),
+        ]
+    );
+    assert!(errors(&world).is_empty());
+}
+
 /// `SendChatMessage`'s steps in 12340's order (`0x50d170`): the type lookup before the language
 /// (`0x50d203`, `0x50d28b`), the leader's own lanes (`0x50d516`, `0x50d412`, `0x50d4e9`), the AFK
 /// clear (`0x50d425`), then the dead-or-ghost gate (`0x50d632`-`0x50d684`), then the chatting
@@ -3131,7 +3391,7 @@ fn the_send_runs_its_steps_in_order() {
     world.init_resource::<crate::sound::MessageSounds>();
     world.init_resource::<bevy::prelude::Messages<crate::tutorial::TutorialEvent>>();
     world.insert_resource(crate::net::SelfGuid(Some(0x7)));
-    world.resource_mut::<crate::ui_party::GroupState>().leader = 0x7;
+    lead_a_raid(&mut world, 0x7);
     let sent = |rx: &crossbeam_channel::Receiver<ClientCommand>| -> Vec<(ChatKind, String)> {
         rx.try_iter()
             .map(|c| match c {
@@ -3199,13 +3459,13 @@ fn the_send_runs_its_steps_in_order() {
 
     // Dead: the AFK clear runs first, then SAY, YELL and EMOTE show the refusal and send nothing,
     // while the exempt lanes still speak.
-    world.spawn((
-        crate::net::SelfPlayer,
-        crate::net::ObjectStore(benilla_protocol::messages::ObjectFields::from_pairs(&[
+    set_self_store(
+        &mut world,
+        benilla_protocol::messages::ObjectFields::from_pairs(&[
             (benilla_protocol::field::FIELD_UNIT_HEALTH, 0u32),
             (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
-        ])),
-    ));
+        ]),
+    );
     world.resource_mut::<super::away::AfkMirror>().0 = 2;
     run_lent(
         &mut world,

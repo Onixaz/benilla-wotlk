@@ -8,8 +8,8 @@
 //!
 //! `language` starts as the speaker's race base language. A string or number third argument is
 //! matched by name, case-insensitively, against every `Languages.dbc` row, known to the character
-//! or not, and a miss raises `Unknown language`: a number is its text, so `7` raises. Refusing a
-//! tongue the character never learned is the server's (vmangos `ChatHandler.cpp:175`).
+//! or not, and a miss raises `Unknown language`: a number is its text, so `7` raises. A tongue the
+//! character does not speak is the host's refusal, inside the call (`0x50d2b0`).
 //!
 //! Deviation: no truncation at 255 characters, because vmangos refuses a longer line itself
 //! (`Chat.cpp:2177`): it is dropped where the reference sends its first 255. The server throttles
@@ -80,6 +80,46 @@ fn chat_type_known(token: &str) -> bool {
 /// [`ChatSend::ends_at_empty_line`] on the binding's arguments, before the line is built.
 fn ends_at_empty_line(text: &str, chat_type: &str) -> bool {
     text.bytes().next().unwrap_or(0) == 0 && !matches!(chat_type, "AFK" | "DND")
+}
+
+/// The UTF-8 test (`0x7e0ec0`), walking the line with the decoder (`0x47bd40`): a lead byte
+/// `10xxxxxx`, `0xFE` or `0xFF` (`0x47be35`), or a trail byte not `10xxxxxx` (`0x47be0b`), fails;
+/// a NUL, one that cuts a sequence included (`0x47bdfa`), ends the walk valid. Forms of up to six
+/// bytes and overlong ones pass.
+fn utf8_valid(bytes: &[u8]) -> bool {
+    let mut at = 0;
+    loop {
+        let lead = bytes.get(at).copied().unwrap_or(0);
+        if lead == 0 {
+            return true;
+        }
+        at += 1;
+        let extra = if lead & 0xFE == 0xFC {
+            5
+        } else if lead & 0xFC == 0xF8 {
+            4
+        } else if lead & 0xF8 == 0xF0 {
+            3
+        } else if lead & 0xF0 == 0xE0 {
+            2
+        } else if lead & 0xE0 == 0xC0 {
+            1
+        } else if lead & 0x80 != 0 {
+            return false;
+        } else {
+            0
+        };
+        for _ in 0..extra {
+            let next = bytes.get(at).copied().unwrap_or(0);
+            if next == 0 {
+                return true;
+            }
+            at += 1;
+            if next & 0xC0 != 0x80 {
+                return false;
+            }
+        }
+    }
 }
 
 impl super::UiScript {
@@ -177,12 +217,23 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "SendChatMessage",
         lua.create_function(
             |lua, (text, chat_type, language, target): (Value, Value, Value, Value)| {
+                // The action gate with kind 10 passes every caller (`0x50d17b` -> `0x5191d9`, its
+                // table row 3, `0x519247`); with no active player the call returns silently
+                // (`0x50d18b`-`0x50d1ab`), before any argument is read.
+                if super::calls::ask_host(lua, &super::HostAsk::ActivePlayer)
+                    == Some(super::HostAnswer::Declined)
+                {
+                    return Ok(());
+                }
                 // A non-string line is the usage error (`0x50d889`).
-                let text = super::binding_abi::string_arg(
-                    lua,
-                    text,
-                    "Usage: SendChatMessage(text [,type] [,language] [,targetPlayer])",
-                )?;
+                let Some(line) = lua.coerce_string(text)? else {
+                    return Err(mlua::Error::RuntimeError(
+                        "Usage: SendChatMessage(text [,type] [,language] [,targetPlayer])".into(),
+                    ));
+                };
+                let bytes = line.as_bytes().to_vec();
+                // Lossy: the UTF-8 test below refuses what 12340 refuses.
+                let text = line.to_string_lossy();
                 // A string type is looked up (`0x50d203` -> `0x4fbb20`) and a miss is the error
                 // (`0x50d20f`); any other value keeps SAY, all ahead of the language.
                 let chat_type = super::binding_abi::optional_string(lua, &chat_type)
@@ -195,6 +246,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 // An empty line of any type but AFK and DND ends the call (`0x50d229`-`0x50d231`).
                 if ends_at_empty_line(&text, &chat_type) {
                     return Ok(());
+                }
+                // The line must walk as UTF-8 (`0x50d238` -> `0x7e0ec0`), else the error (`0x50d244`).
+                if !utf8_valid(&bytes) {
+                    return Err(mlua::Error::RuntimeError(
+                        "SendChatMessage(): Chat message must be UTF-8 text".into(),
+                    ));
                 }
                 // A string language is looked up and a miss is the error (`0x50d28b`, `0x50d297`).
                 let language = match super::binding_abi::optional_string(lua, &language) {

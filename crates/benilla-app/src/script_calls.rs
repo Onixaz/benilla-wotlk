@@ -168,7 +168,8 @@ pub(crate) fn answer_in_call(
     ask: &benilla_ui::script::HostAsk,
 ) -> Option<benilla_ui::script::HostAnswer> {
     use benilla_ui::script::{HostAnswer, HostAsk};
-    crate::ui_script::safe_world::with_world(|world| match ask.clone() {
+    crate::ui_script::safe_world::with_world(|world| {
+        match ask.clone() {
         HostAsk::GuildBank(request) => world
             .run_system_cached_with(crate::ui_guild_bank::decide, request)
             .ok()
@@ -198,6 +199,22 @@ pub(crate) fn answer_in_call(
                 .put_back(earlier);
             Some(HostAnswer::Done)
         }
+        // The active player's object, read at the call (`0x4d3790` -> `0x4d4db0`).
+        HostAsk::ActivePlayer => Some(
+            if world
+                .query_filtered::<(), (
+                    With<crate::net::ObjectStore>,
+                    With<crate::net::SelfPlayer>,
+                )>()
+                .iter(world)
+                .next()
+                .is_some()
+            {
+                HostAnswer::Done
+            } else {
+                HostAnswer::Declined
+            },
+        ),
         // `SendChatMessage` past its argument reads, every line it adds added in the call
         // (`0x50d170`).
         // What an enclosing turn queued stays its own.
@@ -233,6 +250,7 @@ pub(crate) fn answer_in_call(
             crate::ui_chat::input::send_addon_message(world, send);
             Some(HostAnswer::Done)
         }
+    }
     })
     .flatten()
 }

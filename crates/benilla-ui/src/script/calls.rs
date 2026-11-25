@@ -65,7 +65,9 @@ pub enum HostAsk {
     BindAnswers,
     /// The message display's chat arm: `text` through the chat add on `chat_type` (`0x521814` -> `0x509dd0`).
     ChatLine { chat_type: u8, text: String },
-    /// `SendChatMessage`'s body past its argument reads: the chat-type gate, the AFK clear and the send (`0x50d170`).
+    /// Whether the active player's object is held (`0x4d3790` -> `0x4d4db0`): `Done` when it is, `Declined` when not.
+    ActivePlayer,
+    /// `SendChatMessage`'s body past its argument reads: the language skill, the group gates, the AFK clear and the send (`0x50d2a5`-`0x50d695`).
     ChatSend(super::ChatSend),
     /// `SendAddonMessage`'s send (`0x500560`).
     AddonSend(super::AddonSend),

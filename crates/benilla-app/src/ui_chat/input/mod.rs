@@ -1406,14 +1406,11 @@ fn auto_clear_afk(cvars: &crate::cvars::Cvars) -> bool {
 }
 
 /// The leader's lanes: a party line goes out as `0x33` (`0x50d516`), a raid line as `0x27`
-/// (`0x50d412`) and a battleground line as `0x2d` (`0x50d4e9`) when the group leader is us.
-pub(super) fn party_lane(
-    wire: crate::net::ChatKind,
-    leader: u64,
-    me: Option<u64>,
-) -> crate::net::ChatKind {
+/// (`0x50d412`) and a battleground line as `0x2d` (`0x50d4e9`) when we lead the party, each past
+/// its group gate.
+pub(super) fn party_lane(wire: crate::net::ChatKind, leads: bool) -> crate::net::ChatKind {
     use crate::net::ChatKind as K;
-    if me != Some(leader) {
+    if !leads {
         return wire;
     }
     match wire {
@@ -1422,6 +1419,64 @@ pub(super) fn party_lane(
         K::Battleground => K::BattlegroundLeader,
         other => other,
     }
+}
+
+/// `SendChatMessage`'s refusal line, shown in its call (`0x5216f0`).
+fn refuse(world: &mut World, key: &'static str) {
+    crate::ui_action::show_line_in_world(world, "chat", crate::ui_action::UiError::key(key));
+}
+
+/// The battleground raid test (`0x572f50`): the current map's `InstanceType` is 3 or 4.
+fn pvp_raid(world: &World) -> bool {
+    // 12340 dereferences a null record for a map outside `Map.dbc` (`0x572f88` -> `0x572f7c`);
+    // that map is no battleground here.
+    let map = world
+        .get_resource::<benilla_world::world_map::CurrentMap>()
+        .map(|m| m.0);
+    map.and_then(|m| {
+        world
+            .get_resource::<benilla_assets::MapCatalogRes>()
+            .and_then(|c| c.0.instance_type(m))
+    })
+    .is_some_and(|t| matches!(t, 3 | 4))
+}
+
+/// Whether we speak `language` at the call (`0x6e0640` answering 1).
+fn speaks_language(world: &mut World, language: u32) -> bool {
+    world
+        .run_system_cached_with(
+            |In(language): In<u32>,
+             me: Query<
+                (
+                    &crate::net::ObjectStore,
+                    Option<&crate::unit_auras::UnitAuras>,
+                ),
+                With<crate::net::SelfPlayer>,
+            >,
+             actions: Option<Res<crate::ui_action::PlayerActions>>,
+             spells: Option<Res<crate::ui_action::Spells>>,
+             lines: Option<Res<crate::ui_spellbook::SkillLines>>| {
+                let (Some((store, auras)), Some(actions), Some(spells), Some(lines)) = (
+                    me.iter().next(),
+                    actions.as_deref(),
+                    spells.as_deref(),
+                    lines.as_deref(),
+                ) else {
+                    return false;
+                };
+                crate::ui_chat::language_skill(
+                    store,
+                    auras,
+                    &actions.spells,
+                    spells,
+                    lines,
+                    language,
+                )
+                .is_some()
+            },
+            language,
+        )
+        .unwrap_or(false)
 }
 
 /// A global string off the VM, read with no call into Lua.
@@ -1519,11 +1574,74 @@ pub(crate) fn send_chat_message(
     if send.ends_at_empty_line() {
         return None;
     }
+    // A named language needs our skill in it (`0x50d2b0`), else `ERR_CANT_SPEAK_LANGAGE` and the
+    // call returns (`0x50d2b9`).
+    if send.language.is_some_and(|l| !speaks_language(world, l)) {
+        refuse(world, "ERR_CANT_SPEAK_LANGAGE");
+        return None;
+    }
     let target_empty = send.target.as_deref().is_none_or(str::is_empty);
+    let me = world
+        .get_resource::<crate::net::SelfGuid>()
+        .and_then(|g| g.0)
+        .unwrap_or(0);
+    // The group facts read at the call: party (`0x4fb0b0`), raid count (`[0xbeb608]`), officer
+    // (`0x572740`), and the leader lanes' compare of the party leader with us (`0x50d4f9`,
+    // `0x50d3fd`, `0x50d4cc`).
+    let (in_party, in_raid, officer, leads) = world
+        .get_resource::<crate::ui_party::GroupState>()
+        .map_or((false, false, false, false), |g| {
+            (
+                g.in_party(),
+                g.in_raid(),
+                g.is_raid_officer(me),
+                me != 0 && g.party_leader() == me,
+            )
+        });
+    let mut wire = kind.wire();
     match kind {
         // A whisper with no target is the verb's error (`0x50d302`).
         T::Whisper if target_empty => {
             return Some("SendChatMessage(): Whisper message missing target player!");
+        }
+        // PARTY needs a party (`0x50d31e`) or a battleground raid (`0x50d32b`-`0x50d333`), else
+        // `ERR_NOT_IN_GROUP` (`0x50d340`); our lead picks `0x33` (`0x50d516`).
+        T::Party => {
+            if !in_party && !(in_raid && pvp_raid(world)) {
+                refuse(world, "ERR_NOT_IN_GROUP");
+                return None;
+            }
+            wire = party_lane(wire, leads);
+        }
+        // RAID_WARNING in a raid needs an officer (`0x50d376`), else `ERR_NOT_LEADER` (`0x50d386`);
+        // outside one, a party (`0x50d399`), else `ERR_NOT_IN_GROUP` (`0x50d3a2`).
+        T::RaidWarning => {
+            if in_raid {
+                if !officer {
+                    refuse(world, "ERR_NOT_LEADER");
+                    return None;
+                }
+            } else if !in_party {
+                refuse(world, "ERR_NOT_IN_GROUP");
+                return None;
+            }
+        }
+        // RAID and BATTLEGROUND need a raid (`0x50d3c3`), else `ERR_NOT_IN_RAID` or
+        // `ERR_NOT_IN_BATTLEGROUND` (`0x50d3cc`-`0x50d3dd`); our lead picks `0x27` (`0x50d412`) or
+        // `0x2d` (`0x50d4e9`).
+        T::Raid | T::Battleground => {
+            if !in_raid {
+                refuse(
+                    world,
+                    if kind == T::Raid {
+                        "ERR_NOT_IN_RAID"
+                    } else {
+                        "ERR_NOT_IN_BATTLEGROUND"
+                    },
+                );
+                return None;
+            }
+            wire = party_lane(wire, leads);
         }
         // A channel send with no target is the verb's error (`0x50d587`); a target naming no
         // joined record ends the call (`0x50d52f`-`0x50d569`), else it sends the record's name.
@@ -1545,13 +1663,6 @@ pub(crate) fn send_chat_message(
         }
         _ => {}
     }
-    let leader = world
-        .get_resource::<crate::ui_party::GroupState>()
-        .map_or(0, |g| g.leader);
-    let me = world
-        .get_resource::<crate::net::SelfGuid>()
-        .and_then(|g| g.0);
-    let wire = party_lane(kind.wire(), leader, me);
     let strings = |world: &World, key: &str| vm_string(world, key);
     // AFK marks or clears and returns (`0x50d5a7`-`0x50d5ee`): no AFK clear, dead gate or tutorial.
     if wire == crate::net::ChatKind::Afk {

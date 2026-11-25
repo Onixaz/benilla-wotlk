@@ -59,6 +59,23 @@ impl GroupState {
         self.group_type == GROUPTYPE_RAID
     }
 
+    /// The party leader (`[0xbd1968]`), zeroed with the slots by the clear-all (`0x52d834`).
+    pub(crate) fn party_leader(&self) -> u64 {
+        if self.slots_emptied {
+            0
+        } else {
+            self.leader
+        }
+    }
+
+    /// The raid officer test on us (`0x572740`): our raid row (`0x572763`) ranks above 0
+    /// (`0x57278c`), leader or assistant, or we lead the party (`0x572792`); no row is no officer.
+    pub(crate) fn is_raid_officer(&self, me: u64) -> bool {
+        let rank = me == self.leader
+            || self.own_flags & benilla_protocol::messages::GROUP_MEMBER_ASSISTANT != 0;
+        self.in_raid() && me != 0 && (rank || me == self.party_leader())
+    }
+
     /// The current dungeon difficulty (`0x5138d0`): the group's in a party, else the player's.
     pub(crate) fn current_dungeon_difficulty(&self) -> u32 {
         if self.in_party() && !self.in_raid() {
