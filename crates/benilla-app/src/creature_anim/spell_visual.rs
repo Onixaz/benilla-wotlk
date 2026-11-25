@@ -1023,6 +1023,8 @@ type KitSpawnWriters<'w> = (
     Option<ResMut<'w, BeamKitWaits>>,
     Res<'w, Time>,
     MessageWriter<'w, BaseRearm>,
+    // Our trajectory casts whose visuals played at the press (`0x809f80`).
+    Option<ResMut<'w, crate::vehicle::LocalTrajectoryGos>>,
 );
 
 /// The writers one kit play fans out to.
@@ -2307,6 +2309,7 @@ pub(super) fn route_cast_visuals(
     );
     let kit_clears = &mut spawns.10;
     let rearms = &mut spawns.13;
+    let local_gos = &mut spawns.14;
     // Nothing watches the waits for changes.
     let reached = waits.as_mut().map_or_else(Vec::new, |w| {
         w.bypass_change_detection()
@@ -2574,6 +2577,10 @@ pub(super) fn route_cast_visuals(
                         ceremony: false,
                     });
                 }
+                // A trajectory cast of ours played its cast kit at the press (`0x80e1b0`).
+                let local = local_gos
+                    .as_deref()
+                    .is_some_and(|l| l.has(ev.entity, ev.spell_id));
                 // For a basic shot the cast kit is the fire clip, from the ranged fallback.
                 if let Some(kit) = resolve_kit_traced(
                     "cast",
@@ -2594,15 +2601,17 @@ pub(super) fn route_cast_visuals(
                     } else {
                         commands.entity(ev.entity).try_remove::<super::RangedHold>();
                     }
-                    play_kit(
-                        ev.entity,
-                        ev.spell_id,
-                        &kit,
-                        KitPlay::DISCRETE,
-                        ev.seq,
-                        &visuals.0,
-                        &mut out,
-                    );
+                    if !local {
+                        play_kit(
+                            ev.entity,
+                            ev.spell_id,
+                            &kit,
+                            KitPlay::DISCRETE,
+                            ev.seq,
+                            &visuals.0,
+                            &mut out,
+                        );
+                    }
                 }
             }
             CastEventKind::Impact {
@@ -2859,6 +2868,13 @@ pub(super) fn route_cast_visuals(
                 }
             }
         } else {
+            // A trajectory cast of ours already launched its missile locally (`0x80e1b0`).
+            if local_gos
+                .as_deref_mut()
+                .is_some_and(|l| l.take(go.caster, go.spell_id))
+            {
+                continue;
+            }
             // Missiles need a visual row with a missile or an ammo model (`0x7fffb0`, `0x800120`).
             let ammo = go.ammo.filter(|a| a.display_id != 0);
             let flies = stages.is_some_and(|s| s.missile_gate != 0 || ammo.is_some());
@@ -2933,6 +2949,73 @@ pub(super) fn route_cast_visuals(
                     kind: ReleaseKind::Fire,
                 });
             }
+        }
+    }
+
+    // Locally launched trajectory casts fly their missile immediately at release (`0x809f80`,
+    // `0x80de60`), before `SMSG_SPELL_GO` arrives.
+    if let Some(launches) = local_gos
+        .as_deref_mut()
+        .map(|l| std::mem::take(&mut l.launches))
+    {
+        for launch in launches {
+            let Some(display) = spells.catalog.get(launch.spell_id) else {
+                continue;
+            };
+            if display.speed <= 0.0 {
+                continue;
+            }
+            let wv = weapon_src.caster(launch.caster);
+            let stages = resolve_stages(spells, &visuals.0, launch.spell_id, || wv);
+            if !stages.is_some_and(|s| s.missile_gate != 0) {
+                continue;
+            }
+            let item = stages.and_then(|s| {
+                missile_item(s.missile_model, None, |slot| {
+                    weapon_src.held_item(launch.caster, slot)
+                })
+            });
+            let path = match (stages, item) {
+                (_, Some(_)) => None,
+                (Some(s), None) if s.missile_model as i32 >= 1 => Some(
+                    visuals
+                        .0
+                        .effect_path(s.missile_model)
+                        .unwrap_or(ERROR_CUBE)
+                        .to_string(),
+                ),
+                _ => Some(ERROR_CUBE.to_string()),
+            };
+            missiles.write(MissileSpawn {
+                caster: launch.caster,
+                spell_id: launch.spell_id,
+                path,
+                item,
+                dest_tag: stages.and_then(|s| s.missile_dest_attachment()),
+                speed: display.speed,
+                targets: Vec::new(),
+                reflects: Vec::new(),
+                reflect_glances: display.attributes_ex7 & 0x2000_0000 != 0,
+                scale: stages
+                    .and_then(|s| visuals.0.effect_scale(s.missile_model))
+                    .map_or(1.0, |s| s.scale),
+                ground_aim: Some(launch.dest),
+                missile_sound: stages.and_then(|s| s.missile_sound),
+                awaits_release: false,
+                trajectory: Some((
+                    launch.trajectory,
+                    visuals.0.missile(display.missile).copied(),
+                )),
+                shape: crate::entities::MissileShape::of(
+                    visuals.0.stages(spell_visual_id(display)),
+                    stages.as_ref(),
+                    visuals.0.stages(display.visual),
+                ),
+                from: None,
+                list: None,
+                aim_deck: None,
+                seq: launch.seq,
+            });
         }
     }
 

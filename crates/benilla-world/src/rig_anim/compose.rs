@@ -472,6 +472,7 @@ mod tests {
             joints,
             spine_bone: None,
             head_bone: None,
+            wheel_bones: [None; 8],
         }
     }
 
