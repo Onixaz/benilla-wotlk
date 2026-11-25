@@ -365,6 +365,7 @@ pub(crate) struct ItemTextCtx<'w, 's> {
         (&'static crate::net::ObjectStore, &'static crate::net::Guid),
         With<crate::net::SelfPlayer>,
     >,
+    my_auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras, With<crate::net::SelfPlayer>>,
     items: Option<Res<'w, Items>>,
     go_templates: Option<Res<'w, GameObjectTemplates>>,
     pages: Option<Res<'w, PageTexts>>,
@@ -482,7 +483,15 @@ impl ItemTextCtx<'_, '_> {
         ) else {
             return 0;
         };
-        crate::ui_chat::language_skill(store, &known.spells, spells, lines, language)
+        crate::ui_chat::language_skill(
+            store,
+            self.my_auras.iter().next(),
+            &known.spells,
+            spells,
+            lines,
+            language,
+        )
+        .unwrap_or(0)
     }
 
     /// The `$`-macro pass the reader runs on its text (`0x589ff6`), with us as the subject.

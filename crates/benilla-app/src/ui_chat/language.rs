@@ -63,6 +63,7 @@ impl ChatLanguages {
 pub(crate) struct Hearer<'w, 's> {
     langs: Res<'w, ChatLanguages>,
     player: Query<'w, 's, &'static ObjectStore, With<SelfPlayer>>,
+    auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras, With<SelfPlayer>>,
     actions: Option<Res<'w, PlayerActions>>,
     spells: Option<Res<'w, Spells>>,
     lines: Option<Res<'w, SkillLines>>,
@@ -101,9 +102,15 @@ impl Hearer<'_, '_> {
             self.spells.as_deref(),
             self.lines.as_deref(),
         ) {
-            (Some(actions), Some(spells), Some(lines)) => {
-                language_skill(player, &actions.spells, spells, lines, language)
-            }
+            (Some(actions), Some(spells), Some(lines)) => language_skill(
+                player,
+                self.auras.iter().next(),
+                &actions.spells,
+                spells,
+                lines,
+                language,
+            )
+            .unwrap_or(0),
             _ => 0,
         };
         self.langs.garble(language, skill, text)
@@ -154,25 +161,50 @@ pub(crate) fn default_language_id(world: &mut World) -> Option<u32> {
     )
 }
 
-/// Our skill in `language` at the call (`0x6e0640`): the last known spell declaring it, its skill line's value; 0 with none.
+/// The comprehend-language aura type, `EffectApplyAuraName` 244 (`0x6e0700`).
+const AURA_COMPREHEND_LANGUAGE: u32 = 244;
+
+/// Our skill in `language` at the call (`0x6e0640`), `None` where it answers 0: the last known spell
+/// declaring it (`0x6e067d`), that spell's ability row for our race and class (`0x6e0775`), the row's
+/// line in `PLAYER_SKILL_INFO` (`0x6e07c0`) with a `SkillLine.dbc` record (`0x6e07e4`-`0x6e080d`),
+/// and its value. With no spell, the comprehend flag (`UNIT_FIELD_FLAGS_2 & 0x8`, `0x6e0699`) and a
+/// held aura of type 244 on the language (`0x6e06c0`-`0x6e0717`) answer 300 (`0x6e0751`).
 pub(crate) fn language_skill(
     store: &ObjectStore,
+    auras: Option<&crate::unit_auras::UnitAuras>,
     known: &std::collections::BTreeSet<u32>,
     spells: &Spells,
     lines: &SkillLines,
     language: u32,
-) -> u32 {
-    let (race, class) = crate::spell::race_class(Some(store));
-    known
+) -> Option<u32> {
+    let declaring = known
         .iter()
-        .rfind(|&&s| spells.catalog.declared_language(s) == Some(language))
-        .and_then(|&s| lines.catalog.spell_to_line(s, race, class))
-        .map_or(0, |line| skill_value(store, line))
+        .rfind(|&&s| spells.catalog.declared_language(s) == Some(language));
+    let Some(&spell) = declaring else {
+        if store.0.unit_flags2() & 0x8 == 0 {
+            return None;
+        }
+        let comprehends = auras.is_some_and(|a| {
+            a.slot_spells().iter().any(|&(id, _)| {
+                spells.catalog.get(id).is_some_and(|d| {
+                    (0..3).any(|e| {
+                        d.effect_apply_aura[e] == AURA_COMPREHEND_LANGUAGE
+                            && d.effect_misc_value[e] == language as i32
+                    })
+                })
+            })
+        });
+        return comprehends.then_some(300);
+    };
+    let (race, class) = crate::spell::race_class(Some(store));
+    let line = lines.catalog.spell_to_line(spell, race, class)?;
+    lines.catalog.line(line)?;
+    skill_value(store, line)
 }
 
 /// A skill's `PLAYER_SKILL_INFO` value as the reference sums it: base, plus the permanent bonus
-/// only when base is non-zero, plus the signed temporary bonus; 0 with no row.
-fn skill_value(store: &ObjectStore, line: u32) -> u32 {
+/// only when base is non-zero, plus the signed temporary bonus; `None` with no row.
+fn skill_value(store: &ObjectStore, line: u32) -> Option<u32> {
     for i in 0..benilla_protocol::messages::PLAYER_SKILL_SLOTS {
         let Some(s) = store.0.player_skill(i) else {
             continue;
@@ -184,9 +216,9 @@ fn skill_value(store: &ObjectStore, line: u32) -> u32 {
         if base != 0 {
             base += i32::from(s.perm_bonus);
         }
-        return (base + i32::from(s.temp_bonus)).max(0) as u32;
+        return Some((base + i32::from(s.temp_bonus)).max(0) as u32);
     }
-    0
+    None
 }
 
 #[cfg(test)]
@@ -335,5 +367,50 @@ mod tests {
             ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(BYTES_0, 99)])),
         ));
         assert_eq!(default_language_id(&mut world), Some(0));
+    }
+
+    /// The comprehend leg (`0x6e0690`-`0x6e0751`): with no known spell for the language, the
+    /// `UNIT_FIELD_FLAGS_2` bit `0x8` and an aura effect 244 naming it, in any of the three
+    /// effects, give 300; a clear bit or no matching effect gives nothing.
+    #[test]
+    fn a_comprehend_aura_speaks_its_language_under_the_flag() {
+        const TONGUE: u32 = 90_000;
+        let lines = SkillLines {
+            catalog: std::sync::Arc::new(benilla_formats::SkillLineCatalog::from_lines([])),
+        };
+        let known = std::collections::BTreeSet::new();
+        let auras = crate::unit_auras::UnitAuras::of(0, &[(0, TONGUE, 1)]);
+        let store = |flags2: u32| {
+            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+                benilla_protocol::field::FIELD_UNIT_FLAGS_2,
+                flags2,
+            )]))
+        };
+        for effect in 0..3 {
+            let mut d = benilla_formats::SpellDisplay::default();
+            d.effect_apply_aura[effect] = 244;
+            d.effect_misc_value[effect] = 2;
+            let mut spells = Spells::empty_for_tests();
+            spells.catalog =
+                benilla_formats::SpellCatalog::from_displays([(TONGUE, d)].into_iter().collect());
+            let skill = |flags2: u32, language: u32| {
+                language_skill(
+                    &store(flags2),
+                    Some(&auras),
+                    &known,
+                    &spells,
+                    &lines,
+                    language,
+                )
+            };
+            assert_eq!(skill(0x8, 2), Some(300), "effect {effect}");
+            assert_eq!(skill(0, 2), None, "the flag clear");
+            assert_eq!(skill(0x8, 1), None, "another language");
+            assert_eq!(
+                language_skill(&store(0x8), None, &known, &spells, &lines, 2),
+                None,
+                "no aura held"
+            );
+        }
     }
 }
