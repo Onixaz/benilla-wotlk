@@ -42,12 +42,12 @@ pub(crate) struct ZoomLimit {
 }
 
 /// A vehicle seat's zoom: its range (`SetVehicleSeatZoomMin/MaxDistance`), each bound `None` for
-/// its default, and its change for the rig to make (`0x74c0e0`'s `ZoomToDistance`), with a count
-/// the rig keys its last applied one on.
+/// its default, and its change for the rig to make (`0x74c0e0`'s `ZoomToDistance`) over its
+/// duration in seconds, with a count the rig keys its last applied one on.
 #[derive(Resource, Default)]
 pub(crate) struct VehicleSeatZoom {
     pub(crate) range: Option<(Option<f32>, Option<f32>)>,
-    pub(crate) ask: Option<(u32, VehicleZoom)>,
+    pub(crate) ask: Option<(u32, VehicleZoom, f32)>,
     /// The seat turns the vehicle zoom on (`flags & 0x1000000`): the default max is 50 yd, not
     /// the CVars' limit (`0x6000e0`).
     pub(crate) vehicle: bool,
