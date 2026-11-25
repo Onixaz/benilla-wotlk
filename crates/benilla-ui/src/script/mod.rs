@@ -479,7 +479,7 @@ pub use quest_log::{
     QuestLogObjectiveView, QuestLogPlan, QuestLogRow, QuestLogState,
 };
 pub use quest_poi::QuestPoiLines;
-pub use quest_watch::{QuestPoiRegion, QuestPoiView, QuestSpecialItemView};
+pub use quest_watch::{quest_difficulty_color, QuestPoiRegion, QuestPoiView, QuestSpecialItemView};
 pub(crate) use region::{apply_font_parts, implicit_creation_anchor_lua, store_text};
 pub use reputation::{
     FactionEntry, FactionFlag, FactionList, FactionTable, ReputationSend, StaticFactions,

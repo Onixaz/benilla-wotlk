@@ -185,6 +185,27 @@ addon calls (#399).
 | `MakeMinigameMove` | `0x5c5550` | minigames not planned (#806) |
 | `PlayDance` | `0x5761f0` | dance studio not planned (#801) |
 
+## DBC tables
+
+Of the 241 tables 12340 loads (`reference/3.3.5a-dbc.tsv`), the ones benilla does not read on
+purpose because nothing in 12340 makes them matter. Most are loaded at startup and never read
+again, so leaving them out matches 12340. Unread tables that are open work are listed with their
+issues in `NOT_READ` (`crates/benilla-formats/tests/dbc_coverage.rs`), not here.
+
+| Table | Why |
+|---|---|
+| `AttackAnimKits` | 12340 loads it and never reads it |
+| `AttackAnimTypes` | 12340 loads it and never reads it |
+| `CreatureSpellData` | 12340 loads it and never reads it |
+| `gtOCTRegenMP` | 12340 loads it as game table 8 and never evaluates that slot |
+| `ItemCondExtCosts` | 12340 loads it and never reads it |
+| `SheatheSoundLookups` | 12340 loads it and never reads it |
+| `SoundEmitters` | 12340 loads it and never reads it |
+| `SoundSamplePreferences` | 12340 loads it and never reads it |
+| `SoundWaterType` | 12340 loads it and never reads it |
+| `UISoundLookups` | 12340 loads it and never reads it |
+| `WorldSafeLocs` | read only by the admin `worldport` console command (`0x407210`), not planned (#1119); the graveyard branch of `GetMapLandmarkInfo` (`0x545a30`) never runs, since the landmark builder (`0x546310`) never sets its flag |
+
 ## Bugs in 12340
 
 Where 12340's code does something other than what it is written to do, benilla does what the code
@@ -217,6 +238,18 @@ means and records the difference here.
   same event (`ChatFrame.lua`: the channel number, arg8, for `%d` and the channel's display name,
   arg4, for `[%s]`, then the sender and target for a user notice), so the log reads
   `Joined Channel: |Hchannel:1|h[1. General - Stormwind City]|h`, the line the player saw.
+- **Honor line: a victim with no side.** The honor-gain line (`0x50b6d0`) names a ranked victim
+  by the global string `PVP_RANK_<rank>_<side>`, printed into a stack buffer at `0x50b789`–`0x50b799`.
+  The side comes from the victim's faction template group: 0 for the `0x4` bit, 1 for the `0x2` bit
+  (`0x50b755`–`0x50b784`). When the template has neither bit, or no record (`0x50b76e`), the code
+  jumps past the print (`0x50b787`) and still looks the buffer up as a global string name
+  (`0x50b7b0`), so 12340 reads whatever the stack held. benilla names such a victim with side 0.
+  Every faction template a server sends for a player carries one of the two bits.
+- **Chat log: a language with no record.** When a line's language is not the active player's
+  default, the log arm prints its `[Language] ` header from the `Languages.dbc` record's name
+  (`0x50abcb`–`0x50abeb`). It reads the name at `0x50abd6` without testing the record, and the
+  lookup returns null for an id outside the table (`0x65c2ae`), so 12340 faults writing that log
+  line. benilla writes an empty name. Every language a server sends in chat has its record.
 
 ## The Mac build
 
@@ -234,24 +267,3 @@ table are the Mac build's.
 | `MovieRecording_IsRecording`, `MovieRecording_IsCompressing`, `MovieRecording_GetProgress`, `MovieRecording_GetTime`, `MovieRecording_GetMovieFullPath`, `MovieRecording_MaxLength` | `0x508910`, `0x508940`, `0x5089a0`, `0x508c00`, `0x508bd0`, `0x508d00` | the idle recorder's values | no movie recording |
 | `MovieRecording_IsCodecSupported` | `0x508b20` | `false` for every codec | no QuickTime |
 | `MusicPlayer_PlayPause`, `MusicPlayer_VolumeUp`, `MusicPlayer_VolumeDown`, `MusicPlayer_BackTrack`, `MusicPlayer_NextTrack` | `0x51c100`, `0x51c150`, `0x51c1a0`, `0x51c1f0`, `0x51c240` | nothing | no music player remote |
-
-## DBC tables
-
-Of the 241 tables 12340 loads (`reference/3.3.5a-dbc.tsv`), the ones benilla does not read on
-purpose because nothing in 12340 makes them matter. Most are loaded at startup and never read
-again, so leaving them out matches 12340. Unread tables that are open work are listed with their
-issues in `NOT_READ` (`crates/benilla-formats/tests/dbc_coverage.rs`), not here.
-
-| Table | Why |
-|---|---|
-| `AttackAnimKits` | 12340 loads it and never reads it |
-| `AttackAnimTypes` | 12340 loads it and never reads it |
-| `CreatureSpellData` | 12340 loads it and never reads it |
-| `gtOCTRegenMP` | 12340 loads it as game table 8 and never evaluates that slot |
-| `ItemCondExtCosts` | 12340 loads it and never reads it |
-| `SheatheSoundLookups` | 12340 loads it and never reads it |
-| `SoundEmitters` | 12340 loads it and never reads it |
-| `SoundSamplePreferences` | 12340 loads it and never reads it |
-| `SoundWaterType` | 12340 loads it and never reads it |
-| `UISoundLookups` | 12340 loads it and never reads it |
-| `WorldSafeLocs` | read only by the admin `worldport` console command (`0x407210`), not planned (#1119); the graveyard branch of `GetMapLandmarkInfo` (`0x545a30`) never runs, since the landmark builder (`0x546310`) never sets its flag |

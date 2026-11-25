@@ -8,8 +8,10 @@ use bevy::prelude::*;
 use benilla_ui::strings::{fill, Arg};
 
 #[cfg(test)]
+use super::event::event_name;
+#[cfg(test)]
 use super::event::notice_token;
-use super::event::{event_name, ChatEvent, ChatEventKind};
+use super::event::{ChatEvent, ChatEventKind};
 
 /// What the app keeps beside the stock chat frames: the log files and the line id.
 #[derive(Resource, Default)]
@@ -374,9 +376,7 @@ const BLIZZARD_ICON: &str = "|TInterface\\ChatFrame\\UI-ChatIcon-Blizz.blp:0:2:0
 
 /// The `ChatTypeInfo` key, `strsub(event, 10)` (`ChatFrame.lua:2677`).
 fn chat_type(kind: ChatEventKind) -> &'static str {
-    event_name(kind)
-        .strip_prefix("CHAT_MSG_")
-        .unwrap_or_default()
+    super::event::type_name(kind)
 }
 
 #[cfg(test)]
