@@ -700,6 +700,10 @@ pub(crate) struct CameraControl {
     /// The look session has been inside `vehicle_facing` (`m_flags & 0x4`, `0x6023d0`): once set,
     /// dragging past a limit clamps the camera's yaw with the body.
     pub(super) vehicle_facing_latched: bool,
+    /// The driven vehicle's aim pitch, which is its mover pitch: the reference's pitch setter
+    /// writes one field (`0x5fb3a0`), so mouse-look's plain camera-pitch store does not run on a
+    /// vehicle, whose camera route goes through the aim (`0x5fbe70`). Set each frame by the aim.
+    pub(crate) vehicle_pitch: Option<f32>,
     /// The mouse buttons the world owns this frame, latched by [`latch_world_mouse`].
     pub(super) world_mouse: WorldMouse,
     /// Logical cursor position captured when look began, to restore on release.

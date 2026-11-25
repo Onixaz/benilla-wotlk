@@ -721,6 +721,7 @@ fn drive_vehicle_aim(
     let delta = rig.as_deref_mut().map_or(0.0, |r| {
         r.hold_pitch_for_aim = false;
         r.vehicle_facing = None;
+        r.vehicle_pitch = None;
         std::mem::take(&mut r.aim_pitch_delta)
     });
     if let Some(power) = script
@@ -778,20 +779,22 @@ fn drive_vehicle_aim(
             script.turn().as_deref_mut(),
         );
     }
-    if aim.target.is_none() && aim.keys == [false, false] && aim.turning == 0 {
-        return;
+    if aim.target.is_some() || aim.keys != [false, false] || aim.turning != 0 {
+        let rate = speeds.map_or(std::f32::consts::PI, |s| s.0.pitch_rate);
+        let mut script = script;
+        aim::drive(
+            &mut aim,
+            &pose,
+            rec,
+            rate,
+            time.delta_secs(),
+            &net,
+            script.turn().as_deref_mut(),
+        );
     }
-    let rate = speeds.map_or(std::f32::consts::PI, |s| s.0.pitch_rate);
-    let mut script = script;
-    aim::drive(
-        &mut aim,
-        &pose,
-        rec,
-        rate,
-        time.delta_secs(),
-        &net,
-        script.turn().as_deref_mut(),
-    );
+    if let (Some(_), Some(rig)) = (rec, rig.as_deref_mut()) {
+        rig.vehicle_pitch = Some(aim.pitch);
+    }
 }
 
 /// Fire what the frame owes, each once per token naming the unit (`0x60bb70`).
