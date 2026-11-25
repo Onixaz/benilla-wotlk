@@ -164,7 +164,7 @@ where
 
 /// Answer a verb's ask inside the Lua call that made it, over the lent `World`; `None` in a world without the state it reads, where the verb's request waits for its drain. A gate or a filing raises nothing here, and the verb signals what the answer leaves; the bind dialogs' answers run step by step, each raise fired at its own (`0x6e0273`, `0x6e02cd`).
 pub(crate) fn answer_in_call(
-    _lua: &mlua::Lua,
+    lua: &mlua::Lua,
     ask: &benilla_ui::script::HostAsk,
 ) -> Option<benilla_ui::script::HostAnswer> {
     use benilla_ui::script::{HostAnswer, HostAsk};
@@ -234,7 +234,10 @@ pub(crate) fn answer_in_call(
             let earlier = world
                 .get_resource_or_init::<crate::ui_script::live::UiEvents>()
                 .set_aside();
-            let went_on = crate::ui_chat::input::run_channel_command(world, cmd);
+            // The calling VM's handle: the world-entry load runs its addons with the VM out of the
+            // `World`, and their joins claim and send as any other's (`0x507c47`, `0x507cc1`).
+            let went_on =
+                crate::ui_chat::input::run_channel_command(world, UiScript::in_call(lua), cmd);
             crate::ui_script::live::fire_handler_events(world);
             world
                 .resource_mut::<crate::ui_script::live::UiEvents>()

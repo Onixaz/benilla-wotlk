@@ -1676,6 +1676,59 @@ JoinProbe.lua
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
+/// A join from an addon's `ADDON_LOADED` handler claims its record and sends CMSG_JOIN_CHANNEL in the
+/// call (`0x507c47`, `0x507cc1`) although the load holds the VM outside the `World`, and answers the
+/// join's values only once it went on (`0x507cea`).
+#[test]
+fn an_addon_loaded_join_claims_and_sends_during_the_load() {
+    const TOC: &str = "## Interface: 30300
+LoadJoin.lua
+";
+    const LUA: &str = "local f = CreateFrame(\"Frame\")
+f:RegisterEvent(\"ADDON_LOADED\")
+f:SetScript(\"OnEvent\", function(_, _, name)
+  if name == \"LoadJoin\" then
+    LoadJoinCount = select(\"#\", JoinTemporaryChannel(\"LoadProbe\"))
+    LoadJoinNumber = (GetChannelName(\"LoadProbe\"))
+  end
+end)
+";
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (tmp, _c, _h) = hermetic_addon("loadjoin", "LoadJoin", TOC, LUA);
+    let mut world = booted_world();
+    world.init_resource::<crate::ui_chat::ChannelState>();
+    let (tx, rx) = crossbeam_channel::unbounded();
+    world.insert_resource(crate::net::NetCommands(tx));
+
+    log_in_as(&mut world, "Onewarrior", 1);
+
+    let script = world
+        .get_non_send_resource::<benilla_ui::script::UiScript>()
+        .expect("VM");
+    assert_ne!(
+        script.eval::<Option<i64>>("LoadJoinCount").ok().flatten(),
+        None,
+        "the handler ran during the load"
+    );
+    assert_ne!(
+        script.eval::<Option<i64>>("LoadJoinNumber").ok().flatten(),
+        Some(0),
+        "the join claimed its record inside the call"
+    );
+    assert!(
+        rx.try_iter().any(|c| matches!(
+            c,
+            crate::net::ClientCommand::JoinChannel { ref name, .. } if name == "LoadProbe"
+        )),
+        "the join went out inside the call"
+    );
+
+    drop(world);
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
 /// The entry load seats the real screen size: a fresh VM's is 1024×768 until `tick_script` runs,
 /// and stock `WorldMapFrame_OnLoad` sizes `BlackoutWorld` from it once (`WorldMapFrame.lua:19-28`).
 #[test]

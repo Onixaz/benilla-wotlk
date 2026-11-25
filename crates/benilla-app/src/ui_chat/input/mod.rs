@@ -967,19 +967,19 @@ fn chat_arm(
 }
 
 /// A channel verb's send inside its call (`0x507a80` the join, `0x5096d0` the leave): the slot and
-/// mask writes, then the packet; a line it prints waits in [`ArmLines`].
+/// mask writes, then the packet; a line it prints waits in [`ArmLines`]. `vm` is the calling VM's
+/// handle, which the world-entry load holds outside the `World` while its addons run.
 pub(crate) fn channel_arm(
-    In(cmd): In<benilla_ui::script::ChannelCommand>,
-    mut vm: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    In((cmd, mut vm)): In<(
+        benilla_ui::script::ChannelCommand,
+        benilla_ui::script::UiScript,
+    )>,
     mut arm_lines: ResMut<ArmLines>,
     mut channels: ResMut<super::edit::ChannelState>,
     commands: Res<NetCommands>,
 ) -> ArmOutcome {
-    let Some(vm) = vm.as_deref_mut() else {
-        return ArmOutcome::Done;
-    };
     let mut script = ArmVm {
-        vm,
+        vm: &mut vm,
         lines: &mut arm_lines.0,
     };
     use benilla_ui::script::ChannelCommand as C;
@@ -1090,14 +1090,16 @@ pub(crate) enum ArmOutcome {
 /// `ListChannels`' line buffer, 3000 bytes (`0x50db63`).
 const LIST_CHANNELS_BUFFER: usize = 0xbb8;
 
-/// [`channel_arm`] with the `World`, its lines added in the call's turn; whether the verb went on.
+/// [`channel_arm`] with the `World` and the calling VM's handle, its lines added in the call's turn;
+/// whether the verb went on.
 pub(crate) fn run_channel_command(
     world: &mut World,
+    vm: benilla_ui::script::UiScript,
     cmd: benilla_ui::script::ChannelCommand,
 ) -> bool {
     world.get_resource_or_init::<ArmLines>();
     let outcome = world
-        .run_system_cached_with(channel_arm, cmd)
+        .run_system_cached_with(channel_arm, (cmd, vm))
         .unwrap_or(ArmOutcome::Done);
     let lines = std::mem::take(&mut world.resource_mut::<ArmLines>().0);
     for line in lines {
@@ -1230,7 +1232,12 @@ pub(crate) fn drain_chat_input(world: &mut World) {
                 });
             }
             ParsedChat::Channel(cmd) => {
-                run_channel_command(world, cmd);
+                if let Some(vm) = world
+                    .get_non_send_resource::<benilla_ui::script::UiScript>()
+                    .map(benilla_ui::script::UiScript::share)
+                {
+                    run_channel_command(world, vm, cmd);
+                }
             }
             parsed => {
                 // `DoEmote`'s token resolves with the `World` lent, before the arm reads the rest.

@@ -196,11 +196,6 @@ const CALLS_NO_LUA: &[(&str, &str, &str)] = &[
         "reads global strings and writes the model's session asks; its lines are added by the caller with the `World`",
     ),
     (
-        "ui_chat/input/mod.rs",
-        "channel_arm",
-        "resets the recruitment latch on the model; its lines are added by the caller with the `World`",
-    ),
-    (
         "ui_chat/recruitment.rs",
         "cvar_leave",
         "strips the recruitment Shortcut from the model's window lists ahead of the record lookup; its events fire in the caller's turn with the `World` lent",
