@@ -10,7 +10,8 @@
 //! online 0x20) and when it was last used. `autoCompleteResortNamesOnRecency` sorts it by that
 //! time, latest first, ties and otherwise by name (`0x57b130`); `autoCompleteUseContext` gates on
 //! the flags and `autoCompleteWhenEditingFromCenter` picks the match (`0x57aca0`). A whisper in or
-//! out adds its name as interacted with and online and stamps the time (`0x57b7c0`).
+//! out enters its sender by guid as interacted with and online and stamps the time; the entry
+//! keeps the first name it is given (`0x57b7c0`).
 //!
 //! Deviation: the group, guild and friend names are read from the API at each call, not kept in a
 //! list; no Battle.net name (0x8) exists without a session.
@@ -139,12 +140,20 @@ fn name_matches(name: &str, text: &str, cursor: Option<f64>, center: bool, full:
 }
 
 impl super::UiScript {
-    /// A whisper in or out names `name` (`0x57b7c0`): interacted with, online, used now.
-    pub fn note_autocomplete_contact(&mut self, name: &str) {
+    /// A whisper in or out enters `guid` (`0x57b7c0`), none for guid 0 (`0x57b7cc`): its entry,
+    /// found by guid (`0x57ae80`), is interacted with, online and used now, and takes `name` only
+    /// while it holds none (`0x57b65d`), a new one `name` or none (`0x57b6e5`).
+    pub fn note_autocomplete_contact(&mut self, guid: u64, name: Option<&str>) {
+        if guid == 0 {
+            return;
+        }
         let now = self.now();
-        self.model_mut()
-            .autocomplete_contacts
-            .insert(name.to_lowercase(), (name.to_string(), now));
+        let mut model = self.model_mut();
+        let entry = model.autocomplete_contacts.entry(guid).or_default();
+        if entry.0.is_empty() {
+            entry.0 = name.unwrap_or_default().to_string();
+        }
+        entry.1 = now;
     }
 }
 
@@ -189,22 +198,38 @@ mod tests {
     use super::name_matches;
     use crate::script::UiScript;
 
+    /// An entry is the guid's (`0x57ae80`): guid 0 enters nothing (`0x57b7cc`), a nameless entry
+    /// takes the next name given, and a named one keeps its first (`0x57b65d`).
+    #[test]
+    fn a_whispered_entry_is_the_guid_s_and_keeps_its_first_name() {
+        let mut s = UiScript::new().unwrap();
+        let ask = "return GetAutoCompleteResults('', 0x10, 0, 5, nil, true)";
+        let count = "return select('#', GetAutoCompleteResults('', 0x10, 0, 5, nil, true))";
+        s.note_autocomplete_contact(0, Some("Nobody"));
+        s.note_autocomplete_contact(7, None);
+        assert_eq!(s.eval::<i64>(count).unwrap(), 0);
+        s.note_autocomplete_contact(7, Some("Ann"));
+        s.note_autocomplete_contact(7, Some("Ann-Icecrown"));
+        assert_eq!(s.eval::<i64>(count).unwrap(), 1);
+        assert_eq!(s.eval::<String>(ask).unwrap(), "Ann");
+    }
+
     /// The list orders by last use, the latest first, and offers a whispered name under the
     /// interacted-with flag alone.
     #[test]
     fn a_whispered_name_is_offered_latest_first() {
         let mut s = UiScript::new().unwrap();
         let ask = "return GetAutoCompleteResults('', 0x10, 0, 5, nil, true)";
-        s.note_autocomplete_contact("Bob");
+        s.note_autocomplete_contact(1, Some("Bob"));
         assert_eq!(s.eval::<String>(ask).unwrap(), "Bob");
         s.tick(5.0);
-        s.note_autocomplete_contact("Arthas");
+        s.note_autocomplete_contact(2, Some("Arthas"));
         assert_eq!(
             s.eval::<(String, String)>(ask).unwrap(),
             ("Arthas".into(), "Bob".into())
         );
         s.tick(5.0);
-        s.note_autocomplete_contact("Bob");
+        s.note_autocomplete_contact(1, Some("Bob"));
         assert_eq!(
             s.eval::<(String, String)>(ask).unwrap(),
             ("Bob".into(), "Arthas".into())

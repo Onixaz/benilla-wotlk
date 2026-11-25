@@ -444,6 +444,50 @@ impl NameCache {
         self.full_name(guid, commands)
     }
 
+    /// A player's or pet's name record as the chat add asks it with its callback (`0x67d770`,
+    /// `0x67ea30`): a denied answer left no record (`0x67a2d0` deletes it), so a guid denied before
+    /// is asked again and waits on the new answer.
+    pub(crate) fn chat_record(&self, guid: u64, commands: &NetCommands) -> Option<&str> {
+        match NameKey::of(guid, None)? {
+            NameKey::Player(g) => {
+                self.players.ask_again(g, || {
+                    let _ = commands.0.send(ClientCommand::NameQuery { guid: g });
+                });
+                self.resolve(g, commands)
+            }
+            NameKey::Pet(n) => {
+                self.pets.ask_again(n, || {
+                    let _ = commands.0.send(ClientCommand::PetNameQuery {
+                        pet_number: n,
+                        guid,
+                    });
+                });
+                self.resolve_pet(n, guid, commands)
+            }
+            NameKey::Creature(_) => None,
+        }
+    }
+
+    /// Whether a player's or pet's guid was answered denied: `0x67a2d0` runs the record's
+    /// callbacks with no record, and the chat callback drops the lines naming it (`0x503e5c`).
+    pub(crate) fn chat_denied(&self, guid: u64) -> bool {
+        match NameKey::of(guid, None) {
+            Some(NameKey::Player(g)) => self.players.answered_unknown(g),
+            Some(NameKey::Pet(n)) => self.pets.answered_unknown(n),
+            _ => false,
+        }
+    }
+
+    /// The sender name the chat add reads off a cached player record (`0x509e6a` -> `0x4fd220`):
+    /// `name-realm` when the record holds a realm, else the bare name.
+    pub(crate) fn peek_full_name(&self, guid: u64) -> Option<String> {
+        let name = self.players.get(guid)?;
+        Some(match self.player_realms.get(&guid) {
+            Some(realm) => format!("{name}-{realm}"),
+            None => name.clone(),
+        })
+    }
+
     /// A player's name as the reference's realm-aware callers format it: `name-realm` when the
     /// record holds a realm (`"%s-%s"`, `0x54b58a`), else the bare name. Asks once on a miss.
     pub(crate) fn full_name(&self, guid: u64, commands: &NetCommands) -> Option<String> {
@@ -496,12 +540,12 @@ pub(crate) mod net {
             );
             player_name(guid, name, race, class, gender, &mut names);
             names.set_player_realm(guid, realm);
-            // The record's callbacks run once it is cached (`0x5a47d0`).
+            // The record's callbacks run once it is cached (`0x5a47d0`); by module, not in 12340's one registration-order list (`0x680d03`-`0x680d2c`, #1487).
             ui.world(move |world| crate::ui_guild_bank::name_landed(world, guid));
             ui.world(move |world| crate::ui_item_text::name_landed(world, guid));
             ui.world(move |world| crate::ui_achievement::name_landed(world, guid, true));
-            // The held chat lines' callback (`0x503c80`).
-            ui.world(crate::ui_chat::name_landed);
+            // The chat module's callbacks on the record (`0x503c80`, `0x503fb0`, `0x6cb990`).
+            ui.world(move |world| crate::ui_chat::name_landed(world, super::NameKey::Player(guid)));
         }
     }
 
@@ -515,10 +559,13 @@ pub(crate) mod net {
             names.player_name_miss(guid, miss, &commands);
             // A placeholder or a denial ends the ask, its callbacks told (`0x635849`, `0x63583f`); a retry asks again.
             if miss != benilla_protocol::messages::NameQueryMiss::Retry {
+                // By module, not in the record's one registration-order list (`0x67a2d0`, #1487).
                 ui.world(move |world| crate::ui_guild_bank::name_landed(world, guid));
                 ui.world(move |world| crate::ui_item_text::name_landed(world, guid));
                 ui.world(move |world| crate::ui_achievement::name_landed(world, guid, false));
-                ui.world(crate::ui_chat::name_landed);
+                ui.world(move |world| {
+                    crate::ui_chat::name_landed(world, super::NameKey::Player(guid));
+                });
             }
         }
     }
@@ -542,7 +589,9 @@ pub(crate) mod net {
             );
             pet_name(pet_number, name, &mut names);
             // A pet-named line's callback (`0x509eb6` asks with `0x503c80`).
-            ui.world(crate::ui_chat::name_landed);
+            ui.world(move |world| {
+                crate::ui_chat::name_landed(world, super::NameKey::Pet(pet_number));
+            });
         }
     }
 

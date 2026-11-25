@@ -207,8 +207,8 @@ impl super::UiScript {
             (model.party.leader_guid, roster(&model.party).len())
         };
         set_field!(self, party, state);
-        let lua = self.lua();
-        {
+        let lua = &self.lua().clone();
+        let closed = {
             let mut model = self.model_mut();
             let model: &mut Model = &mut model;
             let count = roster(&model.party).len();
@@ -223,27 +223,44 @@ impl super::UiScript {
                         .events
                         .push(("READY_CHECK_FINISHED", vec![ScriptValue::Bool(true)]));
                 }
+                None
             } else if model.ready_check.deadline.is_some()
                 && count < old_count
                 && (leads(&model.party) || officer(&model.party))
                 && !ready_check_pending_online(model)
             {
-                ready_check_force_close(lua, model);
+                ready_check_force_close(lua, model)
+            } else {
+                None
             }
-        }
+        };
         self.fire_ready_check_events();
+        if let Some(line) = closed {
+            self.add_chat_text(0, line);
+        }
     }
 
     /// `MSG_RAID_READY_CHECK` (`0x574d50`): arms the 30 s deadline and stores the initiator. A
     /// raid officer, or a party's leader, flags every member pending but the initiator, who reads
-    /// ready; the other members' ready bytes stand. The initiator prints `READY_CHECK_START`.
-    /// [`Self::ready_check_initiated`] follows once the initiator's name is known.
+    /// ready; the other members' ready bytes stand. The initiator adds `READY_CHECK_START` between
+    /// the arm and the flags (`0x574dc4`). [`Self::ready_check_initiated`] follows once the
+    /// initiator's name is known.
     pub fn ready_check_armed(&mut self, initiator: u64) {
-        let lua = self.lua();
+        let lua = &self.lua().clone();
         let now = clock(lua);
+        let start = {
+            let mut model = self.model_mut();
+            let own = model.party.own_guid;
+            let check = &mut model.ready_check;
+            check.deadline = Some(now + READY_CHECK_SECONDS);
+            check.initiator = initiator;
+            (own != 0 && own == initiator).then(|| global_text(lua, "READY_CHECK_START"))
+        };
+        if let Some(line) = start {
+            self.add_chat_text(0, line);
+        }
         let mut model = self.model_mut();
         let model: &mut Model = &mut model;
-        let own = model.party.own_guid;
         let flags = if model.party.raid.is_empty() {
             leads(&model.party)
         } else {
@@ -251,11 +268,6 @@ impl super::UiScript {
         };
         let members: Vec<u64> = roster(&model.party).iter().map(|m| m.0).collect();
         let check = &mut model.ready_check;
-        check.deadline = Some(now + READY_CHECK_SECONDS);
-        check.initiator = initiator;
-        if own != 0 && own == initiator {
-            check.lines.push(global_text(lua, "READY_CHECK_START"));
-        }
         if flags {
             for guid in members.into_iter().filter(|&g| g != 0) {
                 if guid == initiator {
@@ -270,12 +282,13 @@ impl super::UiScript {
         }
     }
 
-    /// The initiator's name landed (`0x5747d0`): `READY_CHECK(name, secondsLeft)` on every client;
-    /// anyone but the initiator also prints `ERR_RAID_LEADER_READY_CHECK_START_S`.
+    /// The initiator's name landed (`0x5747d0`): `READY_CHECK(name, secondsLeft)` on every client
+    /// (`0x574808`); anyone but the initiator then shows `ERR_RAID_LEADER_READY_CHECK_START_S`
+    /// through the message display (`0x57482e`).
     pub fn ready_check_initiated(&mut self, name: &str) {
-        let lua = self.lua();
+        let lua = &self.lua().clone();
         let now = clock(lua);
-        {
+        let shown = {
             let mut model = self.model_mut();
             let own = model.party.own_guid;
             let check = &mut model.ready_check;
@@ -284,21 +297,24 @@ impl super::UiScript {
                 "READY_CHECK",
                 vec![ScriptValue::Str(name.to_string()), ScriptValue::Int(left)],
             ));
-            if own == 0 || own != check.initiator {
-                let template = global_text(lua, "ERR_RAID_LEADER_READY_CHECK_START_S");
-                check.lines.push(template.replacen("%s", name, 1));
-            }
-        }
+            own == 0 || own != check.initiator
+        };
         self.fire_ready_check_events();
+        if shown {
+            let key = "ERR_RAID_LEADER_READY_CHECK_START_S";
+            let text = global_text(lua, key).replacen("%s", name, 1);
+            self.show_text(key, text);
+        }
     }
 
     /// `MSG_RAID_READY_CHECK_CONFIRM` (`0x5744f0`): the member's pending flag clears and their
-    /// ready byte is stored. A `0` prints `RAID_MEMBER_NOT_READY`, in a raid on the initiator's
-    /// client alone. `READY_CHECK_CONFIRM(unit, ready)` fires per token naming the member, and the
-    /// check closes once nobody online is pending.
+    /// ready byte is stored. A `0` adds `RAID_MEMBER_NOT_READY`, in a raid on the initiator's
+    /// client alone (`0x574618`, `0x57472c`); then `READY_CHECK_CONFIRM(unit, ready)` fires per
+    /// token naming the member (`0x574625`, `0x574739`), and the check closes once nobody online
+    /// is pending (`0x5747b3`).
     pub fn ready_check_confirmed(&mut self, guid: u64, ready: bool) {
-        let lua = self.lua();
-        {
+        let lua = &self.lua().clone();
+        let not_ready = {
             let mut model = self.model_mut();
             let model: &mut Model = &mut model;
             let raid = !model.party.raid.is_empty();
@@ -309,11 +325,12 @@ impl super::UiScript {
             let check = &mut model.ready_check;
             check.pending.retain(|&g| g != guid);
             check.ready.retain(|&g| g != guid);
+            let mut line = None;
             if ready {
                 check.ready.push(guid);
             } else if !name.is_empty() && (!raid || (own != 0 && own == check.initiator)) {
                 let template = global_text(lua, "RAID_MEMBER_NOT_READY");
-                check.lines.push(template.replacen("%s", &name, 1));
+                line = Some(template.replacen("%s", &name, 1));
             }
             for token in model.tokens().tokens_naming(guid) {
                 model.ready_check.events.push((
@@ -321,11 +338,23 @@ impl super::UiScript {
                     vec![ScriptValue::Str(token), ScriptValue::Bool(ready)],
                 ));
             }
-            if !ready_check_pending_online(model) {
-                ready_check_force_close(lua, model);
-            }
+            line
+        };
+        if let Some(line) = not_ready {
+            self.add_chat_text(0, line);
         }
         self.fire_ready_check_events();
+        let closed = {
+            let mut model = self.model_mut();
+            if ready_check_pending_online(&model) {
+                None
+            } else {
+                ready_check_force_close(lua, &mut model)
+            }
+        };
+        if let Some(line) = closed {
+            self.add_chat_text(0, line);
+        }
     }
 
     /// `MSG_RAID_READY_CHECK_FINISHED` (`0x572560`): the check is over, not preempted.
@@ -342,13 +371,29 @@ impl super::UiScript {
         self.fire_ready_check_events();
     }
 
+    /// Whether the ready-check deadline has passed, so [`Self::ready_check_tick`] has a close to run.
+    pub fn ready_check_due(&self) -> bool {
+        let now = clock(self.lua());
+        self.model_ref()
+            .ready_check
+            .deadline
+            .is_some_and(|d| now >= d)
+    }
+
     /// The initiator's 30 s timer (`0x573670`): once the deadline passes the check closes.
     pub fn ready_check_tick(&mut self) {
-        let lua = self.lua();
+        let lua = &self.lua().clone();
         let now = clock(lua);
-        let mut model = self.model_mut();
-        if model.ready_check.deadline.is_some_and(|d| now >= d) {
-            ready_check_time(lua, &mut model, now);
+        let closed = {
+            let mut model = self.model_mut();
+            if model.ready_check.deadline.is_some_and(|d| now >= d) {
+                ready_check_time(lua, &mut model, now)
+            } else {
+                None
+            }
+        };
+        if let Some(line) = closed {
+            self.add_chat_text(0, line);
         }
     }
 
@@ -357,17 +402,6 @@ impl super::UiScript {
         for (event, args) in events {
             self.fire_event(event, args);
         }
-    }
-
-    /// Drain the ready-check lines composed since the last call; the reference prints each as a
-    /// `CHAT_MSG_SYSTEM` line (`(text, 10)`).
-    pub fn take_ready_check_lines(&mut self) -> Vec<String> {
-        drain_field!(self, ready_check.lines)
-    }
-
-    /// Drain the system lines the party bindings composed (`SetSavedInstanceExtend`'s lock line).
-    pub fn take_party_lines(&mut self) -> Vec<String> {
-        drain_field!(self, party_lines)
     }
 
     /// Drain the party/loot intents queued since the last call.
@@ -665,10 +699,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 "OPT_OUT_LOOT_TOGGLE_OFF"
             };
             let line = lua.globals().get::<String>(key).unwrap_or_default();
-            let mut model = crate::script::model_mut_of(lua);
-            model.opt_out_of_loot = on;
-            model.party_requests.push(PartyRequest::OptOutOfLoot(on));
-            model.party_lines.push(line);
+            {
+                let mut model = crate::script::model_mut_of(lua);
+                model.opt_out_of_loot = on;
+                model.party_requests.push(PartyRequest::OptOutOfLoot(on));
+            }
+            // The system line through the chat add inside the call (`0x52cf54`).
+            super::ui_errors::add_chat_text(lua, 0, &line);
             Ok(())
         })?,
     )?;
@@ -1060,8 +1097,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 extend,
             };
             let line = crate::strings::fill(&template, &[crate::strings::Arg::S(&shown)]);
-            model.party_lines.push(line);
-            model.party_requests.push(request);
+            drop(model);
+            // The lock line through the chat add inside the call (`0x50dd24`), then the send
+            // (`0x50dd8d`).
+            super::ui_errors::add_chat_text(lua, 0, &line);
+            crate::script::model_mut_of(lua)
+                .party_requests
+                .push(request);
             Ok(())
         })?,
     )?;
@@ -1104,7 +1146,6 @@ pub(crate) struct ReadyCheckState {
     pub(crate) pending: Vec<u64>,
     /// The members whose last ready byte was non-zero.
     pub(crate) ready: Vec<u64>,
-    pub(crate) lines: Vec<String>,
     events: Vec<(&'static str, Vec<ScriptValue>)>,
 }
 
@@ -1163,14 +1204,16 @@ fn officer(party: &PartyState) -> bool {
 }
 
 /// The close (`0x573390`): only on the initiator's client, once the deadline passed,
-/// the check disarms and prints one system line, the pending members' names as
+/// the check disarms and composes one system line, the pending members' names as
 /// `RAID_MEMBERS_AFK`, else `READY_CHECK_ALL_READY` when nobody answered not ready, else
-/// `READY_CHECK_FINISHED`; then the finish goes to the server, whose echo fires the event.
-fn ready_check_time(lua: &Lua, model: &mut Model, now: f64) {
+/// `READY_CHECK_FINISHED`, which the caller adds once it lets go of the model (`0x5735bc`,
+/// `0x573602`); then the finish goes to the server (`0x573638`), whose echo fires the event.
+#[must_use]
+fn ready_check_time(lua: &Lua, model: &mut Model, now: f64) -> Option<String> {
     let check = &model.ready_check;
     let own = model.party.own_guid;
     if !check.deadline.is_some_and(|d| now >= d) || check.initiator == 0 || own != check.initiator {
-        return;
+        return None;
     }
     let members = roster(&model.party);
     let check = &mut model.ready_check;
@@ -1189,8 +1232,8 @@ fn ready_check_time(lua: &Lua, model: &mut Model, now: f64) {
     } else {
         global_text(lua, "READY_CHECK_FINISHED")
     };
-    check.lines.push(text);
     model.party_requests.push(PartyRequest::ReadyCheckFinish);
+    Some(text)
 }
 
 /// The close test (`0x57463e`, `0x574761`): a member holds the check open only while pending
@@ -1201,14 +1244,14 @@ fn ready_check_pending_online(model: &Model) -> bool {
         .any(|m| m.2 && model.ready_check.pending.contains(&m.0))
 }
 
-/// The force-close sites: an armed deadline becomes `now - 1` and the check closes at once.
-fn ready_check_force_close(lua: &Lua, model: &mut Model) {
-    if model.ready_check.deadline.is_none() {
-        return;
-    }
+/// The force-close sites: an armed deadline becomes `now - 1` and the check closes at once,
+/// handing back the close's line for the caller to add.
+#[must_use]
+fn ready_check_force_close(lua: &Lua, model: &mut Model) -> Option<String> {
+    model.ready_check.deadline?;
     let now = model.now;
     model.ready_check.deadline = Some(now - 1.0);
-    ready_check_time(lua, model, now);
+    ready_check_time(lua, model, now)
 }
 
 #[cfg(test)]
@@ -1907,8 +1950,8 @@ mod tests {
         assert!(err.contains("Usage: GetSavedInstanceInfo(index)"), "{err}");
     }
 
-    /// `SetSavedInstanceExtend` (`0x50dc10`) flips the flag, prints the lock line with the
-    /// difficulty and queues the request; a non-boolean raises.
+    /// `SetSavedInstanceExtend` (`0x50dc10`) flips the flag, adds the lock line with the
+    /// difficulty inside the call (`0x50dd24`) and queues the request; a non-boolean raises.
     #[test]
     fn set_saved_instance_extend_stores_prints_and_sends() {
         let mut s = UiScript::new().unwrap();
@@ -1918,8 +1961,32 @@ mod tests {
         )
         .unwrap();
         s.set_saved_instances(vec![lockout(533, "Naxxramas", 1234, 1)]);
-        s.run("SetSavedInstanceExtend(1, true) SetSavedInstanceExtend(5, true)")
+        s.run(
+            r#"Log = {}
+               local f = CreateFrame("Frame")
+               f:RegisterEvent("CHAT_MSG_SYSTEM")
+               f:SetScript("OnEvent", function(_, e, a1) Log[#Log + 1] = a1 end)"#,
+        )
+        .unwrap();
+        let lines = added(&mut s, |s| {
+            s.run(
+                "SetSavedInstanceExtend(1, true) Log[#Log + 1] = 'after' \
+                 SetSavedInstanceExtend(5, true)",
+            )
             .unwrap();
+        });
+        assert_eq!(
+            lines,
+            ["Your instance lock for Naxxramas (25 Player) has been extended."]
+        );
+        assert_eq!(
+            s.eval::<Vec<String>>("return Log").unwrap(),
+            [
+                "Your instance lock for Naxxramas (25 Player) has been extended.",
+                "after"
+            ],
+            "the line's event fires before the verb returns"
+        );
         assert!(s
             .eval::<bool>("return select(6, GetSavedInstanceInfo(1)) == true")
             .unwrap());
@@ -1930,10 +1997,6 @@ mod tests {
                 difficulty: 1,
                 extend: true
             }]
-        );
-        assert_eq!(
-            s.take_party_lines(),
-            vec!["Your instance lock for Naxxramas (25 Player) has been extended.".to_string()]
         );
         let err = s
             .run("SetSavedInstanceExtend(1, 1)")
@@ -2082,6 +2145,19 @@ mod tests {
         v
     }
 
+    /// The system lines `op` adds through the chat add inside its call, with a view lent.
+    fn added(s: &mut UiScript, op: impl FnOnce(&mut UiScript)) -> Vec<String> {
+        let mut view = crate::script::live::TestView::default();
+        crate::script::live::lending(&mut view, || op(s));
+        view.chat_lines
+            .into_iter()
+            .map(|(chat_type, line)| {
+                assert_eq!(chat_type, 0, "a system line");
+                line
+            })
+            .collect()
+    }
+
     fn status(s: &UiScript, token: &str) -> Option<String> {
         s.eval::<Option<String>>(&format!("return GetReadyCheckStatus('{token}')"))
             .unwrap()
@@ -2102,14 +2178,15 @@ mod tests {
             "nothing local yet"
         );
 
-        s.ready_check_armed(0x5E1F);
-        assert_eq!(s.take_ready_check_lines(), ["Starting ready check..."]);
-        s.ready_check_initiated("Probefour");
-        assert_eq!(log(&s), ["READY_CHECK,Probefour,30"], "the initiator's too");
+        assert_eq!(
+            added(&mut s, |s| s.ready_check_armed(0x5E1F)),
+            ["Starting ready check..."]
+        );
         assert!(
-            s.take_ready_check_lines().is_empty(),
+            added(&mut s, |s| s.ready_check_initiated("Probefour")).is_empty(),
             "no start line for us"
         );
+        assert_eq!(log(&s), ["READY_CHECK,Probefour,30"], "the initiator's too");
         assert_eq!(s.eval::<i64>("return GetReadyCheckTimeLeft()").unwrap(), 30);
 
         s.run("DoReadyCheck()").unwrap();
@@ -2130,11 +2207,22 @@ mod tests {
         assert!(s.take_party_requests().is_empty(), "no check to answer");
 
         s.ready_check_armed(0x5E1F);
-        s.ready_check_initiated("Probefour");
-        assert_eq!(log(&s), ["READY_CHECK,Probefour,30"]);
+        s.run(
+            "local f = CreateFrame('Frame') f:RegisterEvent('CHAT_MSG_SYSTEM') \
+             f:SetScript('OnEvent', function(_, e, a1) LOG[#LOG + 1] = e .. ',' .. a1 end)",
+        )
+        .unwrap();
         assert_eq!(
-            s.take_ready_check_lines(),
+            added(&mut s, |s| s.ready_check_initiated("Probefour")),
             ["Probefour has initiated a ready check."]
+        );
+        // The event first (`0x574808`), then the display's line (`0x57482e`).
+        assert_eq!(
+            log(&s),
+            [
+                "READY_CHECK,Probefour,30",
+                "CHAT_MSG_SYSTEM,Probefour has initiated a ready check."
+            ]
         );
         assert!(s.model_mut().ready_check.pending.is_empty());
         s.run("ConfirmReadyCheck()").unwrap();
@@ -2161,8 +2249,7 @@ mod tests {
             ..Default::default()
         });
         s.set_now(100.0);
-        s.ready_check_armed(0x5E1F);
-        s.take_ready_check_lines();
+        added(&mut s, |s| s.ready_check_armed(0x5E1F));
         assert_eq!(
             status(&s, "player").as_deref(),
             Some("ready"),
@@ -2170,15 +2257,19 @@ mod tests {
         );
         assert_eq!(status(&s, "raid2").as_deref(), Some("waiting"));
 
-        s.ready_check_confirmed(0xA11CE, false);
+        assert_eq!(
+            added(&mut s, |s| s.ready_check_confirmed(0xA11CE, false)),
+            ["Alice is not ready"]
+        );
         assert_eq!(log(&s), ["READY_CHECK_CONFIRM,raid2,false"]);
-        assert_eq!(s.take_ready_check_lines(), ["Alice is not ready"]);
         assert_eq!(status(&s, "raid2").as_deref(), Some("notready"));
         assert!(s.take_party_requests().is_empty(), "Bob still pending");
 
-        s.ready_check_confirmed(0xB0B, true);
+        assert_eq!(
+            added(&mut s, |s| s.ready_check_confirmed(0xB0B, true)),
+            ["Ready check finished"]
+        );
         assert_eq!(log(&s), ["READY_CHECK_CONFIRM,raid3,true"]);
-        assert_eq!(s.take_ready_check_lines(), ["Ready check finished"]);
         assert_eq!(
             s.take_party_requests(),
             vec![PartyRequest::ReadyCheckFinish]
@@ -2193,16 +2284,15 @@ mod tests {
         let mut s = UiScript::new().unwrap();
         s.set_party(raid_we_lead(&s));
         s.set_now(100.0);
-        s.ready_check_armed(0x5E1F);
-        s.take_ready_check_lines();
+        added(&mut s, |s| s.ready_check_armed(0x5E1F));
         s.ready_check_confirmed(0xA11CE, true);
         s.set_now(129.0);
-        s.ready_check_tick();
-        assert!(s.take_ready_check_lines().is_empty());
+        assert!(!s.ready_check_due());
+        assert!(added(&mut s, UiScript::ready_check_tick).is_empty());
         s.set_now(130.0);
-        s.ready_check_tick();
+        assert!(s.ready_check_due());
         assert_eq!(
-            s.take_ready_check_lines(),
+            added(&mut s, UiScript::ready_check_tick),
             ["The following players are Away: Bob"]
         );
         assert_eq!(
@@ -2213,13 +2303,12 @@ mod tests {
 
         // Everyone ready closes with the all-ready line.
         s.set_now(200.0);
-        s.ready_check_armed(0x5E1F);
-        s.ready_check_confirmed(0xA11CE, true);
-        s.ready_check_confirmed(0xB0B, true);
-        assert_eq!(
-            s.take_ready_check_lines(),
-            ["Starting ready check...", "Everyone is Ready"]
-        );
+        let lines = added(&mut s, |s| {
+            s.ready_check_armed(0x5E1F);
+            s.ready_check_confirmed(0xA11CE, true);
+            s.ready_check_confirmed(0xB0B, true);
+        });
+        assert_eq!(lines, ["Starting ready check...", "Everyone is Ready"]);
     }
 
     /// In a party the leader flags the slots; an officer gate does not apply (`0x574e57`).
@@ -2233,10 +2322,10 @@ mod tests {
             s.set_unit(token, Some(unit(true, guid)));
         }
         s.set_now(100.0);
-        s.ready_check_armed(0x5E1F);
+        added(&mut s, |s| s.ready_check_armed(0x5E1F));
         assert_eq!(status(&s, "player").as_deref(), Some("ready"));
         assert_eq!(status(&s, "party1").as_deref(), Some("waiting"));
-        s.ready_check_confirmed(0xA11CE, true);
+        added(&mut s, |s| s.ready_check_confirmed(0xA11CE, true));
         assert_eq!(status(&s, "party1").as_deref(), Some("ready"));
         s.set_now(130.0);
         assert_eq!(status(&s, "party1"), None, "expired");
@@ -2244,7 +2333,7 @@ mod tests {
         // A new leader ends the check, preempted.
         log(&s);
         s.set_now(140.0);
-        s.ready_check_armed(0x5E1F);
+        added(&mut s, |s| s.ready_check_armed(0x5E1F));
         party.leader_guid = 0xA11CE;
         s.set_party(party);
         assert_eq!(log(&s), ["READY_CHECK_FINISHED,true,nil"]);
