@@ -2988,7 +2988,7 @@ fn comprehend(world: &mut bevy::prelude::World, language: i32) {
 }
 
 /// `SendChatMessage`'s language inside the call: the id the binding resolved rides every type's
-/// packet but AFK's, whose AFK mark never reads it.
+/// packet but AFK's, whose AFK mark never reads it and writes 0 (`0x6dc724`).
 #[test]
 fn a_named_language_rides_the_chat_command() {
     use crate::net::{ChatKind, ClientCommand};
@@ -3020,7 +3020,7 @@ fn a_named_language_rides_the_chat_command() {
             (ChatKind::Say, Some(2)),
             (ChatKind::Whisper, Some(2)),
             (ChatKind::Say, None),
-            (ChatKind::Afk, None),
+            (ChatKind::Afk, Some(0)),
         ]
     );
 }
