@@ -164,16 +164,14 @@ fn cvar_leave(
     areas: Option<Res<AreaTableRes>>,
     commands: Res<NetCommands>,
 ) -> Option<bool> {
-    let Some(name) = areas.as_deref().and_then(|a| {
+    let name = areas.as_deref().and_then(|a| {
         let row = channels
             .channels
             .rows()
             .iter()
             .find(|r| r.is_guild_recruitment())?;
         Some(row.joinable_name("", city_word(&a.0)?))
-    }) else {
-        return None;
-    };
+    })?;
     info!("chat: guildRecruitmentChannel 0 — leaving {name:?}");
     Some(cascade_leave(&mut channels, &commands, &name).unwrap_or(false))
 }
