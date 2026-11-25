@@ -218,6 +218,8 @@ pub(super) struct HeldCast {
     cast: TrajectoryCast,
     mover: Entity,
     since_s: f64,
+    /// Whether the cast animation one-shot has been observed running on the mover.
+    saw_oneshot: bool,
 }
 
 /// A trajectory cast with a cast time, whose final aim goes out as
@@ -231,31 +233,59 @@ pub(super) struct FinalAim {
     due_s: f64,
     /// Waits past the cast time for the animation's release.
     at_release: bool,
+    /// Whether the server's `Casting` state was observed for this cast.
+    saw_casting: bool,
+    /// Whether the release animation one-shot was observed running once `due_s` passed.
+    saw_oneshot: bool,
 }
 
-/// Our trajectory casts whose visuals played at the press and whose aim went at the release
-/// (`0x809f80`): their GO plays no cast kit and launches at once (`0x80e1b0`'s trajectory arm),
-/// by caster and spell, with the send's time. Deviation: the reference flies its own missile
-/// from the release; here the GO's does, a round trip later.
+/// A locally launched trajectory missile (`0x809f80`, `0x80de60`), drained by
+/// [`crate::creature_anim::spell_visual::route_cast_visuals`] to fly immediately at release.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct LocalTrajectoryLaunch {
+    pub(crate) caster: Entity,
+    pub(crate) spell_id: u32,
+    pub(crate) dest: Vec3,
+    pub(crate) trajectory: crate::creature_anim::Trajectory,
+    pub(crate) seq: u64,
+}
+
+/// Our trajectory casts whose visuals and missile launched locally (`0x809f80`, `0x80de60`):
+/// their server GO plays no cast kit and spawns no missile (`0x80e1b0`'s trajectory arm).
 #[derive(Resource, Default)]
-pub(crate) struct LocalTrajectoryGos(pub(crate) Vec<(Entity, u32, f64)>);
+pub(crate) struct LocalTrajectoryGos {
+    sent: Vec<(Entity, u32, f64)>,
+    pub(crate) launches: Vec<LocalTrajectoryLaunch>,
+}
 
 impl LocalTrajectoryGos {
     /// Whether `caster`'s GO of `spell_id` is one of ours.
     pub(crate) fn has(&self, caster: Entity, spell_id: u32) -> bool {
-        self.0.iter().any(|&(e, s, _)| e == caster && s == spell_id)
+        self.sent
+            .iter()
+            .any(|&(e, s, _)| e == caster && s == spell_id)
     }
 
     /// Spend the entry the GO consumed.
     pub(crate) fn take(&mut self, caster: Entity, spell_id: u32) -> bool {
-        let before = self.0.len();
-        self.0.retain(|&(e, s, _)| !(e == caster && s == spell_id));
-        self.0.len() != before
+        let before = self.sent.len();
+        self.sent
+            .retain(|&(e, s, _)| !(e == caster && s == spell_id));
+        self.sent.len() != before
+    }
+
+    /// Record a locally launched trajectory cast waiting for its server GO.
+    fn record(&mut self, caster: Entity, spell_id: u32, at: f64) {
+        self.sent.push((caster, spell_id, at));
     }
 }
 
 /// How long a sent cast waits for its GO before it is forgotten.
 const LOCAL_GO_WAIT_S: f64 = 5.0;
+
+/// Grace window for the cast animation's one-shot to start on the mover before releasing a cast
+/// whose rig never started one (matching `entities/missile.rs`'s `RELEASE_WAIT_MAX`).
+const RELEASE_START_GRACE_S: f64 = 0.25;
 
 /// The casts the send holds between frames.
 #[derive(Default)]
@@ -264,9 +294,21 @@ pub(super) struct ShotMemory {
     final_aim: Option<FinalAim>,
 }
 
-/// The longest a held cast or a final aim waits for its animation's release: past it, it goes
-/// as it stands. Deviation: the reference waits on the release alone.
-const RELEASE_WAIT_S: f64 = 2.0;
+/// Whether a held cast or final-aim release should fire this frame: on a release keyframe, when
+/// the cast one-shot ends without firing one (`0x72df00`), or after the start grace if no one-shot
+/// ever started on the mover.
+fn release_ready(
+    keyframe: bool,
+    live_oneshot: bool,
+    saw_oneshot: &mut bool,
+    elapsed_s: f64,
+) -> bool {
+    if keyframe {
+        return true;
+    }
+    *saw_oneshot |= live_oneshot;
+    (*saw_oneshot && !live_oneshot) || (!*saw_oneshot && elapsed_s > RELEASE_START_GRACE_S)
+}
 
 /// A release keyframe on the mover: the spell's cast-hand and target markers, and the bow's.
 const RELEASE_IDENTS: [[u8; 4]; 4] = [*b"$CSL", *b"$CSR", *b"$CST", *b"$BWR"];
@@ -296,7 +338,7 @@ pub(super) fn send_trajectory_casts(
     units: crate::entities::AttachPosQuery,
     joints: Query<&GlobalTransform>,
     world: benilla_world::collision::WorldCollision,
-    (mut targeting, mods, mut memory, time, mut keys, mut anims, mut local_gos): (
+    (mut targeting, mods, mut memory, time, mut keys, mut anims, mut local_gos, rigs, anim_data): (
         ResMut<super::targeting::TrajectoryTargeting>,
         Option<Res<crate::spell::SpellModifiers>>,
         Local<ShotMemory>,
@@ -307,38 +349,84 @@ pub(super) fn send_trajectory_casts(
             Option<ResMut<crate::creature_anim::PlaySeq>>,
         ),
         Option<ResMut<LocalTrajectoryGos>>,
+        Query<(
+            &crate::creature_anim::AnimDriver,
+            &AnimationPlayer,
+            &AnimationTransitions,
+            &benilla_assets::ModelAnimations,
+        )>,
+        Option<Res<crate::creature_anim::AnimData>>,
     ),
 ) {
     let now = time.elapsed_secs_f64();
-    if let Some(l) = local_gos.as_mut().filter(|l| !l.0.is_empty()) {
-        l.0.retain(|&(.., at)| now - at < LOCAL_GO_WAIT_S);
+    if let Some(l) = local_gos.as_mut().filter(|l| !l.sent.is_empty()) {
+        l.sent.retain(|&(.., at)| now - at < LOCAL_GO_WAIT_S);
     }
     let released = |mover: Entity, keys: &[(Entity, [u8; 4])]| {
         keys.iter()
             .any(|&(e, ident)| e == mover && RELEASE_IDENTS.contains(&ident))
     };
+    let catalog = anim_data.as_deref().map(|d| &d.0);
+    let oneshot_live = |mover: Entity| {
+        rigs.get(mover)
+            .ok()
+            .is_some_and(|(drv, player, tr, anims)| {
+                crate::creature_anim::oneshot_is_live(drv, player, tr, anims, catalog)
+            })
+    };
     let keys: Vec<(Entity, [u8; 4])> = keys.read().map(|k| (k.entity, k.ident)).collect();
+    let active_mover = mover.single().ok();
+    // Clear any held cast or pending final aim if the active mover changed or vanished (`0x80de60`),
+    // or if a cast-time trajectory spell was interrupted before finishing.
+    if let Some(h) = memory.held {
+        if active_mover.is_none_or(|(e, ..)| e != h.mover) {
+            memory.held = None;
+        }
+    }
+    if let Some(f) = &mut memory.final_aim {
+        match active_mover {
+            Some((e, .., casting)) if e == f.mover => {
+                if casting.is_some_and(|c| c.spell_id == f.spell_id) {
+                    f.saw_casting = true;
+                } else if f.saw_casting && now < f.due_s {
+                    memory.final_aim = None;
+                }
+            }
+            _ => {
+                memory.final_aim = None;
+            }
+        }
+    }
     // The held cast goes on its release, aimed now.
     let mut todo: Vec<(TrajectoryCast, bool)> = std::mem::take(&mut casts.0)
         .into_iter()
         .map(|c| (c, false))
         .collect();
-    if let Some(h) = memory.held {
-        let timed_out = now - h.since_s >= RELEASE_WAIT_S;
-        if released(h.mover, &keys) || timed_out {
+    if let Some(h) = &mut memory.held {
+        let keyframe = released(h.mover, &keys);
+        let live = oneshot_live(h.mover);
+        if release_ready(keyframe, live, &mut h.saw_oneshot, now - h.since_s) {
+            let h = *h;
             debug!(
                 "vehicle: held trajectory cast {} released after {:.3} s{}",
                 h.cast.spell_id,
                 now - h.since_s,
-                if timed_out { " (no release)" } else { "" }
+                if keyframe { "" } else { " (anim end)" }
             );
             memory.held = None;
             todo.push((h.cast, true));
         }
     }
-    let final_due = memory.final_aim.filter(|f| {
-        now >= f.due_s
-            && (!f.at_release || released(f.mover, &keys) || now >= f.due_s + RELEASE_WAIT_S)
+    let final_due = memory.final_aim.as_mut().and_then(|f| {
+        if now < f.due_s {
+            return None;
+        }
+        if !f.at_release {
+            return Some(*f);
+        }
+        let keyframe = released(f.mover, &keys);
+        let live = oneshot_live(f.mover);
+        release_ready(keyframe, live, &mut f.saw_oneshot, now - f.due_s).then_some(*f)
     });
     if todo.is_empty() && final_due.is_none() {
         return;
@@ -346,7 +434,7 @@ pub(super) fn send_trajectory_casts(
     let (Some(net), Some(player)) = (net, player) else {
         return;
     };
-    let Ok((entity, guid, vehicle, flags2, height, store, casting)) = mover.single() else {
+    let Some((entity, guid, vehicle, flags2, height, store, casting)) = active_mover else {
         memory.final_aim = None;
         debug!("vehicle: {} trajectory casts with no mover", todo.len());
         return;
@@ -427,9 +515,19 @@ pub(super) fn send_trajectory_casts(
         let kit = stages.and_then(|st| visuals.as_deref()?.0.kit(st.cast));
         // The aim preview draws the spell sent (`0x6fbf90`), and its cast leg holds a cast the
         // reference holds for its animation (`0x809f80`).
+        let instant_missile =
+            cast_ms <= 0 && casting.is_none() && stages.is_some_and(|s| s.missile_gate != 0);
         let held =
             cast_ms <= 0 && super::targeting::held_until_release(casting.is_some(), stages, kit);
         if !freed {
+            // `0x809f80`: refuse while a cast-time trajectory update is pending (error 105).
+            if memory.final_aim.is_some() {
+                debug!(
+                    "vehicle: trajectory cast {} refused, final aim pending",
+                    cast.spell_id
+                );
+                continue;
+            }
             if held {
                 if memory.held.is_some() {
                     // `0x809f80`: one held cast at a time; the second fails (error 105).
@@ -438,6 +536,10 @@ pub(super) fn send_trajectory_casts(
                         cast.spell_id
                     );
                     continue;
+                }
+                // Drop any stale local-GO suppression left behind by a previously failed cast.
+                if let Some(l) = local_gos.as_mut() {
+                    l.take(entity, cast.spell_id);
                 }
                 targeting.sent(cast.caster, cast.count, cast.spell_id, true);
                 // The press plays the cast's visuals, its kit's animation and sound among them
@@ -460,6 +562,7 @@ pub(super) fn send_trajectory_casts(
                     cast,
                     mover: entity,
                     since_s: now,
+                    saw_oneshot: false,
                 });
                 continue;
             }
@@ -472,10 +575,42 @@ pub(super) fn send_trajectory_casts(
             "vehicle: trajectory cast {} pitch {:.3} speed {:.2} lands in {:.2} s at {:?}",
             cast.spell_id, shot.pitch, shot.speed, shot.time, shot.impact
         );
-        // A released cast's visuals already played: its GO plays none.
-        if freed {
+        // A released held cast (or an unheld instant trajectory cast) flies its missile locally
+        // at once (`0x809f80`, `0x80de60`); its server GO skips its cast kit and missile spawn
+        // (`0x80e1b0`).
+        let launch_local = freed || instant_missile;
+        if launch_local {
+            if !freed {
+                if let Some(l) = local_gos.as_mut() {
+                    l.take(entity, cast.spell_id);
+                }
+                let (events, seq) = &mut anims;
+                if let Some(events) = events.as_mut() {
+                    events.write(crate::creature_anim::CastEvent {
+                        entity,
+                        spell_id: cast.spell_id,
+                        kind: crate::creature_anim::CastEventKind::Go { ends_cast: false },
+                        cast_count: cast.count,
+                        seq: seq.as_mut().map_or(0, |s| s.next()),
+                    });
+                }
+            }
+            let seq = anims.1.as_mut().map_or(0, |s| s.next());
             if let Some(l) = local_gos.as_mut() {
-                l.0.push((entity, cast.spell_id, now));
+                l.record(entity, cast.spell_id, now);
+                l.launches.push(LocalTrajectoryLaunch {
+                    caster: entity,
+                    spell_id: cast.spell_id,
+                    dest: benilla_assets::coords::wow_to_bevy(shot.impact.to_array()),
+                    trajectory: crate::creature_anim::Trajectory {
+                        pitch: shot.pitch,
+                        speed: shot.speed,
+                        delay: shot.time,
+                        caster: cast.caster,
+                        cast_id: cast.count,
+                    },
+                    seq,
+                });
             }
         }
         let _ = net.0.send(ClientCommand::PetCastTrajectory {
@@ -502,6 +637,8 @@ pub(super) fn send_trajectory_casts(
                 mover: entity,
                 due_s: now + f64::from(cast_ms) / 1000.0,
                 at_release: super::targeting::held_until_release(false, stages, kit),
+                saw_casting: false,
+                saw_oneshot: false,
             });
         }
     }
@@ -517,11 +654,35 @@ mod tests {
         let mut w = World::new();
         let caster = w.spawn_empty().id();
         let mut gos = LocalTrajectoryGos::default();
-        gos.0.push((caster, 47801, 1.0));
+        gos.record(caster, 47801, 1.0);
         assert!(gos.has(caster, 47801));
         assert!(!gos.has(caster, 1));
         assert!(gos.take(caster, 47801));
         assert!(!gos.take(caster, 47801), "spent");
+    }
+
+    /// A held cast waits through an arbitrarily long live one-shot, releases as soon as the
+    /// one-shot ends or a release keyframe fires, and falls back after the start grace if no
+    /// one-shot ever started.
+    #[test]
+    fn release_ready_tracks_keyframe_anim_end_and_start_grace() {
+        let mut saw = false;
+        // One-shot running: stays held even well past 2 s.
+        assert!(!release_ready(false, true, &mut saw, 0.05));
+        assert!(saw);
+        assert!(!release_ready(false, true, &mut saw, 3.5));
+        // One-shot ends: releases immediately.
+        assert!(release_ready(false, false, &mut saw, 3.6));
+
+        // Keyframe fires mid-animation: releases immediately.
+        let mut saw_kf = false;
+        assert!(!release_ready(false, true, &mut saw_kf, 0.1));
+        assert!(release_ready(true, true, &mut saw_kf, 0.2));
+
+        // No one-shot ever starts: waits during grace, releases once grace elapses.
+        let mut saw_none = false;
+        assert!(!release_ready(false, false, &mut saw_none, 0.1));
+        assert!(release_ready(false, false, &mut saw_none, 0.3));
     }
 
     fn missile() -> SpellMissileRec {
