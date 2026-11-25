@@ -1403,22 +1403,37 @@ fn sync_portraits(
                 }
                 entity
             }
-            "npc" => crate::ui_session::interact_entity(&interact, &index),
-            // The quest window's giver (`0x6081b0`), which `QuestFrame_SetPortrait` binds. Only a
-            // unit bakes: the binding clears the texture for a GameObject or item (`0x6113e0`).
-            "questnpc" => quest_giver
-                .as_deref()
-                .and_then(crate::ui_quest::QuestGiver::quest_npc)
-                .and_then(|g| index.0.get(&g).copied())
-                .filter(|e| {
-                    ent_q.get(*e).is_ok_and(|n| {
-                        matches!(
-                            n.kind,
-                            benilla_protocol::EntityKind::Player
-                                | benilla_protocol::EntityKind::Unit
-                        )
-                    })
-                }),
+            // The interaction NPC, and the quest window's giver (`0x6081b0`), which
+            // `QuestFrame_SetPortrait` binds. Only a unit bakes: the binding clears the texture
+            // for a held GameObject or item, and draws an unheld player's stand-in (`0x6113e0`).
+            "npc" | "questnpc" => {
+                let guid = if token == "npc" {
+                    interact.0
+                } else {
+                    quest_giver
+                        .as_deref()
+                        .and_then(crate::ui_quest::QuestGiver::quest_npc)
+                };
+                match guid
+                    .filter(|g| *g != 0)
+                    .map(|g| (g, index.0.get(&g).copied()))
+                {
+                    Some((_, Some(e))) => Some(e).filter(|e| {
+                        ent_q.get(*e).is_ok_and(|n| {
+                            matches!(
+                                n.kind,
+                                benilla_protocol::EntityKind::Player
+                                    | benilla_protocol::EntityKind::Unit
+                            )
+                        })
+                    }),
+                    Some((g, None)) => {
+                        (occupant, unseen) = unheld_subject(g, &party.names, &party.roster);
+                        None
+                    }
+                    None => None,
+                }
+            }
             // The seated player's transport (`0x60ac87`) and the focus `[0xbd07d0]`, each gated on
             // the UI drawing it: the stock vehicle art and the focus frame ship hidden.
             "vehicle" | "focus" => {

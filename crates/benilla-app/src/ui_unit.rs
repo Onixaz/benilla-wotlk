@@ -1753,7 +1753,17 @@ fn feed_units(
         .as_deref()
         .and_then(crate::ui_quest::QuestGiver::quest_npc)
         .and_then(|guid| {
-            let entity = *index.as_deref()?.0.get(&guid)?;
+            let Some(entity) = index.as_deref().and_then(|i| i.0.get(&guid).copied()) else {
+                // An unheld sharer still exists as a group member (`0x60c2a0`): read the roster.
+                return crate::ui_party::unheld_group_state(
+                    held.group,
+                    guid,
+                    held.self_store
+                        .and_then(|store| faction_group(store, held.factions)),
+                    held.classes,
+                    held.types,
+                );
+            };
             Some(npc_state(
                 &held,
                 stores.all.get(entity).ok()?,
