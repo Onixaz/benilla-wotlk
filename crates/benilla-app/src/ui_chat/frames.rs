@@ -340,6 +340,7 @@ fn log_text(text: &str, escape: bool) -> String {
                 rest = &rest[2..];
                 continue;
             }
+            // No `[` after it ends the copy (`0x50ac91` -> `0x50ad30`), so a colour-only line logs empty.
             let Some(open) = rest.find('[') else {
                 break;
             };
