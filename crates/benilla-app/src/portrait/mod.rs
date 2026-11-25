@@ -63,18 +63,20 @@ use light::{model_pane_light, studio_light, BoothLight};
 pub(crate) mod test_bake;
 
 /// The round portrait slots, each with its own layer and camera. `"npc"` is an interaction
-/// interact target ([`crate::ui_session::InteractTarget`]); `"targettarget"` resolves only while drawn,
+/// interact target ([`crate::ui_session::InteractTarget`]), `"questnpc"` the quest window's giver
+/// ([`crate::ui_quest::QuestGiver::quest_npc`]); `"targettarget"` resolves only while drawn,
 /// and so do a party member's pet, `"partypetN"`, the vehicle, the focus and the loot source
 /// `SetLootPortrait` binds ([`benilla_ui::script::LOOT_PORTRAIT_UNIT`]).
 ///
 /// Deviation: a fixed list. The binding (`0x6113e0`) resolves any token through the `Unit*`
 /// resolver; a token off this list draws nothing.
-const SLOTS: [&str; 16] = [
+const SLOTS: [&str; 17] = [
     "player",
     "target",
     "targettarget",
     "pet",
     "npc",
+    "questnpc",
     "vehicle",
     "focus",
     "party1",
@@ -1343,9 +1345,10 @@ fn sync_portraits(
     mut env_cache: Local<Option<bool>>,
     mut cams: Query<(&BoothCam, &mut Transform, &mut Projection)>,
     anim_data: Option<Res<crate::creature_anim::AnimData>>,
-    (interact, index): (
+    (interact, index, quest_giver): (
         Res<crate::ui_session::InteractTarget>,
         Res<crate::net::GuidIndex>,
+        Option<NonSend<crate::ui_quest::QuestGiver>>,
     ),
     mut party: PartyBooths,
 ) {
@@ -1400,7 +1403,37 @@ fn sync_portraits(
                 }
                 entity
             }
-            "npc" => crate::ui_session::interact_entity(&interact, &index),
+            // The interaction NPC, and the quest window's giver (`0x6081b0`), which
+            // `QuestFrame_SetPortrait` binds. Only a unit bakes: the binding clears the texture
+            // for a held GameObject or item, and draws an unheld player's stand-in (`0x6113e0`).
+            "npc" | "questnpc" => {
+                let guid = if token == "npc" {
+                    interact.0
+                } else {
+                    quest_giver
+                        .as_deref()
+                        .and_then(crate::ui_quest::QuestGiver::quest_npc)
+                };
+                match guid
+                    .filter(|g| *g != 0)
+                    .map(|g| (g, index.0.get(&g).copied()))
+                {
+                    Some((_, Some(e))) => Some(e).filter(|e| {
+                        ent_q.get(*e).is_ok_and(|n| {
+                            matches!(
+                                n.kind,
+                                benilla_protocol::EntityKind::Player
+                                    | benilla_protocol::EntityKind::Unit
+                            )
+                        })
+                    }),
+                    Some((g, None)) => {
+                        (occupant, unseen) = unheld_subject(g, &party.names, &party.roster);
+                        None
+                    }
+                    None => None,
+                }
+            }
             // The seated player's transport (`0x60ac87`) and the focus `[0xbd07d0]`, each gated on
             // the UI drawing it: the stock vehicle art and the focus frame ship hidden.
             "vehicle" | "focus" => {

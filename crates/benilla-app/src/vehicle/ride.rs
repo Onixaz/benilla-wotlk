@@ -41,6 +41,8 @@ pub(crate) struct SeatRide {
     pub(super) anchor: Entity,
     /// The anchor's local transform as last written.
     local: Transform,
+    /// The vehicle's key-bone slot armed by this seat's `0x20000` ride loop (`0x756f80`), if any.
+    loop_bone: Option<u8>,
 }
 
 /// On a seat anchor: the passenger whose rig it carries, so it goes when the passenger does.
@@ -62,6 +64,31 @@ pub(crate) struct SeatPose {
     pub(crate) end: Option<u16>,
     /// The seat plays the end even falling, swimming or flying (`flags & 0x200000`).
     pub(crate) end_forced: bool,
+}
+
+/// On a vehicle: the whole-model ride loops seated passengers' `0x20000` seats play on it
+/// (`0x7489c0`, through `0x756f80`), keyed by seat index so exiting one seat never clears
+/// another seat's loop. Per-bone loops (`bone < 35`) live in [`benilla_world::rig_anim::KeyBoneAnims`].
+#[derive(Component, Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct VehicleSeatLoop(pub(crate) Vec<(u8, u16)>);
+
+impl VehicleSeatLoop {
+    /// The active whole-model seat ride loop anim, if any seat holds one.
+    pub(crate) fn active_anim(&self) -> Option<u16> {
+        self.0.last().map(|&(_, anim)| anim)
+    }
+
+    /// Arm `anim` for `seat`, replacing any prior entry for that seat.
+    pub(crate) fn set(&mut self, seat: u8, anim: u16) {
+        self.0.retain(|&(s, _)| s != seat);
+        self.0.push((seat, anim));
+    }
+
+    /// Clear `seat`'s entry; returns `true` when no seat loops remain.
+    pub(crate) fn clear(&mut self, seat: u8) -> bool {
+        self.0.retain(|&(s, _)| s != seat);
+        self.0.is_empty()
+    }
 }
 
 /// A seat anim column: `-1` and 506, the getters' "no anim", are none.
@@ -241,12 +268,15 @@ pub(super) fn ride_seats(
         ),
         Or<(With<Passenger>, With<SeatRide>)>,
     >,
-    vehicles: Query<
+    mut vehicles: Query<
         (
             &Vehicle,
             &GlobalTransform,
             Option<&BoneAttach>,
             Option<&MountChild>,
+            Option<&mut VehicleSeatLoop>,
+            Option<&benilla_assets::ModelAnimations>,
+            Option<&mut benilla_world::rig_anim::KeyBoneAnims>,
         ),
         Without<DespawnFade>,
     >,
@@ -255,7 +285,9 @@ pub(super) fn ride_seats(
     index: Res<GuidIndex>,
     tables: Res<VehicleTables>,
     creatures: Option<Res<crate::entities::Creatures>>,
+    anim_data: Option<Res<crate::creature_anim::AnimData>>,
 ) {
+    let catalog = anim_data.as_deref().map(|d| &d.0);
     for (entity, net, passenger, rider, ride, own_points, own_tf, in_transit, flags2) in &passengers
     {
         // Seated, or in the exit's pre-delay, which holds the seat (`0x74a7f0`).
@@ -263,7 +295,7 @@ pub(super) fn ride_seats(
             .filter(|p| p.state == SEATED || p.state == 4)
             .and_then(|p| Some((p, *index.0.get(&p.vehicle)?)));
         let wanted = seated.and_then(|(p, v)| {
-            let (vehicle, vehicle_tf, points, mount) = vehicles.get(v).ok()?;
+            let (vehicle, vehicle_tf, points, mount, ..) = vehicles.get(v).ok()?;
             let seat = tables.seat(vehicle.id, usize::from(p.seat))?;
             // The model the seat hangs from; a mount still building waits a frame.
             let (model, model_tf, points) = match mount {
@@ -273,7 +305,13 @@ pub(super) fn ride_seats(
                 }
                 None => (v, vehicle_tf, points),
             };
-            Some((p, v, seat, model, model_tf, points))
+            let j_offset = joint_offset(seat, points);
+            let attachment = usize::try_from(seat.attachment_id)
+                .ok()
+                .and_then(|i| SEAT_ATTACHMENTS.get(i))
+                .copied();
+            let seat_point = attachment.and_then(|a| points?.points.get(&a).copied());
+            Some((p, v, seat, model, *model_tf, j_offset, seat_point))
         });
         // Leave a seat the passenger left, or one whose vehicle went.
         if let Some(r) = ride {
@@ -302,10 +340,24 @@ pub(super) fn ride_seats(
                 } else {
                     commands.entity(entity).remove::<(SeatRide, SeatPose)>();
                 }
+                // Only this seat's own ride loop on the vehicle ends with the ride.
+                if let Ok((_, _, _, _, seat_loop, _, bone_anims)) = vehicles.get_mut(r.vehicle) {
+                    if let Some(kb) = r.loop_bone {
+                        if let Some(mut kba) = bone_anims {
+                            kba.stop(kb);
+                        }
+                    } else if let Some(mut seat_loop) = seat_loop {
+                        if seat_loop.clear(r.seat) {
+                            if let Ok(mut ec) = commands.get_entity(r.vehicle) {
+                                ec.remove::<VehicleSeatLoop>();
+                            }
+                        }
+                    }
+                }
                 continue;
             }
         }
-        let Some((p, vehicle, seat, model, vehicle_tf, points)) = wanted else {
+        let Some((p, vehicle, seat, model, vehicle_tf, j_offset, seat_point)) = wanted else {
             continue;
         };
         let facing = rider.map_or(0.0, |r| r.local_orientation);
@@ -316,7 +368,7 @@ pub(super) fn ride_seats(
             .and_then(|(bone, offset)| Some(poses.get(entity).ok()?.bind_pivot(bone)? + offset));
         let scale = own_tf.scale().x / vehicle_tf.scale().x.max(0.001);
         let local = seat_transform(seat, facing, scale, pivot);
-        let local = match joint_offset(seat, points) {
+        let local = match j_offset {
             Some(offset) => Transform {
                 translation: local.translation + offset,
                 ..local
@@ -350,19 +402,13 @@ pub(super) fn ride_seats(
         if poses.get(entity).is_err() {
             continue;
         }
-        let attachment = usize::try_from(seat.attachment_id)
-            .ok()
-            .and_then(|i| SEAT_ATTACHMENTS.get(i))
-            .copied();
-        let joint = attachment
-            .and_then(|a| points?.points.get(&a).copied())
-            .and_then(|(bone, offset)| {
-                let joint = poses
-                    .get_mut(model)
-                    .ok()?
-                    .anchor_for(&mut commands, model, bone)?;
-                Some((joint, offset))
-            });
+        let joint = seat_point.and_then(|(bone, offset)| {
+            let joint = poses
+                .get_mut(model)
+                .ok()?
+                .anchor_for(&mut commands, model, bone)?;
+            Some((joint, offset))
+        });
         // Under the attachment, or at the vehicle's own frame without one (`0x7490f0`'s tail).
         let parent = joint.map_or(model, |(joint, _)| joint);
         let anchor = commands
@@ -381,12 +427,50 @@ pub(super) fn ride_seats(
             "vehicle: passenger {entity} seated on its anchor, state {} anim {:?}",
             p.state, pose
         );
+        // A seat flagged `0x20000` loops its ride anim (column 35) on the vehicle while seated
+        // (`0x7489c0`, through `0x756f80`): on its key bone when `< 35` (excluding 26), else on
+        // the whole model.
+        let mut loop_bone = None;
+        if let Some(anim) = seat_anim(seat.vehicle_anims[2]).filter(|_| seat.flags & 0x2_0000 != 0)
+        {
+            if let Ok((_, _, _, _, seat_loop, anims, bone_anims)) = vehicles.get_mut(vehicle) {
+                match super::passenger::vehicle_anim_bone(seat.vehicle_anim_bones[2]) {
+                    Some(kb) => {
+                        if let Some(anims) = anims.filter(|a| a.pose.key_bone(kb).is_some()) {
+                            if let Some(clip) =
+                                crate::creature_anim::resolved_clip_index(anims, anim, catalog)
+                            {
+                                let duration = anims.clips[clip].duration;
+                                if let Some(mut kba) = bone_anims {
+                                    kba.play(kb, clip, duration, true);
+                                } else {
+                                    let mut kba = benilla_world::rig_anim::KeyBoneAnims::default();
+                                    kba.play(kb, clip, duration, true);
+                                    commands.entity(vehicle).insert(kba);
+                                }
+                                loop_bone = Some(kb);
+                            }
+                        }
+                    }
+                    None => {
+                        if let Some(mut seat_loop) = seat_loop {
+                            seat_loop.set(p.seat, anim);
+                        } else {
+                            commands
+                                .entity(vehicle)
+                                .insert(VehicleSeatLoop(vec![(p.seat, anim)]));
+                        }
+                    }
+                }
+            }
+        }
         commands.entity(entity).insert(SeatRide {
             vehicle,
             seat: p.seat,
             state: p.state,
             anchor,
             local,
+            loop_bone,
         });
         match pose {
             Some(pose) => commands.entity(entity).insert(pose),
@@ -556,5 +640,17 @@ mod tests {
         };
         let t = seat_transform(&s, 0.5, 1.0, None);
         assert!(t.rotation.angle_between(Quat::IDENTITY) < 1.0e-6);
+    }
+
+    /// Exiting one seat on a multi-seat vehicle leaves another seated passenger's ride loop intact.
+    #[test]
+    fn vehicle_seat_loop_tracks_each_seat_independently() {
+        let mut loops = VehicleSeatLoop::default();
+        loops.set(1, 111);
+        assert_eq!(loops.active_anim(), Some(111));
+        assert!(!loops.clear(0), "seat 0 had no loop; seat 1 remains");
+        assert_eq!(loops.active_anim(), Some(111));
+        assert!(loops.clear(1), "last loop cleared");
+        assert_eq!(loops.active_anim(), None);
     }
 }

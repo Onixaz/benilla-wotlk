@@ -12,7 +12,7 @@ mod pose;
 pub(crate) use compose::seed_rig_rows;
 pub use compose::{finalize_rig_worlds, PosePost};
 pub use global_seq::GlobalSeqDrive;
-pub use pose::{RigAnchor, RigFrame, RigPose};
+pub use pose::{KeyBoneAnim, KeyBoneAnims, RigAnchor, RigFrame, RigPose};
 
 /// Parks this rig's per-bone pose evaluation: the evaluator and the pose post-passes skip it,
 /// while the sequence clocks, the driver state machine and the event scanner keep running.

@@ -744,7 +744,12 @@ pub(super) fn control(
         let aim_pitch = cam.pitch + rig.smart_pivot.bias();
         if mouselook && aim_pitch != player.aim_pitch_seen {
             player.aim_pitch_seen = aim_pitch;
-            player.mover_pitch = aim_pitch.clamp(-MOUSELOOK_PITCH_CLAMP, MOUSELOOK_PITCH_CLAMP);
+            if rig.vehicle_pitch.is_none() {
+                player.mover_pitch = aim_pitch.clamp(-MOUSELOOK_PITCH_CLAMP, MOUSELOOK_PITCH_CLAMP);
+            }
+        }
+        if let Some(pitch) = rig.vehicle_pitch {
+            player.mover_pitch = pitch;
         }
         let mut swim_pitch = 0.0_f32;
         // Pre-step feet Y, the true take-off height: the step already rises one jump tick.
@@ -861,11 +866,15 @@ pub(super) fn control(
             now,
             launch_y,
         );
+        // `0x73dab0` runs the facing chase only for a living model with a twist bone, outside
+        // swimming/flying (`afloat`), a passenger's motion (states 2/5), and a fixed-facing vehicle.
+        let twists = body.single().is_ok_and(|q| q.8.is_some());
         let anim_flags = gait::drive_body_heading(
             &mut player,
             pose_flags,
             dt,
             afloat,
+            rig.vehicle_fixed_facing || dead || !twists,
             moving,
             airborne,
             turning || mouselook,
