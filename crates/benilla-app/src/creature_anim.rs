@@ -25,6 +25,10 @@ use select::{Mode, Special};
 mod twist;
 pub(crate) use twist::{wrap_pi, BodyTwist};
 
+/// The wheel spin, composed onto the wheel key bones (27-34) as the unit drives.
+mod wheels;
+pub(crate) use wheels::Wheels;
+
 /// Parks an off-frustum rig's pose while its clocks run, as the reference does not tick one; a
 /// parked unit's events fire only for a `MORE_AUDIBLE` template.
 mod lod;
@@ -1211,6 +1215,7 @@ impl Plugin for CreatureAnimPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
         twist::plugin(app);
+        wheels::plugin(app);
         lod::plugin(app);
         breath::register(app);
         // The breath classifier runs at its own 10 s cadence, outside the chain.

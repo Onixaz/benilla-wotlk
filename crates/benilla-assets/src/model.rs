@@ -284,6 +284,9 @@ pub struct ModelSkeleton {
     pub spine_bone: Option<u16>,
     /// The KeyBoneID 6 (Head) bone, which takes the rest of that twist.
     pub head_bone: Option<u16>,
+    /// The KeyBoneID 27-34 (wheel) bones, slot `i` for key bone `27 + i`: the unit's wheel mask
+    /// (`0x715fd0`), spun as the unit drives.
+    pub wheel_bones: [Option<u16>; 8],
 }
 
 /// Bake a [`Skeleton`] to Bevy space, with its inverse bind poses. A vanilla M2 has no
@@ -322,6 +325,7 @@ pub(crate) fn build_skeleton(skel: &Skeleton) -> (ModelSkeleton, Vec<Mat4>) {
             joints,
             spine_bone: key_bone(4),
             head_bone: key_bone(6),
+            wheel_bones: std::array::from_fn(|i| key_bone(27 + i as i16)),
         },
         inverse_bindposes,
     )
@@ -887,6 +891,7 @@ mod tests {
             joints: Vec::new(),
             spine_bone: None,
             head_bone: None,
+            wheel_bones: [None; 8],
         };
         let (clip, _pose, poses_bones) =
             build_animation_clip(&sequence(1.333, Vec::new()), &skeleton);
@@ -1009,6 +1014,37 @@ mod tests {
             2,
             "…and the palette faces them anyway: welding is not a gate on the arm"
         );
+    }
+
+    /// The wheel mask is the key bones 27-34 the model carries (`0x715fd0`): the IoC Demolisher has
+    /// four wheels (27-30), the Forsaken Catapult three (27-29), and neither has 31-34.
+    #[test]
+    fn the_wheel_mask_is_the_wheel_key_bones_the_model_carries() {
+        let data = benilla_formats::wow_data_or_skip!();
+        let chain = benilla_formats::open_chain(&data).expect("open chain");
+        for (path, want) in [
+            (
+                "Creature\\DemolisherVehicle\\DemolisherVehicle.m2",
+                [
+                    Some(28),
+                    Some(26),
+                    Some(29),
+                    Some(27),
+                    None,
+                    None,
+                    None,
+                    None,
+                ],
+            ),
+            (
+                "Creature\\ForsakenCatapult\\ForsakenCatapult.m2",
+                [Some(21), Some(23), Some(22), None, None, None, None, None],
+            ),
+        ] {
+            let bytes = benilla_formats::read_m2(&chain, path).expect("read the vehicle");
+            let (built, _) = build_skeleton(&benilla_formats::parse_m2_skeleton(&bytes));
+            assert_eq!(built.wheel_bones, want, "{path}");
+        }
     }
 
     /// `RidingHorse.m2`'s rider seat (attachment 0) rides bone 30, flags 0x6: the mount's root

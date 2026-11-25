@@ -257,6 +257,7 @@ mod tests {
             }],
             spine_bone: None,
             head_bone: None,
+            wheel_bones: [None; 8],
         };
         app.world_mut()
             .entity_mut(root)

@@ -1186,6 +1186,7 @@ mod tests {
             ],
             spine_bone: None,
             head_bone: None,
+            wheel_bones: [None; 8],
         };
         let ibp = Handle::default();
         // One skinned batch and one static one, through the same call.
@@ -1298,6 +1299,7 @@ mod tests {
             }],
             spine_bone: None,
             head_bone: None,
+            wheel_bones: [None; 8],
         };
         let stand = bevy::animation::graph::AnimationNodeIndex::new(1);
         let anims = benilla_assets::ModelAnimations {

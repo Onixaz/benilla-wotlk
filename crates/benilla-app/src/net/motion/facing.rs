@@ -102,6 +102,11 @@ impl DisplayFacing {
     pub(crate) fn deck(&self) -> Option<f32> {
         self.deck
     }
+
+    /// The damped turn's angular velocity (rad/s, positive turning left), the wheels' turn input.
+    pub(crate) fn velocity(&self) -> f32 {
+        self.velocity
+    }
 }
 
 /// The signed yaw the facing pump applied this frame (positive turns left), the client's shuffle

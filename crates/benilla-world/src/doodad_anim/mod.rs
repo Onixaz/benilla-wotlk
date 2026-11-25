@@ -801,6 +801,7 @@ mod tests {
                 .collect(),
             spine_bone: None,
             head_bone: None,
+            wheel_bones: [None; 8],
         }
     }
 

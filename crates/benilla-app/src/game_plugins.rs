@@ -924,7 +924,9 @@ pub(crate) mod schedule_tests {
     /// `place_cascades` reads the world camera's `GlobalTransform` after propagation against the
     /// nameplate, raid-mark and model-particle writers of other entities', and
     /// `mute_world_casters` reads new `Mesh3d`s against their writers, muting one a frame late.
-    const POST_UPDATE_CEILING: usize = 384;
+    /// The wheel spin adds 1: `spin_wheels` writes `RigPose` beside `apply_global_sequences`, which
+    /// keys no wheel bone on the vehicles that have them.
+    const POST_UPDATE_CEILING: usize = 385;
     const POST_UPDATE_SLACK: usize = 20;
     /// Whether the `PostUpdate` ratchet fails or only warns: off with every ceiling while #1245
     /// lands, which #1333 turns back on.
@@ -1318,7 +1320,8 @@ pub(crate) mod schedule_tests {
         // reference updates each unit's playing effects (`0x6f39b0`).
         ("Update", 663, 637),
         // Counts `apply_host_sequence` (ship state -> props), gated on `Changed<HostSequence>`.
-        ("PostUpdate", 183, 142),
+        // Counts `spin_wheels` (the wheel spin), gated on any unit with wheels.
+        ("PostUpdate", 184, 142),
         ("PreUpdate", 60, 60),
         ("First", 11, 8),
         ("RunFixedMainLoop", 7, 7),

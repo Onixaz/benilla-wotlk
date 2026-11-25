@@ -615,6 +615,7 @@ mod held_weapon_tests {
             }],
             spine_bone: None,
             head_bone: None,
+            wheel_bones: [None; 8],
         };
         dm.attachments = ids
             .iter()
