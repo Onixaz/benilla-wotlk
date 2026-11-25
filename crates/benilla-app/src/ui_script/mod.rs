@@ -294,26 +294,13 @@ pub(crate) struct UiInput;
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct UiDrain;
 
-/// The frame's atomic (`Instant`, `GetTime`) pair, the one base for mapping a store `Instant` onto
-/// `GetTime`: `anchor`'s steps are the VM clock's deltas, so a mapped start is stable frame to
-/// frame. Neither leg restarts with the VM: the reference's `GetTime` is `GetTickCount`, and stock
-/// `Cooldown.lua:3` gates on `start > 0`, so a reset would hide every running cooldown's sweep.
-#[derive(Resource)]
+/// The frame's `GetTime`, which does not restart with the VM: the reference's `GetTime` is
+/// `GetTickCount`, and stock `Cooldown.lua:3` gates on `start > 0`, so a reset would hide every
+/// running cooldown's sweep.
+#[derive(Resource, Default)]
 pub(crate) struct UiClock {
-    /// `Time<Real>::last_update()` at the tick that produced [`Self::ui_now`].
-    pub(crate) anchor: std::time::Instant,
-    /// The VM clock after that tick, in seconds since this process started.
+    /// The VM clock after the frame's tick, in seconds since this process started.
     pub(crate) ui_now: f64,
-}
-
-/// The pre-boot pair, replaced by [`lifecycle::seed_vm_clock`] at the first VM.
-impl Default for UiClock {
-    fn default() -> Self {
-        Self {
-            anchor: std::time::Instant::now(),
-            ui_now: 0.0,
-        }
-    }
 }
 
 /// The FrameXML digest this process loads, which the corpus harness stamps on each report.

@@ -440,6 +440,12 @@ impl SkillLineCatalog {
         }
     }
 
+    /// The same catalog with these line displays filed, for tests.
+    pub fn with_lines(mut self, lines: impl IntoIterator<Item = (u32, SkillLineInfo)>) -> Self {
+        self.lines.extend(lines);
+        self
+    }
+
     /// One line with its link flag and run, for tests.
     pub fn from_link_run_for_tests(line_id: u32, can_link: bool, run: Vec<LinkAbility>) -> Self {
         let mut s = Self::from_abilities([]);

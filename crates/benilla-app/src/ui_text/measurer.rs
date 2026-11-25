@@ -20,7 +20,7 @@ pub(crate) fn measure_request(
     r: &MeasureRequest,
 ) -> (f32, f32, f32) {
     let rs = seam * r.scale;
-    let spec = || super::FontSpec {
+    let spec = |wrap| super::FontSpec {
         path: r.font.as_deref(),
         // The render pass's drawn px: `GetStringWidth` and `GetStringHeight` report the drawn size.
         height: super::drawn_px(r.height, r.text_height, rs),
@@ -28,13 +28,15 @@ pub(crate) fn measure_request(
         outline: r.outline,
         alpha_gradient: None, // alpha never changes metrics
         spacing: r.spacing * rs,
+        wrap,
     };
     let wrap = r.wrap_width.map(|w| w * rs);
-    let (w, h) = super::measure_text(e, &r.text, wrap, spec());
-    // `GetStringWidth` answers the unwrapped width, which only a wrapped region needs a second pass
-    // for.
-    let natural = if wrap.is_some() {
-        super::measure_text(e, &r.text, None, spec()).0
+    let (w, h) = super::measure_text(e, &r.text, wrap, spec(r.wrap));
+    // `GetStringWidth` answers the extent, every line unwrapped whatever the wrap bits, which a
+    // wrapped or styled region needs a second pass for.
+    let plain = benilla_ui::script::TextWrap::default();
+    let natural = if wrap.is_some() || r.wrap != plain {
+        super::measure_text(e, &r.text, None, spec(plain)).0
     } else {
         w
     };
@@ -56,6 +58,7 @@ pub(crate) fn editbox_advances(
         outline: req.outline,
         alpha_gradient: None, // alpha never changes metrics
         spacing: req.spacing * seam * req.scale,
+        wrap: benilla_ui::script::TextWrap::default(),
     };
     let cum = super::line_advances(e, &req.text, spec)
         .iter()

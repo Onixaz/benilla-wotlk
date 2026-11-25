@@ -246,10 +246,7 @@ mod tests {
             .state
             .set_predicted(0x3f, 0x3e, None, 1, &[0.1; benilla_ui::script::RUNE_KINDS]);
         world.insert_resource(runes);
-        world.insert_resource(crate::ui_script::UiClock {
-            anchor: std::time::Instant::now(),
-            ui_now: 20.0,
-        });
+        world.insert_resource(crate::ui_script::UiClock { ui_now: 20.0 });
         world.init_resource::<UiEvents>();
         world.insert_resource(SelfGuid(Some(ME)));
         world

@@ -146,6 +146,9 @@ pub(super) struct MessageFont {
     pub(super) justify_h: JustifyH,
     /// The font's line gap (`SetSpacing`): lines step `height + spacing` (`0x968790`).
     pub(super) spacing: f32,
+    /// The frame font's indented word wrap (style bit `0x20000`), which each line's string
+    /// inherits from the frame font it is given (`0x969fa0`).
+    pub(super) indented: bool,
 }
 
 /// The FontString region holding a message frame's font, made on the first font-block call when
@@ -206,6 +209,7 @@ impl UiScript {
                         outline: d.outline,
                         justify_h: d.justify.paint_h(),
                         spacing: d.font_spacing,
+                        indented: model.frame_indented_wrap.contains(&(fh, 0)),
                     })
             })
             .unwrap_or(MessageFont {
@@ -215,6 +219,7 @@ impl UiScript {
                 outline: Outline::default(),
                 justify_h: JustifyH::Left,
                 spacing: 0.0,
+                indented: model.frame_indented_wrap.contains(&(fh, 0)),
             })
     }
 
@@ -287,6 +292,7 @@ impl UiScript {
                 wrap_width.to_bits().hash(&mut h);
                 (font.outline as u8).hash(&mut h);
                 scale.to_bits().hash(&mut h);
+                font.indented.hash(&mut h);
                 h.finish()
             };
             if model.msg_swept.get(&fh) == Some(&(lines_gen, env)) {
@@ -302,6 +308,7 @@ impl UiScript {
                 wrap_width.to_bits().hash(&mut hasher);
                 (font.outline as u8).hash(&mut hasher);
                 scale.to_bits().hash(&mut hasher);
+                font.indented.hash(&mut hasher);
                 let key = hasher.finish();
                 if line.rows_key == key {
                     continue;
@@ -312,6 +319,7 @@ impl UiScript {
                     font: font.path.clone(),
                     height: font.height,
                     wrap_width,
+                    indented: font.indented,
                     outline: font.outline,
                     scale,
                     text: line.text.clone(),
@@ -454,6 +462,10 @@ impl UiScript {
                     outline: font.outline,
                     alpha_gradient: None,
                     world_seat: false, // interface, not world
+                    wrap: super::TextWrap {
+                        indented: font.indented,
+                        ..super::TextWrap::default()
+                    },
                 },
                 scale: paint.scale,
             });

@@ -183,10 +183,7 @@ pub(super) fn rig(
     let mut vm = listening_vm();
     vm.set_now(10.0);
     world.insert_non_send_resource(vm);
-    world.insert_resource(crate::ui_script::UiClock {
-        anchor: Instant::now(),
-        ui_now: 10.0,
-    });
+    world.insert_resource(crate::ui_script::UiClock { ui_now: 10.0 });
     // No pet feed is left: the bar's and the book's events fire where they land.
     let feed = Schedule::default();
     let mut rig = Rig {

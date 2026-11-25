@@ -1361,6 +1361,7 @@ pub(super) fn measure_request_for(model: &mut Model, rh: RegionHandle) -> Option
     let d = model.region_data.get(&rh)?;
     let text = d.text.clone().filter(|t| !t.is_empty())?;
     let wrap_width = d.size.map(|s| s.0).filter(|w| *w > 0.0);
+    let wrap = model.text_wrap(d);
     let font = d.font_path.clone();
     let height = d.font_height;
     let text_height = d.text_height;
@@ -1373,6 +1374,7 @@ pub(super) fn measure_request_for(model: &mut Model, rh: RegionHandle) -> Option
         height,
         text_height,
         wrap_width,
+        wrap,
         outline,
         spacing,
         scale,
@@ -1399,7 +1401,7 @@ fn stale_measure_key(model: &Model, rh: RegionHandle) -> Option<(u64, f32)> {
         return None;
     }
     // The metric reads in `region.rs` check the stored measure against this same key.
-    let key = d.measure_key(scale);
+    let key = d.measure_key(scale, model.text_wrap(d));
     if d.measured.map(|m| m.key) == Some(key) {
         return None;
     }

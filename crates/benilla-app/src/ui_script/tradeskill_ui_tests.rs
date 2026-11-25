@@ -34,6 +34,7 @@ fn recipe(spell_id: u32, name: &str, group: TradeSkillGroup, slots: u32) -> Trad
         min_made: 1,
         max_made: 1,
         cooldown_end: None,
+        cooldown_on_hold: false,
         description: (!creates_item).then(|| format!("Permanently enchant: {name}.")),
         search_text: vec![name.to_lowercase()],
         reagents: vec![TradeSkillReagent {
@@ -254,7 +255,10 @@ fn the_stock_blacksmithing_window_creates_and_switches_lines() {
     assert_eq!(text(&s, "TradeSkillRankFrameSkillRank:GetText()"), "80/150");
 
     s.run("TradeSkillCreateAllButton:Click()").unwrap();
-    assert_eq!(s.take_trade_skill_casts(), [(2660, 3)]);
+    assert_eq!(
+        s.trade_skill_list_mut(|t| std::mem::take(&mut t.casts)),
+        [(2660, 3)]
+    );
     s.tick(0.0);
     assert_eq!(
         s.eval::<i64>("return TradeSkillInputBox:GetNumber()")
@@ -265,7 +269,11 @@ fn the_stock_blacksmithing_window_creates_and_switches_lines() {
 
     // The window's close button: the stock OnHide calls CloseTradeSkill.
     s.run("HideUIPanel(TradeSkillFrame)").unwrap();
-    assert!(s.take_trade_skill_close());
+    assert_eq!(
+        s.trade_skill_list_mut(|t| t.line),
+        0,
+        "the stock OnHide's CloseTradeSkill clears the line in its call"
+    );
     let errors = trade_skill_errors(s.take_errors());
     assert!(errors.is_empty(), "window errors: {errors:#?}");
 }

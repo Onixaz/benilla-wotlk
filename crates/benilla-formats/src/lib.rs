@@ -152,7 +152,11 @@ mod movie;
 pub use movie::{load_movies, MovieCatalog, MovieFile};
 mod bank_bag_slot_prices;
 mod creature_movement_info;
+mod object_effects;
 pub use creature_movement_info::{load_creature_movement_info, CreatureMovementInfo};
+pub use object_effects::{
+    load_object_effects, EffectGroup, ObjectEffect, ObjectEffectCatalog, EFFECT_SOUND,
+};
 mod currency;
 pub use bank_bag_slot_prices::{load_bank_bag_slot_prices, BankBagSlotPrices};
 pub use currency::{load_currency_tables, CurrencyCategory, CurrencyTables, CurrencyType};

@@ -184,7 +184,37 @@ pub enum QuadContent {
         /// (`super::nameplate::is_world_seated`), which slides on a device-pixel snap, so a second
         /// snap would jitter its text. Not a reference field.
         world_seat: bool,
+        /// The wrap style bits the text block lays the string out by.
+        wrap: TextWrap,
     },
+}
+
+/// The FontString style bits the text layout reads, as the text block's flag translation
+/// (`0x4bd870`) hands them on: `0x40` to `0x2`, `0x1000` to `0x40`, `0x20000` to `0x2000`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TextWrap {
+    /// Style bit `0x40` clear: the string wraps at its width. Set (`SetWordWrap(false)`), the
+    /// layout stops after its first line (`0x6c7f79`), cut at the last character that fits
+    /// (`0x6c2103`).
+    pub word_wrap: bool,
+    /// Style bit `0x1000` (`SetNonSpaceWrap`): after a cut inside a word, the fit count walks on
+    /// to the next line (`0x6c2124`); clear, it stops there (`0x6bd50b`).
+    pub non_space_wrap: bool,
+    /// Style bit `0x20000`, the indented word wrap: every line after the first wraps 15 screen
+    /// pixels narrower (`0x6c7ca6`) and sits that far in from a left (`0x6c7e25`) or right
+    /// (`0x6c7dc0`) edge; a centred one only narrows.
+    pub indented: bool,
+}
+
+impl Default for TextWrap {
+    /// The constructor's style `0x212` (`0x48530d`): word wrap on, the other two off.
+    fn default() -> Self {
+        Self {
+            word_wrap: true,
+            non_space_wrap: false,
+            indented: false,
+        }
+    }
 }
 
 /// A `FontString`'s horizontal justification (`justifyH`, `SetJustifyH`); CENTER by default.
@@ -322,6 +352,9 @@ pub struct FontObject {
     /// `SetIndentedWordWrap`, the style bit `0x20000` (`0x4a4a50`), off from the constructor's
     /// `0x212`; an inheriting FontString answers it until it sets its own.
     pub indented_word_wrap: bool,
+    /// The style bit `0x1000`, XML `nonspacewrap` alone (`0x497307`), off from the constructor's
+    /// `0x212`; an inheriting FontString answers it until it sets its own.
+    pub non_space_wrap: bool,
 }
 
 /// One entry of [`UiScript::extract`](super::UiScript::extract)'s render list, in the client's
@@ -421,15 +454,15 @@ pub(crate) struct RegionData {
     /// file without waiting on its read. Every benilla texture load already works that way, so the
     /// bit is read by its getter alone.
     pub(crate) non_blocking: bool,
-    /// `SetWordWrap(false)`, the font string's style bit `0x40`. Stored, not applied: the reference
-    /// then lays the text out on one line; here it still wraps at the rect's width.
+    /// `SetWordWrap(false)`, the font string's style bit `0x40`: the text is laid out on one line,
+    /// cut at the rect's width ([`TextWrap::word_wrap`]).
     pub(crate) no_word_wrap: bool,
     /// The style bit `0x20000`, the indented word wrap, set through the FontString's
-    /// `GetIndentedWordWrap` (12340 registers the pair swapped); `None` reads its font object's.
-    /// Stored, not applied: a wrapped line's indent is not drawn.
+    /// `GetIndentedWordWrap` (12340 registers the pair swapped); `None` reads its font object's
+    /// ([`TextWrap::indented`]).
     pub(crate) indented_word_wrap: Option<bool>,
-    /// `SetNonSpaceWrap`/`CanNonSpaceWrap`, `None` on. Stored, not applied: the reference's flag
-    /// `0x40` drives a mid-word wrap and the ellipsis fit count.
+    /// `SetNonSpaceWrap`/`CanNonSpaceWrap`, `None` off as the constructor's `0x212` leaves bit
+    /// `0x1000`: the one-line layout's fit count reads it ([`TextWrap::non_space_wrap`]).
     pub(crate) non_space_wrap: Option<bool>,
     /// The client's dword at the font string's `+0x120`: bits 0-2 horizontal, 3-5 vertical, `0x212`
     /// from the constructor. A cleared axis answers `"UNKNOWN"` to the getter and draws centred.
@@ -532,14 +565,14 @@ impl RegionData {
     /// The measure-cache key of the text, font, wrap width, outline and owner scale. A Lua metric
     /// read treats a measure under another key as absent; the layout keeps the old box until the
     /// new one lands, except for empty text, which is never measured.
-    pub(crate) fn measure_key(&self, scale: f32) -> u64 {
+    pub(crate) fn measure_key(&self, scale: f32, wrap: TextWrap) -> u64 {
         // By reference: `String` hashes as `str` does, and this runs for every FontString every
         // frame, so a clone would allocate for nothing.
-        self.measure_key_of(self.text.as_deref().unwrap_or(""), scale)
+        self.measure_key_of(self.text.as_deref().unwrap_or(""), scale, wrap)
     }
 
     /// [`Self::measure_key`] with `text` in place of the region's own.
-    pub(crate) fn measure_key_of(&self, text: &str, scale: f32) -> u64 {
+    pub(crate) fn measure_key_of(&self, text: &str, scale: f32, wrap: TextWrap) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         text.hash(&mut hasher);
@@ -552,6 +585,8 @@ impl RegionData {
         (self.outline as u8).hash(&mut hasher);
         self.font_spacing.to_bits().hash(&mut hasher);
         scale.to_bits().hash(&mut hasher);
+        // The wrap bits change the line count, and the indent the continuation lines' width.
+        wrap.hash(&mut hasher);
         hasher.finish()
     }
 }
@@ -621,6 +656,8 @@ pub struct MeasureRequest {
     pub text_height: Option<f32>,
     /// Set when the region's width is pinned (explicit `<Size x>`), else single-line.
     pub wrap_width: Option<f32>,
+    /// The FontString's wrap style bits.
+    pub wrap: TextWrap,
     /// A THICK outline adds 1 px to every glyph step.
     pub outline: Outline,
     /// The line gap in logical px (`SetSpacing`), added between wrapped lines.
@@ -647,6 +684,9 @@ pub struct LineMeasureRequest {
     pub height: Option<f32>,
     /// The frame's inner width: already scale-multiplied, unlike `height`, the font's own size.
     pub wrap_width: f32,
+    /// The frame font's indented word wrap (style bit `0x20000`), which narrows every row after
+    /// the first.
+    pub indented: bool,
     pub outline: Outline,
     /// As for [`MeasureRequest::scale`].
     pub scale: f32,

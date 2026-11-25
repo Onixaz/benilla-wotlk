@@ -261,6 +261,10 @@ fn on_spell_learned(
                 spell: spell_id,
                 replaces: None,
             }));
+            // Past the registrar our player's add files a recipe and rebuilds whole (`0x6e7b52`, then `0x6e7c1a`).
+            if is_recipe(l.spells.as_deref(), spell_id) {
+                l.ui.world(move |w| crate::ui_tradeskill::recipe_learned(w, spell_id));
+            }
         }
         // The totem lists, and a live learn's refill (`0x542d33`, `0x542df1`).
         let display = l
@@ -287,6 +291,13 @@ fn on_spell_learned(
             l.ui.world(move |world| learn_place_step(world, spell_id, page));
         }
     }
+}
+
+/// Whether the spell's row carries `SPELL_ATTR_IS_TRADESKILL` (`0x6e7bdb`).
+fn is_recipe(spells: Option<&Spells>, spell_id: u32) -> bool {
+    spells
+        .and_then(|s| s.catalog.get(spell_id))
+        .is_some_and(|d| d.attributes & benilla_formats::SPELL_ATTR_IS_TRADESKILL != 0)
 }
 
 /// The tutorial a live learn into a tab raises after its flash (`0x542d1b`).
@@ -323,29 +334,46 @@ fn place_first_rank(
     bar.write_slot(slot, packed, net).then_some(slot)
 }
 
-fn on_spell_removed(In(ev): In<SessionEvent>, mut l: Lifecycle, mut commands: Commands) {
+fn on_spell_removed(In(ev): In<SessionEvent>, mut l: Lifecycle, commands: Commands) {
+    let SessionEvent::SpellRemoved { spell_id } = ev else {
+        return;
+    };
+    let recipe = our_object_exists(&l) && is_recipe(l.spells.as_deref(), spell_id);
+    if recipe {
+        // Our player's removal (`0x6e7878` -> `0x6e71d0`) rebuilds a recipe's list (`0x6e72e6`) before the book removal (`0x6e7361`), so its listeners still find the recipe in the known list.
+        l.ui.world(move |w| crate::ui_tradeskill::recipe_removed(w, spell_id));
+        l.ui.world(move |w| {
+            if let Err(e) = w.run_system_cached_with(spell_removed, spell_id) {
+                error!("net: the spell removal did not run: {e}");
+            }
+        });
+    } else {
+        spell_removed(In(spell_id), l, commands);
+    }
+}
+
+/// The book's side of `SMSG_REMOVED_SPELL`, from the known-spell removal (`0x6e7361` -> `0x53fad0`) on.
+fn spell_removed(In(spell_id): In<u32>, mut l: Lifecycle, mut commands: Commands) {
     refill_in_turn(&mut commands);
-    if let SessionEvent::SpellRemoved { spell_id } = ev {
-        // The known-spell removal drops a companion from its list (`0x53fad0`); before our object exists it zeroes the buffer's entry (`0x6e7888`).
-        let exists = our_object_exists(&l);
-        if !exists {
-            l.known_buffer.0.retain(|&s| s != spell_id);
-        } else {
-            companion_remove(&mut l, spell_id);
-        }
-        // The removal's first argument: whether the spell was in the known list (`0x53fbe2`).
-        let held = l.actions.spells.contains(&spell_id);
-        removed_spell(spell_id, &mut l.actions, l.spells.as_deref(), &mut *l.ui);
-        unlearn_totem(&mut l.multicast, spell_id);
-        // The plain unlearn drops its stance entry (`0x53fe44`, notify clear, `0x6e7361`).
-        if exists {
-            use crate::ui_action::usable_cache::{edit_step, ListEdit};
-            l.ui.world(edit_step(ListEdit::Remove(spell_id)));
-        }
-        // The removal ends in the book update, a spell it held or not (`0x5401b8`).
-        if exists {
-            l.update_book(&LearnedInTab::default(), held);
-        }
+    // The known-spell removal drops a companion from its list (`0x53fad0`); before our object exists it zeroes the buffer's entry (`0x6e7888`).
+    let exists = our_object_exists(&l);
+    if !exists {
+        l.known_buffer.0.retain(|&s| s != spell_id);
+    } else {
+        companion_remove(&mut l, spell_id);
+    }
+    // The removal's first argument: whether the spell was in the known list (`0x53fbe2`).
+    let held = l.actions.spells.contains(&spell_id);
+    removed_spell(spell_id, &mut l.actions, l.spells.as_deref(), &mut *l.ui);
+    unlearn_totem(&mut l.multicast, spell_id);
+    // The plain unlearn drops its stance entry (`0x53fe44`, notify clear, `0x6e7361`).
+    if exists {
+        use crate::ui_action::usable_cache::{edit_step, ListEdit};
+        l.ui.world(edit_step(ListEdit::Remove(spell_id)));
+    }
+    // The removal ends in the book update, a spell it held or not (`0x5401b8`).
+    if exists {
+        l.update_book(&LearnedInTab::default(), held);
     }
 }
 
@@ -495,7 +523,23 @@ fn on_spell_superceded(
                 spell: new_spell_id,
                 replaces: Some(old_spell_id),
             }));
-            l.update_book(&flash, true);
+            // The registrar returns before its book update for a hidden spell or a recipe (`0x54265c`, `0x542692`).
+            let hidden_or_recipe = l
+                .spells
+                .as_deref()
+                .and_then(|s| s.catalog.get(new_spell_id))
+                .is_some_and(|d| {
+                    d.attributes & (ATTR_DO_NOT_DISPLAY | benilla_formats::SPELL_ATTR_IS_TRADESKILL)
+                        != 0
+                });
+            if !hidden_or_recipe {
+                l.update_book(&flash, true);
+            }
+            // Then our player's removal (`0x6e7e81`): the list rebuilds (`0x6e72e6`), then the book update (`0x6e7361`; bar and cursor legs #1351).
+            l.ui.world(move |w| crate::ui_tradeskill::recipe_removed(w, old_spell_id));
+            l.update_book(&LearnedInTab::default(), false);
+            // Then our player's add (`0x6e7e92`): a recipe joins its array and rebuilds (`0x6e7c1a`).
+            l.ui.world(move |w| crate::ui_tradeskill::recipe_learned(w, new_spell_id));
         }
     }
 }
@@ -1420,11 +1464,13 @@ fn learned_spell(
             }
         }
     }
+    let recipe =
+        display.is_some_and(|d| d.attributes & benilla_formats::SPELL_ATTR_IS_TRADESKILL != 0);
     if let Some(d) = display {
         if d.attributes & ATTR_DO_NOT_DISPLAY != 0 {
             return None;
         }
-        if d.attributes & benilla_formats::SPELL_ATTR_IS_TRADESKILL != 0 {
+        if recipe {
             announce_learn(spell_id, spells, errors);
             return None;
         }
@@ -1501,7 +1547,7 @@ fn removed_spell(
     spell_id: u32,
     actions: &mut PlayerActions,
     spells: Option<&Spells>,
-    errors: &mut dyn crate::ui_action::signals::SignalSink,
+    errors: &mut dyn LearnOut,
 ) {
     debug!("net: removed spell {spell_id}");
     if actions.spells.remove(&spell_id) {
@@ -2696,6 +2742,46 @@ mod tests {
         );
         assert_eq!(bar.buttons[&0].action, 143, "the rank replaced in place");
         assert_eq!(order.0, ["slot 0", "ERR_LEARN_SPELL_S"]);
+    }
+
+    /// The registrar (`0x6e7b52` -> `0x542030`) announces a learned recipe (`0x542679`) and skips a
+    /// hidden one (`0x54265c`); the list's rebuild is the handler's later step (`0x6e7c1a`).
+    #[test]
+    fn a_learned_recipe_announces_unless_hidden() {
+        for (attributes, expect) in [
+            (
+                benilla_formats::SPELL_ATTR_IS_TRADESKILL,
+                &["ERR_LEARN_RECIPE_S"][..],
+            ),
+            (
+                benilla_formats::SPELL_ATTR_IS_TRADESKILL | ATTR_DO_NOT_DISPLAY,
+                &[][..],
+            ),
+        ] {
+            let spells = catalog_with(
+                3275,
+                benilla_formats::SpellDisplay {
+                    name: "Linen Bandage".to_string(),
+                    attributes,
+                    ..Default::default()
+                },
+            );
+            let mut order = LearnOrder::default();
+            learned_spell(
+                3275,
+                (
+                    &mut PlayerActions::default(),
+                    &mut crate::ui_action::ActionSlots::default(),
+                ),
+                Some(&spells),
+                &mut order,
+                &mut LearnedInTab::default(),
+                live(),
+                &no_bar(),
+                &Default::default(),
+            );
+            assert_eq!(order.0, expect, "attributes {attributes:#x}");
+        }
     }
 
     /// Heroic Strike carries `SPELL_ATTR_ABILITY`, so the reference lands on `0x38`, the ability

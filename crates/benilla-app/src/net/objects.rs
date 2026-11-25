@@ -196,7 +196,7 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
         if sc.self_guid.0 == Some(guid) && kind == EntityKind::Player {
             sc.ui.fire("TABARD_CANSAVE_CHANGED", Vec::new());
         }
-        // Our own create's init replays the known-spell buffer into the companion lists and updates them (`0x6e8378` -> `0x6e7f50`), ahead of the control below.
+        // Our own create's init replays the known-spell buffer into the companion lists and updates them, and files the recipes by line (`0x6e8378` -> `0x6e7f50`), ahead of the control below.
         if sc.self_guid.0 == Some(guid) {
             let me = (
                 fields.unit_race().unwrap_or(0),
@@ -623,6 +623,12 @@ fn record_callback(sc: &mut Scene, entry: u32, landed: bool, wait: crate::items:
                 sc.ui.fire("TRAINER_DESCRIPTION_UPDATE", Vec::new());
             }
         }
+        // The list's product callback counts down whatever the answer (`0x5d9f80`).
+        RecordWait::TradeSkillList => sc.ui.world(crate::ui_tradeskill::list_record_callback),
+        // A reagent's or tool's rebuilds on a found record (`0x5de103`).
+        RecordWait::TradeSkillItem => sc
+            .ui
+            .world(move |world| crate::ui_tradeskill::item_record_callback(world, landed)),
         // The petition vendor's callback fires on a found record (`0x5a1f30`).
         RecordWait::PetitionVendor => {
             if landed {
@@ -1907,8 +1913,9 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     // (`0x722c50` -> `0x53d1b0`).
     let target = sc.selection.as_deref().and_then(|s| s.guid);
     if sc.self_guid.0 != Some(guid) {
-        // Another player's visible entry watch (`0x6e1e10`): the alert recompute (`0x6e1ea4`), the rest ours alone (`0x6e1eb6`).
+        // Another player's visible entry watch (`0x6e1e10`): the trade-skill list's refresh in place (`0x6e1e9c`), the alert recompute (`0x6e1ea4`), the rest ours alone (`0x6e1eb6`).
         for _ in 0..merged.other_visible_entries {
+            sc.ui.world(crate::ui_tradeskill::refresh_in_place);
             sc.ui.world(crate::ui_char::update_inventory_alerts);
         }
         if merged.aura_state_moved && target == Some(guid) {
@@ -2117,12 +2124,13 @@ fn visible_item_field(index: u16) -> Option<(u8, bool)> {
     (r < 38).then_some(((r / 2) as u8, r % 2 == 0))
 }
 
-/// Our visible entry watch on `slot` (`0x6e1e10`), the entry moved by magnitude or sign (`0x6e1e56`-`0x6e1e7e`): the alert recompute (`0x6e1ea4`), then ours alone, the bar's usable update and its item updates for the old then the new entry (`0x6e1ec2`, `0x6e1ed2`, `0x6e1ee2`); the main hand's `UNIT_ATTACK` then its book update (`0x6e1f2c`, `0x6e1f37`), the off hand's `UNIT_ATTACK` (`0x6e1f21`), the ranged slot's `UNIT_RANGED_ATTACK_POWER` then its book update (`0x6e1f08`, `0x6e1f13`). The trade-skill refresh ahead of the alerts (`0x6e1e9c`) is the trade-skill module's.
+/// Our visible entry watch on `slot` (`0x6e1e10`), the entry moved by magnitude or sign (`0x6e1e56`-`0x6e1e7e`): the alert recompute (`0x6e1ea4`), then ours alone, the bar's usable update and its item updates for the old then the new entry (`0x6e1ec2`, `0x6e1ed2`, `0x6e1ee2`); the main hand's `UNIT_ATTACK` then its book update (`0x6e1f2c`, `0x6e1f37`), the off hand's `UNIT_ATTACK` (`0x6e1f21`), the ranged slot's `UNIT_RANGED_ATTACK_POWER` then its book update (`0x6e1f08`, `0x6e1f13`); the trade-skill list's refresh in place ahead of the alerts (`0x6e1e9c`).
 fn visible_entry_watch(sc: &mut Scene, slot: u8, old: u32, new: u32) {
     let (old, new) = (old as i32, new as i32);
     if old.unsigned_abs() == new.unsigned_abs() && (old > 0) == (new > 0) {
         return;
     }
+    sc.ui.world(crate::ui_tradeskill::refresh_in_place);
     sc.ui.world(crate::ui_char::update_inventory_alerts);
     sc.ui.world(crate::ui_action::usable_cache::step(
         crate::ui_action::usable_cache::Pass::Bar,
@@ -3073,7 +3081,8 @@ fn item_disable_watch(sc: &mut Scene, guid: u64) {
     if owner.is_none() || owner != sc.self_guid.0 {
         return;
     }
-    // The bar's item update (`0x70b0d0`) before the walk.
+    // The trade-skill list's refresh in place (`0x70b0c4`), then the bar's item update (`0x70b0d0`) before the walk.
+    sc.ui.world(crate::ui_tradeskill::refresh_in_place);
     sc.ui
         .world(move |world| crate::ui_action::slots::update_item(world, entry));
     let me = sc.self_guid.0.is_some_and(|g| sc.index.0.contains_key(&g));

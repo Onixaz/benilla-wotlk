@@ -206,10 +206,44 @@ pub(crate) struct CompanionInit<'w> {
     actions: Res<'w, crate::ui_action::PlayerActions>,
 }
 
-/// The active player's init (`0x6e7f50`), run as our object is created with its race, class and form byte: the lists cleared (`0x6e7f9d`), each buffered spell added without a line, the stance list among them, the book update with its re-sort and masks (`0x6e7fdb`), then one companion update (`0x6e7fe3`); shapeshifted, the usable update (`0x6e8059`), the selection update (`0x6e805e`), the form's preset bar and the bonus update (`0x6e8063`, `0x6e8068`), then `UPDATE_SHAPESHIFT_FORM` (`0x6e8074`).
+/// The active player's init (`0x6e7f50`), run as our object is created with its race, class and form byte: the lists cleared (`0x6e7f9d`), then each buffered spell's add at its own step (`0x6e7fb0`-`0x6e7fd3` -> `0x6e7fc5`), then the tail.
 pub(crate) fn active_player_init(In((race, class, form)): In<(u8, u8, u8)>, init: CompanionInit) {
     let CompanionInit {
         buffer,
+        mut lists,
+        mut ui,
+        mut book,
+        ..
+    } = init;
+    book.set_race_class(race, class);
+    book.clear_registered();
+    {
+        use crate::ui_action::usable_cache::{edit_step, ListEdit};
+        ui.world(edit_step(ListEdit::Rebuild));
+    }
+    *lists = CompanionLists::default();
+    ui.world(crate::ui_tradeskill::clear_recipes);
+    for &spell_id in &buffer.0 {
+        ui.world(move |world: &mut World| init_add(world, spell_id, race, class));
+    }
+    ui.world(move |world: &mut World| {
+        if let Err(e) = world.run_system_cached_with(active_player_init_tail, form) {
+            warn!("companions: the active player's init tail did not run: {e}");
+        }
+    });
+}
+
+/// One buffered spell's add without a line (`0x6e7fc5` -> `0x6e7b00`): its companion arm, then a recipe's line and whole rebuild, whose update fires before the next add.
+fn init_add(world: &mut World, spell_id: u32, race: u8, class: u8) {
+    if let Err(e) = world.run_system_cached_with(init_add_companion, (spell_id, race, class)) {
+        warn!("companions: the init's add of {spell_id} did not run: {e}");
+    }
+    crate::ui_tradeskill::recipe_learned(world, spell_id);
+}
+
+/// The add's companion arm for one buffered spell, its tutorial triggered (`0x542751`).
+fn init_add_companion(In((spell_id, race, class)): In<(u32, u8, u8)>, init: CompanionInit) {
+    let CompanionInit {
         mut lists,
         spells,
         summons,
@@ -218,62 +252,19 @@ pub(crate) fn active_player_init(In((race, class, form)): In<(u8, u8, u8)>, init
         skill_lines,
         mut ui,
         mut tutorials,
-        mut book,
-        mut schools,
-        actions,
+        ..
     } = init;
-    book.set_race_class(race, class);
-    book.clear_registered();
-    {
-        use crate::ui_action::usable_cache::{edit_step, ListEdit};
-        ui.world(edit_step(ListEdit::Rebuild));
-    }
-    // Shapeshifted only (`0x6e8050`-`0x6e8057`): a form row that is no stance; a form the table
-    // lacks is none.
-    let shifted = spells
-        .as_deref()
-        .and_then(|s| s.forms.get(&u32::from(form)))
-        .is_some_and(|row| crate::spell::validator::is_shapeshifted(form, row.flags));
-    // The stored action table goes on the bar (`0x6e8000`-`0x6e8046`), then the shapeshifted tail.
-    let tail = move |ui: &mut UiEvents| {
-        ui.world(crate::spell::net::put_action_table);
-        if shifted {
-            ui.world(crate::ui_action::usable_cache::step(
-                crate::ui_action::usable_cache::Pass::Full,
-            ));
-            crate::ui_action::signals::selection(ui);
-            // The form's preset bar and the bonus update (`0x6e8063`, `0x6e8068`).
-            ui.world(crate::ui_action::bonus::form_changed);
-            ui.fire("UPDATE_SHAPESHIFT_FORM", Vec::new());
-        }
-    };
-    let mut update_book = |ui: &mut UiEvents| {
-        let inputs = crate::ui_spellbook::BookInputs {
-            known: &actions.spells,
-            spells: spells.as_deref(),
-            summons: summons.as_deref().map_or(&EMPTY_SUMMONS, |s| &s.0),
-            skill_lines: skill_lines.as_deref().map(|s| &*s.catalog),
-        };
-        // Our object's init passes its first argument set (`0x6e7fd5`).
-        book.update(&inputs, &mut schools, ui, true);
-    };
     let (Some(spells), Some(summons), Some(names), Some(commands)) = (
         spells.as_deref(),
         summons.as_deref(),
         names.as_deref(),
         commands.as_deref(),
     ) else {
-        *lists = CompanionLists::default();
-        update_book(&mut ui);
-        tail(&mut ui);
         return;
     };
-    let line_of = |id: u32| {
-        skill_lines
-            .as_deref()
-            .and_then(|s| s.catalog.spell_to_line(id, race, class))
-    };
-    let known: Vec<_> = buffer.0.iter().map(|&id| (id, line_of(id))).collect();
+    let line = skill_lines
+        .as_deref()
+        .and_then(|s| s.catalog.spell_to_line(spell_id, race, class));
     let mut cx = CompanionCx {
         catalog: &spells.catalog,
         summons: &summons.0,
@@ -281,30 +272,69 @@ pub(crate) fn active_player_init(In((race, class, form)): In<(u8, u8, u8)>, init
         commands,
         ui: &mut ui,
     };
-    let tutorial_ids = add_initial(&mut lists, known, &mut cx, update_book);
-    tail(&mut ui);
-    for id in tutorial_ids {
-        if let Some(t) = tutorials.as_mut() {
-            t.write(crate::tutorial::TutorialEvent::trigger(id));
-        }
+    let tutorial = add_known(&mut lists, spell_id, false, line, &mut cx);
+    if let (Some(id), Some(t)) = (tutorial, tutorials.as_mut()) {
+        t.write(crate::tutorial::TutorialEvent::trigger(id));
     }
 }
 
-/// The init's adds: the lists cleared (`0x6e7f9d`), each known spell added without a line, then one update.
-pub(crate) fn add_initial(
-    lists: &mut CompanionLists,
-    known: impl IntoIterator<Item = (u32, Option<u32>)>,
-    cx: &mut CompanionCx,
-    before_update: impl FnOnce(&mut UiEvents),
-) -> Vec<u32> {
-    *lists = CompanionLists::default();
-    let tutorials = known
-        .into_iter()
-        .filter_map(|(spell_id, line)| add_known(lists, spell_id, false, line, cx))
-        .collect();
-    before_update(cx.ui);
-    cx.update(lists, None);
-    tutorials
+/// The init after its adds: the book update with its re-sort and masks (`0x6e7fdb`), then one companion update (`0x6e7fe3`); shapeshifted, the usable update (`0x6e8059`), the selection update (`0x6e805e`), the form's preset bar and the bonus update (`0x6e8063`, `0x6e8068`), then `UPDATE_SHAPESHIFT_FORM` (`0x6e8074`).
+fn active_player_init_tail(In(form): In<u8>, init: CompanionInit) {
+    let CompanionInit {
+        mut lists,
+        spells,
+        summons,
+        names,
+        commands,
+        skill_lines,
+        mut ui,
+        mut book,
+        mut schools,
+        actions,
+        ..
+    } = init;
+    {
+        let inputs = crate::ui_spellbook::BookInputs {
+            known: &actions.spells,
+            spells: spells.as_deref(),
+            summons: summons.as_deref().map_or(&EMPTY_SUMMONS, |s| &s.0),
+            skill_lines: skill_lines.as_deref().map(|s| &*s.catalog),
+        };
+        // Our object's init passes its first argument set (`0x6e7fd5`).
+        book.update(&inputs, &mut schools, &mut ui, true);
+    }
+    if let (Some(spells), Some(summons), Some(names), Some(commands)) = (
+        spells.as_deref(),
+        summons.as_deref(),
+        names.as_deref(),
+        commands.as_deref(),
+    ) {
+        CompanionCx {
+            catalog: &spells.catalog,
+            summons: &summons.0,
+            names,
+            commands,
+            ui: &mut ui,
+        }
+        .update(&mut lists, None);
+    }
+    // The stored action table goes on the bar (`0x6e8000`-`0x6e8046`), then the shapeshifted tail.
+    ui.world(crate::spell::net::put_action_table);
+    // Shapeshifted only (`0x6e8050`-`0x6e8057`): a form row that is no stance; a form the table
+    // lacks is none.
+    let shifted = spells
+        .as_deref()
+        .and_then(|s| s.forms.get(&u32::from(form)))
+        .is_some_and(|row| crate::spell::validator::is_shapeshifted(form, row.flags));
+    if shifted {
+        ui.world(crate::ui_action::usable_cache::step(
+            crate::ui_action::usable_cache::Pass::Full,
+        ));
+        crate::ui_action::signals::selection(&mut ui);
+        // The form's preset bar and the bonus update (`0x6e8063`, `0x6e8068`).
+        ui.world(crate::ui_action::bonus::form_changed);
+        ui.fire("UPDATE_SHAPESHIFT_FORM", Vec::new());
+    }
 }
 
 /// The known-spell removal's companion arm (`0x53fad0`): a listed spell leaves its list, then the update and `COMPANION_UNLEARNED`.

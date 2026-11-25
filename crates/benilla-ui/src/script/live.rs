@@ -1603,6 +1603,72 @@ pub trait LiveState {
     /// The setter's zero (`0x59411b`): the trainer and its records.
     fn trainer_zero(&mut self) {}
 
+    /// The client's tradeskill window at the call (`0xc235a0`-`0xc23604`); `None` where no view lends it.
+    fn trade_skill(&self) -> Option<&super::TradeSkillList> {
+        None
+    }
+
+    /// The tradeskill window, written by a verb inside its call; `None` where no view lends it.
+    fn trade_skill_mut(&mut self) -> Option<&mut super::TradeSkillList> {
+        None
+    }
+
+    /// The open line's `SkillLine.dbc` names and the player's ranks of it at the call (`0x5db810`).
+    fn trade_skill_line(&self) -> super::TradeSkillLineView {
+        super::TradeSkillLineView::default()
+    }
+
+    /// Recipe `spell_id`'s spell record read at the call (`0x5db2a0`, `0x5db550`, `0x5db6e0`); `None` without a record.
+    fn trade_skill_recipe(&self, _spell_id: u32) -> Option<super::TradeSkillRecipeView> {
+        None
+    }
+
+    /// Reagent `item` of recipe `spell_id` at the call (`0x5de400`): its record asked with the list's item callback (`0x5de50d` -> `0x5de100`), and the bags' count of it (`0x754d00`).
+    fn trade_skill_reagent(&mut self, _spell_id: u32, _item: u32) -> super::TradeSkillReagentView {
+        super::TradeSkillReagentView::default()
+    }
+
+    /// Recipe `spell_id`'s requirements at the call (`0x5de620`): `(name, has)` for the spell focus and the required area, both met, then the tools asked with the list's item callback and the tool categories, each tested against the bags.
+    fn trade_skill_tools(&mut self, _spell_id: u32) -> Vec<(String, bool)> {
+        Vec::new()
+    }
+
+    /// Recipe `spell_id`'s description parsed at the call (`0x5dbe10`), `None` for none.
+    fn trade_skill_description(
+        &self,
+        _spell_id: u32,
+        _global: GlobalStrings<'_>,
+    ) -> Option<String> {
+        None
+    }
+
+    /// Recipe `spell_id`'s cooldown at the call (`0x5da9a0`), as [`Self::spell_cooldown`] reads it.
+    fn trade_skill_cooldown(
+        &self,
+        spell_id: u32,
+        anchor: std::time::Instant,
+        ui_now: f64,
+    ) -> Option<(i64, u32, bool)> {
+        self.spell_cooldown(spell_id, anchor, ui_now)
+    }
+
+    /// The open line's `|Htrade:` link built at the call (`0x5dc0b0` -> `0x5db060`), `None` when it cannot link.
+    fn trade_skill_list_link(&self) -> Option<String> {
+        None
+    }
+
+    /// The text filter (`0x5dc110`) on recipe `spell_id` at the call: the product's required level within `min`..`max` (0 open), then `name`, folded, found in the product's, the recipe's, its reagents', tools' and focus' texts.
+    fn trade_skill_filter_spell(
+        &self,
+        _spell_id: u32,
+        _min: i32,
+        _max: i32,
+        _name: Option<&str>,
+        _global: GlobalStrings<'_>,
+    ) -> bool {
+        true
+    }
+
     /// Our coinage at the call (`PLAYER_FIELD_COINAGE`), 0 with no player object; `None` where no view lends it.
     fn player_money(&self) -> Option<u64> {
         None

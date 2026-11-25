@@ -1738,20 +1738,18 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     Spell(u32),
                 }
                 let hover = {
-                    let model = lua
-                        .app_data_ref::<crate::script::ModelCell>()
-                        .expect("model app_data");
-                    let recipe = super::tradeskill::recipe_at(&model, index).ok_or_else(invalid)?;
+                    let (spell, recipe) =
+                        super::tradeskill::recipe_at(lua, index).ok_or_else(invalid)?;
                     match reagent {
                         Some(ri) => {
-                            let r = usize::try_from(ri - 1)
+                            let &(item, need) = usize::try_from(ri - 1)
                                 .ok()
                                 .and_then(|i| recipe.reagents.get(i))
                                 .ok_or_else(invalid)?;
                             Hover::Item(
-                                r.item,
+                                item,
                                 Sell::Block {
-                                    stack: r.need,
+                                    stack: need,
                                     max: None,
                                 },
                             )
@@ -1763,7 +1761,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                                 max: Some(recipe.max_made),
                             },
                         ),
-                        None => Hover::Spell(recipe.spell_id),
+                        None => Hover::Spell(spell),
                     }
                 };
                 match hover {

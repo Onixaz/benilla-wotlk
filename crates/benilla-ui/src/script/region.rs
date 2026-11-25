@@ -741,7 +741,9 @@ pub(super) fn virtual_span(model: &Model, rh: RegionHandle) -> (f32, f32) {
                 .and_then(|r| model.arena.frame(r.owner))
                 .map(|f| f.effective_scale)
                 .unwrap_or(1.0);
-            let m = d.measured.filter(|m| m.key == d.measure_key(scale));
+            let m = d
+                .measured
+                .filter(|m| m.key == d.measure_key(scale, model.text_wrap(d)));
             // The floor applies to a known extent. Empty text is a known zero and floors; a pending
             // measure, possible only in a VM with no measurer installed, answers 0, where the
             // reference measures inline and always knows.
