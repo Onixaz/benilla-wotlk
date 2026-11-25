@@ -86,7 +86,7 @@ fn running_a_macro_runs_its_lines_through_the_references_edit_box() {
     assert_eq!(
         sends
             .iter()
-            .map(|c| (c.text.as_str(), c.chat_type.as_str()))
+            .map(|c| (std::str::from_utf8(&c.text).unwrap(), c.chat_type.as_str()))
             .collect::<Vec<_>>(),
         vec![("  /say pew  ", "SAY")],
         "an indented line is no command: the reference's tokenizer keeps its spaces (`0x564db0`)"
@@ -125,7 +125,7 @@ fn a_character_macro_runs_by_its_own_index() {
     assert_eq!(
         s.take_chat_sends()
             .iter()
-            .map(|c| c.text.clone())
+            .map(|c| String::from_utf8(c.text.clone()).unwrap())
             .collect::<Vec<_>>(),
         vec!["Charge".to_string()]
     );
@@ -200,7 +200,7 @@ fn a_registered_frame_sees_every_macro_line_as_an_event() {
     assert_eq!(
         s.take_chat_sends()
             .iter()
-            .map(|c| c.text.clone())
+            .map(|c| String::from_utf8(c.text.clone()).unwrap())
             .collect::<Vec<_>>(),
         vec!["Incoming!".to_string()]
     );
@@ -234,7 +234,10 @@ fn stock_secure_buttons_run_a_macro_and_macro_text() {
     )
     .unwrap();
     let said = |s: &mut UiScript| -> Vec<String> {
-        s.take_chat_sends().into_iter().map(|c| c.text).collect()
+        s.take_chat_sends()
+            .into_iter()
+            .map(|c| String::from_utf8(c.text).unwrap())
+            .collect()
     };
     s.set_regen_enabled(false);
     s.run(r#"MacroButton:Click("LeftButton") MacroButton:Click("RightButton")"#)
@@ -277,7 +280,7 @@ fn either_line_ending_splits_a_body() {
     assert_eq!(
         s.take_chat_sends()
             .iter()
-            .map(|c| c.text.clone())
+            .map(|c| String::from_utf8(c.text.clone()).unwrap())
             .collect::<Vec<_>>(),
         vec!["Charge".to_string(), "a".to_string(), "b".to_string()],
         "\r alone splits; \r\n does not leave an empty token"

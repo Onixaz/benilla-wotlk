@@ -22,12 +22,15 @@ pub struct ZoneChannelRow {
 /// handlers' calls, one variant each.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ChannelCommand {
-    /// `JoinChannelByName(name, password)`, sent on both non-nil legs; `voice` is 3.3.5a's
-    /// `hasVoice` argument, false in 1.12.1.
+    /// `JoinChannelByName(name, password)`, sent on both non-nil legs; `voice` is the `hasVoice`
+    /// argument, kept on the record (`+0xa4`, `0x5077c8`), and `permanent` is
+    /// `JoinPermanentChannel`'s flag (`+0xa5`, `0x5077d9`), which the chat cache's save reads
+    /// (`0x4fd432`).
     Join {
         name: String,
         password: String,
         voice: bool,
+        permanent: bool,
     },
     /// `LeaveChannelByName(name)`.
     Leave {
@@ -287,13 +290,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // and a custom channel `(0, nil)`, both sending; a `frameId` that truncates to 1..=10 registers
     // the channel in that window's list, deduplicated by name. A non-string name raises the usage;
     // a space, a row whose zone text is empty, or a name or password of 128 bytes or more, answers
-    // nothing. A matched row's password is dropped. Deviation: the profanity refusal
-    // (`ERR_PROFANE_CHAT_NAME`) is not built, and the permanent flag, which only marks the channel
-    // for the client's own re-join, is not kept.
-    for verb in [
-        "JoinChannelByName",
-        "JoinTemporaryChannel",
-        "JoinPermanentChannel",
+    // nothing (`0x50d974`-`0x50d99e`), as does a profane name, after its `ERR_PROFANE_CHAT_NAME`
+    // (`0x50d9c7`, `0x50d9d8`). A matched row's password is dropped.
+    for (verb, permanent) in [
+        ("JoinChannelByName", false),
+        ("JoinTemporaryChannel", false),
+        ("JoinPermanentChannel", true),
     ] {
         g.set(
             verb,
@@ -315,7 +317,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                         return Ok(MultiValue::new());
                     }
                     let voice = !matches!(voice, Value::Nil | Value::Boolean(false));
-                    match join_by_name(lua, name, password, frame, voice)? {
+                    match join_by_name(lua, name, password, frame, voice, permanent)? {
                         Some(answer) => answer.into_lua_multi(lua),
                         None => Ok(MultiValue::new()),
                     }
@@ -338,14 +340,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // LeaveChannelByName(name) returns nothing and raises `Usage:` on a non-string, non-number. A
-    // key whose integer parse is non-zero is a joined slot, resolved app-side and never a window
-    // entry; a Shortcut leaves the name composed for this zone (a no-op with no zone text) and
-    // strips by Shortcut; anything else is a custom channel. Deviation: the reference composes the
-    // Shortcut with `GetRealZoneText` alone, so in a capital `/leave Trade` sends `Trade -
-    // Stormwind City` and leaves nothing; ours uses the join's city-aware name, because the
-    // reference's form cannot leave the channel it joined. The slot is freed app-side when the
-    // server's `YOU_LEFT` arrives.
+    // LeaveChannelByName(name) (`0x5096d0` -> `0x5093f0`) returns nothing and raises `Usage:` on a
+    // non-string, non-number. A name whose integer parse is non-zero names a confirmed record, else
+    // the call does nothing (`0x509403` -> `0x4fe160`). A Shortcut composes its name for this zone
+    // exactly as the join does, bailing on an empty subject (`0x5094b1`-`0x509505`), and strips
+    // the windows by the Shortcut; any other name strips by itself (`0x50952f`-`0x509560`). The
+    // record lookup and the send are the host's (`0x509562`-`0x509613`).
     g.set(
         "LeaveChannelByName",
         lua.create_function(|lua, name: Option<Value>| {
@@ -358,14 +358,25 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .to_string(),
                 _ => return Err(mlua::Error::runtime(r#"Usage: LeaveChannelByName("name")"#)),
             };
-            if super::chat_window::leading_int(&key) != 0 {
-                push(lua, ChannelCommand::Leave { name: key });
-                return Ok(());
-            }
+            // The number leg: the record at that number, held in state 0, or nothing.
+            let key = match super::cvars::sstr_to_int(&key) {
+                0 => key,
+                n => {
+                    let slots = super::channel_pane::live_slots();
+                    let held = usize::try_from(n)
+                        .ok()
+                        .and_then(|n| n.checked_sub(1))
+                        .and_then(|i| slots.get(i).cloned().flatten())
+                        .filter(|s| s.active);
+                    match held {
+                        Some(slot) => slot.name,
+                        None => return Ok(()),
+                    }
+                }
+            };
             let row = zone_catalog()
                 .into_iter()
                 .find(|r| r.shortcut.eq_ignore_ascii_case(&key));
-            let mut model = crate::script::model_mut_of(lua);
             let (wire, strip_key) = match row {
                 Some(ZoneChannelRow { resolved: None, .. }) => return Ok(()),
                 Some(ZoneChannelRow {
@@ -375,8 +386,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 }) => (r, shortcut),
                 None => (key.clone(), key),
             };
-            model.strip_window_channel(&strip_key);
-            drop(model);
+            crate::script::model_mut_of(lua).strip_window_channel(&strip_key);
             push(lua, ChannelCommand::Leave { name: wire });
             Ok(())
         })?,
@@ -503,8 +513,16 @@ fn join_by_name(
     password: String,
     frame: Value,
     voice: bool,
+    permanent: bool,
 ) -> mlua::Result<Option<(i64, Option<String>)>> {
     if name.contains(' ') {
+        return Ok(None);
+    }
+    // The typed name through the profanity filter, forced on (`0x50d9c7` -> `0x509a50`): a match
+    // shows its line and answers nothing (`0x50d9d8`).
+    if super::calls::ask_host(lua, &super::HostAsk::ProfaneChannelName(name.clone()))
+        == Some(super::HostAnswer::Declined)
+    {
         return Ok(None);
     }
     let row = zone_catalog()
@@ -539,6 +557,7 @@ fn join_by_name(
             name: resolved.clone().unwrap_or_else(|| name.clone()),
             password,
             voice,
+            permanent,
         },
     ) {
         return Ok(None);
@@ -681,12 +700,22 @@ mod command_tests {
     }
 
     /// `LeaveChannelByName`'s four legs and its raise; a Shortcut strips its entry from every
-    /// window.
+    /// window, and a number names a confirmed record (`0x4fe160`).
     #[test]
     fn leave_channel_by_name_composes_strips_and_raises_the_way_the_reference_does() {
         let mut s = UiScript::new().unwrap();
+        let slot = |name: &str, active: bool| {
+            Some(crate::script::ChannelSlotInfo {
+                name: name.into(),
+                shortcut: None,
+                active,
+                flags: 0,
+                instance: 0,
+            })
+        };
         let mut view = crate::script::live::TestView {
             zone_channels: catalog(),
+            channel_slots: vec![slot("Other", true), slot("Waiting", false)],
             ..Default::default()
         };
         s.with_live(&mut view, |s| {
@@ -698,15 +727,45 @@ mod command_tests {
             s.take_channel_commands();
             s.take_chat_window_changes();
 
-            s.run("LeaveChannelByName('2')").unwrap();
+            s.run("LeaveChannelByName('1')").unwrap();
             assert_eq!(
                 s.take_channel_commands(),
-                vec![ChannelCommand::Leave { name: "2".into() }],
-                "a number goes through as typed — the app holds the slot states"
+                vec![ChannelCommand::Leave {
+                    name: "Other".into()
+                }],
+                "a number names its confirmed record"
             );
             assert!(
                 s.take_chat_window_changes().is_empty(),
-                "…and strips no window: a slot name never equals a window entry"
+                "…and strips the windows by that name, which none lists"
+            );
+            s.run("LeaveChannelByName('2') LeaveChannelByName('3') LeaveChannelByName(-1)")
+                .unwrap();
+            assert!(
+                s.take_channel_commands().is_empty(),
+                "a pending record, no record or a negative number: nothing (`0x4fe19f`)"
+            );
+            s.run("LeaveChannelByName('1abc') LeaveChannelByName('4294967297')")
+                .unwrap();
+            assert_eq!(
+                s.take_channel_commands(),
+                vec![
+                    ChannelCommand::Leave {
+                        name: "Other".into()
+                    };
+                    2
+                ],
+                "the integer parse takes the leading digits and wraps: 2^32 + 1 reads 1"
+            );
+            s.run("LeaveChannelByName('+1') LeaveChannelByName('0')")
+                .unwrap();
+            assert_eq!(
+                s.take_channel_commands(),
+                vec![
+                    ChannelCommand::Leave { name: "+1".into() },
+                    ChannelCommand::Leave { name: "0".into() },
+                ],
+                "no `+`, and 0 is a name"
             );
 
             s.run("LeaveChannelByName('general')").unwrap();
@@ -784,11 +843,13 @@ mod command_tests {
                         name: "General - Elwynn Forest".into(),
                         password: String::new(),
                         voice: true,
+                        permanent: true,
                     },
                     ChannelCommand::Join {
                         name: "MyChan".into(),
                         password: "secret".into(),
                         voice: false,
+                        permanent: false,
                     },
                 ]
             );

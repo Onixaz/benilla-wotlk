@@ -2001,7 +2001,7 @@ pub(crate) mod schedule_tests {
         ("ui_chat.rs", "end_session_chat", Because::Deliberate,
          "the session end in `OnExit(InWorld)`: it empties the chat log and clears the game VM's windows, publishing nothing a VM waits for"),
         ("ui_chat/recruitment.rs", "guild_recruitment_cascade", Because::SelfHealing,
-         "`pending` is held until the zone mask and zone id are settled, which happens on the entry VM"),
+         "`pending` is set by the cascade's callers (a zone update, the mode setter, a player object's init, the guild id watcher) and spent by its next run, gates or not"),
         ("ui_gm_ticket.rs", "feed_gm_ticket", Because::MemoLatched,
          "`feed.vm: VmMemo<FedTicket>` counters restart per VM while `state.answers` keeps counting, so the latest answer is re-fired"),
         ("ui_inspect.rs", "feed_inspect", Because::MemoLatched,

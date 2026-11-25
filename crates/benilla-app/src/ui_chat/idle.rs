@@ -197,7 +197,7 @@ pub(crate) fn idle_handler(world: &mut World) {
     if action.afk {
         // The AFK mark with no message (`0x52b349`), reached only with the mirror clear
         // (`0x52b338`): the same mark `/afk` runs, `CLEARED_DND` and all.
-        super::input::set_afk(world, "");
+        super::input::set_afk(world, b"");
     }
 }
 
@@ -557,7 +557,7 @@ mod tests {
             matches!(
                 sent.as_slice(),
                 [ClientCommand::Chat { kind: crate::net::ChatKind::Afk, target: None, text, .. }]
-                    if text == "Away from Keyboard"
+                    if text == b"Away from Keyboard"
             ),
             "{sent:?}"
         );

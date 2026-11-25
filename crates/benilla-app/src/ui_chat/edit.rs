@@ -108,7 +108,7 @@ pub(crate) struct ChannelState {
     /// reference writes it from its live slots at teardown; ours are cleared before the flush, so
     /// the list is kept here: seated from the file, grown by a confirmed custom join, shrunk by an
     /// explicit leave. A channel whose re-join is refused, or that kicks the player, stays listed
-    /// until a `/leave`, where the reference's file drops it.
+    /// until a `/leave`, where the reference's file drops it (#1518).
     pub custom: Vec<SavedChannel>,
 }
 
@@ -135,6 +135,11 @@ pub(crate) struct ChannelSlot {
     pub flags: u8,
     /// `+0x98`, the confirmed join's second word (`0x5078e5`).
     pub instance: u32,
+    /// `+0xa4`, the join's voice flag (`0x5077c8`), saved with a permanent custom channel.
+    pub voice: bool,
+    /// `+0xa5`, the join's permanent flag (`0x5077d9`): the chat cache saves a custom record only
+    /// with it (`0x4fd432`).
+    pub permanent: bool,
 }
 
 /// The reference's per-slot state (`+0x9c`), in the values whose notice token differs: the stock
@@ -167,6 +172,8 @@ impl ChannelSlot {
             leave_asked: false,
             flags: 0,
             instance: 0,
+            voice: false,
+            permanent: false,
         }
     }
 
@@ -264,19 +271,39 @@ impl ChannelState {
         if self.channels.zone_channel_id(name) != 0 {
             return;
         }
-        let number = self.number_of(name).unwrap_or(0);
+        let Some(number) = self.number_of(name) else {
+            return;
+        };
+        // The save writes a custom record only with its permanent flag, and its voice flag
+        // (`0x4fd432`, `0x4fd43e`).
+        let Some((voice, true)) = self.slot(number).map(|s| (s.voice, s.permanent)) else {
+            return;
+        };
         match self
             .custom
             .iter_mut()
             .find(|c| c.name.eq_ignore_ascii_case(name))
         {
-            Some(c) => c.number = number,
+            Some(c) => {
+                c.number = number;
+                c.voice = voice;
+            }
             None => self.custom.push(SavedChannel {
                 name: name.to_string(),
-                // The stock `/join` enables voice (`JoinPermanentChannel(…, 1)`).
-                voice: true,
+                voice,
                 number,
             }),
+        }
+    }
+
+    /// The claim's voice and permanent flags on record `n` (`0x5077c8`, `0x5077d9`).
+    pub(crate) fn set_join_flags(&mut self, n: u32, voice: bool, permanent: bool) {
+        let slot = (n as usize)
+            .checked_sub(1)
+            .and_then(|i| self.joined.get_mut(i));
+        if let Some(Some(slot)) = slot {
+            slot.voice = voice;
+            slot.permanent = permanent;
         }
     }
 
@@ -288,16 +315,6 @@ impl ChannelState {
     /// Whether the mask carries `id`'s bit, the walk's live predicate.
     pub(crate) fn zone_row_wanted(&self, id: u32) -> bool {
         self.zone_mask.is_some_and(|mask| mask & zone_bit(id) != 0)
-    }
-
-    /// The numeric leg of leave-by-name: a nonzero integer parse names a confirmed slot, and a
-    /// hole, an out-of-range number or a suspended slot make the whole call a no-op (`None`).
-    /// Anything else is already the wire name.
-    pub(crate) fn leave_target(&self, arg: &str) -> Option<String> {
-        match sstr_to_int(arg) {
-            0 => Some(arg.to_string()),
-            n => self.confirmed_slot_name(n).map(str::to_string),
-        }
     }
 
     /// `SendChatMessage`'s channel target: the integer parse straight, with no name leg, so only a

@@ -497,10 +497,17 @@ pub(crate) fn restore_chat_looks(world: &mut World, script: &mut UiScript) {
     // The list holds custom channels only, so each carries id 0; 3.3.5a's re-join is the client's
     // own, auto 1, a quiet join that claims its record at the saved number first (`0x50819c`).
     for c in parsed.joined {
+        // The re-join passes its saved voice flag and the permanent flag (`0x508182`-`0x508189`).
         let claimed = world
             .get_resource_mut::<super::edit::ChannelState>()
-            .map(|mut ch| ch.claim_for_join(&c.name, c.number));
-        if !matches!(claimed, Some(super::edit::JoinRecord::Claimed(_))) {
+            .map(|mut ch| match ch.claim_for_join(&c.name, c.number) {
+                super::edit::JoinRecord::Claimed(n) => {
+                    ch.set_join_flags(n, c.voice, true);
+                    true
+                }
+                _ => false,
+            });
+        if claimed != Some(true) {
             continue;
         }
         if let Some(commands) = &commands {
@@ -798,16 +805,27 @@ POSITION "
         };
         state.note_custom_channel_joined("General - Elwynn Forest");
         assert!(state.custom.is_empty(), "a zone channel travels as its bit");
+        // A temporary join is not saved: the save reads the permanent flag (`0x4fd432`).
+        let super::super::edit::JoinRecord::Claimed(temp) = state.claim_for_join("Temp", 0) else {
+            panic!("claimed");
+        };
+        state.set_join_flags(temp, true, false);
+        state.note_custom_channel_joined("Temp");
+        assert!(state.custom.is_empty(), "a temporary channel is not saved");
+        let super::super::edit::JoinRecord::Claimed(n) = state.claim_for_join("MyChan", 0) else {
+            panic!("claimed");
+        };
+        state.set_join_flags(n, false, true);
         state.note_custom_channel_joined("MyChan");
         state.note_custom_channel_joined("mychan");
         assert_eq!(
             state
                 .custom
                 .iter()
-                .map(|c| c.name.as_str())
+                .map(|c| (c.name.as_str(), c.voice, c.number))
                 .collect::<Vec<_>>(),
-            ["MyChan"],
-            "once, by name"
+            [("MyChan", false, 2)],
+            "once, by name, with the record's voice flag and number (`0x4fd43e`)"
         );
         state.note_custom_channel_left("MYCHAN");
         assert!(state.custom.is_empty(), "an explicit leave drops it");

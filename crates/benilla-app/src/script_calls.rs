@@ -249,6 +249,19 @@ pub(crate) fn answer_in_call(
                 HostAnswer::Declined
             })
         }
+        // The join's profanity test on its typed name, its line shown in the call (`0x50d9c7`,
+        // `0x50d9d8`).
+        HostAsk::ProfaneChannelName(name) => Some(
+            if crate::ui_chat::input::refuse_profane_channel_name(
+                world,
+                &UiScript::in_call(lua),
+                &name,
+            ) {
+                HostAnswer::Declined
+            } else {
+                HostAnswer::Done
+            },
+        ),
         // `SendAddonMessage`'s packet (`0x50071f`).
         HostAsk::AddonSend(send) => {
             crate::ui_chat::input::send_addon_message(world, send);

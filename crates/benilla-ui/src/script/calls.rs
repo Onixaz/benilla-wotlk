@@ -73,6 +73,9 @@ pub enum HostAsk {
     AddonSend(super::AddonSend),
     /// A channel verb's send and its record writes (`0x507a80`, `0x5096d0`, `0x50dae0`).
     Channel(super::ChannelCommand),
+    /// The join's profanity test on its typed name (`0x50d9c7` -> `0x509a50`, forced on): `Declined`
+    /// after `ERR_PROFANE_CHAT_NAME` shows (`0x50d9d8`), else `Done`.
+    ProfaneChannelName(String),
 }
 
 /// What the host answered a [`HostAsk`].

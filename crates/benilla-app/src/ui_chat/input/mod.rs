@@ -989,12 +989,14 @@ pub(crate) fn channel_arm(
             name,
             password,
             voice,
+            permanent,
         } => {
             manual_join_or_leave(&channels, &mut script, &name);
             // The record is found or claimed before the send, with no relist (`0x507a80`).
             match channels.claim_for_join(&name, 0) {
                 super::edit::JoinRecord::Claimed(n) => {
                     debug!("chat: joining {name:?} as slot {n}");
+                    channels.set_join_flags(n, voice, permanent);
                 }
                 super::edit::JoinRecord::Held => return ArmOutcome::Done,
                 // The verb is not quiet: its line, then no send (`0x507755`, `0x507c51`).
@@ -1004,11 +1006,8 @@ pub(crate) fn channel_arm(
             channels.join_command(name, password, false, voice)
         }
         C::Leave { name } => {
-            // `LeaveChannelByName`: a number names a confirmed slot or the call does
-            // nothing. Only this path clears the zone mask and the custom re-join list.
-            let Some(name) = channels.leave_target(&name) else {
-                return ArmOutcome::Done;
-            };
+            // `LeaveChannelByName` past its name (the binding resolved a number and composed a
+            // Shortcut). Only this path clears the zone mask and the custom re-join list.
             // The mode reset reads the name before any record (`0x50951c`).
             manual_join_or_leave(&channels, &mut script, &name);
             // The verb's leave sends only for a record in state 0, under the record's own name
@@ -1099,6 +1098,7 @@ pub(crate) fn run_channel_command(
     cmd: benilla_ui::script::ChannelCommand,
 ) -> bool {
     world.get_resource_or_init::<ArmLines>();
+    let mut caller = vm.share();
     let outcome = world
         .run_system_cached_with(channel_arm, (cmd, vm))
         .unwrap_or(ArmOutcome::Done);
@@ -1106,9 +1106,12 @@ pub(crate) fn run_channel_command(
     for line in lines {
         super::feed::add(world, line);
     }
+    // The line shows inside the call on the calling VM (`0x507755` -> `0x5216f0`), which the
+    // world-entry load and a reload hold outside the `World`.
     if outcome == ArmOutcome::TooManyChannels {
-        crate::ui_action::show_line_in_world(
+        crate::ui_action::show_line_with_vm(
             world,
+            &mut caller,
             "chat",
             crate::ui_action::UiError::key("ERR_TOO_MANY_CHAT_CHANNELS"),
         );
@@ -1141,7 +1144,7 @@ fn take_chat_lines(
             let cmd = ClientCommand::Chat {
                 kind: super::edit::SendType::Say.wire(),
                 target: None,
-                text: msg.to_string(),
+                text: msg.as_bytes().to_vec(),
                 language: None,
             };
             if commands.0.send(cmd).is_err() {
@@ -1429,6 +1432,23 @@ pub(super) fn party_lane(wire: crate::net::ChatKind, leads: bool) -> crate::net:
     }
 }
 
+/// The join's profanity test (`0x50d9c7` -> `0x509a50`): a copy of the typed name through the
+/// filter forced on; a match shows `ERR_PROFANE_CHAT_NAME` on the calling VM (`0x50d9d8`).
+pub(crate) fn refuse_profane_channel_name(
+    world: &mut World,
+    vm: &benilla_ui::script::UiScript,
+    name: &str,
+) -> bool {
+    let mut copy = name.to_string();
+    let profane = world
+        .get_resource_mut::<crate::text_filter::TextFilter>()
+        .is_some_and(|mut f| f.mask(true, &mut copy));
+    if profane {
+        refuse(world, vm, "ERR_PROFANE_CHAT_NAME");
+    }
+    profane
+}
+
 /// `SendChatMessage`'s refusal line, shown in its call on the calling VM (`0x5216f0`).
 fn refuse(world: &mut World, vm: &benilla_ui::script::UiScript, key: &'static str) {
     crate::ui_action::show_line_with_vm(
@@ -1509,7 +1529,7 @@ fn send_chat(
     world: &World,
     kind: crate::net::ChatKind,
     target: Option<String>,
-    text: String,
+    text: Vec<u8>,
     language: Option<u32>,
 ) {
     let Some(commands) = world.get_resource::<NetCommands>() else {
@@ -1553,7 +1573,7 @@ fn clear_afk_with(
     world.resource_mut::<super::away::AfkMirror>().0 = 0;
     let line = vm_string(vm, "CLEARED_AFK").unwrap_or_default();
     super::away::add_system(world, line);
-    send_chat(world, crate::net::ChatKind::Afk, None, String::new(), None);
+    send_chat(world, crate::net::ChatKind::Afk, None, Vec::new(), None);
     true
 }
 
@@ -1561,17 +1581,19 @@ fn clear_afk_with(
 /// mirror clear (`0x6dc66d`) it adds `CLEARED_DND` under a live DND bit (`0x6dc675`-`0x6dc6a0`), then
 /// `MARKED_AFK_MESSAGE` (`0x6dc6e0`), then sets the mirror (`0x6dc6e8`); set, it adds nothing. The
 /// AFK packet always goes out with the message (`0x6dc73d`).
-pub(crate) fn set_afk(world: &mut World, msg: &str) {
+pub(crate) fn set_afk(world: &mut World, msg: &[u8]) {
     let vm = world_vm(world);
     set_afk_with(world, vm.as_ref(), msg);
 }
 
 /// [`set_afk`] reading its strings off `vm`, the calling VM inside a verb's call.
-fn set_afk_with(world: &mut World, vm: Option<&benilla_ui::script::UiScript>, msg: &str) {
+fn set_afk_with(world: &mut World, vm: Option<&benilla_ui::script::UiScript>, msg: &[u8]) {
     let body = if msg.is_empty() {
-        vm_string(vm, "DEFAULT_AFK_MESSAGE").unwrap_or_default()
+        vm_string(vm, "DEFAULT_AFK_MESSAGE")
+            .unwrap_or_default()
+            .into_bytes()
     } else {
-        msg.to_string()
+        msg.to_vec()
     };
     let mirror = world
         .get_resource::<super::away::AfkMirror>()
@@ -1588,7 +1610,8 @@ fn set_afk_with(world: &mut World, vm: Option<&benilla_ui::script::UiScript>, ms
             super::away::add_system(world, line);
         }
         let format = vm_string(vm, "MARKED_AFK_MESSAGE").unwrap_or_default();
-        super::away::add_system(world, super::away::fill_one(&format, &body));
+        let line = super::away::fill_one_bytes(format.as_bytes(), &body);
+        super::away::add_system(world, super::away::shown(&line));
         world.resource_mut::<super::away::AfkMirror>().0 = 1;
     }
     send_chat(world, crate::net::ChatKind::Afk, None, body, None);
@@ -1712,7 +1735,9 @@ pub(crate) fn send_chat_message(
         // is the forced AFK clear (`0x50d5e9`-`0x50d5ee`), any other the AFK mark (`0x50d5db`). The
         // AFK mark's own packet never reads the language argument.
         let text = if !mirror.is_afk() && send.text.is_empty() {
-            strings("DEFAULT_AFK_MESSAGE").unwrap_or_default()
+            strings("DEFAULT_AFK_MESSAGE")
+                .unwrap_or_default()
+                .into_bytes()
         } else {
             send.text
         };
@@ -1789,20 +1814,32 @@ fn self_dead_or_ghost(world: &mut World) -> bool {
         .unwrap_or(false)
 }
 
-/// `SendAddonMessage`'s packet inside the call (`0x50071f`): the binding has already applied the
-/// reference's rules (`prefix` TAB `message`, the downgrade outside a raid). This writes the
-/// outbound half of the `addon` trace tag and `ui_chat::net` the inbound:
+/// `SendAddonMessage`'s gates and packet inside the call (`0x500678`-`0x50071f`): RAID outside a
+/// raid goes as PARTY (`0x500663`-`0x50066c`), and PARTY with no party sends nothing (`0x500678`).
+/// This writes the outbound half of the `addon` trace tag and `ui_chat::net` the inbound:
 /// `WOW_MOVE_TRACE=<path> WOW_MOVE_TRACE_TAGS=addon` logs both.
-pub(crate) fn send_addon_message(world: &World, send: benilla_ui::script::AddonSend) {
+pub(crate) fn send_addon_message(world: &World, mut send: benilla_ui::script::AddonSend) {
+    use benilla_ui::script::AddonDistribution as D;
+    // The party (`0x4fb0b0`'s word) and raid count (`[0xbeb608]`) read at the call.
+    let (in_party, in_raid) = world
+        .get_resource::<crate::ui_party::GroupState>()
+        .map_or((false, false), |g| (g.in_party(), g.in_raid()));
+    if send.distribution == D::Raid && !in_raid {
+        send.distribution = D::Party;
+    }
+    if send.distribution == D::Party && !in_party {
+        debug!("chat: addon message on PARTY with no party; not sent");
+        return;
+    }
+    let text = String::from_utf8_lossy(&send.text);
     debug!(
-        "chat: addon broadcast on {} — {:?}",
-        send.distribution.token(),
-        send.text
+        "chat: addon message on {} — {text:?}",
+        send.distribution.token()
     );
     if benilla_assets::trace::enabled() {
         benilla_assets::trace::line(
             "addon",
-            &format!("-> {} {:?}", send.distribution.token(), send.text),
+            &format!("-> {} {text:?}", send.distribution.token()),
         );
     }
     let Some(commands) = world.get_resource::<NetCommands>() else {
@@ -1810,10 +1847,11 @@ pub(crate) fn send_addon_message(world: &World, send: benilla_ui::script::AddonS
     };
     let cmd = ClientCommand::AddonMessage {
         distribution: send.distribution,
+        target: send.target,
         text: send.text,
     };
     if commands.0.send(cmd).is_err() {
-        warn!("chat: not connected; addon broadcast dropped");
+        warn!("chat: not connected; addon message dropped");
     }
 }
 

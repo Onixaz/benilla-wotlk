@@ -169,7 +169,7 @@ fn taxi_probe(
                 let _ = net.0.send(ClientCommand::Chat {
                     kind: crate::net::ChatKind::Say,
                     target: None,
-                    text,
+                    text: text.into(),
                     language: None,
                 });
             }

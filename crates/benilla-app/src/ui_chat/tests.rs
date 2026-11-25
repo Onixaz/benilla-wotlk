@@ -1980,7 +1980,7 @@ fn an_addon_message_survives_its_own_send_and_receive() {
 
     // The same text arrives as a PARTY line in LANG_ADDON.
     let mut log = crate::ui_script::live::UiEvents::default();
-    log.push_addon(&sent.text, 0x01, 7);
+    log.push_addon(std::str::from_utf8(&sent.text).unwrap(), 0x01, 7);
 
     assert_eq!(
         super::feed::addon_parts(log.take_chat()),
@@ -2779,7 +2779,7 @@ fn afk_then_dnd_clears_the_afk_first() {
     let sent: Vec<(ChatKind, String)> = rx
         .try_iter()
         .map(|c| match c {
-            ClientCommand::Chat { kind, text, .. } => (kind, text),
+            ClientCommand::Chat { kind, text, .. } => (kind, String::from_utf8(text).unwrap()),
             other => panic!("unexpected command {other:?}"),
         })
         .collect();
@@ -2826,7 +2826,9 @@ fn the_afk_clear_is_gated_on_the_mirror_and_the_cvar() {
     let sent: Vec<(ChatKind, String)> = rx
         .try_iter()
         .filter_map(|c| match c {
-            ClientCommand::Chat { kind, text, .. } => Some((kind, text)),
+            ClientCommand::Chat { kind, text, .. } => {
+                Some((kind, String::from_utf8(text).unwrap()))
+            }
             _ => None,
         })
         .collect();
@@ -2845,7 +2847,9 @@ fn chat_sent(
 ) -> Vec<(crate::net::ChatKind, String)> {
     rx.try_iter()
         .filter_map(|c| match c {
-            crate::net::ClientCommand::Chat { kind, text, .. } => Some((kind, text)),
+            crate::net::ClientCommand::Chat { kind, text, .. } => {
+                Some((kind, String::from_utf8(text).unwrap()))
+            }
             _ => None,
         })
         .collect()
@@ -2909,7 +2913,7 @@ fn the_afk_mark_clears_a_standing_dnd_in_text_first() {
     );
     // The idle leg's mark (`0x52b349`) is the same function: the DND line, then the default text.
     world.resource_mut::<super::away::AfkMirror>().0 = 0;
-    super::input::set_afk(&mut world, "");
+    super::input::set_afk(&mut world, b"");
     assert_eq!(
         system_seen(&world),
         vec![
@@ -3019,6 +3023,8 @@ fn a_channel_send_carries_the_numbered_slots_name() {
                 leave_asked: false,
                 flags: 0,
                 instance: 0,
+                voice: false,
+                permanent: false,
             }),
         ],
         ..Default::default()
@@ -3061,7 +3067,7 @@ fn a_channel_send_carries_the_numbered_slots_name() {
         .map(|c| match c {
             ClientCommand::Chat {
                 kind, target, text, ..
-            } => (kind, target, text),
+            } => (kind, target, String::from_utf8(text).unwrap()),
             other => panic!("unexpected command {other:?}"),
         })
         .collect();
@@ -3164,6 +3170,117 @@ fn the_join_verb_claims_its_record_or_skips_the_send() {
     assert_eq!(world.resource::<ChannelState>().number_of("Eleventh"), None);
 }
 
+/// The join's `ERR_TOO_MANY_CHAT_CHANNELS` shows inside the call on the calling VM (`0x507755` ->
+/// `0x5216f0`): with the `World`'s VM held outside it, as the world-entry load and a reload hold
+/// it while addons run, a file-scope join with ten held records still shows its line.
+#[test]
+fn a_join_with_ten_records_during_the_load_shows_its_line() {
+    use super::edit::{ChannelSlot, ChannelState};
+
+    let script = benilla_ui::script::UiScript::new().expect("VM");
+    script
+        .run(r#"ERR_TOO_MANY_CHAT_CHANNELS = "You have joined too many channels.""#)
+        .expect("lua");
+    let (mut world, rx) = send_world(script);
+    world.init_resource::<crate::sound::MessageSounds>();
+    world.insert_resource(ChannelState {
+        joined: (1..=10)
+            .map(|i| Some(ChannelSlot::joined(&format!("C{i}"))))
+            .collect(),
+        ..Default::default()
+    });
+    world.resource_mut::<super::ChatLog>().leave_world();
+    let mut vm = world
+        .remove_non_send_resource::<benilla_ui::script::UiScript>()
+        .expect("VM");
+    let answered = crate::ui_script::safe_world::lend_to(&mut world, &mut vm, |s| {
+        s.eval::<i64>("return select('#', JoinChannelByName('Eleventh'))")
+    })
+    .expect("lua");
+    assert_eq!(answered, 0, "a failed claim answers nothing");
+    assert_eq!(rx.try_iter().count(), 0, "and sends nothing");
+    world.insert_non_send_resource(vm);
+    super::feed::enter_world(&mut world);
+    assert_eq!(
+        system_seen(&world),
+        vec!["You have joined too many channels."]
+    );
+}
+
+/// `SendChatMessage` cuts its line at 255 bytes (`0x577d65`) even inside a UTF-8 sequence, and
+/// the packet carries the partial bytes as cut (`0x50d81c`).
+#[test]
+fn a_send_cut_inside_a_character_carries_its_bytes() {
+    use crate::net::ClientCommand;
+
+    let (mut world, rx) = send_world(benilla_ui::script::UiScript::new().expect("VM"));
+    run_lent(
+        &mut world,
+        r#"SendChatMessage(string.rep("a", 254) .. "\195\169", "SAY")"#,
+    )
+    .expect("lua");
+    let sent: Vec<Vec<u8>> = rx
+        .try_iter()
+        .filter_map(|c| match c {
+            ClientCommand::Chat { text, .. } => Some(text),
+            _ => None,
+        })
+        .collect();
+    let mut want = vec![b'a'; 254];
+    want.push(0xC3);
+    assert_eq!(sent, vec![want]);
+}
+
+/// `SendAddonMessage`'s gates and packet in the call (`0x500678`-`0x50071f`): with no group, PARTY
+/// and a RAID taken as PARTY send nothing (`0x500684`) while GUILD and a WHISPER go out; in a
+/// party RAID goes as PARTY (`0x50066c`); in a raid it stays RAID.
+#[test]
+fn the_addon_message_gates_run_in_the_call() {
+    use crate::net::ClientCommand;
+    use benilla_ui::script::AddonDistribution as D;
+
+    let (mut world, rx) = send_world(benilla_ui::script::UiScript::new().expect("VM"));
+    let sent =
+        |rx: &crossbeam_channel::Receiver<ClientCommand>| -> Vec<(D, Option<String>, Vec<u8>)> {
+            rx.try_iter()
+                .filter_map(|c| match c {
+                    ClientCommand::AddonMessage {
+                        distribution,
+                        target,
+                        text,
+                    } => Some((distribution, target, text)),
+                    _ => None,
+                })
+                .collect()
+        };
+    run_lent(
+        &mut world,
+        r#"
+        SendAddonMessage("p", "a")
+        SendAddonMessage("p", "b", "RAID")
+        SendAddonMessage("p", "c", "GUILD")
+        SendAddonMessage("p", "d", "WHISPER", "Bob")
+        "#,
+    )
+    .expect("lua");
+    assert_eq!(
+        sent(&rx),
+        vec![
+            (D::Guild, None, b"p\tc".to_vec()),
+            (D::Whisper, Some("Bob".into()), b"p\td".to_vec()),
+        ]
+    );
+    lead_a_raid(&mut world, 0x99);
+    world
+        .resource_mut::<crate::ui_party::GroupState>()
+        .group_type = 0;
+    run_lent(&mut world, r#"SendAddonMessage("p", "e", "RAID")"#).expect("lua");
+    assert_eq!(sent(&rx), vec![(D::Party, None, b"p\te".to_vec())]);
+    lead_a_raid(&mut world, 0x99);
+    run_lent(&mut world, r#"SendAddonMessage("p", "f", "RAID")"#).expect("lua");
+    assert_eq!(sent(&rx), vec![(D::Raid, None, b"p\tf".to_vec())]);
+}
+
 /// A raid led by `leader` whose subgroup holds one other member, so the party test passes too.
 fn lead_a_raid(world: &mut bevy::prelude::World, leader: u64) {
     lead_a_raid_rows(
@@ -3240,7 +3357,7 @@ fn the_line_passes_name_tokens_cut_lines_and_walk_escapes() {
     let sent = |rx: &crossbeam_channel::Receiver<ClientCommand>| -> Vec<String> {
         rx.try_iter()
             .map(|c| match c {
-                ClientCommand::Chat { text, .. } => text,
+                ClientCommand::Chat { text, .. } => String::from_utf8(text).unwrap(),
                 other => panic!("unexpected command {other:?}"),
             })
             .collect()
@@ -3343,7 +3460,7 @@ fn the_group_and_language_refusals_return_before_the_afk_clear() {
     let sent = |rx: &crossbeam_channel::Receiver<ClientCommand>| -> Vec<(ChatKind, String)> {
         rx.try_iter()
             .map(|c| match c {
-                ClientCommand::Chat { kind, text, .. } => (kind, text),
+                ClientCommand::Chat { kind, text, .. } => (kind, String::from_utf8(text).unwrap()),
                 other => panic!("unexpected command {other:?}"),
             })
             .collect()
@@ -3518,7 +3635,7 @@ fn the_send_runs_its_steps_in_order() {
     let sent = |rx: &crossbeam_channel::Receiver<ClientCommand>| -> Vec<(ChatKind, String)> {
         rx.try_iter()
             .map(|c| match c {
-                ClientCommand::Chat { kind, text, .. } => (kind, text),
+                ClientCommand::Chat { kind, text, .. } => (kind, String::from_utf8(text).unwrap()),
                 other => panic!("unexpected command {other:?}"),
             })
             .collect()
@@ -3644,7 +3761,7 @@ fn an_empty_line_sends_nothing_but_afk_and_dnd() {
     let sent = |rx: &crossbeam_channel::Receiver<ClientCommand>| -> Vec<(ChatKind, String)> {
         rx.try_iter()
             .map(|c| match c {
-                ClientCommand::Chat { kind, text, .. } => (kind, text),
+                ClientCommand::Chat { kind, text, .. } => (kind, String::from_utf8(text).unwrap()),
                 other => panic!("unexpected command {other:?}"),
             })
             .collect()

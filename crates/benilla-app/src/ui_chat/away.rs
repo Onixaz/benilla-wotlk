@@ -28,15 +28,15 @@ impl AfkMirror {
 pub(crate) struct AwayOutcome {
     /// The `CHAT_MSG_SYSTEM` line.
     pub(crate) line: String,
-    /// The `CMSG_MESSAGECHAT` body, after the client's own default-message substitution.
-    pub(crate) body: String,
+    /// The `CMSG_MESSAGECHAT` body's bytes, after the client's own default-message substitution.
+    pub(crate) body: Vec<u8>,
 }
 
 /// `/dnd <msg>` against the live `PLAYER_FLAGS` bit `0x4`, the DND arm; unlike `/afk`, a repeat
 /// with a message re-prints. `MARKED_DND` carries its period inside the format string, so it is
 /// filled, never composed.
 pub(crate) fn dnd_line(
-    msg: &str,
+    msg: &[u8],
     is_dnd: bool,
     strings: &impl Fn(&str) -> Option<String>,
 ) -> AwayOutcome {
@@ -44,42 +44,55 @@ pub(crate) fn dnd_line(
     if is_dnd && msg.is_empty() {
         return AwayOutcome {
             line: text("CLEARED_DND"),
-            body: String::new(),
+            body: Vec::new(),
         };
     }
     let body = if msg.is_empty() {
-        text("DEFAULT_DND_MESSAGE")
+        text("DEFAULT_DND_MESSAGE").into_bytes()
     } else {
-        msg.to_string()
+        msg.to_vec()
     };
     AwayOutcome {
-        line: fill_one(&text("MARKED_DND"), &body),
+        line: shown(&fill_one_bytes(text("MARKED_DND").as_bytes(), &body)),
         body,
     }
 }
 
-/// Fill the first `%s` of a GlobalString, which the reference `snprintf`s; `%%` is a percent.
-pub(crate) fn fill_one(template: &str, arg: &str) -> String {
-    let mut out = String::with_capacity(template.len() + arg.len());
-    let mut chars = template.chars().peekable();
+/// A composed line as the chat event's text: the line's bytes, a sequence that is no UTF-8 read
+/// as U+FFFD, since the event carries a `String` (#1517).
+pub(crate) fn shown(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+/// Fill the first `%s` of a GlobalString, as the reference's `snprintf` fills it with any bytes;
+/// `%%` is a percent.
+pub(crate) fn fill_one_bytes(template: &[u8], arg: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(template.len() + arg.len());
     let mut used = false;
-    while let Some(c) = chars.next() {
-        if c != '%' {
+    let mut i = 0;
+    while i < template.len() {
+        let c = template[i];
+        i += 1;
+        if c != b'%' {
             out.push(c);
             continue;
         }
-        match chars.next() {
-            Some('%') => out.push('%'),
-            Some('s') if !used => {
-                out.push_str(arg);
+        match template.get(i).copied() {
+            Some(b'%') => out.push(b'%'),
+            Some(b's') if !used => {
+                out.extend_from_slice(arg);
                 used = true;
             }
             Some(other) => {
-                out.push('%');
+                out.push(b'%');
                 out.push(other);
             }
-            None => out.push('%'),
+            None => {
+                out.push(b'%');
+                continue;
+            }
         }
+        i += 1;
     }
     out
 }
@@ -174,7 +187,7 @@ mod tests {
 
     #[test]
     fn the_truth_table_row_for_row() {
-        let dnd = |msg: &str, is: bool| dnd_line(msg, is, &strings);
+        let dnd = |msg: &str, is: bool| dnd_line(msg.as_bytes(), is, &strings);
 
         assert_eq!(
             dnd("", false),
@@ -187,7 +200,7 @@ mod tests {
             dnd("", true),
             AwayOutcome {
                 line: "You are no longer marked DND.".into(),
-                body: String::new(),
+                body: Vec::new(),
             }
         );
         assert_eq!(
@@ -206,6 +219,10 @@ mod tests {
             },
             "DND re-marks where AFK stays silent — the reference's own asymmetry"
         );
+    }
+
+    fn fill_one(template: &str, arg: &str) -> String {
+        shown(&fill_one_bytes(template.as_bytes(), arg.as_bytes()))
     }
 
     #[test]
@@ -227,10 +244,10 @@ mod tests {
     #[test]
     fn a_missing_string_table_does_not_invent_english() {
         let none = |_: &str| None;
-        let out = dnd_line("brb", false, &none);
+        let out = dnd_line(b"brb", false, &none);
         assert_eq!(out.line, "");
         assert_eq!(
-            out.body, "brb",
+            out.body, b"brb",
             "the wire half never depends on the strings"
         );
     }

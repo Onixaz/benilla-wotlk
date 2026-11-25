@@ -25,20 +25,25 @@ impl WorldWriter {
         chat_type: u32,
         language: Option<u32>,
         target: Option<&str>,
-        message: &str,
+        message: &[u8],
     ) -> Result<()> {
         let body = message_chat_body(self.chat_language, chat_type, language, target, message);
         self.send(opcode::CMSG_MESSAGECHAT, &body)
     }
 
-    /// Send an addon message (`SendAddonMessage`): `text` is the caller's composed `prefix` TAB
-    /// `message`, on the party, raid, guild or battleground lane. Its language,
-    /// [`messages::LANGUAGE_ADDON`], is the only mark of addon data; vmangos gates it on
-    /// `AddonChannel` and skips the language gate, flood control and sanitizing.
-    pub fn send_addon_message(&mut self, chat_type: u32, text: &str) -> Result<()> {
+    /// Send an addon message (`SendAddonMessage`, `0x5006bf`-`0x50071f`): the chat type, language
+    /// [`messages::LANGUAGE_ADDON`], the whisper's player on [`messages::CHAT_TYPE_WHISPER`] alone,
+    /// then `prefix` TAB `message` as the verb composed it.
+    pub fn send_addon_message(
+        &mut self,
+        chat_type: u32,
+        target: Option<&str>,
+        text: &[u8],
+    ) -> Result<()> {
+        let target = target.filter(|_| chat_type == messages::CHAT_TYPE_WHISPER);
         self.send(
             opcode::CMSG_MESSAGECHAT,
-            &messages::messagechat(chat_type, messages::LANGUAGE_ADDON, text),
+            &messages::messagechat_kind(chat_type, messages::LANGUAGE_ADDON, target, text),
         )
     }
 
@@ -90,7 +95,7 @@ fn message_chat_body(
     chat_type: u32,
     language: Option<u32>,
     target: Option<&str>,
-    message: &str,
+    message: impl AsRef<[u8]>,
 ) -> Vec<u8> {
     let target = (chat_type == messages::CHAT_TYPE_WHISPER
         || chat_type == messages::CHAT_TYPE_CHANNEL)
@@ -118,6 +123,15 @@ mod tests {
         assert_eq!(
             message_chat_body(1, messages::CHAT_TYPE_WHISPER, Some(3), Some("Bo"), "yo"),
             [7, 0, 0, 0, 3, 0, 0, 0, b'B', b'o', 0, b'y', b'o', 0]
+        );
+    }
+
+    /// The body carries the line's bytes as cut, a lone UTF-8 lead byte included, then its NUL.
+    #[test]
+    fn a_cut_inside_a_character_goes_out_as_its_bytes() {
+        assert_eq!(
+            message_chat_body(7, messages::CHAT_TYPE_SAY, None, None, b"ab\xC3"),
+            [1, 0, 0, 0, 7, 0, 0, 0, b'a', b'b', 0xC3, 0]
         );
     }
 

@@ -75,13 +75,15 @@ pub fn char_create(req: &CharCreateReq) -> Vec<u8> {
 }
 
 /// `CMSG_MESSAGECHAT` body: `u32` type and language, the target or channel name for whisper and
-/// channel only (`None` otherwise), then the message (vmangos `Server/Packets/Chat.cpp:3-12`).
+/// channel only (`None` otherwise), then the message's bytes as the client cut them, which need not
+/// end on a UTF-8 boundary (vmangos `Server/Packets/Chat.cpp:3-12`).
 pub fn messagechat_kind(
     chat_type: u32,
     language: u32,
     target: Option<&str>,
-    message: &str,
+    message: impl AsRef<[u8]>,
 ) -> Vec<u8> {
+    let message = message.as_ref();
     let mut body = Vec::with_capacity(message.len() + target.map_or(0, str::len) + 10);
     body.extend_from_slice(&chat_type.to_le_bytes());
     body.extend_from_slice(&language.to_le_bytes());
@@ -89,7 +91,7 @@ pub fn messagechat_kind(
         body.extend_from_slice(target.as_bytes());
         body.push(0);
     }
-    body.extend_from_slice(message.as_bytes());
+    body.extend_from_slice(message);
     body.push(0);
     body
 }

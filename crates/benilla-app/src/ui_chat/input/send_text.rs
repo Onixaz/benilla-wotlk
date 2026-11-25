@@ -11,8 +11,9 @@ const LINE_BUFFER: usize = 0x100;
 /// The walk's Lua error (`0x50d7b1`).
 pub(super) const INVALID_ESCAPE: &str = "SendChatMessage(): Invalid escape code in chat message";
 
-/// The line `SendChatMessage` sends for `text`, or `None` for the escape walk's Lua error.
-pub(super) fn sent_line(world: &mut World, vm: &UiScript, text: &str) -> Option<String> {
+/// The line `SendChatMessage` sends for `text`, or `None` for the escape walk's Lua error. Bytes
+/// throughout: a 255-byte cut can end inside a UTF-8 sequence, and 12340 sends it so.
+pub(super) fn sent_line(world: &mut World, vm: &UiScript, text: &[u8]) -> Option<Vec<u8>> {
     // The tokens (`0x50d6ac` -> `0x577d00`).
     let parsed = {
         let world: &World = world;
@@ -21,30 +22,29 @@ pub(super) fn sent_line(world: &mut World, vm: &UiScript, text: &str) -> Option<
             .get_resource::<crate::target::Selection>()
             .and_then(|s| s.guid)
             .unwrap_or(0);
-        utf8_cut(parse_tokens(text, |token| match token {
+        parse_tokens(text, |token| match token {
             Token::Focus => token_name(world, vm, focus, "FOCUS_TOKEN_NOT_FOUND"),
             Token::Target => token_name(world, vm, target, "TARGET_TOKEN_NOT_FOUND"),
-        }))
+        })
     };
     // The drunk slur, while the drunk test passes (`0x50d6c5` -> `0x4ffd80`, `0x50d6e8`).
     let mut line = match self_drunkness(world) {
         Some(drunk) => {
             let slurred = combat_string(vm, "SLURRED_SPEECH");
             let mut filter = world.get_resource_mut::<crate::text_filter::TextFilter>();
-            utf8_cut(slur(
-                parsed.as_bytes(),
+            slur(
+                &parsed,
                 drunk,
                 rand::random::<f32>,
                 // The word test forces the profanity filter on (`0x578124` -> `0x509a50`).
                 |word| filter.as_mut().is_some_and(|f| f.mask(true, word)),
-                |copy| super::super::away::fill_one(&slurred, copy).into_bytes(),
-            ))
+                |copy| super::super::away::fill_one_bytes(slurred.as_bytes(), copy),
+            )
         }
         None => parsed,
     };
     // The newline cut (`0x50d6f7`), then the escape walk (`0x50d6ff`-`0x50d7ae`).
-    let cut = benilla_ui::script::truncate_new_lines(&line).len();
-    line.truncate(cut);
+    line.truncate(benilla_ui::script::new_line_cut(&line));
     benilla_ui::script::chat_escapes_valid(&mut line).then_some(line)
 }
 
@@ -60,8 +60,7 @@ enum Token {
 /// The parse (`0x577d00`): each `%` and the byte after it read as a token; a known one packs its
 /// unit's name, any other packs the `%` alone and the byte stays text (`0x577ed1`). Packed into the
 /// 256-byte buffer.
-fn parse_tokens(text: &str, mut name: impl FnMut(Token) -> String) -> Vec<u8> {
-    let src = text.as_bytes();
+fn parse_tokens(src: &[u8], mut name: impl FnMut(Token) -> String) -> Vec<u8> {
     let mut out = Vec::new();
     let mut start = 0;
     while let Some(at) = src[start..]
@@ -216,7 +215,7 @@ fn slur(
     drunk: f32,
     mut draw: impl FnMut() -> f32,
     mut profane: impl FnMut(&mut String) -> bool,
-    slurred: impl FnOnce(&str) -> Vec<u8>,
+    slurred: impl FnOnce(&[u8]) -> Vec<u8>,
 ) -> Vec<u8> {
     let mut out = Vec::with_capacity(LINE_BUFFER);
     let mut remaining = LINE_BUFFER;
@@ -265,23 +264,11 @@ fn slur(
         word_start = false;
     }
     if drunk * 0.25 > draw() {
-        let copy = String::from_utf8_lossy(&out).into_owned();
-        let mut line = slurred(&copy);
+        let mut line = slurred(&out);
         line.truncate(LINE_BUFFER - 1);
         return line;
     }
     out
-}
-
-/// The buffer as text. Deviation: a cut that ends inside a UTF-8 sequence drops the partial
-/// character, because the send carries a `String`; 12340 sends the partial bytes.
-fn utf8_cut(bytes: Vec<u8>) -> String {
-    String::from_utf8(bytes).unwrap_or_else(|e| {
-        let valid = e.utf8_error().valid_up_to();
-        let mut bytes = e.into_bytes();
-        bytes.truncate(valid);
-        String::from_utf8(bytes).unwrap_or_default()
-    })
 }
 
 #[cfg(test)]
@@ -299,7 +286,7 @@ mod tests {
     /// as text, so `%%t` is a `%` and the target (`0x577ed1`, `0x577ee4`).
     #[test]
     fn the_parse_names_the_tokens_and_keeps_other_percents() {
-        let parse = |t: &str| String::from_utf8(parse_tokens(t, names)).unwrap();
+        let parse = |t: &str| String::from_utf8(parse_tokens(t.as_bytes(), names)).unwrap();
         assert_eq!(parse("hi %t and %F"), "hi Tom and Fay");
         assert_eq!(parse("%N%n%T%f"), "TomTomTomFay");
         assert_eq!(parse("50% off %x"), "50% off %x");
@@ -312,12 +299,23 @@ mod tests {
     #[test]
     fn the_parse_caps_the_line_at_255_bytes() {
         let long = "a".repeat(300);
-        assert_eq!(parse_tokens(&long, names).len(), 255);
+        assert_eq!(parse_tokens(long.as_bytes(), names).len(), 255);
         let near = format!("{}%t", "b".repeat(253));
         assert_eq!(
-            String::from_utf8(parse_tokens(&near, names)).unwrap(),
+            String::from_utf8(parse_tokens(near.as_bytes(), names)).unwrap(),
             format!("{}To", "b".repeat(253))
         );
+    }
+
+    /// The 255-byte cut (`0x577d65`) lands inside a two-byte character and keeps its lead byte:
+    /// the line stays bytes to the wire.
+    #[test]
+    fn the_cut_keeps_a_partial_character() {
+        let text = format!("{}\u{e9}", "a".repeat(254));
+        let out = parse_tokens(text.as_bytes(), names);
+        assert_eq!(out.len(), 255);
+        assert_eq!(out[254], 0xC3);
+        assert!(String::from_utf8(out).is_err());
     }
 
     /// A word-start `s` takes its `h` on a draw under the level unless the word is profane; one
@@ -332,7 +330,7 @@ mod tests {
                 0.5,
                 || draws.next().unwrap_or(1.0),
                 |_| profane,
-                |c| format!("{c} ...hic!").into_bytes(),
+                |c| [c, b" ...hic!"].concat(),
             ))
             .unwrap()
         };

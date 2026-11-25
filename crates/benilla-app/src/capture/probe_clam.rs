@@ -132,7 +132,7 @@ fn finish(net: &NetCommands, entry: u32, now: f64) -> Phase {
     let _ = net.0.send(ClientCommand::Chat {
         kind: ChatKind::Say,
         target: None,
-        text: format!(".additem {entry} -1"),
+        text: format!(".additem {entry} -1").into(),
         language: None,
     });
     Phase::Cleanup { since: now }
@@ -203,7 +203,7 @@ fn clam_probe(
             let _ = net.0.send(ClientCommand::Chat {
                 kind: ChatKind::Say,
                 target: None,
-                text: format!(".additem {entry}"),
+                text: format!(".additem {entry}").into(),
                 language: None,
             });
             probe.phase = Phase::Stocking { sent_at: now };

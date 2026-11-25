@@ -143,7 +143,7 @@ fn level_to(net: &NetCommands, from: u32, to: u32) {
     let _ = net.0.send(ClientCommand::Chat {
         kind: ChatKind::Say,
         target: None,
-        text: format!(".levelup {delta}"),
+        text: format!(".levelup {delta}").into(),
         language: None,
     });
 }
@@ -206,7 +206,7 @@ fn goquest_probe(
             let _ = net.0.send(ClientCommand::Chat {
                 kind: ChatKind::Say,
                 target: None,
-                text: format!(".go xyz {x} {y} {z} {map}"),
+                text: format!(".go xyz {x} {y} {z} {map}").into(),
                 language: None,
             });
             probe.phase = Phase::Settling { sent_at: now };

@@ -149,6 +149,8 @@ pub(crate) struct Scene<'w, 's> {
         Option<Res<'w, crate::ui_action::Spells>>,
         Option<Res<'w, crate::spell::SummonSlots>>,
     ),
+    /// The guild-recruitment cascade a player object's init runs (`0x6e82c5`).
+    recruitment: Option<ResMut<'w, crate::ui_chat::GuildRecruitmentCascade>>,
 }
 
 fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
@@ -282,6 +284,13 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
             std::time::Instant::now(),
             ALLOC_EXPIRE,
         );
+        // Every player object's init runs the guild-recruitment cascade, whoever the player is
+        // (`0x6e8280` -> `0x6e82c5`).
+        if kind == EntityKind::Player {
+            if let Some(cascade) = sc.recruitment.as_mut() {
+                cascade.request();
+            }
+        }
         let arena_side = (kind == EntityKind::Player && sc.self_guid.0 != Some(guid))
             .then(|| fields.player_arena_faction())
             .flatten();

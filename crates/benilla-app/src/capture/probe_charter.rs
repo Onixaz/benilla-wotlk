@@ -427,7 +427,7 @@ fn charter_step(
             let _ = net.0.send(ClientCommand::Chat {
                 kind: ChatKind::Say,
                 target: None,
-                text: format!(".modify money {FUND_COPPER}"),
+                text: format!(".modify money {FUND_COPPER}").into(),
                 language: None,
             });
             info!(
@@ -1087,7 +1087,7 @@ fn hop(probe: &mut CharterProbe, net: &NetCommands, now: f64) {
     let _ = net.0.send(ClientCommand::Chat {
         kind: ChatKind::Say,
         target: None,
-        text: format!(".go xyz {x} {y} {z} {REGISTRAR_MAP}"),
+        text: format!(".go xyz {x} {y} {z} {REGISTRAR_MAP}").into(),
         language: None,
     });
     probe.phase = Phase::Settling { sent_at: now };

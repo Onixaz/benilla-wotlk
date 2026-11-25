@@ -997,7 +997,7 @@ impl MoveKind {
     }
 }
 
-/// The `ChatMsg` type an addon broadcast rides: the client's four-lane whitelist.
+/// The `ChatMsg` type an addon message rides: the verb's five lanes (`0x50062b`-`0x500645`).
 pub(crate) fn addon_wire_chat_type(distribution: benilla_ui::script::AddonDistribution) -> u32 {
     use benilla_protocol::messages as m;
     use benilla_ui::script::AddonDistribution as D;
@@ -1006,6 +1006,7 @@ pub(crate) fn addon_wire_chat_type(distribution: benilla_ui::script::AddonDistri
         D::Raid => m::CHAT_TYPE_RAID,
         D::Guild => m::CHAT_TYPE_GUILD,
         D::Battleground => m::CHAT_TYPE_BATTLEGROUND,
+        D::Whisper => m::CHAT_TYPE_WHISPER,
     }
 }
 
@@ -1247,7 +1248,8 @@ pub(crate) enum ClientCommand {
     Chat {
         kind: ChatKind,
         target: Option<String>,
-        text: String,
+        /// The line's bytes as the verb cut them, which need not end on a UTF-8 boundary.
+        text: Vec<u8>,
         /// The `Languages.dbc` id `SendChatMessage` named; `None` speaks the character's own.
         language: Option<u32>,
     },
@@ -1255,7 +1257,9 @@ pub(crate) enum ClientCommand {
     /// whispered addon message). `text` is `prefix` TAB `message`.
     AddonMessage {
         distribution: benilla_ui::script::AddonDistribution,
-        text: String,
+        /// The whisper's player; `None` on the group lanes.
+        target: Option<String>,
+        text: Vec<u8>,
     },
     /// `CMSG_NAME_QUERY`, sent only by [`crate::names::NameCache`]'s ask-once resolve.
     NameQuery {
@@ -3320,15 +3324,15 @@ mod tests {
             "…and the run arm is untouched by it"
         );
     }
-    /// The four lanes `SendAddonMessage` sends on (`0x4fbb20`'s numbering).
+    /// The five lanes `SendAddonMessage` sends on (`0x50062b`-`0x500645`).
     #[test]
-    fn addon_distributions_map_to_the_clients_own_four_wire_types() {
+    fn addon_distributions_map_to_the_clients_own_five_wire_types() {
         use benilla_ui::script::AddonDistribution as D;
-        let lanes: Vec<u32> = [D::Party, D::Raid, D::Guild, D::Battleground]
+        let lanes: Vec<u32> = [D::Party, D::Raid, D::Guild, D::Battleground, D::Whisper]
             .into_iter()
             .map(addon_wire_chat_type)
             .collect();
-        assert_eq!(lanes, [0x02, 0x03, 0x04, 0x2C]);
+        assert_eq!(lanes, [0x02, 0x03, 0x04, 0x2C, 0x07]);
     }
 
     /// The chat bar's lanes: SAY is 1 (`0x50d1d8`), and the leader lanes the verb picks (`0x50d516`,

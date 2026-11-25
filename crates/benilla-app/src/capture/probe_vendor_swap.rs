@@ -191,7 +191,7 @@ fn vendor_swap_step(
             let _ = net.0.send(ClientCommand::Chat {
                 kind: ChatKind::Say,
                 target: None,
-                text: format!(".go xyz {x} {y} {z} {MAP}"),
+                text: format!(".go xyz {x} {y} {z} {MAP}").into(),
                 language: None,
             });
             probe.phase = Phase::Settle { sent_at: now };

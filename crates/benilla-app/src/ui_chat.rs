@@ -70,6 +70,7 @@ pub(crate) use feed::{
 pub(crate) use frames::{
     add_chat_line_in_call, add_chat_line_now, add_combat_line_now, ChatWindows,
 };
+pub(crate) use recruitment::GuildRecruitmentCascade;
 /// The per-character chat cache's restore, called from the world-entry UI load: its two events
 /// must precede the session's first chat line and `PLAYER_LOGIN`.
 pub(crate) use settings::restore_chat_looks;

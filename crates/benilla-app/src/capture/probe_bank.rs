@@ -216,7 +216,7 @@ fn bank_step(
             let _ = net.0.send(ClientCommand::Chat {
                 kind: ChatKind::Say,
                 target: None,
-                text: format!(".go xyz {x} {y} {z} 0"),
+                text: format!(".go xyz {x} {y} {z} 0").into(),
                 language: None,
             });
             probe.phase = Phase::Settling { sent_at: now };
@@ -291,7 +291,7 @@ fn bank_step(
                 let _ = net.0.send(ClientCommand::Chat {
                     kind: ChatKind::Say,
                     target: None,
-                    text: format!(".additem {ITEM_ENTRY} 1"),
+                    text: format!(".additem {ITEM_ENTRY} 1").into(),
                     language: None,
                 });
                 probe.phase = Phase::EnsureItem {
@@ -407,7 +407,7 @@ fn bank_step(
                     info!("PROBE_BANK: (5 buy_slot) purse {money}c < {cost}c — granting {grant}c with `.modify money`");
                     let _ = net.0.send(ClientCommand::Chat {
                         kind: ChatKind::Say,
-                        text: format!(".modify money {grant}"),
+                        text: format!(".modify money {grant}").into(),
                         language: None,
                         target: None,
                     });
@@ -495,7 +495,7 @@ fn bank_step(
                 let _ = net.0.send(ClientCommand::Chat {
                     kind: ChatKind::Say,
                     target: None,
-                    text: format!(".go xyz {x} {by} {bz} 0"),
+                    text: format!(".go xyz {x} {by} {bz} 0").into(),
                     language: None,
                 });
                 probe.phase = Phase::Refusal {
