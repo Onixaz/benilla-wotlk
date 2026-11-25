@@ -257,7 +257,7 @@ fn on_channel_notify(
     In(ev): In<SessionEvent>,
     mut chat_log: ResMut<crate::ui_script::live::UiEvents>,
     social: Res<SocialState>,
-    channels: Res<super::edit::ChannelState>,
+    mut channels: ResMut<super::edit::ChannelState>,
 ) {
     if let SessionEvent::ChannelNotify {
         notice,
@@ -283,7 +283,20 @@ fn on_channel_notify(
                 }
             }
         }
+        // The voice arms (jump table `0x50eb08`: `0x22` -> `0x50e964`, `0x23` -> `0x50ea05`, `0x24`
+        // -> `0x50e9bc`) write the record found by the wire name ahead of the line.
+        let on = match notice {
+            n::VOICE_ON | n::VOICE_ENABLED => Some(true),
+            n::VOICE_OFF => Some(false),
+            _ => None,
+        };
+        let rebuild = on.is_some_and(|on| channels.set_voice(&channel, on));
+        // `VOICE_ENABLED` adds no line (`0x50ea00` jumps past the add).
         chat_log.push_channel_notice(notice, channel, &tail);
+        // A found record's rebuild after the line, with its signal (`0x50eaf3` -> `0x504840`).
+        if rebuild {
+            chat_log.world(super::feed::channels_updated);
+        }
     }
 }
 

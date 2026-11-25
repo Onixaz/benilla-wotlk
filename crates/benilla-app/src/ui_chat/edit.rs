@@ -389,6 +389,24 @@ impl ChannelState {
         }
     }
 
+    /// A voice notice's write to the record holding `name`, found by name (`0x4fdfc0`): `on` sets
+    /// the flags byte's `0x80` (`0x50e9b0`, `0x50e9f2`), else clears it (`0x50ea4d`). Whether a
+    /// record held it.
+    pub(crate) fn set_voice(&mut self, name: &str, on: bool) -> bool {
+        let Some(slot) = self
+            .number_of(name)
+            .and_then(|n| self.joined[n as usize - 1].as_mut())
+        else {
+            return false;
+        };
+        if on {
+            slot.flags |= 0x80;
+        } else {
+            slot.flags &= 0x7f;
+        }
+        true
+    }
+
     /// Whether we asked to leave the slot holding `name`; `None` when no slot holds it.
     pub(crate) fn leave_asked(&self, name: &str) -> Option<bool> {
         self.number_of(name)

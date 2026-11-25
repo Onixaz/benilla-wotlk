@@ -528,7 +528,7 @@ fn channel_notice_lines(
     channel: String,
     tail: &ChannelNoticeTail,
 ) -> Vec<ChatLine> {
-    // The voice flag's set prints nothing, and benilla's channel pane has no voice column.
+    // The voice flag's set prints nothing (`0x50ea00`); its record write is the handler's.
     if notice_byte == channel_notice::VOICE_ENABLED {
         return Vec::new();
     }
@@ -1016,7 +1016,7 @@ fn deliver_after(channels: &mut ChannelState, AfterLine { dropped }: AfterLine) 
 
 /// The channel list's update (`0x505d40`) with the `World` lent: the pane relists the live records
 /// and fires `CHANNEL_UI_UPDATE`.
-fn channels_updated(world: &mut World) {
+pub(super) fn channels_updated(world: &mut World) {
     crate::ui_script::safe_world::lend(world, |s| s.channels_updated());
 }
 

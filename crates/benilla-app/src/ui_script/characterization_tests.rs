@@ -13438,6 +13438,105 @@ fn the_join_writes_its_flags_and_an_equal_display_list_fires_nothing() {
     );
 }
 
+/// The voice notices write the record's flags byte ahead of their line and rebuild after it
+/// (`0x50e9b0`, `0x50ea4d`, `0x50e9f2`; `0x50eaf3` -> `0x504840`): `VOICE_ON` fires its line then
+/// `CHANNEL_UI_UPDATE`, `VOICE_ENABLED` only the rebuild, and a display list then compares against
+/// the written byte (`0x503a62`). A notice for a channel with no record writes and rebuilds nothing.
+#[test]
+fn the_voice_notices_write_the_record_and_rebuild_after_the_line() {
+    use benilla_protocol::messages::{channel_notice, ChannelNoticeTail};
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    join_charz(&mut rig);
+    rig.packets(
+        vec![channel_notice(
+            channel_notice::YOU_JOINED,
+            "Charz",
+            ChannelNoticeTail::YouJoined {
+                flags: 0x18,
+                instance: 0,
+                text: None,
+            },
+        )],
+        1,
+    );
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("GetNumDisplayChannels() SetSelectedDisplayChannel(4)")
+    })
+    .expect("a VM")
+    .unwrap();
+    let voice =
+        |notice, channel: &str| channel_notice(notice, channel, ChannelNoticeTail::Actor(ME));
+    let list = |flags| SessionEvent::ChannelList {
+        display: true,
+        channel: "Charz".into(),
+        flags,
+        members: Vec::new(),
+    };
+    const EVENTS: &[&str] = &[
+        "CHAT_MSG_CHANNEL_NOTICE_USER",
+        "CHANNEL_UI_UPDATE",
+        "CHANNEL_FLAGS_UPDATED",
+        "AUCTION_HOUSE_DISABLED",
+    ];
+    let seen = rig.packets(
+        vec![
+            voice(channel_notice::VOICE_ON, "Charz"),
+            closed_house(),
+            list(0x98),
+        ],
+        1,
+    );
+    assert_eq!(
+        fired(&seen, EVENTS),
+        [
+            "CHAT_MSG_CHANNEL_NOTICE_USER",
+            "CHANNEL_UI_UPDATE",
+            "AUCTION_HOUSE_DISABLED"
+        ],
+        "the line, then the rebuild; the list's 0x98 is the record's"
+    );
+    let seen = rig.packets(
+        vec![
+            voice(channel_notice::VOICE_OFF, "Charz"),
+            closed_house(),
+            list(0x18),
+        ],
+        1,
+    );
+    assert_eq!(
+        fired(&seen, EVENTS),
+        [
+            "CHAT_MSG_CHANNEL_NOTICE_USER",
+            "CHANNEL_UI_UPDATE",
+            "AUCTION_HOUSE_DISABLED"
+        ],
+        "the clear brings the record back to 0x18"
+    );
+    let seen = rig.packets(
+        vec![
+            voice(channel_notice::VOICE_ENABLED, "Charz"),
+            closed_house(),
+            list(0x98),
+        ],
+        1,
+    );
+    assert_eq!(
+        fired(&seen, EVENTS),
+        ["CHANNEL_UI_UPDATE", "AUCTION_HOUSE_DISABLED"],
+        "the set adds no line"
+    );
+    let seen = rig.packets(vec![voice(channel_notice::VOICE_ON, "Elsewhere")], 1);
+    assert_eq!(
+        fired(&seen, EVENTS),
+        ["CHAT_MSG_CHANNEL_NOTICE_USER"],
+        "no record: the line alone"
+    );
+}
+
 /// The roster's callback is registered only on a member the cache missed at list time (`0x503bdb`):
 /// a re-answer for a member that was cached then (here after `SMSG_INVALIDATE_PLAYER`) leaves the
 /// count, and the uncached member's answer fires the count and the roster.
