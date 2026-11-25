@@ -9,7 +9,6 @@ use bevy::prelude::*;
 use crate::net::ObjectStore;
 use crate::sound::MessageSounds;
 use crate::spell::validator::MountedGate;
-use crate::ui_chat::{ChatEvent, ChatLog};
 use crate::ui_items::{count_of, InventoryScope};
 
 /// One cast failure. `arg` fills the message's `%s`; the reference raises its local refusals
@@ -275,20 +274,13 @@ pub(crate) fn show_messages(
     lines: impl IntoIterator<Item = Shown>,
 ) {
     for line in lines {
-        show_one(
-            script,
-            Some(&mut sink.chat),
-            Some(&mut sink.sounds),
-            who,
-            line,
-        );
+        show_one(script, Some(&mut sink.sounds), who, line);
     }
 }
 
 /// [`show_messages`] for one line, either sink possibly absent.
 pub(super) fn show_one(
     script: &mut UiScript,
-    chat: Option<&mut ChatLog>,
     sounds: Option<&mut MessageSounds>,
     who: &str,
     Shown { record, kind, text }: Shown,
@@ -299,15 +291,9 @@ pub(super) fn show_one(
         sounds.push(record);
     }
     match kind {
-        // The display's chat arm on its row's chat type (`0x521814` -> `0x509dd0`), through the chat feed, in order with the caller's other chat lines there (#1354).
+        // The display's chat arm on its row's chat type, through the chat add in the caller's turn (`0x521814` -> `0x509dd0`).
         MsgKind::Chat => {
-            let chat_type = record.map_or(0, |r| r.chat_type);
-            if let Some(chat) = chat {
-                chat.push_event(ChatEvent::text_only(
-                    crate::ui_chat::kind_of_type(chat_type),
-                    text,
-                ));
-            }
+            script.add_chat_text(record.map_or(0, |r| r.chat_type), text);
         }
         MsgKind::Info => {
             script.fire_event("UI_INFO_MESSAGE", vec![ScriptValue::Str(text)]);
@@ -327,6 +313,24 @@ pub(crate) fn show_in_turn(
     #[cfg(test)]
     LINES_IN_TURN.with(|lines| lines.borrow_mut().push(line.clone()));
     ui.world(move |world| show_line_in_world(world, who, line));
+}
+
+/// [`show_in_turn`], then `then` in the same step: a handler's writes after its line, which its
+/// listeners read before them (`0x5216f0` returns before the handler goes on).
+pub(crate) fn show_in_turn_then(
+    ui: &mut crate::ui_script::live::UiEvents,
+    who: &'static str,
+    line: UiError,
+    then: impl FnOnce(&mut World) + Send + Sync + 'static,
+) {
+    #[cfg(test)]
+    LINES_IN_TURN.with(|lines| lines.borrow_mut().push(line.clone()));
+    ui.world(move |world| {
+        show_line_in_world(world, who, line);
+        // The line's chat add and its event run before the handler goes on (`0x52183c`).
+        crate::ui_script::live::fire_handler_events(world);
+        then(world);
+    });
 }
 
 #[cfg(test)]
@@ -361,11 +365,9 @@ fn show_line_now(
     show_messages(&mut script, &mut sink, who, shown);
 }
 
-/// Where a shown message lands besides the VM: the chat log and the sound queue, one parameter
-/// because the feeds that raise messages are at Bevy's parameter limit.
+/// Where a shown message lands besides the VM: the sound queue.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct MessageSink<'w> {
-    pub(crate) chat: ResMut<'w, ChatLog>,
     pub(crate) sounds: ResMut<'w, MessageSounds>,
 }
 
@@ -559,6 +561,41 @@ mod shown_tests {
     use benilla_ui::script::UiScript;
     use bevy::prelude::*;
 
+    /// The chat lines added through the lent chat log, by chat type.
+    #[derive(Default)]
+    struct ChatAdds(Vec<(u8, String)>);
+
+    impl benilla_ui::script::LiveState for ChatAdds {
+        fn add_chat_line(
+            &mut self,
+            chat_type: u8,
+            text: &str,
+        ) -> Option<(&'static str, Vec<benilla_ui::script::ScriptValue>)> {
+            self.0.push((chat_type, text.to_string()));
+            None
+        }
+
+        fn unit_flags(&self, _: u64) -> Option<u32> {
+            None
+        }
+
+        fn unit_health(&self, _: u64) -> Option<u32> {
+            None
+        }
+
+        fn active_player(&self) -> Option<u64> {
+            None
+        }
+
+        fn has_control(&self) -> bool {
+            true
+        }
+
+        fn far_sight(&self) -> bool {
+            false
+        }
+    }
+
     /// Through [`super::show_messages`]: a keyed line queues its catalog row; an unkeyed line and
     /// an unknown key queue nothing.
     #[test]
@@ -569,23 +606,29 @@ mod shown_tests {
         let mut state = bevy::ecs::system::SystemState::<MessageSink>::new(&mut world);
         let mut script = UiScript::new().expect("VM");
 
+        // The chat row is added inside the call through the lent chat log (`0x509dd0`).
+        let mut log = ChatAdds::default();
+        let lua = script.lua().clone();
         {
             let mut sink = state.get_mut(&mut world);
-            super::show_messages(
-                &mut script,
-                &mut sink,
-                "test",
-                [
-                    // A voiced refusal, a named cue, a chat row and a silent row.
-                    Shown::keyed("ERR_OUT_OF_MANA", "Not enough mana".into()),
-                    Shown::keyed("ERR_NEWTAXIPATH", "New flight path discovered!".into()),
-                    Shown::keyed("ERR_ALREADY_IN_GROUP_S", "Bob is already in a group".into()),
-                    Shown::keyed("ERR_CANT_STACK", "That item cannot stack".into()),
-                    Shown::unkeyed(MsgKind::Error, "the server said so".into()),
-                    Shown::keyed("ERR_NOT_A_REAL_MESSAGE", "invented".into()),
-                ],
-            );
+            benilla_ui::script::world_loan::lend_live(&lua, &mut log, || {
+                super::show_messages(
+                    &mut script,
+                    &mut sink,
+                    "test",
+                    [
+                        // A voiced refusal, a named cue, a chat row and a silent row.
+                        Shown::keyed("ERR_OUT_OF_MANA", "Not enough mana".into()),
+                        Shown::keyed("ERR_NEWTAXIPATH", "New flight path discovered!".into()),
+                        Shown::keyed("ERR_ALREADY_IN_GROUP_S", "Bob is already in a group".into()),
+                        Shown::keyed("ERR_CANT_STACK", "That item cannot stack".into()),
+                        Shown::unkeyed(MsgKind::Error, "the server said so".into()),
+                        Shown::keyed("ERR_NOT_A_REAL_MESSAGE", "invented".into()),
+                    ],
+                );
+            });
         }
+        assert_eq!(log.0, [(0, "Bob is already in a group".to_string())]);
         state.apply(&mut world);
 
         let queued = world.resource::<MessageSounds>().queued().to_vec();
@@ -1062,43 +1105,69 @@ mod chat_arm_tests {
 
     use super::{show_line_in_world, UiError};
 
-    /// A handler's chat-kind line goes out on its row's chat type (`0x521814` -> `0x509dd0`): a type-26 row is a `CHAT_MSG_SKILL` line, not `CHAT_MSG_SYSTEM`.
-    #[test]
-    fn a_skill_rows_line_goes_out_as_a_skill_line() {
+    /// A world past its entry with a spy on the chat events and `PLAYER_TARGET_CHANGED`, each
+    /// entry carrying `STATE` as the listener read it.
+    fn world() -> World {
         let mut world = World::new();
-        world.init_resource::<crate::ui_script::live::UiEvents>();
-        world.init_resource::<crate::ui_chat::ChatWindows>();
-        world.init_resource::<crate::ui_chat::ChatLog>();
+        let _wire = crate::ui_chat::insert_add_resources(&mut world);
         world.init_resource::<crate::sound::MessageSounds>();
         let script = UiScript::new().unwrap();
         script
             .run(
-                r#"SEEN = {} ERR_SKILL_GAINED_S = "You have gained the %s skill."
+                r#"SEEN = {} STATE = 1 ERR_SKILL_GAINED_S = "You have gained the %s skill."
                 local f = CreateFrame("Frame")
                 f:RegisterEvent("CHAT_MSG_SKILL")
                 f:RegisterEvent("CHAT_MSG_SYSTEM")
-                f:SetScript("OnEvent", function(_, e, t) SEEN[#SEEN + 1] = e .. ":" .. t end)"#,
+                f:RegisterEvent("PLAYER_TARGET_CHANGED")
+                f:SetScript("OnEvent", function(_, e, t)
+                    SEEN[#SEEN + 1] = e .. ":" .. tostring(t) .. ":" .. STATE
+                end)"#,
             )
             .unwrap();
         world.insert_non_send_resource(script);
+        world
+    }
+
+    fn seen(world: &World) -> String {
+        world
+            .non_send_resource::<UiScript>()
+            .eval("return table.concat(SEEN, ',')")
+            .unwrap()
+    }
+
+    /// A handler's chat-kind line goes out on its row's chat type (`0x521814` -> `0x509dd0`): a
+    /// type-26 row fires `CHAT_MSG_SKILL`, not `CHAT_MSG_SYSTEM`, in the handler's turn.
+    #[test]
+    fn a_skill_rows_line_fires_chat_msg_skill_in_the_handlers_turn() {
+        let mut world = world();
         show_line_in_world(
             &mut world,
             "test",
             UiError::s("ERR_SKILL_GAINED_S", "Swords"),
         );
         crate::ui_script::live::fire_handler_events(&mut world);
-        let seen: String = world
-            .non_send_resource::<UiScript>()
-            .eval("return table.concat(SEEN, ',')")
-            .unwrap();
-        // Nothing fires in the handler's turn: the line fires from the chat feed until #1416.
-        assert_eq!(seen, "");
         assert_eq!(
-            world.resource::<crate::ui_chat::ChatLog>().pending_events(),
-            [(
-                Some(crate::ui_chat::ChatEventKind::Skill),
-                "You have gained the Swords skill.".to_string()
-            )]
+            seen(&world),
+            "CHAT_MSG_SKILL:You have gained the Swords skill.:1"
+        );
+    }
+
+    /// The display's chat arm adds its line inside the handler (`0x521814` -> `0x509dd0`, recorded
+    /// at `0x50a8a5`, signalled at `0x4fdd5c`): its listener reads the state before the handler's
+    /// next write, and its event fires ahead of the handler's next event.
+    #[test]
+    fn a_handlers_chat_line_is_read_before_its_next_write_and_event() {
+        let mut world = world();
+        {
+            let mut ui = world.resource_mut::<crate::ui_script::live::UiEvents>();
+            super::show_in_turn(&mut ui, "test", UiError::s("ERR_SKILL_GAINED_S", "Swords"));
+            ui.write(|s| s.run("STATE = 2").unwrap());
+            ui.fire("PLAYER_TARGET_CHANGED", Vec::new());
+        }
+        crate::ui_script::live::fire_handler_events(&mut world);
+        assert_eq!(
+            seen(&world),
+            "CHAT_MSG_SKILL:You have gained the Swords skill.:1,PLAYER_TARGET_CHANGED:nil:2"
         );
     }
 }

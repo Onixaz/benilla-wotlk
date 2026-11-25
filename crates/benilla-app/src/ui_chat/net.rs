@@ -2,12 +2,13 @@
 //! chat. `SMSG_NOTIFICATION` and `SMSG_AREA_TRIGGER_MESSAGE` are mostly `UIErrorsFrame` toasts,
 //! shown in the handler's turn through [`TextSink`].
 
+use crate::ui_chat::ChatSink as _;
 use benilla_protocol::messages::{ChatMessage, CHAT_MSG_WHISPER};
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
 
 use super::{Broadcast, ChatEvent, ChatEventKind, ChatLog};
-use crate::net::{ClientCommand, NetCommands, NetHandlerApp, PlayedTimeAnswer, ServerSaidMessage};
+use crate::net::{ClientCommand, NetCommands, NetHandlerApp, ServerSaidMessage};
 use crate::ui_action::signals::SignalSink;
 use crate::ui_action::{TextSink, UiError};
 use crate::ui_script::live::UiEvents;
@@ -37,13 +38,15 @@ pub(super) fn register(app: &mut App) {
 
 fn on_chat(
     In(ev): In<SessionEvent>,
-    mut chat_log: ResMut<ChatLog>,
+    mut chat_log: ResMut<crate::ui_script::live::UiEvents>,
     social: Res<SocialState>,
     commands: Res<NetCommands>,
     mut server_said: MessageWriter<ServerSaidMessage>,
 ) {
     if let SessionEvent::Chat(m) = ev {
-        chat(m, &mut chat_log, &social, &commands, &mut server_said);
+        if let Some(line) = chat(m, &social, &commands, &mut server_said) {
+            chat_log.push_line(line);
+        }
     }
 }
 
@@ -60,9 +63,7 @@ fn on_channel_list(In(ev): In<SessionEvent>, world: &mut World) {
         return;
     };
     if !display {
-        if let Some(mut chat_log) = world.get_resource_mut::<ChatLog>() {
-            channel_list(channel, &members, &mut chat_log);
-        }
+        super::feed::add(world, channel_list(channel, &members).into());
         return;
     }
     debug!(
@@ -160,8 +161,9 @@ fn on_chat_not_in_party(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
     }
 }
 
-/// The four world broadcasts, parked for [`super::broadcast`]'s resolve pass.
-fn on_broadcast(In(ev): In<SessionEvent>, mut chat_log: ResMut<ChatLog>) {
+/// The world broadcasts (`0x50c3c0`, `0x50c850`, `0x50c980`): each resolves against the joined
+/// channels and the player's zone as it lands and adds its lines in the handler's turn.
+fn on_broadcast(In(ev): In<SessionEvent>, world: &mut World) {
     let b = match ev {
         SessionEvent::ZoneUnderAttack { area_id } => Broadcast::ZoneUnderAttack { area_id },
         SessionEvent::DefenseMessage { zone_id, text } => Broadcast::Defense { zone_id, text },
@@ -170,7 +172,19 @@ fn on_broadcast(In(ev): In<SessionEvent>, mut chat_log: ResMut<ChatLog>) {
         }
         _ => return,
     };
-    broadcast(b, &mut chat_log);
+    // A defense broadcast outside the defense channels prints nothing, so the log is its only trace.
+    info!("net: world broadcast — {b:?}");
+    let template = world
+        .get_non_send_resource::<benilla_ui::script::UiScript>()
+        .and_then(|s| super::combat::global_string(s, "ZONE_UNDER_ATTACK"));
+    match world.run_system_cached_with(super::broadcast::broadcast_lines, (b, template)) {
+        Ok(lines) => {
+            for line in lines {
+                super::feed::add(world, line.into());
+            }
+        }
+        Err(e) => warn!("chat: the broadcast was not resolved: {e}"),
+    }
 }
 
 /// `SMSG_CHAT_RESTRICTED` (`0x6e3cb9`): the kind picks its line through `0x6e44d0`; past 3,
@@ -193,31 +207,46 @@ fn on_chat_restricted(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
     }
 }
 
-fn on_toast(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>, mut chat_log: ResMut<ChatLog>) {
+fn on_toast(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
     match ev {
-        SessionEvent::Notification { text } => notification(&text, &mut *ui, &mut chat_log),
+        SessionEvent::Notification { text } => {
+            if let Some(line) = notification(&text, &mut *ui) {
+                ui.push_event(line);
+            }
+        }
         SessionEvent::AreaTriggerMessage { text } => area_trigger_message(text, &mut *ui),
         _ => {}
     }
 }
 
-/// Fill the mailbox `feed::played_time_bridge` fires as `TIME_PLAYED_MSG`, whose stock handler
-/// prints the chat lines; the breakdown goes to the console (`0x401400`-`0x40144c`), the log here.
+/// `SMSG_PLAYED_TIME` (`0x401390`): the played clock's seed, and for a shown answer the console
+/// breakdown (`0x401400`-`0x40144c`, the log here) then `TIME_PLAYED_MSG(total, level)` raised in
+/// the handler (`0x401463`), whose stock handler prints the chat lines.
 fn on_played_time(
     In(ev): In<SessionEvent>,
-    mut answer: ResMut<PlayedTimeAnswer>,
     mut clock: ResMut<crate::net::PlayedClock>,
+    mut ui: ResMut<UiEvents>,
+    active: Query<(), With<crate::net::SelfPlayer>>,
 ) {
     if let SessionEvent::PlayedTime { total, level, show } = ev {
         debug!("net: played time {total} s (level {level} s, shown {show})");
-        clock.0 = Some((total, std::time::Instant::now()));
+        // Only the active player's clock is seeded (`0x4013c6`-`0x4013f1`).
+        if !active.is_empty() {
+            clock.0 = Some((total, std::time::Instant::now()));
+        }
         // Only a shown answer prints and fires `TIME_PLAYED_MSG` (`0x4013f6`).
         if show {
-            answer.0 = Some((total, level));
             info!(
                 "console: total time played {}, this level {}",
                 played_breakdown(total),
                 played_breakdown(level)
+            );
+            ui.fire(
+                "TIME_PLAYED_MSG",
+                vec![
+                    benilla_ui::script::ScriptValue::Int(i64::from(total)),
+                    benilla_ui::script::ScriptValue::Int(i64::from(level)),
+                ],
             );
         }
     }
@@ -225,7 +254,7 @@ fn on_played_time(
 
 fn on_channel_notify(
     In(ev): In<SessionEvent>,
-    mut chat_log: ResMut<ChatLog>,
+    mut chat_log: ResMut<crate::ui_script::live::UiEvents>,
     social: Res<SocialState>,
 ) {
     if let SessionEvent::ChannelNotify {
@@ -251,7 +280,7 @@ fn on_channel_notify(
 /// `MSG_RANDOM_ROLL` (`0x6e37af`): an ignored roller's roll shows nothing (`0x6e3801`).
 fn on_random_roll(
     In(ev): In<SessionEvent>,
-    mut chat_log: ResMut<ChatLog>,
+    mut chat_log: ResMut<crate::ui_script::live::UiEvents>,
     social: Res<SocialState>,
 ) {
     if let SessionEvent::RandomRoll {
@@ -274,15 +303,15 @@ fn on_session_end(In(_): In<SessionEvent>, mut chat_log: ResMut<ChatLog>) {
     chat_log.clear_session();
 }
 
-/// A spoken line (`SMSG_MESSAGECHAT`). System lines (`0x0A`), the server's answers to GM
-/// commands, log at `info!` and go out as [`ServerSaidMessage`]; other chat logs at `debug!`.
+/// A spoken line (`SMSG_MESSAGECHAT`): the line the handler adds, `None` for one it drops. System
+/// lines (`0x0A`), the server's answers to GM commands, log at `info!` and go out as
+/// [`ServerSaidMessage`]; other chat logs at `debug!`.
 fn chat(
     m: ChatMessage,
-    chat_log: &mut ChatLog,
     social: &SocialState,
     net_commands: &NetCommands,
     server_said: &mut MessageWriter<ServerSaidMessage>,
-) {
+) -> Option<super::ChatLine> {
     // Addon traffic: 1.12 has no addon opcode or chat type, so `LANG_ADDON` on any lane is the
     // whole test. The line never renders; it fires `CHAT_MSG_ADDON` once the sender's name
     // resolves. An ignored sender's fires nothing, as the reference drops ignored lines first, and
@@ -300,9 +329,9 @@ fn chat(
                     &format!("<- [{:#04x}] {:?}", m.chat_type, m.text),
                 );
             }
-            chat_log.push_addon(&m.text, m.chat_type, m.sender_guid);
+            return Some(super::feed::addon_line(&m.text, m.chat_type, m.sender_guid));
         }
-        return;
+        return None;
     }
     if m.chat_type == 0x0A {
         info!("net: server says — {}", m.text);
@@ -337,21 +366,21 @@ fn chat(
         ]
         .contains(&m.chat_type)
         {
-            return;
+            return None;
         }
     }
-    chat_log.push_wire(m);
+    Some(super::ChatLine::Wire { msg: m })
 }
 
 /// The `/chatlist` roster (`SMSG_CHANNEL_LIST`). Members arrive as guids and are not resolved, so
 /// the line gives their count where the reference lists their names.
-fn channel_list(channel: String, members: &[(u64, u8)], chat_log: &mut ChatLog) {
+fn channel_list(channel: String, members: &[(u64, u8)]) -> ChatEvent {
     let mut ev = ChatEvent::text_only(
         ChatEventKind::ChannelList,
         format!("{} member(s)", members.len()),
     );
     ev.channel = channel;
-    chat_log.push_event(ev);
+    ev
 }
 
 /// A whisper target is offline: message 241, `ERR_CHAT_PLAYER_NOT_FOUND_S`, with the server's
@@ -416,7 +445,7 @@ fn notice_route(text: &str) -> NoticeRoute<'_> {
 /// `SMSG_NOTIFICATION` (`0x401280`): the error-display line, the console and a chat line as the
 /// text's prefix says ([`notice_route`]). vmangos sends `.gm on` as both a system line and a
 /// notification (`Objects/Player.cpp:2676-2677`).
-fn notification(text: &str, errors: &mut dyn TextSink, chat_log: &mut ChatLog) {
+fn notification(text: &str, errors: &mut dyn TextSink) -> Option<ChatEvent> {
     let route = notice_route(text);
     info!("net: notification — {}", route.text);
     match route.toast {
@@ -429,9 +458,7 @@ fn notification(text: &str, errors: &mut dyn TextSink, chat_log: &mut ChatLog) {
         .and_then(|t| u8::try_from(t).ok())
         .and_then(benilla_protocol::messages::wotlk_chat_type_shared)
         .and_then(super::event::kind_of_wire);
-    if let Some(kind) = kind {
-        chat_log.push_event(ChatEvent::text_only(kind, route.text.to_string()));
-    }
+    kind.map(|kind| ChatEvent::text_only(kind, route.text.to_string()))
 }
 
 /// An area trigger's refusal (`SMSG_AREA_TRIGGER_MESSAGE`, `0x2b8`): the yellow `UIErrorsFrame`
@@ -439,13 +466,6 @@ fn notification(text: &str, errors: &mut dyn TextSink, chat_log: &mut ChatLog) {
 fn area_trigger_message(text: String, errors: &mut dyn TextSink) {
     info!("net: area-trigger message — {text}");
     errors.text_line(MsgKind::Info, text);
-}
-
-/// Park a world broadcast for `ui_chat::broadcast`'s resolve pass, logged: a defense broadcast
-/// outside the defense channels prints nothing, so the log is its only trace.
-fn broadcast(b: Broadcast, chat_log: &mut ChatLog) {
-    info!("net: world broadcast — {b:?}");
-    chat_log.push_broadcast(b);
 }
 
 /// One played time as days, hours, minutes and seconds, for the console line.
@@ -470,6 +490,7 @@ mod tests {
             sender_guid: 0x21,
             target_guid: 0x21,
             sender_name: None,
+            receiver_name: None,
             channel: None,
             text: text.to_string(),
             chat_tag: 0,
@@ -492,22 +513,19 @@ mod tests {
         world.insert_resource(NetCommands(tx));
         world.insert_resource(SocialState::default());
         world.insert_resource(ChatLog::default());
-        world
+        let line = world
             .run_system_once(
-                move |mut chat_log: ResMut<ChatLog>,
-                      social: Res<SocialState>,
+                move |social: Res<SocialState>,
                       net_commands: Res<NetCommands>,
                       mut server_said: MessageWriter<ServerSaidMessage>| {
-                    chat(
-                        m.clone(),
-                        &mut chat_log,
-                        &social,
-                        &net_commands,
-                        &mut server_said,
-                    );
+                    chat(m.clone(), &social, &net_commands, &mut server_said)
                 },
             )
             .unwrap();
+        // Outside the world the add queues the line (`0x509f48`).
+        if let Some(line) = line {
+            super::super::feed::add_now(&mut world, line);
+        }
         world.resource::<ChatLog>().pending_len()
     }
 
@@ -536,22 +554,19 @@ mod tests {
         world.insert_resource(SocialState::default());
         world.insert_resource(ChatLog::default());
         let m = a_party_line(LANGUAGE_ADDON, "Quiver\tVERSION:3.1.4");
-        world
+        let line = world
             .run_system_once(
-                move |mut chat_log: ResMut<ChatLog>,
-                      social: Res<SocialState>,
+                move |social: Res<SocialState>,
                       net_commands: Res<NetCommands>,
                       mut server_said: MessageWriter<ServerSaidMessage>| {
-                    chat(
-                        m.clone(),
-                        &mut chat_log,
-                        &social,
-                        &net_commands,
-                        &mut server_said,
-                    );
+                    chat(m.clone(), &social, &net_commands, &mut server_said)
                 },
             )
             .unwrap();
+        // Outside the world the add queues the line (`0x509f48`).
+        if let Some(line) = line {
+            super::super::feed::add_now(&mut world, line);
+        }
         let log = world.resource::<ChatLog>();
         assert_eq!(
             log.pending_addons(),
@@ -590,8 +605,8 @@ mod tests {
         );
 
         let mut errors: Vec<(String, MsgKind)> = Vec::new();
-        let mut log = ChatLog::default();
-        notification("GM mode is ON", &mut errors, &mut log);
+        let mut log = Vec::new();
+        log.extend(notification("GM mode is ON", &mut errors));
         assert_eq!(
             errors,
             [(
@@ -600,7 +615,7 @@ mod tests {
             )],
             "the SendNotification half is the RED toast, never a second line"
         );
-        assert_eq!(log.pending_len(), 0);
+        assert!(log.is_empty());
     }
 
     /// `0x4012ac`-`0x401371`: each prefix's surfaces, with the prefix cut from the text.
@@ -626,13 +641,13 @@ mod tests {
     #[test]
     fn a_hash_notification_writes_a_chat_line_of_its_type() {
         let mut errors: Vec<(String, MsgKind)> = Vec::new();
-        let mut log = ChatLog::default();
-        notification("~#^1hello", &mut errors, &mut log);
-        notification("~#plain system", &mut errors, &mut log);
-        notification("~#^/", &mut errors, &mut log);
+        let mut log = Vec::new();
+        log.extend(notification("~#^1hello", &mut errors));
+        log.extend(notification("~#plain system", &mut errors));
+        log.extend(notification("~#^/", &mut errors));
         assert!(errors.is_empty());
         assert_eq!(
-            log.pending_len(),
+            log.len(),
             2,
             "type 1 (say) and type 0 (system); -1 has no lane"
         );
@@ -666,7 +681,7 @@ mod tests {
     #[test]
     fn an_ignored_players_roll_is_dropped() {
         let mut world = World::new();
-        world.insert_resource(ChatLog::default());
+        world.init_resource::<UiEvents>();
         let mut social = SocialState::default();
         social.set_ignores_for_test(vec![0x21]);
         world.insert_resource(social);
@@ -680,7 +695,7 @@ mod tests {
             world.run_system_once_with(on_random_roll, ev).unwrap();
         }
         assert_eq!(
-            world.resource::<ChatLog>().pending_len(),
+            world.resource_mut::<UiEvents>().take_chat().len(),
             1,
             "only 0x22's roll queues"
         );
@@ -742,5 +757,28 @@ mod tests {
             .unwrap();
         crate::ui_script::live::fire_handler_events(&mut world);
         assert!(owner(&world), "our row carries the owner bit");
+    }
+
+    /// The answer seeds the active player's clock alone (`0x4013c6`-`0x4013f1`): with no active
+    /// player it is dropped, and the clock still reads 0.
+    #[test]
+    fn a_played_answer_seeds_only_the_active_players_clock() {
+        let mut world = World::new();
+        world.init_resource::<crate::net::PlayedClock>();
+        world.init_resource::<UiEvents>();
+        let answer = || SessionEvent::PlayedTime {
+            total: 3_600,
+            level: 60,
+            show: false,
+        };
+        world
+            .run_system_once_with(on_played_time, answer())
+            .unwrap();
+        assert_eq!(world.resource::<crate::net::PlayedClock>().now(), 0);
+        world.spawn(crate::net::SelfPlayer);
+        world
+            .run_system_once_with(on_played_time, answer())
+            .unwrap();
+        assert_eq!(world.resource::<crate::net::PlayedClock>().now(), 3_600);
     }
 }

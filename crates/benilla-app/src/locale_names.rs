@@ -1,5 +1,5 @@
 //! The display names benilla answers from enUS literals, read from the DBCs under any other locale
-//! (`ChrRaces`, `ChrClasses`, `CreatureType`, `Languages`). Nothing loads under enUS.
+//! (`ChrRaces`, `ChrClasses`, `CreatureType`). Nothing loads under enUS.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -13,7 +13,6 @@ struct Names {
     races: Rows,
     classes: Rows,
     creature_types: Rows,
-    languages: Rows,
 }
 
 static NAMES: OnceLock<Names> = OnceLock::new();
@@ -61,7 +60,6 @@ fn load(chain: &mut Chain) -> Option<Names> {
         races: dbc_strings(chain, "DBFilesClient\\ChrRaces.dbc", &[14, 31, 48]).ok()?,
         classes: dbc_strings(chain, "DBFilesClient\\ChrClasses.dbc", &[4, 21, 38]).ok()?,
         creature_types: dbc_strings(chain, "DBFilesClient\\CreatureType.dbc", &[1]).ok()?,
-        languages: dbc_strings(chain, "DBFilesClient\\Languages.dbc", &[1]).ok()?,
     })
 }
 
@@ -99,11 +97,6 @@ fn single(rows: &'static Rows, id: u32) -> Option<&'static str> {
 /// The running locale's creature type word, `None` under enUS.
 pub(crate) fn creature_type(id: u32) -> Option<&'static str> {
     single(&NAMES.get()?.creature_types, id)
-}
-
-/// The running locale's name of a language, `None` under enUS.
-pub(crate) fn language(id: u32) -> Option<&'static str> {
-    single(&NAMES.get()?.languages, id)
 }
 
 #[cfg(test)]

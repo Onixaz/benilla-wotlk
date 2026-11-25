@@ -9504,12 +9504,13 @@ fn group_loot_rolls_fire_from_their_handlers_with_the_rolls_read_at_the_call() {
                 "CHAT_MSG_LOOT Need Roll - 0 for |cffffffff|Hitem:593921:0:0:0:0:0:0:0:80|h[Charz Gem]|h|r by Probesix      0 0  0 1  0 | roll0=Charz Gem roll1=Charz Late roll2=nil rleft1=true".to_string(),
             ],
             vec![
+                // The won line is added (`0x6fb937`) before the roll closes (`0x6fb953`).
+                "CHAT_MSG_LOOT You won: |cffffffff|Hitem:593921:0:0:0:0:0:0:0:80|h[Charz Gem]|h|r      0 0  0 2  0 | roll0=Charz Gem roll1=Charz Late roll2=nil rleft1=true".to_string(),
                 "CANCEL_LOOT_ROLL 0 | roll0=nil roll1=Charz Late roll2=nil rleft1=true".to_string(),
-                "CHAT_MSG_LOOT You won: |cffffffff|Hitem:593921:0:0:0:0:0:0:0:80|h[Charz Gem]|h|r      0 0  0 2  0 | roll0=nil roll1=Charz Late roll2=nil rleft1=true".to_string(),
             ],
             vec![
+                "CHAT_MSG_LOOT Everyone passed on: |cffffffff|Hitem:593922:0:0:0:0:0:0:0:80|h[Charz Late]|h|r      0 0  0 3  0 | roll0=nil roll1=Charz Late roll2=nil rleft1=true".to_string(),
                 "CANCEL_LOOT_ROLL 1 | roll0=nil roll1=nil roll2=nil rleft1=false".to_string(),
-                "CHAT_MSG_LOOT Everyone passed on: |cffffffff|Hitem:593922:0:0:0:0:0:0:0:80|h[Charz Late]|h|r      0 0  0 3  0 | roll0=nil roll1=nil roll2=nil rleft1=false".to_string(),
             ],
         ]
     );
@@ -10746,9 +10747,11 @@ fn an_auction_house_fires_from_its_handlers_with_the_lists_read_at_the_call() {
             vec![at("AUCTION_ITEM_LIST_UPDATE", browse)],
             Vec::new(),
             vec![at("AUCTION_OWNED_LIST_UPDATE", owned)],
+            // The bid's line is added inside the handler (`0x5a009f`), its listener reading the row
+            // before the bid's write (`0x5a0112`, `0x5a0121`) and its update (`0x5a0195`).
             vec![
+                at("CHAT_MSG_SYSTEM Bid accepted.      0 0  0 1  0", owned),
                 at("AUCTION_ITEM_LIST_UPDATE", bid),
-                at("CHAT_MSG_SYSTEM Bid accepted.      0 0  0 1  0", bid),
             ],
             vec![at("AUCTION_OWNED_LIST_UPDATE", bid)],
             vec![
@@ -10898,6 +10901,188 @@ fn set_current_title_sends_inside_the_call() {
         "both sent before the chunk returned"
     );
     assert_eq!(cur, 0, "the field waits for the server");
+}
+
+// ── Chat lines: the chat add in its caller's turn (#1283) ────────────────────────────────────────
+
+/// A spoken `SAY` line from `guid`.
+fn say_from(guid: u64, text: &str) -> SessionEvent {
+    SessionEvent::Chat(benilla_protocol::messages::ChatMessage {
+        chat_type: benilla_protocol::messages::CHAT_MSG_SAY,
+        language: 0,
+        sender_guid: guid,
+        target_guid: 0,
+        sender_name: None,
+        receiver_name: None,
+        channel: None,
+        text: text.into(),
+        chat_tag: 0,
+        achievement: 0,
+        wire_type: 0,
+        sender_word: 0,
+    })
+}
+
+/// A closed house's answer (`MSG_AUCTION_HELLO`), whose handler raises `AUCTION_HOUSE_DISABLED`
+/// itself: the marker the chat lines are ordered against.
+fn closed_house() -> SessionEvent {
+    SessionEvent::AuctionHello {
+        auctioneer: 0x77,
+        house_id: 1,
+        enabled: false,
+    }
+}
+
+/// The observer's `CHAT_MSG_SAY` (text and sender), `TIME_PLAYED_MSG` (its two numbers) and
+/// `AUCTION_HOUSE_DISABLED` (as `|`), in the order they fired.
+fn chat_order(seen: &[Seen]) -> Vec<String> {
+    seen.iter()
+        .filter_map(|s| match s.event.as_str() {
+            "CHAT_MSG_SAY" | "TIME_PLAYED_MSG" => Some(format!(
+                "{} {}",
+                s.event,
+                s.args.split(' ').take(2).collect::<Vec<_>>().join(" ")
+            )),
+            "AUCTION_HOUSE_DISABLED" => Some("|".to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// `SMSG_MESSAGECHAT` adds its line in the handler (`0x509dd0`), between the events of the packets
+/// around it: a sender not cached holds the line (`0x509f92` -> `0x50ad82`) and its name is asked
+/// once (`0x509e51`); the answer's callback adds it in the answer's handler (`0x503c80`,
+/// `0x503edb`), in whichever order the two packets come; a cached sender's line fires in its own.
+#[test]
+fn a_spoken_line_fires_in_its_handler_or_at_its_names_answer() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    const ANN: u64 = 0x31;
+    const BOB: u64 = 0x32;
+    // The line before its answer: held, then added at the answer, before the next handler.
+    let seen = rig.packets(
+        vec![
+            closed_house(),
+            say_from(ANN, "hello"),
+            closed_house(),
+            name_answer(ANN, "Ann"),
+            closed_house(),
+        ],
+        1,
+    );
+    assert_eq!(
+        chat_order(&seen),
+        ["|", "|", "CHAT_MSG_SAY hello Ann", "|"],
+        "the held line fires inside its name answer's handler"
+    );
+    let asks = rx
+        .try_iter()
+        .filter(|c| matches!(c, crate::net::ClientCommand::NameQuery { guid: ANN }))
+        .count();
+    assert_eq!(asks, 1, "the add asks the name once, with its callback");
+    // The answer before the line: the line finds the name and fires in its own handler.
+    let seen = rig.packets(
+        vec![
+            name_answer(BOB, "Bob"),
+            closed_house(),
+            say_from(BOB, "hi"),
+            closed_house(),
+        ],
+        1,
+    );
+    assert_eq!(chat_order(&seen), ["|", "CHAT_MSG_SAY hi Bob", "|"]);
+    // A name cached frames before: the same.
+    let seen = rig.packets(
+        vec![closed_house(), say_from(ANN, "again"), closed_house()],
+        1,
+    );
+    assert_eq!(chat_order(&seen), ["|", "CHAT_MSG_SAY again Ann", "|"]);
+}
+
+/// `SMSG_PLAYED_TIME`'s handler (`0x401390`) raises `TIME_PLAYED_MSG(total, level)` itself
+/// (`0x401463`), for a shown answer alone (`0x4013f6`), between the events of the packets around it.
+#[test]
+fn played_time_fires_from_its_handler_for_a_shown_answer_only() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let answer = |show| SessionEvent::PlayedTime {
+        total: 360_000,
+        level: 7_200,
+        show,
+    };
+    let seen = rig.packets(
+        vec![answer(false), closed_house(), answer(true), closed_house()],
+        1,
+    );
+    assert_eq!(chat_order(&seen), ["|", "TIME_PLAYED_MSG 360000 7200", "|"]);
+}
+
+/// `RequestTimePlayed` (`0x515880`) sends `CMSG_PLAYED_TIME` inside the call (`0x5158c1`), asking for
+/// a shown answer, before the calling chunk goes on.
+#[test]
+fn request_time_played_sends_inside_the_call() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("RequestTimePlayed() RequestTimePlayed()").unwrap();
+    })
+    .expect("a VM");
+    let sent = rx
+        .try_iter()
+        .filter(|c| matches!(c, crate::net::ClientCommand::PlayedTime { show: true }))
+        .count();
+    assert_eq!(sent, 2, "each call sends before the chunk returns");
+}
+
+/// `SMSG_SERVER_MESSAGE` adds its `CHAT_MSG_SYSTEM` line in its handler (`0x50c980`), in wire order
+/// with the packets around it.
+#[test]
+fn a_server_message_adds_its_line_in_its_handler() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let seen = rig.packets(
+        vec![
+            SessionEvent::PlayedTime {
+                total: 1,
+                level: 1,
+                show: true,
+            },
+            SessionEvent::ServerMessage {
+                message_type: 3,
+                text: "charz".into(),
+            },
+            SessionEvent::PlayedTime {
+                total: 2,
+                level: 2,
+                show: true,
+            },
+        ],
+        1,
+    );
+    let order: Vec<&str> = seen
+        .iter()
+        .filter(|s| s.event == "TIME_PLAYED_MSG" || s.event == "CHAT_MSG_SYSTEM")
+        .map(|s| s.event.as_str())
+        .collect();
+    assert_eq!(
+        order,
+        ["TIME_PLAYED_MSG", "CHAT_MSG_SYSTEM", "TIME_PLAYED_MSG"],
+        "the broadcast's line between the two answers' events"
+    );
+    let line = seen
+        .iter()
+        .find(|s| s.event == "CHAT_MSG_SYSTEM")
+        .map(|s| s.args.clone())
+        .unwrap_or_default();
+    assert!(line.contains("charz"), "{line}");
 }
 
 /// A reload keeps the skill list: the UI shutdown leaves it (`0x52b03e` -> `0x528f00`) and only the

@@ -105,7 +105,6 @@ impl Plugin for NetPlugin {
             .init_resource::<ServerWallClock>()
             .init_resource::<Reputations>()
             .init_resource::<HomeBind>()
-            .init_resource::<PlayedTimeAnswer>()
             .init_resource::<PlayedClock>()
             .init_resource::<Proficiencies>()
             .init_resource::<ControlFlag>()
@@ -816,14 +815,8 @@ impl Reputations {
 #[derive(Resource, Default)]
 pub(crate) struct HomeBind(pub(crate) Option<u32>);
 
-/// The undelivered `/played` answer (`SMSG_PLAYED_TIME`): total seconds and seconds this level.
-/// One slot: the server sends one reply per request.
-#[derive(Resource, Default)]
-pub(crate) struct PlayedTimeAnswer(pub(crate) Option<(u32, u32)>);
-
 /// The played clock's seed (`0x6cf470`): every `SMSG_PLAYED_TIME`'s total, shown or not, and when
-/// it came, which the refund and trade windows count against. The feed stamps it on the `GetTime`
-/// clock for the VM.
+/// it came, which the refund and trade windows count against, read at the call.
 #[derive(Resource, Default)]
 pub(crate) struct PlayedClock(pub(crate) Option<(u32, Instant)>);
 

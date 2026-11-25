@@ -709,6 +709,7 @@ pub(crate) struct WorldLeaveSweepMessage;
 pub(crate) struct LeaveWorldSweep<'w> {
     armed: ResMut<'w, LeavingWorldArmed>,
     sweeps: MessageWriter<'w, WorldLeaveSweepMessage>,
+    chat: Option<ResMut<'w, crate::ui_chat::ChatLog>>,
 }
 
 impl LeaveWorldSweep<'_> {
@@ -716,6 +717,10 @@ impl LeaveWorldSweep<'_> {
     pub(crate) fn run(&mut self) -> bool {
         let swept = self.armed.spend();
         if swept {
+            // The chat add queues from here to the next entry (`0x528cc9`).
+            if let Some(chat) = self.chat.as_mut() {
+                chat.leave_world();
+            }
             self.sweeps.write(WorldLeaveSweepMessage);
         }
         swept
@@ -728,6 +733,10 @@ pub(crate) fn run_leave_world_sweep(world: &mut World) -> bool {
         .get_resource_mut::<LeavingWorldArmed>()
         .is_some_and(|mut l| l.spend());
     if swept {
+        // The chat add queues from here to the next entry (`0x528cc9`).
+        if let Some(mut chat) = world.get_resource_mut::<crate::ui_chat::ChatLog>() {
+            chat.leave_world();
+        }
         if let Some(mut sweeps) = world.get_resource_mut::<Messages<WorldLeaveSweepMessage>>() {
             sweeps.write(WorldLeaveSweepMessage);
         }

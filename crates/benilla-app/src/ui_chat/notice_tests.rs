@@ -1,20 +1,20 @@
-//! The guid-tail channel notices through [`super::feed::feed_chat`] to the stock chat frame: the
+//! The guid-tail channel notices through [`super::feed::add`] to the stock chat frame: the
 //! reference hands every notice's channel name to its composer, which numbers it off the joined
 //! channels and fills arg7-arg9 from that record. Without that stamp the stock filter
 //! (`ChatFrame.lua:1373-1392`) prints nothing.
 
-use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::*;
 
 use benilla_protocol::messages::{channel_notice as n, ChannelNoticeTail};
 use benilla_ui::script::UiScript;
 
 use super::tests::{chat_vm, lines_in_window, SPY};
+use super::ChatSink as _;
 
 const ANN: u64 = 0x11;
 const BOB: u64 = 0x12;
 
-/// A world holding everything [`super::feed::feed_chat`] reads, the stock chat stack in its VM,
+/// A world holding everything [`super::feed::add`] reads, the stock chat stack in its VM,
 /// `ChatFrame1` carrying `Mychan`, and our slots `World`, `Trade - City` and `Mychan` (3).
 struct Feed {
     world: World,
@@ -53,6 +53,7 @@ impl Feed {
         let mut world = World::new();
         world.insert_non_send_resource(s);
         world.insert_resource(super::ChatLog::default());
+        world.init_resource::<crate::ui_script::live::UiEvents>();
         world.insert_resource(super::frames::ChatWindows::default());
         world.insert_resource(channels);
         world.insert_resource(crate::names::NameCache::default());
@@ -79,13 +80,13 @@ impl Feed {
 
     fn push(&mut self, notice: u8, channel: &str, tail: ChannelNoticeTail) {
         self.world
-            .resource_mut::<super::ChatLog>()
+            .resource_mut::<crate::ui_script::live::UiEvents>()
             .push_channel_notice(notice, channel.into(), &tail);
     }
 
     /// One frame of the drain.
     fn drain(&mut self) {
-        self.world.run_system_once(super::feed::feed_chat).unwrap();
+        super::feed::drain_for_test(&mut self.world);
     }
 
     fn script(&self) -> &UiScript {
@@ -398,7 +399,7 @@ fn the_wotlk_notice_arms_fire_their_requests_lines_and_suspension() {
 /// A join's trailing text queues a second notice line; the voice flag's set queues nothing.
 #[test]
 fn the_join_text_queues_a_second_line_and_the_voice_flag_nothing() {
-    let mut log = super::ChatLog::default();
+    let mut log = crate::ui_script::live::UiEvents::default();
     log.push_channel_notice(
         n::YOU_JOINED,
         "Mychan".into(),
@@ -407,11 +408,11 @@ fn the_join_text_queues_a_second_line_and_the_voice_flag_nothing() {
             text: Some("Welcome".into()),
         },
     );
-    assert_eq!(log.pending_len(), 2);
+    assert_eq!(log.take_chat().len(), 2);
     log.push_channel_notice(
         n::VOICE_ENABLED,
         "Mychan".into(),
         &ChannelNoticeTail::Actor(ANN),
     );
-    assert_eq!(log.pending_len(), 2, "the voice flag prints nothing");
+    assert!(log.take_chat().is_empty(), "the voice flag prints nothing");
 }

@@ -21,11 +21,29 @@ const LANGUAGE_WORDS: &str = "DBFilesClient\\LanguageWords.dbc";
 /// Locale columns in a 12340 `Name_lang` block.
 const LOCALES: usize = 16;
 
-/// Race id to its base language's name, per locale column.
+/// Race id to its base language's name, per locale column, and to its base language's id.
 #[derive(Debug, Default, Clone)]
-pub struct DefaultLanguages(HashMap<u32, [Option<String>; LOCALES]>);
+pub struct DefaultLanguages(HashMap<u32, [Option<String>; LOCALES]>, HashMap<u32, u32>);
 
 impl DefaultLanguages {
+    /// The race's base language id (`0x6d5e70`: the race's `ChrRaces` record at `+0x1c`, 0 with no
+    /// record).
+    pub fn id(&self, race: u32) -> u32 {
+        self.1.get(&race).copied().unwrap_or(0)
+    }
+
+    /// A hand-built table for tests: `(race, base language id, enUS name)` rows.
+    pub fn from_rows(rows: &[(u32, u32, &str)]) -> Self {
+        let mut out = Self::default();
+        for &(race, id, name) in rows {
+            let mut names: [Option<String>; LOCALES] = Default::default();
+            names[0] = Some(name.to_string());
+            out.0.insert(race, names);
+            out.1.insert(race, id);
+        }
+        out
+    }
+
     /// The race's default language name in `locale`'s column. `None` is the reference's answer at
     /// three of its four failure edges, which push no Lua value at all, not `nil`.
     pub fn name(&self, race: u32, locale: usize) -> Option<&str> {
@@ -65,6 +83,12 @@ impl Languages {
         self.0
             .iter()
             .filter_map(move |(id, names)| Some((*id, names.get(locale)?.as_deref()?)))
+    }
+
+    /// The running locale's name on language `id`'s record (its `+4`), `None` with no record.
+    pub fn name(&self, id: u32) -> Option<&str> {
+        let (_, names) = self.0.iter().find(|(row, _)| *row == id)?;
+        Some(names[0].as_deref().unwrap_or(""))
     }
 
     pub fn len(&self) -> usize {
@@ -127,15 +151,17 @@ pub fn load_default_languages(chain: &mut Chain) -> Result<DefaultLanguages> {
     let schema = crate::characters::chr_races_schema(&crate::dbc_layout::LAYOUTS.chr_races);
     let races = parse(&race_bytes, schema, "ChrRaces.dbc")?;
     let mut out = HashMap::new();
+    let mut ids = HashMap::new();
     for r in races.records() {
         let (Some(race), Some(lang)) = (u32_at(r, 0), u32_at(r, CHR_RACES_BASE_LANGUAGE)) else {
             continue;
         };
+        ids.insert(race, lang);
         if let Some(names) = by_id.get(&lang) {
             out.insert(race, names.clone());
         }
     }
-    Ok(DefaultLanguages(out))
+    Ok(DefaultLanguages(out, ids))
 }
 
 /// `LanguageWords.dbc`, the fake words the client substitutes, word for word, when it renders
@@ -264,10 +290,33 @@ mod tests {
         for race in [2, 5, 6, 8, 10] {
             assert_eq!(langs.name(race, 0), Some("Orcish"), "race {race}");
         }
-        // No such race: the reference's no-record edge.
+        // The ids behind them: Common 7, Orcish 1.
+        assert_eq!((langs.id(1), langs.id(2)), (7, 1));
+        // No such race: the reference's no-record edge, id 0 (`0x6d5e9f`).
         assert_eq!(langs.name(99, 0), None);
+        assert_eq!(langs.id(99), 0);
         // An enUS install fills only column 0; another is empty, not a panic.
         assert_eq!(langs.name(1, 5), None);
+    }
+
+    /// The chat add names a line's language off its record (`0x4fdbfd`, `0x50abd6`), so every
+    /// 3.3.5a language past the 1.12 set has its name, and an id with no record has none.
+    #[test]
+    fn every_shipped_language_record_names_its_language() {
+        let data = crate::wow_data_or_skip!();
+        let mut chain = Chain::open(&data).expect("open patch chain");
+        let langs = load_languages(&mut chain).expect("load");
+        for (id, name) in [
+            (1, "Orcish"),
+            (7, "Common"),
+            (35, "Draenei"),
+            (36, "Zombie"),
+            (37, "Gnomish Binary"),
+            (38, "Goblin Binary"),
+        ] {
+            assert_eq!(langs.name(id), Some(name), "language {id}");
+        }
+        assert_eq!(langs.name(4), None, "no record");
     }
 
     #[test]

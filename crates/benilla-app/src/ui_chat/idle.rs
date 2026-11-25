@@ -17,7 +17,6 @@ use bevy::prelude::*;
 use bevy::time::Real;
 
 use super::away::{afk_line, push_system, AfkMirror};
-use super::feed::ChatLog;
 
 /// The last-input stamp: elapsed real time on the one clock both its writers and the handler read.
 /// Process-global, zero at start and never reset, not even at world entry, so a client untouched
@@ -130,7 +129,6 @@ pub(crate) fn idle_handler(
     mut script: crate::ui_script::InTurn,
     self_q: Query<&crate::net::ObjectStore, With<crate::net::SelfPlayer>>,
     mut mirror: ResMut<AfkMirror>,
-    mut chat: ResMut<ChatLog>,
     commands: Res<crate::net::NetCommands>,
     mut stand: MessageWriter<crate::player::StandStateRequest>,
     follow: Res<crate::player::FollowState>,
@@ -171,13 +169,14 @@ pub(crate) fn idle_handler(
         stand.write(crate::player::StandStateRequest { state: 1 });
     }
 
-    let strings = |key: &str| crate::ui_chat::combat::global_string(&script, key);
     if action.afk {
         // The AFK mark with no message is `/afk` with an empty message and a clear mirror, so it
         // shares that path: the `DEFAULT_AFK_MESSAGE` echo and body, and the optimistic mirror.
-        let out = afk_line("", *mirror, &strings);
+        let out = afk_line("", *mirror, &|key: &str| {
+            crate::ui_chat::combat::global_string(&script, key)
+        });
         if let Some(line) = out.line {
-            push_system(&mut chat, line);
+            push_system(&mut script, line);
         }
         if let Some(v) = out.mirror {
             mirror.0 = v;
@@ -192,8 +191,8 @@ pub(crate) fn idle_handler(
     // While a logout is pending the whole leg is skipped, the line with the request, so it runs
     // once per logout and again after a cancel.
     if action.camp && !logout.pending() {
-        if let Some(line) = strings("IDLE_MESSAGE") {
-            push_system(&mut chat, line);
+        if let Some(line) = crate::ui_chat::combat::global_string(&script, "IDLE_MESSAGE") {
+            push_system(&mut script, line);
         }
         // The logout request with the game menu's arguments; `crate::ui_logout` owns the rest.
         script.queue_session_request(benilla_ui::script::SessionRequest::Logout);
@@ -502,7 +501,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<Time<Real>>()
             .init_resource::<AfkMirror>()
-            .init_resource::<ChatLog>()
+            .init_resource::<crate::ui_script::live::UiEvents>()
             .init_resource::<LastInput>()
             .init_resource::<crate::player::FollowState>()
             .init_resource::<crate::player::Approach>()
@@ -532,7 +531,9 @@ mod tests {
     }
 
     fn lines(app: &App) -> Vec<String> {
-        app.world().resource::<ChatLog>().pending_lines()
+        app.world()
+            .resource::<crate::ui_script::live::UiEvents>()
+            .chat_texts()
     }
 
     /// The sit is a [`crate::player::StandStateRequest`]; the mark, the `/afk` line and packet.

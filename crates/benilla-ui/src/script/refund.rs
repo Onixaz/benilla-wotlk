@@ -26,12 +26,10 @@ pub struct RefundView {
     pub played_at_purchase: u32,
 }
 
-/// The played clock now (`0x6cf440`): the last total the server said plus the seconds since; 0 before
-/// the first answer.
-pub(super) fn played_now(model: &Model) -> i64 {
-    model.played_time.map_or(0, |(total, at)| {
-        i64::from(total) + (model.now - at).max(0.0) as i64
-    })
+/// The played clock now, read at the call (`0x6cf440`): the last total the server said plus the
+/// seconds since; 0 before the first answer and where no view lends it.
+pub(super) fn played_now(_model: &Model) -> i64 {
+    super::read_live(|l| l.played_now()).flatten().unwrap_or(0)
 }
 
 /// `item`'s refund record read at the call; with no view answering, as an engine-free test runs, the record pushed into the model.
@@ -120,12 +118,6 @@ impl super::UiScript {
     /// Push the bound-but-tradeable items' create stamps: the stamps a call reads with no view lent.
     pub fn set_bound_trade_stamps(&mut self, stamps: std::collections::HashMap<u64, u32>) {
         set_field!(self, bound_trade_stamps, stamps);
-    }
-
-    /// The server's played total, stamped now on the `GetTime` clock.
-    pub fn set_played_time(&mut self, total: u32) {
-        let now = self.model_ref().now;
-        self.model_mut().played_time = Some((total, now));
     }
 
     /// Take the `ContainerRefundItemPurchase` sends, item guids.
@@ -335,21 +327,32 @@ mod tests {
     #[test]
     fn purchase_info_reads_the_record_while_the_window_runs() {
         let mut s = script_with_purchase(Vec::new());
-        s.set_played_time(10_600);
-        let info: (i64, i64, i64, i64, i64) =
-            s.eval("return GetContainerItemPurchaseInfo(0, 1)").unwrap();
-        assert_eq!(info, (0, 2000, 0, 1, 6600));
-        let (_, count): (mlua::Value, i64) = s
-            .eval("local t, n = GetContainerItemPurchaseItem(0, 1, 1) return t, n")
-            .unwrap();
-        assert_eq!(count, 3);
-        assert_eq!(
-            s.arity("GetContainerItemPurchaseItem(0, 1, 2)").unwrap(),
-            0,
-            "one cost item"
-        );
-        s.set_played_time(17_200);
-        assert_eq!(s.arity("GetContainerItemPurchaseInfo(0, 1)").unwrap(), 0);
+        let mut view = crate::script::live::TestView {
+            played: Some(10_600),
+            ..Default::default()
+        };
+        s.with_live(&mut view, |s| {
+            let info: (i64, i64, i64, i64, i64) =
+                s.eval("return GetContainerItemPurchaseInfo(0, 1)").unwrap();
+            assert_eq!(info, (0, 2000, 0, 1, 6600));
+            let (_, count): (mlua::Value, i64) = s
+                .eval("local t, n = GetContainerItemPurchaseItem(0, 1, 1) return t, n")
+                .unwrap();
+            assert_eq!(count, 3);
+            assert_eq!(
+                s.arity("GetContainerItemPurchaseItem(0, 1, 2)").unwrap(),
+                0,
+                "one cost item"
+            );
+        });
+        view.played = Some(17_200);
+        s.with_live(&mut view, |s| {
+            assert_eq!(
+                s.arity("GetContainerItemPurchaseInfo(0, 1)").unwrap(),
+                0,
+                "the clock is read at the call"
+            );
+        });
     }
 
     /// The item an open loot window takes from answers nothing (`[0xbfa8d8]`).

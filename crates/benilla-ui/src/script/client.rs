@@ -250,12 +250,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         )?;
     }
 
-    // `RequestTimePlayed()` queues a `CMSG_PLAYED_TIME` and returns nothing; the answer is the
-    // `TIME_PLAYED_MSG(total, level)` the app fires when `SMSG_PLAYED_TIME` lands.
+    // `RequestTimePlayed()` (`0x515880`) sends `CMSG_PLAYED_TIME` in the call (`0x5158c1`) and
+    // returns nothing; the answer's handler signals `TIME_PLAYED_MSG(total, level)`.
     g.set(
         "RequestTimePlayed",
-        lua.create_function(|lua, ()| {
-            crate::script::model_mut_of(lua).played_time_asks += 1;
+        lua.create_function(|_, ()| {
+            let _ = crate::script::write_live(|l| l.send_played_time());
             Ok(())
         })?,
     )?;
@@ -308,12 +308,6 @@ impl super::UiScript {
     /// `SetUIVisibility`'s flag: whether the world should draw the names and plates over units.
     pub fn world_ui_visible(&self) -> bool {
         self.model_ref().world_ui_visible
-    }
-
-    /// Drain the `RequestTimePlayed()` asks, each a `CMSG_PLAYED_TIME`: a count, as the request
-    /// body is empty.
-    pub fn take_played_time_asks(&mut self) -> u32 {
-        drain_field!(self, played_time_asks)
     }
 
     /// Drain the `OpeningCinematic()` calls, each an empty `CMSG_OPENING_CINEMATIC`.

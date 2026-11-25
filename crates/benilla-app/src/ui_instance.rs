@@ -8,6 +8,7 @@
 //! ([`InstanceState::saw_own_dungeon`]), because AzerothCore never sends
 //! `SMSG_UPDATE_INSTANCE_OWNERSHIP`, so the server alone would never offer the reset.
 
+use crate::ui_chat::ChatSink as _;
 #[cfg(test)]
 use benilla_ui::script::UiScript;
 use std::time::{Duration, Instant};
@@ -20,7 +21,7 @@ use benilla_ui::script::{InstanceLock, ScriptValue};
 use bevy::prelude::*;
 
 use crate::net::{ClientCommand, NetCommands};
-use crate::ui_chat::{ChatEvent, ChatEventKind, ChatLog};
+use crate::ui_chat::{ChatEvent, ChatEventKind};
 use crate::ui_script::{UiDrain, UiFeed, WorldLeaveSweepMessage};
 
 /// `CanShowResetInstances()`'s window, 25 hours: `cmp eax, 0x15f90` against `time(0)` minus when we
@@ -662,7 +663,6 @@ fn track_instance_state(
 fn feed_instance(
     mut script: crate::ui_script::InTurn,
     mut state: ResMut<InstanceState>,
-    mut chat: ResMut<ChatLog>,
     inputs: ResetInputs,
     time: Res<Time<Real>>,
     mut fed_maps: Local<crate::ui_script::VmMemo<bool>>,
@@ -689,7 +689,7 @@ fn feed_instance(
             match lockout_text(&line, name.as_deref(), &text(line.token)) {
                 Some(text) => {
                     debug!("ui_instance: {} -> {text:?}", line.token);
-                    chat.push_event(ChatEvent::text_only(ChatEventKind::System, text));
+                    script.push_event(ChatEvent::text_only(ChatEventKind::System, text));
                 }
                 None => debug!("ui_instance: {} resolves to nothing — no line", line.token),
             }

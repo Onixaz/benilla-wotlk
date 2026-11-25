@@ -4,6 +4,7 @@
 //! asleep gate, the stow, the posture, then `CMSG_TEXT_EMOTE`. Own sends are never echoed locally;
 //! the server echoes them.
 
+use crate::ui_chat::ChatSink as _;
 use bevy::prelude::*;
 
 mod parse;
@@ -202,7 +203,6 @@ fn manual_join_or_leave(
 fn chat_arm(
     In((msg, parsed, emote)): In<(String, ParsedChat, Option<benilla_ui::script::EmoteTarget>)>,
     mut script: crate::ui_script::InTurn,
-    mut chat_log: ResMut<super::feed::ChatLog>,
     // Mutable because an explicit leave clears the channel's `ZONECHANNELS` bit; the zone walk's
     // own leave does not.
     mut channels: ResMut<super::edit::ChannelState>,
@@ -264,7 +264,7 @@ fn chat_arm(
                 "eye: [{:.1}, {:.1}, {:.1}], look: [{:.1}, {:.1}, {:.1}], minute: {minute}",
                 eye[0], eye[1], eye[2], look[0], look[1], look[2]
             );
-            chat_log.push_event(super::event::ChatEvent::text_only(
+            script.push_event(super::event::ChatEvent::text_only(
                 super::event::ChatEventKind::System,
                 format!("shot: {snippet}"),
             ));
@@ -279,7 +279,7 @@ fn chat_arm(
                     .open(&path)
                     .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
                 if appended.is_ok() {
-                    chat_log.push_event(super::event::ChatEvent::text_only(
+                    script.push_event(super::event::ChatEvent::text_only(
                         super::event::ChatEventKind::System,
                         format!("shot: appended to {}", path.display()),
                     ));
@@ -289,7 +289,7 @@ fn chat_arm(
         ParsedChat::Liquid => {
             // Every candidate footprint, so a wrong surface shows beside the right one.
             let Ok((_, feet)) = self_player.single().map(|(_, _, t)| ((), t.translation())) else {
-                chat_log.push_event(super::event::ChatEvent::text_only(
+                script.push_event(super::event::ChatEvent::text_only(
                     super::event::ChatEventKind::System,
                     "liquid: no player yet".into(),
                 ));
@@ -332,7 +332,7 @@ fn chat_arm(
             }
             lines.extend(candidates.into_iter().map(|c| format!("liquid:   {c}")));
             for line in lines {
-                chat_log.push_event(super::event::ChatEvent::text_only(
+                script.push_event(super::event::ChatEvent::text_only(
                     super::event::ChatEventKind::System,
                     line,
                 ));
@@ -497,7 +497,7 @@ fn chat_arm(
             for line in lines {
                 // Also to the log: a scripted two-client run reads stdout, not the feed.
                 info!("{line}");
-                chat_log.push_event(super::event::ChatEvent::text_only(
+                script.push_event(super::event::ChatEvent::text_only(
                     super::event::ChatEventKind::System,
                     line,
                 ));
@@ -539,7 +539,7 @@ fn chat_arm(
                 } else {
                     "partytest: no player position — cannot place a ping".to_string()
                 };
-                chat_log.push_event(super::event::ChatEvent::text_only(
+                script.push_event(super::event::ChatEvent::text_only(
                     super::event::ChatEventKind::System,
                     line,
                 ));
@@ -602,7 +602,7 @@ fn chat_arm(
                     }
                     None => {
                         // `ERR_TARGET_NOT_IN_GROUP_S` (`GlobalStrings.lua:1861`).
-                        chat_log.push_event(super::event::ChatEvent::text_only(
+                        script.push_event(super::event::ChatEvent::text_only(
                             super::event::ChatEventKind::System,
                             format!("{name} is not in your party."),
                         ));
@@ -659,7 +659,7 @@ fn chat_arm(
                 "Misc: /afk, /dnd, /random [min] [max], /played, /logout, /quit",
                 "Instruments: /shot, /liquid, /reaction, /castvis, /chattest, /partytest",
             ] {
-                chat_log.push_event(super::event::ChatEvent::text_only(
+                script.push_event(super::event::ChatEvent::text_only(
                     super::event::ChatEventKind::System,
                     line.to_string(),
                 ));
@@ -673,7 +673,7 @@ fn chat_arm(
                     continue;
                 };
                 if !line.is_empty() {
-                    chat_log.push_event(super::event::ChatEvent::text_only(
+                    script.push_event(super::event::ChatEvent::text_only(
                         super::event::ChatEventKind::System,
                         line,
                     ));
@@ -907,7 +907,7 @@ fn chat_arm(
                 None => warn!("castvis: no selection and no self avatar — dropped"),
             }
         }
-        ParsedChat::ChatTest => chattest_battery(&mut chat_log),
+        ParsedChat::ChatTest => chattest_battery(&mut script),
         // `SlashCmdList["LOGOUT"]` is `Logout()`, the game menu's route: `crate::ui_logout`
         // sends the request and narrates the answer with the CAMP countdown.
         ParsedChat::Logout => {
@@ -920,12 +920,8 @@ fn chat_arm(
         ParsedChat::Console { line } => {
             chat_out.console.queue(move |world: &mut World| {
                 let lines = crate::console::execute(world, &line);
-                let mut log = world.resource_mut::<super::feed::ChatLog>();
                 for text in lines {
-                    log.push_event(super::event::ChatEvent::text_only(
-                        super::event::ChatEventKind::System,
-                        text,
-                    ));
+                    system_line(world, text);
                 }
             });
         }
@@ -972,7 +968,7 @@ fn chat_arm(
                     } else {
                         format!("Channels: {}", roster.join(", "))
                     };
-                    chat_log.push_event(super::event::ChatEvent::text_only(
+                    script.push_event(super::event::ChatEvent::text_only(
                         super::event::ChatEventKind::System,
                         text,
                     ));
@@ -1049,12 +1045,10 @@ fn take_chat_lines(
 
 /// A system line printed to the chat log.
 fn system_line(world: &mut World, text: String) {
-    world
-        .resource_mut::<super::feed::ChatLog>()
-        .push_event(super::event::ChatEvent::text_only(
-            super::event::ChatEventKind::System,
-            text,
-        ));
+    super::feed::add(
+        world,
+        super::event::ChatEvent::text_only(super::event::ChatEventKind::System, text).into(),
+    );
 }
 
 /// Run `body` in the VM with the `World` lent; its error, if any.
@@ -1142,7 +1136,7 @@ pub(crate) fn drain_chat_input(world: &mut World) {
 
 /// `/chattest`: one synthetic line of every renderable form (kinds, flags, the language header,
 /// channel prefixes, notices, item and player links) through the real event pipeline.
-fn chattest_battery(log: &mut super::feed::ChatLog) {
+fn chattest_battery(log: &mut impl super::ChatSink) {
     use super::event::{ChatEvent, ChatEventKind as K};
     let player = |kind: K, text: &str, sender: &str| {
         let mut e = ChatEvent::text_only(kind, text.into());
@@ -1314,7 +1308,6 @@ pub(super) fn party_lane(
 pub(super) fn drain_addon_chat_sends(
     mut script: crate::ui_script::InTurn,
     commands: Res<NetCommands>,
-    mut chat_log: ResMut<super::feed::ChatLog>,
     mut tutorials: Option<MessageWriter<crate::tutorial::TutorialEvent>>,
     // The optimistic AFK mirror the `/afk` toggle reads and writes.
     mut mirror: ResMut<super::away::AfkMirror>,
@@ -1336,7 +1329,7 @@ pub(super) fn drain_addon_chat_sends(
                 "chat: SendChatMessage with unknown type {:?}",
                 send.chat_type
             );
-            chat_log.push_event(super::event::ChatEvent::text_only(
+            script.push_event(super::event::ChatEvent::text_only(
                 super::event::ChatEventKind::System,
                 format!("Unknown chat type \"{}\".", send.chat_type),
             ));
@@ -1377,13 +1370,16 @@ pub(super) fn drain_addon_chat_sends(
         // `SendChatMessage`: every type but AFK (`0x14`) first clears a standing AFK, `/dnd`
         // included; then AFK and DND each have an arm ahead of the generic send. The system lines,
         // the default text and the mirror are `super::away`'s.
-        let strings = |key: &str| crate::ui_chat::combat::global_string(&script, key);
+        let strings = |script: &crate::ui_script::VmTurn, key: &str| {
+            crate::ui_chat::combat::global_string(script, key)
+        };
         let wire = party_lane(kind.wire(), group.leader, self_guid.0);
         if !matches!(wire, crate::net::ChatKind::Afk) {
-            if let Some(line) =
-                super::away::auto_clear_line(*mirror, auto_clear_afk(&cvars), &strings)
-            {
-                super::away::push_system(&mut chat_log, line);
+            let line = super::away::auto_clear_line(*mirror, auto_clear_afk(&cvars), &|k| {
+                strings(&script, k)
+            });
+            if let Some(line) = line {
+                super::away::push_system(&mut script, line);
                 mirror.0 = 0;
                 // The empty `0x14` that tells the server, ahead of the message's own packet.
                 let _ = commands.0.send(ClientCommand::Chat {
@@ -1396,9 +1392,9 @@ pub(super) fn drain_addon_chat_sends(
         }
         let text = match wire {
             crate::net::ChatKind::Afk => {
-                let out = super::away::afk_line(&send.text, *mirror, &strings);
+                let out = super::away::afk_line(&send.text, *mirror, &|k| strings(&script, k));
                 if let Some(line) = out.line {
-                    super::away::push_system(&mut chat_log, line);
+                    super::away::push_system(&mut script, line);
                 }
                 if let Some(v) = out.mirror {
                     mirror.0 = v;
@@ -1407,9 +1403,10 @@ pub(super) fn drain_addon_chat_sends(
             }
             crate::net::ChatKind::Dnd => {
                 // DND has no mirror: the live descriptor bit.
-                let out = super::away::dnd_line(&send.text, is_dnd(&self_q), &strings);
+                let out =
+                    super::away::dnd_line(&send.text, is_dnd(&self_q), &|k| strings(&script, k));
                 if let Some(line) = out.line {
-                    super::away::push_system(&mut chat_log, line);
+                    super::away::push_system(&mut script, line);
                 }
                 out.body
             }

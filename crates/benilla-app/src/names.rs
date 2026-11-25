@@ -500,6 +500,8 @@ pub(crate) mod net {
             ui.world(move |world| crate::ui_guild_bank::name_landed(world, guid));
             ui.world(move |world| crate::ui_item_text::name_landed(world, guid));
             ui.world(move |world| crate::ui_achievement::name_landed(world, guid, true));
+            // The held chat lines' callback (`0x503c80`).
+            ui.world(crate::ui_chat::name_landed);
         }
     }
 
@@ -516,11 +518,16 @@ pub(crate) mod net {
                 ui.world(move |world| crate::ui_guild_bank::name_landed(world, guid));
                 ui.world(move |world| crate::ui_item_text::name_landed(world, guid));
                 ui.world(move |world| crate::ui_achievement::name_landed(world, guid, false));
+                ui.world(crate::ui_chat::name_landed);
             }
         }
     }
 
-    fn on_pet_name(In(ev): In<SessionEvent>, mut names: ResMut<NameCache>) {
+    fn on_pet_name(
+        In(ev): In<SessionEvent>,
+        mut names: ResMut<NameCache>,
+        mut ui: ResMut<crate::ui_script::live::UiEvents>,
+    ) {
         if let SessionEvent::PetName {
             pet_number,
             name,
@@ -534,6 +541,8 @@ pub(crate) mod net {
                 declensions,
             );
             pet_name(pet_number, name, &mut names);
+            // A pet-named line's callback (`0x509eb6` asks with `0x503c80`).
+            ui.world(crate::ui_chat::name_landed);
         }
     }
 

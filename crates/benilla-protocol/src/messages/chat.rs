@@ -66,9 +66,9 @@ pub const CHAT_MSG_COMBAT_HONOR_GAIN: u8 = 0x71;
 pub const CHAT_MSG_COMBAT_FACTION_CHANGE: u8 = 0x72;
 pub const CHAT_MSG_TARGETICONS: u8 = 0x73;
 
-/// The only chat types the 1.12 client runs its `$`-macro expander over; the rest reach the frame
-/// verbatim. This is the wire gate; the re-expansion after a name query omits `0x5A`.
-pub const MACRO_EXPANDED_TYPES: [u8; 8] = [
+/// The chat types the add runs its `$`-macro parser over (`0x50a120`-`0x50a157`), the two
+/// achievement types aside; the rest reach the frame verbatim.
+pub const MACRO_EXPANDED_TYPES: [u8; 10] = [
     CHAT_MSG_MONSTER_SAY,        // 0x0B
     CHAT_MSG_MONSTER_YELL,       // 0x0C
     CHAT_MSG_MONSTER_EMOTE,      // 0x0D
@@ -76,7 +76,9 @@ pub const MACRO_EXPANDED_TYPES: [u8; 8] = [
     CHAT_MSG_BG_SYSTEM_NEUTRAL,  // 0x52
     CHAT_MSG_BG_SYSTEM_ALLIANCE, // 0x53
     CHAT_MSG_BG_SYSTEM_HORDE,    // 0x54
-    CHAT_MSG_RAID_BOSS_EMOTE,    // 0x5A, wire gate only
+    CHAT_MSG_RAID_BOSS_WHISPER,  // 0x59
+    CHAT_MSG_RAID_BOSS_EMOTE,    // 0x5A
+    CHAT_MSG_MONSTER_PARTY,      // 0x61
 ];
 
 /// The battleground system lines: one guid, the macro subject (`BuildChatPacket`'s `default:`).
@@ -105,6 +107,9 @@ pub struct ChatMessage {
     pub target_guid: u64,
     /// The inline speaker name of the monster shapes; player names come from the name query.
     pub sender_name: Option<String>,
+    /// The receiver's inline name, sent when its guid is neither 0, a player nor a pet; the add
+    /// takes it over any cache for the `$`-macros (`0x50c2df`-`0x50c30e`).
+    pub receiver_name: Option<String>,
     /// The channel name, on `CHAT_MSG_CHANNEL` only.
     pub channel: Option<String>,
     pub text: String,
@@ -288,6 +293,7 @@ pub(super) fn read_message_chat_wotlk(r: &mut &[u8], gm: bool) -> io::Result<Opt
     let sender_guid = read_u64_le(r)?;
     let sender_word = read_u32_le(r)?;
     let mut sender_name = None;
+    let mut receiver_name = None;
     let mut channel = None;
     let target_guid;
     match wire_type {
@@ -302,7 +308,7 @@ pub(super) fn read_message_chat_wotlk(r: &mut &[u8], gm: bool) -> io::Result<Opt
             sender_name = Some(read_len_string(r)?);
             target_guid = read_u64_le(r)?;
             if names_receiver(target_guid) {
-                let _receiver_name = read_len_string(r)?;
+                receiver_name = Some(read_len_string(r)?);
             }
         }
         w::WHISPER_FOREIGN => {
@@ -312,7 +318,7 @@ pub(super) fn read_message_chat_wotlk(r: &mut &[u8], gm: bool) -> io::Result<Opt
         w::BG_SYSTEM_NEUTRAL | w::BG_SYSTEM_ALLIANCE | w::BG_SYSTEM_HORDE => {
             target_guid = read_u64_le(r)?;
             if target_guid != 0 && !client_is_player(target_guid) {
-                let _receiver_name = read_len_string(r)?;
+                receiver_name = Some(read_len_string(r)?);
             }
         }
         w::ACHIEVEMENT | w::GUILD_ACHIEVEMENT => {
@@ -344,6 +350,7 @@ pub(super) fn read_message_chat_wotlk(r: &mut &[u8], gm: bool) -> io::Result<Opt
         sender_guid,
         target_guid,
         sender_name,
+        receiver_name,
         channel,
         text,
         chat_tag,

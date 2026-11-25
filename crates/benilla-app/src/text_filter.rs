@@ -521,7 +521,7 @@ mod tests {
     }
 }
 
-/// The chat chokepoint's view of the two filters, one [`SystemParam`] to keep `feed_chat` under
+/// The chat chokepoint's view of the two filters, one [`SystemParam`] to keep the chat add under
 /// Bevy's sixteen-parameter limit.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct ChatTextFilter<'w> {

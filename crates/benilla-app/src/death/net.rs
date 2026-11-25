@@ -3,6 +3,7 @@
 //! forward for our own mover and the corpse-guid latch's hooks on the object lifecycle, called
 //! from the drain's object arms.
 
+use crate::ui_chat::ChatSink as _;
 use benilla_protocol::{EntityKind, MoveMode, ObjectFields, SessionEvent, SessionEventKind};
 use benilla_ui::script::ScriptValue;
 use bevy::prelude::*;
@@ -259,7 +260,10 @@ fn on_spirit_healer_confirm(
     }
 }
 
-fn on_durability_damage_death(In(ev): In<SessionEvent>, mut log: ResMut<crate::ui_chat::ChatLog>) {
+fn on_durability_damage_death(
+    In(ev): In<SessionEvent>,
+    mut log: ResMut<crate::ui_script::live::UiEvents>,
+) {
     if let SessionEvent::DurabilityDamageDeath = ev {
         durability_damage_death(&mut log);
     }
@@ -398,7 +402,7 @@ fn death_release_loc(map: i32, position: [f32; 3], ghost: Option<bool>, death_ne
 
 /// `SMSG_DURABILITY_DAMAGE_DEATH`, the 10% death durability loss: a `CHAT_MSG_COMBAT_MISC_INFO`
 /// line with no arguments, not an error; the body is ignored.
-fn durability_damage_death(log: &mut crate::ui_chat::ChatLog) {
+fn durability_damage_death(log: &mut crate::ui_script::live::UiEvents) {
     use crate::ui_chat::combat;
     log.push_combat(combat::ready(
         crate::ui_chat::ChatEventKind::CombatMiscInfo,
