@@ -1,5 +1,9 @@
-//! The camera of our player's seat (`CVehicleCamera_C`). While our passenger is entering or seated
-//! (states 1 to 3, `0x74c0e0`):
+//! The camera of our player's seat. While our passenger is entering or seated (states 1 to 3,
+//! `0x74c0e0`):
+//! - a seat that turns on the vehicle zoom (`flags & 0x1000000`) glides the camera out to
+//!   `cameraSavedVehicleDistance` (50 yd when unset) under a 50 yd max (`0x600590`, `0x6000e0`);
+//!   leaving it saves that distance and glides back to `cameraSavedDistance`. It takes precedence
+//!   over the seat's own zoom below.
 //! - a seat that drives the zoom (`flagsB & 0x400`) sets its range, its own minimum
 //!   (`0x4000`) and maximum (`0x8000`) or the defaults, and its preferred distance (`0x800`),
 //!   raised to unless `0x1000` and lowered to unless `0x2000`, which widens a default bound it
@@ -26,7 +30,11 @@ use benilla_assets::coords::wow_to_bevy;
 use benilla_formats::VehicleSeatRec;
 
 use crate::net::{GuidIndex, NetEntity, SelfPlayer};
-use crate::player::camera_zoom::{VehicleSeatZoom, VehicleZoom, ZoomLimit, CAM_DIST_MIN};
+use crate::player::camera::FlyCam;
+use crate::player::camera_zoom::{
+    set_vehicle_zoom, VehicleSeatZoom, VehicleZoom, ZoomLimit, CAM_DIST_MIN,
+};
+use crate::player::CameraControl;
 use crate::player::{head_height, CameraPivot, RemoteView, VehicleFocus};
 
 use super::{Passenger, Vehicle, VehicleTables};
@@ -129,6 +137,29 @@ fn seat_timing(seat: &VehicleSeatRec, entering: bool) -> Option<(f32, f32)> {
     }
 }
 
+/// The seat's zoom on a change of seat (`0x74c0e0`): whether it turns on the vehicle zoom, its
+/// range, and its zoom ask; a vehicle zoom seat asks none, leaving the distance a seat before kept.
+fn seat_change(
+    seat: Option<&VehicleSeatRec>,
+    default_max: f32,
+) -> (bool, Option<ZoomRange>, Option<VehicleZoom>) {
+    match seat {
+        Some(s) if s.flags & 0x1000000 != 0 => (true, None, None),
+        Some(s) => match seat_zoom(s, default_max) {
+            Some((range, enter)) => (false, Some(range), Some(enter)),
+            None => (false, None, Some(VehicleZoom::Leave)),
+        },
+        None => (false, None, Some(VehicleZoom::Leave)),
+    }
+}
+
+/// A seat's camera duration, seconds: the enter's under `flagsB & 0x40` (column 47), the exit's
+/// under `0x80` (column 49); 0 without one.
+#[cfg(test)]
+fn seat_duration(seat: &VehicleSeatRec, entering: bool) -> f32 {
+    seat_timing(seat, entering).map_or(0.0, |(_, d)| d)
+}
+
 /// Feed the seat's zoom range and focus to the camera.
 #[allow(clippy::type_complexity)] // a Bevy system's full input set
 pub(super) fn feed_vehicle_camera(
@@ -156,10 +187,12 @@ pub(super) fn feed_vehicle_camera(
     zoom: Option<ResMut<VehicleSeatZoom>>,
     focus: Option<ResMut<VehicleFocus>>,
     mut memory: Local<CameraMemory>,
-    (rig, time, models): (
-        Option<ResMut<crate::player::CameraControl>>,
+    (mut rig, time, models, cvars, cams): (
+        Option<ResMut<CameraControl>>,
         Res<Time<Real>>,
         Query<(&GlobalTransform, &benilla_assets::ModelAnimations)>,
+        Option<ResMut<crate::cvars::Cvars>>,
+        Query<&FlyCam, With<benilla_world::view::WorldCamera>>,
     ),
 ) {
     let (Some(limit), Some(mut zoom), Some(mut focus)) = (limit, zoom, focus) else {
@@ -179,26 +212,30 @@ pub(super) fn feed_vehicle_camera(
     let key = seat.map(|(p, _, id, _)| (id, p.seat));
     if key != memory.seat {
         memory.seat = key;
-        let ask = match seat.and_then(|(.., s)| seat_zoom(s, limit.max)) {
-            Some((range, enter)) => {
-                zoom.range = Some(range);
-                enter
-            }
-            None => {
-                zoom.range = None;
-                VehicleZoom::Leave
-            }
-        };
-        memory.count = memory.count.wrapping_add(1);
-        zoom.ask = Some((memory.count, ask));
-        // The offsets head for the new seat's vehicle's, or none: over the seat's own timing,
-        // else over the passenger's motion, else at once.
-        let rec = seat.and_then(|(_, _, id, _)| tables.vehicle(id));
-        let to = rec.map_or((0.0, 0.0), |r| (r.camera_pitch_offset, r.camera_yaw_offset));
+        let (vehicle_zoom, range, ask) = seat_change(seat.map(|(.., s)| s), limit.max);
         let timing = match seat {
             Some((.., s)) => seat_timing(s, true),
             None => memory.exit_timing,
         };
+        // The vehicle zoom first, over the seat's camera duration (`0x74c0e0`): animated on, and
+        // off unless a seat's own zoom follows or a kept distance is about to be restored.
+        let duration = timing.map_or(0.0, |(_, d)| d);
+        if let (Some(rig), Some(mut cvars)) = (rig.as_deref_mut(), cvars) {
+            let animate = vehicle_zoom
+                || (!matches!(ask, Some(VehicleZoom::Enter { .. })) && !rig.keeps_exit_zoom());
+            let cam = cams.iter().next();
+            set_vehicle_zoom(rig, (vehicle_zoom, duration, animate), cam, &mut cvars);
+        }
+        zoom.vehicle = vehicle_zoom;
+        zoom.range = range;
+        if let Some(ask) = ask {
+            memory.count = memory.count.wrapping_add(1);
+            zoom.ask = Some((memory.count, ask));
+        }
+        // The offsets head for the new seat's vehicle's, or none: over the seat's own timing,
+        // else over the passenger's motion, else at once.
+        let rec = seat.and_then(|(_, _, id, _)| tables.vehicle(id));
+        let to = rec.map_or((0.0, 0.0), |r| (r.camera_pitch_offset, r.camera_yaw_offset));
         let animated = passenger.is_some_and(|p| matches!(p.state, 1 | 2 | 4 | 5));
         memory.at_motion = None;
         match timing {
@@ -347,6 +384,42 @@ mod tests {
         assert_eq!(seat_timing(&s, false), None);
         let exit = VehicleSeatRec { flags_b: 0x80, ..s };
         assert_eq!(seat_timing(&exit, false), Some((0.2, 0.4)));
+    }
+
+    #[test]
+    fn a_vehicle_zoom_seat_wins_over_its_own_zoom_and_asks_none() {
+        let mut s = seat(0x400 | 0x8000);
+        s.flags = 0x1000000;
+        assert_eq!(seat_change(Some(&s), 15.0), (true, None, None));
+        let (on, range, ask) = seat_change(Some(&seat(0x400 | 0x8000)), 15.0);
+        assert!(!on && range == Some((None, Some(12.0))));
+        assert!(matches!(ask, Some(VehicleZoom::Enter { .. })));
+        assert_eq!(
+            seat_change(None, 15.0),
+            (false, None, Some(VehicleZoom::Leave))
+        );
+        assert_eq!(
+            seat_change(Some(&seat(0)), 15.0),
+            (false, None, Some(VehicleZoom::Leave))
+        );
+    }
+
+    #[test]
+    fn a_seat_times_its_camera_only_under_its_bits() {
+        let mut s = VehicleSeatRec {
+            camera_entering_duration: 1.5,
+            camera_exiting_duration: 0.75,
+            ..Default::default()
+        };
+        assert_eq!(
+            (seat_duration(&s, true), seat_duration(&s, false)),
+            (0.0, 0.0)
+        );
+        s.flags_b = 0x40 | 0x80;
+        assert_eq!(
+            (seat_duration(&s, true), seat_duration(&s, false)),
+            (1.5, 0.75)
+        );
     }
 
     #[test]
