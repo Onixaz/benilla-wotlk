@@ -526,7 +526,7 @@ pub use trainer::{
 pub use types::{
     BlendMode, EditAction, EditBoxAdvanceRequest, EditBoxTextUi, EditOutcome, EditUnit,
     ExtractedQuad, FontObject, FontShadow, Gradient, JustifyH, JustifyV, LineMeasureRequest,
-    MeasureRequest, Outline, QuadContent, ScriptValue, TexCoords,
+    MeasureRequest, Outline, QuadContent, ScriptValue, TexCoords, TextWrap,
 };
 pub(crate) use types::{FontExplicit, MeasuredText, RegionData};
 pub use unit::{

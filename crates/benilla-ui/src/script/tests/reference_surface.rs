@@ -428,10 +428,11 @@ fn region_set_parent_relinks_the_draw_owner_and_leaves_anchors_alone() {
     );
 }
 
-/// FontString's `SetNonSpaceWrap`/`CanNonSpaceWrap`: on by default, the getter answers `1` or nil,
+/// FontString's `SetNonSpaceWrap`/`CanNonSpaceWrap`: off from the constructor's style `0x212`
+/// (`0x48530d`), whose bit `0x1000` the getter tests (`0x48e010`); the getter answers `1` or nil,
 /// and a bare `SetNonSpaceWrap()` turns it on.
 #[test]
-fn non_space_wrap_defaults_on_and_answers_one_or_nil() {
+fn non_space_wrap_defaults_off_and_answers_one_or_nil() {
     let s = crate::script::UiScript::new().unwrap();
     s.run(r#"f = CreateFrame("Frame", "NSF") fs = f:CreateFontString("NSFText", "ARTWORK")"#)
         .unwrap();
@@ -439,9 +440,11 @@ fn non_space_wrap_defaults_on_and_answers_one_or_nil() {
     assert_eq!(
         s.eval::<Option<i64>>("return NSFText:CanNonSpaceWrap()")
             .unwrap(),
-        Some(1),
-        "default on, answered as 1"
+        None,
+        "default off, answered as nil"
     );
+
+    s.run("NSFText:SetNonSpaceWrap(true)").unwrap();
     assert!(
         !s.eval::<bool>("return NSFText:CanNonSpaceWrap() == true")
             .unwrap(),

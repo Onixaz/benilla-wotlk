@@ -522,6 +522,7 @@ fn draw_bubble(
         outline: Outline::None,
         alpha_gradient: None,
         spacing: 0.0,
+        wrap: benilla_ui::script::TextWrap::default(),
     };
     // The wrap law: wider than 0.2 gx wraps at the cap, else max(width, 2 borders).
     let cap = gx_px(WRAP_W, basis);

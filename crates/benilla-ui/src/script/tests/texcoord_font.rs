@@ -84,6 +84,7 @@ fn set_font_object_repoints_fontstring() {
             shadow: None,
             spacing: None,
             indented_word_wrap: false,
+            non_space_wrap: false,
         },
     );
     s.register_font_object(
@@ -98,6 +99,7 @@ fn set_font_object_repoints_fontstring() {
             shadow: None,
             spacing: None,
             indented_word_wrap: false,
+            non_space_wrap: false,
         },
     );
     s.run(
@@ -199,6 +201,7 @@ fn justify_v_defaults_middle_and_overrides() {
             shadow: None,
             spacing: None,
             indented_word_wrap: false,
+            non_space_wrap: false,
         },
     );
     s.run("fs:SetFontObject('TopFont')").unwrap();

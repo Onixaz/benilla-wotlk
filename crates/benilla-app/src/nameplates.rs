@@ -456,6 +456,7 @@ fn build_name_mesh(atlas: &mut UiFontAtlas, lines: &[String]) -> Mesh {
                 outline: Outline::None,
                 alpha_gradient: None,
                 spacing: 0.0,
+                wrap: benilla_ui::script::TextWrap::default(),
             },
             // A world billboard: the glyphs are re-seated in pitch units below, off the UI grid.
             TextSeat::Exact,

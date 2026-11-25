@@ -178,7 +178,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             .map(|f| f.effective_scale)
             .unwrap_or(1.0);
         Ok(d.measured
-            .filter(|m| m.key == d.measure_key(scale))
+            .filter(|m| m.key == d.measure_key(scale, model.text_wrap(d)))
             .map(|m| m.natural_w)
             .unwrap_or(0.0))
     }
@@ -294,8 +294,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, this: Table| Ok(justify_of(lua, &this)?.name_v()))?,
     )?;
 
-    // SetNonSpaceWrap/CanNonSpaceWrap, FontString only: the getter answers 1 or nil, and a call
-    // with no argument enables.
+    // SetNonSpaceWrap/CanNonSpaceWrap, FontString only: the getter (`0x48e010`) answers 1 or nil,
+    // nil from the constructor's `0x212` (`0x48530d`) or the font's bit until set, and a call with
+    // no argument enables.
     m.set(
         "SetNonSpaceWrap",
         lua.create_function(|lua, (this, enable): (Table, Value)| {
@@ -307,6 +308,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let rh = region_handle_of(lua, &this)?;
             let mut model = crate::script::model_mut_of(lua);
             model.region_data.entry(rh).or_default().non_space_wrap = Some(on);
+            model.touch_measure(rh);
             Ok(())
         })?,
     )?;
@@ -319,8 +321,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let on = model
                 .region_data
                 .get(&rh)
-                .and_then(|d| d.non_space_wrap)
-                .unwrap_or(true);
+                .is_some_and(|d| model.text_wrap(d).non_space_wrap);
             Ok(if on { Some(1i64) } else { None })
         })?,
     )?;
@@ -344,7 +345,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 .map(|f| f.effective_scale)
                 .unwrap_or(1.0);
             Ok(d.laid_measure()
-                .filter(|m| m.key == d.measure_key(scale))
+                .filter(|m| m.key == d.measure_key(scale, model.text_wrap(d)))
                 .map(|m| m.h)
                 .unwrap_or(0.0))
         })?,
@@ -373,6 +374,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let rh = region_handle_of(lua, &this)?;
             let mut model = crate::script::model_mut_of(lua);
             model.region_data.entry(rh).or_default().no_word_wrap = !on;
+            model.touch_measure(rh);
             Ok(())
         })?,
     )?;
@@ -392,6 +394,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let rh = region_handle_of(lua, &this)?;
             let mut model = crate::script::model_mut_of(lua);
             model.region_data.entry(rh).or_default().indented_word_wrap = Some(on);
+            model.touch_measure(rh);
             Ok(())
         })?,
     )?;
@@ -400,12 +403,10 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, this: Table| {
             let rh = region_handle_of(lua, &this)?;
             let model = crate::script::model_mut_of(lua);
-            let d = model.region_data.get(&rh);
-            let on = d.and_then(|d| d.indented_word_wrap).unwrap_or_else(|| {
-                d.and_then(|d| d.font_object.as_deref())
-                    .and_then(|n| model.font_object(n))
-                    .is_some_and(|fo| fo.indented_word_wrap)
-            });
+            let on = model
+                .region_data
+                .get(&rh)
+                .is_some_and(|d| model.text_wrap(d).indented);
             Ok(crate::script::binding_abi::flag(on))
         })?,
     )?;

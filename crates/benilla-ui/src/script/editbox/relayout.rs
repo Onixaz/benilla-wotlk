@@ -165,7 +165,7 @@ fn text_height(lua: &Lua, h: FrameHandle, rh: RegionHandle) -> Option<f32> {
         if d.text.as_deref().is_none_or(str::is_empty) {
             0.0
         } else {
-            let key = d.measure_key(owner_scale(&model, h));
+            let key = d.measure_key(owner_scale(&model, h), model.text_wrap(d));
             d.measured.filter(|m| m.key == key)?.h
         }
     };
@@ -187,7 +187,8 @@ fn line_height(lua: &Lua, h: FrameHandle, rh: RegionHandle) -> Option<f32> {
     let scale = owner_scale(&model, h);
     let req = {
         let d = model.region_data.get(&rh)?;
-        let key = d.measure_key_of(ONE_LINE, scale);
+        let wrap = model.text_wrap(d);
+        let key = d.measure_key_of(ONE_LINE, scale, wrap);
         if let Some(KindState::EditBox(eb)) = model.arena.frame(h).map(|f| &f.kind_state) {
             if let Some((k, lh)) = eb.line_height {
                 if k == key {
@@ -201,6 +202,7 @@ fn line_height(lua: &Lua, h: FrameHandle, rh: RegionHandle) -> Option<f32> {
             height: d.font_height,
             text_height: d.text_height,
             wrap_width: None,
+            wrap,
             outline: d.outline,
             spacing: 0.0,
             scale,

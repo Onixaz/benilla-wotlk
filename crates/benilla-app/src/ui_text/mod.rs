@@ -102,6 +102,7 @@ struct Remembered {
     height: Option<f32>,
     spacing: f32,
     outline: Outline,
+    wrap: benilla_ui::script::TextWrap,
     /// The answer; `None` means the text fits and draws raw, also worth remembering.
     display: Option<String>,
 }
@@ -130,7 +131,8 @@ impl EllipsisMemo {
             && e.font.as_deref() == font.path
             && e.height == font.height
             && e.spacing == font.spacing
-            && e.outline == font.outline)
+            && e.outline == font.outline
+            && e.wrap == font.wrap)
             .then_some(&e.display)
     }
 
@@ -156,6 +158,7 @@ impl EllipsisMemo {
                 height: font.height,
                 spacing: font.spacing,
                 outline: font.outline,
+                wrap: font.wrap,
                 display,
             },
         );
@@ -180,6 +183,7 @@ mod ellipsis_memo_tests {
             outline,
             alpha_gradient: None,
             spacing: 0.0,
+            wrap: benilla_ui::script::TextWrap::default(),
         }
     }
 
