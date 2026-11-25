@@ -6152,10 +6152,10 @@ fn seated(app: &mut App, pose: crate::vehicle::SeatPose) -> Entity {
         .id()
 }
 
-/// The seat's base start goes first; a start the model lacks plays out at once and the loop
-/// takes the base (`0x747b20`, `0x7484e0`).
+/// The seat's base start plays its resolved clip once (even a looping fallback) and hands off to
+/// the loop when it finishes (`0x747b20`, `0x7484e0`).
 #[test]
-fn a_seat_start_the_model_lacks_hands_the_base_to_its_loop() {
+fn a_seat_start_plays_its_resolved_clip_once_then_hands_the_base_to_its_loop() {
     let mut app = app();
     let unit = seated(
         &mut app,
@@ -6165,9 +6165,24 @@ fn a_seat_start_the_model_lacks_hands_the_base_to_its_loop() {
         },
     );
     app.update();
+    let drv = app.world().entity(unit).get::<AnimDriver>().unwrap();
+    assert!(
+        !drv.seat_lower_spent,
+        "the fallback plays until it finishes"
+    );
+    assert_eq!(drv.gait, Some(120));
+    // Complete the resolved Stand (node 1) cycle.
+    app.world_mut()
+        .entity_mut(unit)
+        .get_mut::<AnimationPlayer>()
+        .unwrap()
+        .stop(AnimationNodeIndex::new(1));
     app.update();
     let drv = app.world().entity(unit).get::<AnimDriver>().unwrap();
-    assert!(drv.seat_lower_spent, "the missing start is spent");
+    assert!(
+        drv.seat_lower_spent,
+        "spent once its resolved clip finishes"
+    );
     assert_eq!(drv.gait, Some(121), "the loop holds the base");
 }
 
@@ -6240,10 +6255,10 @@ fn an_exit_leaving_its_anims_plays_its_end() {
     assert_eq!(drv.seat_end, Some(187), "a run lands as JumpLandRun");
 }
 
-/// A torso start whose resolved clip loops counts as played out so the torso loop takes over
-/// instead of hanging on a seated unit (`0x747bd0`).
+/// A torso start whose resolved clip loops plays once on the torso, then hands off to the torso
+/// loop when it finishes (`0x747bd0`, `0x7484e0`).
 #[test]
-fn a_looping_seat_upper_start_hands_the_torso_to_its_loop() {
+fn a_looping_seat_upper_start_plays_once_then_hands_the_torso_to_its_loop() {
     let mut app = app();
     let mut model = seated_model();
     let mut looping_start = clip(139, 8, true);
@@ -6266,10 +6281,24 @@ fn a_looping_seat_upper_start_hands_the_torso_to_its_loop() {
         .id();
     app.update();
     let drv = app.world().entity(unit).get::<AnimDriver>().unwrap();
-    assert!(drv.seat_upper_spent, "looping upper start is spent at once");
+    assert!(!drv.seat_upper_spent, "start plays until it finishes");
+    assert!(
+        drv.overlay.is_some_and(|ov| ov.id == 139 && !ov.looping),
+        "start arms once on the torso: {:?}",
+        drv.overlay.map(|o| (o.id, o.looping))
+    );
+    // Complete the start clip's single cycle on the torso node.
+    app.world_mut()
+        .entity_mut(unit)
+        .get_mut::<AnimationPlayer>()
+        .unwrap()
+        .stop(AnimationNodeIndex::new(9));
+    app.update();
+    let drv = app.world().entity(unit).get::<AnimDriver>().unwrap();
+    assert!(drv.seat_upper_spent, "spent once its cycle finishes");
     assert!(
         drv.overlay.is_some_and(|ov| ov.id == 140 && ov.looping),
-        "torso loop takes over immediately: {:?}",
+        "torso loop takes over: {:?}",
         drv.overlay.map(|o| (o.id, o.looping))
     );
 }

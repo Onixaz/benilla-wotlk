@@ -36,6 +36,8 @@ const NO_ANIM: i32 = 506;
 pub(crate) struct SeatRide {
     vehicle: Entity,
     seat: u8,
+    /// The passenger state whose [`SeatPose`] was last written (`3` seated or `4` exit pre-delay).
+    state: u8,
     pub(super) anchor: Entity,
     /// The anchor's local transform as last written.
     local: Transform,
@@ -48,8 +50,8 @@ pub(crate) struct SeatAnchor(Entity);
 /// The anims a passenger holds in its current seat state (`0x747b20`, `0x747bd0`), each a
 /// one-shot start before its loop. The lower pair replaces the body's base pick; the upper pair
 /// rides the torso while the seat animates it (`flags & 0x4`), under any one-shot. The start flags
-/// clear on each state change (`0x7489c0`), which a fresh component is; an enter's two states are
-/// one.
+/// clear on each state change (`0x7489c0`), which a fresh component is; an enter's two states and
+/// an exit's two states are each one.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct SeatPose {
     /// The base's start and loop.
@@ -235,6 +237,7 @@ pub(super) fn ride_seats(
             Option<&BoneAttach>,
             &GlobalTransform,
             Has<TransitAnchor>,
+            Option<&super::aim::MoveFlags2>,
         ),
         Or<(With<Passenger>, With<SeatRide>)>,
     >,
@@ -253,10 +256,9 @@ pub(super) fn ride_seats(
     tables: Res<VehicleTables>,
     creatures: Option<Res<crate::entities::Creatures>>,
 ) {
-    for (entity, net, passenger, rider, ride, own_points, own_tf, in_transit) in &passengers {
-        // Seated, or in the exit's pre-delay, which holds the seat (`0x74a7f0`). Deviation:
-        // state 4 keeps the ride's anims rather than switching to the exit's (`0x747b20`); the
-        // exit's arrive with its motion (state 5).
+    for (entity, net, passenger, rider, ride, own_points, own_tf, in_transit, flags2) in &passengers
+    {
+        // Seated, or in the exit's pre-delay, which holds the seat (`0x74a7f0`).
         let seated = passenger
             .filter(|p| p.state == SEATED || p.state == 4)
             .and_then(|p| Some((p, *index.0.get(&p.vehicle)?)));
@@ -321,10 +323,26 @@ pub(super) fn ride_seats(
             },
             None => local,
         };
+        let exit_anims = plays_exit_anims(seat, flags2.map_or(0, |f| f.0));
+        let pose = seat_pose(seat, p.state, exit_anims);
         if let Some(r) = ride {
+            let state_changed = r.state != p.state;
             if r.local != local {
                 commands.entity(r.anchor).insert(local);
-                commands.entity(entity).insert(SeatRide { local, ..*r });
+            }
+            if r.local != local || state_changed {
+                commands.entity(entity).insert(SeatRide {
+                    state: p.state,
+                    local,
+                    ..*r
+                });
+            }
+            if state_changed {
+                // Entering the exit's pre-delay (state 4) switches to the exit's anims (`0x747b20`).
+                match pose {
+                    Some(pose) => commands.entity(entity).insert(pose),
+                    None => commands.entity(entity).remove::<SeatPose>(),
+                };
             }
             continue;
         }
@@ -360,16 +378,17 @@ pub(super) fn ride_seats(
             crate::entities::mount::reseat_rig(&mut commands, &mut rig, anchor, false);
         }
         debug!(
-            "vehicle: passenger {entity} seated on its anchor, ride anim {:?}",
-            seat_pose(seat, SEATED, false)
+            "vehicle: passenger {entity} seated on its anchor, state {} anim {:?}",
+            p.state, pose
         );
         commands.entity(entity).insert(SeatRide {
             vehicle,
             seat: p.seat,
+            state: p.state,
             anchor,
             local,
         });
-        match seat_pose(seat, SEATED, false) {
+        match pose {
             Some(pose) => commands.entity(entity).insert(pose),
             None => commands.entity(entity).remove::<SeatPose>(),
         };

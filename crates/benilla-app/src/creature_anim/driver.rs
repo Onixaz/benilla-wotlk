@@ -769,10 +769,16 @@ fn drive_unit(
         mv.stand_state = 0;
     }
     if seat != drv.seat {
-        // A new seat state clears the start flags (`0x7489c0`). An exit leaving its anims owes
-        // its end while alive (`0x7489c0`, `0x74b9c0`): played landed or under the seat's forcing
-        // flag, a run's JumpEnd as JumpLandRun; falling, swimming or flying it leaves the base to
-        // the fall or swim.
+        // A new seat state clears the start flags and resets a seat-upper start overlay
+        // (`0x7489c0`). An exit leaving its anims owes its end while alive (`0x7489c0`,
+        // `0x74b9c0`): played landed or under the seat's forcing flag, a run's JumpEnd as
+        // JumpLandRun; falling, swimming or flying it leaves the base to the fall or swim.
+        if drv
+            .overlay
+            .is_some_and(|ov| !ov.looping && drv.seat.and_then(|s| s.upper[0]) == Some(ov.id))
+        {
+            retire_overlay(&mut drv, &mut player, ONESHOT_RELEASE_FADE);
+        }
         drv.seat_end = match (seat, drv.seat) {
             (None, Some(last)) if !dead => {
                 let afloat = mv.flags
@@ -815,11 +821,9 @@ fn drive_unit(
         .filter(|_| !drv.seat_lower_spent);
     if let Some(start) = lower_start.or(drv.seat_end) {
         let start_id = seat_tier(start);
-        // Deviation: a one-shot this model lacks, or whose resolved clip loops, counts as played
-        // out at once, where `0x7484e0` plays the fallback until its end.
-        let missing = anims
-            .find(resolved(anims, start_id, catalog).id)
-            .is_none_or(|c| c.looping);
+        // Only a clip the model lacks altogether is spent at once; a resolved clip (including a
+        // looping fallback) plays once until its end (`0x7484e0`).
+        let missing = anims.find(resolved(anims, start_id, catalog).id).is_none();
         if missing
             || drv.gait == Some(start_id) && oneshot_finished(&player, anims, start_id, catalog)
         {
@@ -1679,9 +1683,13 @@ fn drive_unit(
     // ── Masked one-shot completion: a finished overlay is not stopped but faded to rest, its held
     // final frame cross-fading onto the base over 150 ms.
     if let Some(ov) = drv.overlay {
+        let seat_upper_start_active =
+            !ov.looping && drv.seat.and_then(|s| s.upper[0]) == Some(ov.id);
         let done = if ov.looping {
             false // a cast-hold loop: the hold block below owns its release
-        } else if find_resolved(anims, ov.id, catalog).is_some_and(|c| c.looping) {
+        } else if !seat_upper_start_active
+            && find_resolved(anims, ov.id, catalog).is_some_and(|c| c.looping)
+        {
             // A hold-less looping clip (a kit's seated eat/drink) releases on movement; the
             // reference's release for this case is untraced. A Special does not release it:
             // a jump is a bone-0 play and leaves the key bone alone.
@@ -1691,7 +1699,7 @@ fn drive_unit(
         };
         if done {
             // The seat's torso start played out: its loop takes the torso next (`0x7484e0`).
-            if drv.seat.and_then(|s| s.upper[0]) == Some(ov.id) {
+            if seat_upper_start_active {
                 drv.seat_upper_spent = true;
             }
             // Freeze on the final frame: the snapshot clamps to `seq.end`.
@@ -1719,17 +1727,13 @@ fn drive_unit(
     // With no hold, a seated passenger's torso takes the seat's upper anim (`0x747bd0`), the pick
     // the base chooser ends on (`0x724500`) moved onto the torso over the seat's base
     // (`0x7385c0`): its start once, then its loop. A one-shot on the key bone wins while it plays.
-    // Deviation: a start whose resolved clip loops counts as played out, where `0x7484e0` plays
-    // the fallback until its end.
     let mut seat_upper_start = drv
         .seat
         .and_then(|s| s.upper[0])
         .filter(|_| !drv.seat_upper_spent && kit_hold.is_none());
     if let Some(start) = seat_upper_start {
         let dir = resolved(anims, start, catalog);
-        let unusable = anims
-            .find(dir.id)
-            .is_none_or(|c| c.upper_node.is_none() || c.looping);
+        let unusable = anims.find(dir.id).is_none_or(|c| c.upper_node.is_none());
         if unusable {
             drv.seat_upper_spent = true;
             seat_upper_start = None;
