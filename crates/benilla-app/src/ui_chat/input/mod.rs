@@ -1429,9 +1429,14 @@ pub(super) fn party_lane(wire: crate::net::ChatKind, leads: bool) -> crate::net:
     }
 }
 
-/// `SendChatMessage`'s refusal line, shown in its call (`0x5216f0`).
-fn refuse(world: &mut World, key: &'static str) {
-    crate::ui_action::show_line_in_world(world, "chat", crate::ui_action::UiError::key(key));
+/// `SendChatMessage`'s refusal line, shown in its call on the calling VM (`0x5216f0`).
+fn refuse(world: &mut World, vm: &benilla_ui::script::UiScript, key: &'static str) {
+    crate::ui_action::show_line_with_vm(
+        world,
+        &mut vm.share(),
+        "chat",
+        crate::ui_action::UiError::key(key),
+    );
 }
 
 /// The battleground raid test (`0x572f50`): the current map's `InstanceType` is 3 or 4.
@@ -1487,11 +1492,16 @@ fn speaks_language(world: &mut World, language: u32) -> bool {
         .unwrap_or(false)
 }
 
-/// A global string off the VM, read with no call into Lua.
-fn vm_string(world: &World, key: &str) -> Option<String> {
+/// A global string off `vm`, read with no call into Lua.
+fn vm_string(vm: Option<&benilla_ui::script::UiScript>, key: &str) -> Option<String> {
+    vm.and_then(|s| crate::ui_chat::combat::global_string(s, key))
+}
+
+/// A handle on the `World`'s VM, for a caller outside any Lua call.
+fn world_vm(world: &World) -> Option<benilla_ui::script::UiScript> {
     world
         .get_non_send_resource::<benilla_ui::script::UiScript>()
-        .and_then(|s| crate::ui_chat::combat::global_string(s, key))
+        .map(benilla_ui::script::UiScript::share)
 }
 
 /// Send `text` on `kind`, the verb's packet out in its turn.
@@ -1520,6 +1530,16 @@ fn send_chat(
 /// `autoClearAFK` on (`0x6d52ea`), the mirror zeroes (`0x6d530e`), `CLEARED_AFK` is added in the
 /// call (`0x6d531d`) and the empty AFK message goes out (`0x6d5373`).
 pub(crate) fn clear_afk(world: &mut World, forced: bool) -> bool {
+    let vm = world_vm(world);
+    clear_afk_with(world, vm.as_ref(), forced)
+}
+
+/// [`clear_afk`] reading its line off `vm`, the calling VM inside a verb's call.
+fn clear_afk_with(
+    world: &mut World,
+    vm: Option<&benilla_ui::script::UiScript>,
+    forced: bool,
+) -> bool {
     let set = world
         .get_resource::<super::away::AfkMirror>()
         .is_some_and(|m| m.is_afk());
@@ -1531,7 +1551,7 @@ pub(crate) fn clear_afk(world: &mut World, forced: bool) -> bool {
         return false;
     }
     world.resource_mut::<super::away::AfkMirror>().0 = 0;
-    let line = vm_string(world, "CLEARED_AFK").unwrap_or_default();
+    let line = vm_string(vm, "CLEARED_AFK").unwrap_or_default();
     super::away::add_system(world, line);
     send_chat(world, crate::net::ChatKind::Afk, None, String::new(), None);
     true
@@ -1542,8 +1562,14 @@ pub(crate) fn clear_afk(world: &mut World, forced: bool) -> bool {
 /// `MARKED_AFK_MESSAGE` (`0x6dc6e0`), then sets the mirror (`0x6dc6e8`); set, it adds nothing. The
 /// AFK packet always goes out with the message (`0x6dc73d`).
 pub(crate) fn set_afk(world: &mut World, msg: &str) {
+    let vm = world_vm(world);
+    set_afk_with(world, vm.as_ref(), msg);
+}
+
+/// [`set_afk`] reading its strings off `vm`, the calling VM inside a verb's call.
+fn set_afk_with(world: &mut World, vm: Option<&benilla_ui::script::UiScript>, msg: &str) {
     let body = if msg.is_empty() {
-        vm_string(world, "DEFAULT_AFK_MESSAGE").unwrap_or_default()
+        vm_string(vm, "DEFAULT_AFK_MESSAGE").unwrap_or_default()
     } else {
         msg.to_string()
     };
@@ -1558,10 +1584,10 @@ pub(crate) fn set_afk(world: &mut World, msg: &str) {
             )
             .unwrap_or(false);
         if dnd {
-            let line = vm_string(world, "CLEARED_DND").unwrap_or_default();
+            let line = vm_string(vm, "CLEARED_DND").unwrap_or_default();
             super::away::add_system(world, line);
         }
-        let format = vm_string(world, "MARKED_AFK_MESSAGE").unwrap_or_default();
+        let format = vm_string(vm, "MARKED_AFK_MESSAGE").unwrap_or_default();
         super::away::add_system(world, super::away::fill_one(&format, &body));
         world.resource_mut::<super::away::AfkMirror>().0 = 1;
     }
@@ -1587,7 +1613,7 @@ pub(crate) fn send_chat_message(
     // A named language needs our skill in it (`0x50d2b0`), else `ERR_CANT_SPEAK_LANGAGE` and the
     // call returns (`0x50d2b9`).
     if send.language.is_some_and(|l| !speaks_language(world, l)) {
-        refuse(world, "ERR_CANT_SPEAK_LANGAGE");
+        refuse(world, vm, "ERR_CANT_SPEAK_LANGAGE");
         return None;
     }
     let target_empty = send.target.as_deref().is_none_or(str::is_empty);
@@ -1618,7 +1644,7 @@ pub(crate) fn send_chat_message(
         // `ERR_NOT_IN_GROUP` (`0x50d340`); our lead picks `0x33` (`0x50d516`).
         T::Party => {
             if !in_party && !(in_raid && pvp_raid(world)) {
-                refuse(world, "ERR_NOT_IN_GROUP");
+                refuse(world, vm, "ERR_NOT_IN_GROUP");
                 return None;
             }
             wire = party_lane(wire, leads);
@@ -1628,11 +1654,11 @@ pub(crate) fn send_chat_message(
         T::RaidWarning => {
             if in_raid {
                 if !officer {
-                    refuse(world, "ERR_NOT_LEADER");
+                    refuse(world, vm, "ERR_NOT_LEADER");
                     return None;
                 }
             } else if !in_party {
-                refuse(world, "ERR_NOT_IN_GROUP");
+                refuse(world, vm, "ERR_NOT_IN_GROUP");
                 return None;
             }
         }
@@ -1643,6 +1669,7 @@ pub(crate) fn send_chat_message(
             if !in_raid {
                 refuse(
                     world,
+                    vm,
                     if kind == T::Raid {
                         "ERR_NOT_IN_RAID"
                     } else {
@@ -1673,7 +1700,8 @@ pub(crate) fn send_chat_message(
         }
         _ => {}
     }
-    let strings = |world: &World, key: &str| vm_string(world, key);
+    // Every string reads the calling VM: the world-entry load holds the `World`'s VM outside it.
+    let strings = |key: &str| vm_string(Some(vm), key);
     // AFK marks or clears and returns (`0x50d5a7`-`0x50d5ee`): no AFK clear, dead gate or tutorial.
     if wire == crate::net::ChatKind::Afk {
         let mirror = world
@@ -1684,19 +1712,19 @@ pub(crate) fn send_chat_message(
         // is the forced AFK clear (`0x50d5e9`-`0x50d5ee`), any other the AFK mark (`0x50d5db`). The
         // AFK mark's own packet never reads the language argument.
         let text = if !mirror.is_afk() && send.text.is_empty() {
-            strings(world, "DEFAULT_AFK_MESSAGE").unwrap_or_default()
+            strings("DEFAULT_AFK_MESSAGE").unwrap_or_default()
         } else {
             send.text
         };
         if text.is_empty() {
-            clear_afk(world, true);
+            clear_afk_with(world, Some(vm), true);
         } else {
-            set_afk(world, &text);
+            set_afk_with(world, Some(vm), &text);
         }
         return None;
     }
     // Every other type first clears a standing AFK (`0x50d417`-`0x50d425`), `/dnd` included.
-    clear_afk(world, false);
+    clear_afk_with(world, Some(vm), false);
     let text = if wire == crate::net::ChatKind::Dnd {
         // DND has no mirror: the live descriptor bit (`0x50d43c`).
         let dnd = world
@@ -1704,7 +1732,7 @@ pub(crate) fn send_chat_message(
                 |q: Query<&crate::net::ObjectStore, With<crate::net::SelfPlayer>>| is_dnd(&q),
             )
             .unwrap_or(false);
-        let out = super::away::dnd_line(&send.text, dnd, &|k| strings(world, k));
+        let out = super::away::dnd_line(&send.text, dnd, &strings);
         super::away::add_system(world, out.line);
         out.body
     } else {
@@ -1713,11 +1741,7 @@ pub(crate) fn send_chat_message(
     // Dead or a ghost, only the group, guild, whisper, channel and DND lanes speak; any other shows
     // `ERR_CHAT_WHILE_DEAD` and ends the call (`0x50d632`-`0x50d684`).
     if !speaks_while_dead(wire) && self_dead_or_ghost(world) {
-        crate::ui_action::show_line_in_world(
-            world,
-            "chat",
-            crate::ui_action::UiError::key("ERR_CHAT_WHILE_DEAD"),
-        );
+        refuse(world, vm, "ERR_CHAT_WHILE_DEAD");
         return None;
     }
     // Every type that reaches the send flags the chatting tutorial (`0x50d695`).

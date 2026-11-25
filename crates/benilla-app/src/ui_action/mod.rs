@@ -58,8 +58,8 @@ pub(crate) use cast_refusal::{
 pub(crate) use errors::take_lines_in_turn;
 pub(crate) use errors::{
     attack_actor_blocked, attack_actor_refusal, keyed_line, reagent_totem_refusal, show_in_turn,
-    show_in_turn_then, show_line_in_world, show_messages, ui_error_text, CastFail, Caster, FillArg,
-    MessageSink, Shown, TextSink, ToolCheck, UiError,
+    show_in_turn_then, show_line_in_world, show_line_with_vm, show_messages, ui_error_text,
+    CastFail, Caster, FillArg, MessageSink, Shown, TextSink, ToolCheck, UiError,
 };
 pub(crate) use weapon_icon::{melee_auto_attack_icon, ranged_weapon_icon};
 

@@ -352,6 +352,28 @@ pub(crate) fn show_line_in_world(world: &mut World, who: &'static str, line: UiE
     }
 }
 
+/// [`show_line_in_world`] on `vm`, the calling VM's handle: a verb's line shown inside its call
+/// whether or not the `World` holds the VM, which the world-entry load holds outside it
+/// (`0x5216f0`: `0x52183c`, `0x521863`, `0x52188a`).
+pub(crate) fn show_line_with_vm(
+    world: &mut World,
+    vm: &mut UiScript,
+    who: &'static str,
+    line: UiError,
+) {
+    let Some(shown) = ui_error_text(&line, &|key| vm.lua().globals().get::<String>(key).ok())
+        .map(|t| Shown::keyed(line.key, t))
+    else {
+        return;
+    };
+    if let (Some(record), Some(mut sounds)) =
+        (shown.record, world.get_resource_mut::<MessageSounds>())
+    {
+        sounds.push(record);
+    }
+    crate::ui_script::safe_world::lend_to(world, vm, |s| show_one(s, None, who, shown));
+}
+
 fn show_line_now(
     In((who, line)): In<(&'static str, UiError)>,
     mut script: crate::ui_script::InTurn,

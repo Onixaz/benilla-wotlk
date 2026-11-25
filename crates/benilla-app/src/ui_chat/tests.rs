@@ -2733,8 +2733,12 @@ fn run_lent(world: &mut bevy::prelude::World, lua: &str) -> mlua::Result<()> {
 
 /// The `CHAT_MSG_SYSTEM` texts the spy saw, drained.
 fn system_seen(world: &bevy::prelude::World) -> Vec<String> {
-    world
-        .non_send_resource::<benilla_ui::script::UiScript>()
+    system_seen_on(world.non_send_resource::<benilla_ui::script::UiScript>())
+}
+
+/// [`system_seen`] on a VM held outside the `World`.
+fn system_seen_on(script: &benilla_ui::script::UiScript) -> Vec<String> {
+    script
         .eval::<Vec<String>>("local s = SystemSeen SystemSeen = {} return s")
         .unwrap()
 }
@@ -3432,6 +3436,57 @@ fn the_group_and_language_refusals_return_before_the_afk_clear() {
         ]
     );
     assert!(errors(&world).is_empty());
+}
+
+/// `SendChatMessage` reads its strings and shows its refusals on the calling VM (`0x50d170`): with
+/// the `World`'s VM held outside it, as the world-entry load and a reload hold it while addons run,
+/// the DND default (`0x50d44e`) and its mark (`0x50d472`) and the AFK mark (`0x6dc6e0`) still read
+/// their globals, and a refusal (`0x50d340`) still shows in the call.
+#[test]
+fn a_send_during_the_load_reads_the_calling_vms_strings() {
+    use crate::net::ChatKind;
+
+    let script = benilla_ui::script::UiScript::new().expect("VM");
+    script
+        .run(r#"ERR_NOT_IN_GROUP = "You aren't in a party.""#)
+        .expect("lua");
+    let (mut world, rx) = send_world(script);
+    world.init_resource::<crate::sound::MessageSounds>();
+    world.init_resource::<bevy::prelude::Messages<crate::tutorial::TutorialEvent>>();
+    // The load: the chat add queues (`0x528cc9`) and the VM is out of the `World`.
+    world.resource_mut::<super::ChatLog>().leave_world();
+    let mut vm = world
+        .remove_non_send_resource::<benilla_ui::script::UiScript>()
+        .expect("VM");
+    crate::ui_script::safe_world::lend_to(&mut world, &mut vm, |s| {
+        s.run(
+            r#"
+            SendChatMessage("", "DND")
+            SendChatMessage("brb", "AFK")
+            SendChatMessage("p", "PARTY")
+            "#,
+        )
+    })
+    .expect("lua");
+    assert_eq!(
+        chat_sent(&rx),
+        vec![
+            (ChatKind::Dnd, "Do not Disturb".into()),
+            (ChatKind::Afk, "brb".into()),
+        ]
+    );
+    // Every line went through the chat add in its call, which queues them until the entry.
+    assert!(system_seen_on(&vm).is_empty());
+    world.insert_non_send_resource(vm);
+    super::feed::enter_world(&mut world);
+    assert_eq!(
+        system_seen(&world),
+        vec![
+            "You are now DND: Do not Disturb.",
+            "You are now AFK: brb",
+            "You aren't in a party."
+        ]
+    );
 }
 
 /// `SendChatMessage`'s steps in 12340's order (`0x50d170`): the type lookup before the language
