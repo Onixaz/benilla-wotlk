@@ -793,6 +793,12 @@ fn special_item(model: &Model, index: i32) -> Option<QuestSpecialItemView> {
     super::read_live(|l| l.quest_special_item(e.quest_id)).flatten()
 }
 
+/// The quest difficulty colour of `level` for an active player at `player` (`0x61e540`): yellow
+/// with no active player (`0x61e562`).
+pub fn quest_difficulty_color(level: i32, player: Option<i32>) -> &'static str {
+    player.map_or("|cffffff00", |p| quest_color(level, p))
+}
+
 /// The tooltip's quest difficulty colour (`0x61e540`, strings at `0xad2a68`): red five and
 /// more levels over the player, orange three, yellow within two, green down to the grey band.
 fn quest_color(level: i32, player: i32) -> &'static str {

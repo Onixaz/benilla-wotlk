@@ -248,7 +248,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     "MOVIE_RECORDING_GUI_OFF"
                 },
             )?;
-            crate::script::model_mut_of(lua).party_lines.push(text);
+            // The system line through the chat add inside the call.
+            super::ui_errors::add_chat_text(lua, 0, &text);
             Ok(MultiValue::new())
         })?,
     )?;
@@ -325,7 +326,10 @@ mod tests {
             ("MovieRecording_GetTime()", 1),
             ("MovieRecording_GetMovieFullPath()", 1),
         ] {
-            assert_eq!(s.arity(call).unwrap(), count, "{call}");
+            // `ToggleGUI` adds a chat line inside the call, which needs a host lent.
+            let mut view = crate::script::live::TestView::default();
+            let arity = crate::script::live::lending(&mut view, || s.arity(call).unwrap());
+            assert_eq!(arity, count, "{call}");
         }
         for verb in [
             "IsRecording",
@@ -433,18 +437,20 @@ mod tests {
         assert_eq!(s.eval::<String>("return seen").unwrap(), "needs more");
     }
 
-    /// `ToggleGUI` flips the CVar and prints the matching system line.
+    /// `ToggleGUI` flips the CVar and adds the matching system line inside the call.
     #[test]
     fn toggle_gui_flips_its_cvar() {
-        let mut s = mac();
+        let s = mac();
         s.register_cvars([("MovieRecordingGUI", "1")]);
         s.run("MOVIE_RECORDING_GUI_ON = 'on' MOVIE_RECORDING_GUI_OFF = 'off'")
             .unwrap();
-        s.run("MovieRecording_ToggleGUI()").unwrap();
-        assert_eq!(s.cvar("MovieRecordingGUI").as_deref(), Some("0"));
-        assert_eq!(s.take_party_lines(), ["off"]);
-        s.run("MovieRecording_ToggleGUI()").unwrap();
-        assert_eq!(s.cvar("MovieRecordingGUI").as_deref(), Some("1"));
-        assert_eq!(s.take_party_lines(), ["on"]);
+        let mut view = crate::script::live::TestView::default();
+        crate::script::live::lending(&mut view, || {
+            s.run("MovieRecording_ToggleGUI()").unwrap();
+            assert_eq!(s.cvar("MovieRecordingGUI").as_deref(), Some("0"));
+            s.run("MovieRecording_ToggleGUI()").unwrap();
+            assert_eq!(s.cvar("MovieRecordingGUI").as_deref(), Some("1"));
+        });
+        assert_eq!(view.chat_lines, [(0, "off".into()), (0, "on".into())]);
     }
 }

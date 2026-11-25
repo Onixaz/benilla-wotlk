@@ -2512,9 +2512,16 @@ pub(crate) enum ClientCommand {
     DelMute {
         guid: u64,
     },
-    /// `CMSG_CHAT_IGNORED`: the server still delivers ignored chat, so the client drops it and
-    /// reports, and the sender hears they are ignored.
+    /// `CMSG_CHAT_IGNORED` (`0x500180`): the server still delivers ignored chat, so the client
+    /// drops it and reports, and the sender hears they are ignored; `reason` 0 for an ignored
+    /// sender (`0x50c186`), 1 for a commentator's refused whisper (`0x50c134`).
     ChatIgnored {
+        guid: u64,
+        reason: u8,
+    },
+    /// `CMSG_CHAT_FILTERED`: a whisper the spam filter dropped, reported with its sender
+    /// (`0x50a6c4`-`0x50a718`).
+    ChatFiltered {
         guid: u64,
     },
     /// `CMSG_WHO`, the `/who` filter parsed into wire fields as `SendWho` builds them.

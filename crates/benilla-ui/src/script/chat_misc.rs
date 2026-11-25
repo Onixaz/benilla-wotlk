@@ -156,14 +156,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // SendSystemMessage(text) (`0x50d8a0`): one `CHAT_MSG_SYSTEM` line, through the chat log the
-    // line ids live in, so it fires at that frame's feed where the reference fires inside the call.
+    // SendSystemMessage(text) (`0x50d8a0`): one system line through the host's chat add inside
+    // the call (`0x50d8f3`), its `CHAT_MSG_SYSTEM` raised before the verb returns.
     g.set(
         "SendSystemMessage",
         lua.create_function(|lua, text: Value| {
             let text =
                 super::binding_abi::string_arg(lua, text, "Usage: SendSystemMessage(\"message\")")?;
-            crate::script::model_mut_of(lua).party_lines.push(text);
+            super::ui_errors::add_chat_text(lua, 0, &text);
             Ok(())
         })?,
     )?;
@@ -242,6 +242,32 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 mod tests {
     use super::*;
     use crate::script::{SelectionRequest, UiScript};
+
+    /// `SendSystemMessage` adds its system line through the host's chat add inside the call
+    /// (`0x50d8f3`): its `CHAT_MSG_SYSTEM` fires before the next statement runs.
+    #[test]
+    fn send_system_message_adds_its_line_inside_the_call() {
+        let s = UiScript::new().unwrap();
+        s.run(
+            r#"
+            Log = {}
+            local f = CreateFrame("Frame")
+            f:RegisterEvent("CHAT_MSG_SYSTEM")
+            f:SetScript("OnEvent", function(_, e, a1) Log[#Log + 1] = e .. ":" .. a1 end)
+            "#,
+        )
+        .unwrap();
+        let mut view = crate::script::live::TestView::default();
+        crate::script::live::lending(&mut view, || {
+            s.run(r#"SendSystemMessage("hello") Log[#Log + 1] = "after""#)
+                .unwrap();
+        });
+        assert_eq!(
+            s.eval::<Vec<String>>("return Log").unwrap(),
+            ["CHAT_MSG_SYSTEM:hello", "after"]
+        );
+        assert_eq!(view.chat_lines, [(0, "hello".into())]);
+    }
 
     #[test]
     fn do_emote_queues_the_uppercased_token_and_a_non_empty_target() {

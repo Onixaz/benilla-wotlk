@@ -451,8 +451,10 @@ fn server_first_line(
         text,
         chat_tag: 0,
         achievement: a.achievement,
-        wire_type: 0,
+        // The add takes the line as type `0x30` (`0x50b0cd`).
+        wire_type: benilla_protocol::messages::wotlk_chat_type::ACHIEVEMENT,
         sender_word: 0,
+        gm: false,
     })
 }
 

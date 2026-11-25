@@ -44,7 +44,7 @@ pub struct EmoteLine<'a> {
     /// The target name as the wire carries it, never round-tripped through a name cache; empty is
     /// untargeted.
     pub target: &'a str,
-    /// Your own name, compared case-insensitively with `target`.
+    /// Your own name, compared byte for byte with `target` (`0x50375d`, a case-sensitive compare).
     pub your_name: &'a str,
 }
 
@@ -61,7 +61,7 @@ impl EmoteTextCatalog {
         if line.performer_is_you {
             ctx = 2;
             performer_is_other = false;
-        } else if !line.target.is_empty() && line.target.eq_ignore_ascii_case(line.your_name) {
+        } else if !line.target.is_empty() && line.target == line.your_name {
             ctx = 1;
             target_is_other = false;
         }
@@ -109,6 +109,21 @@ impl EmoteTextCatalog {
 
     pub fn is_empty(&self) -> bool {
         self.forms.is_empty()
+    }
+
+    /// A catalog of one emote's enUS sentences by `EmoteText[]` column, for a caller's test.
+    pub fn from_rows(text_id: u32, sentences: &[(usize, &str)]) -> Self {
+        let mut cols = [0u32; FORMS];
+        let mut data = HashMap::new();
+        for (i, &(col, text)) in sentences.iter().enumerate() {
+            let id = i as u32 + 1;
+            cols[col] = id;
+            data.insert(id, vec![Some(text.to_string())]);
+        }
+        Self {
+            forms: HashMap::from([(text_id, cols)]),
+            data,
+        }
     }
 }
 
@@ -258,6 +273,19 @@ mod tests {
             ..line("Me", "", "Me")
         };
         assert_eq!(cat.compose(WAVE, &mine, 0).as_deref(), Some("You wave."));
+    }
+
+    /// The "at you" test compares the target with your name case-sensitively (`0x50375d`): a
+    /// target spelled in another case is someone else.
+    #[test]
+    fn the_target_matches_your_name_only_in_its_own_case() {
+        let data = crate::wow_data_or_skip!();
+        let mut chain = Chain::open(&data).expect("open patch chain");
+        let cat = load_emote_text_catalog(&mut chain).expect("load");
+        assert_eq!(
+            cat.compose(WAVE, &line("Bob", "ME", "Me"), 0).as_deref(),
+            Some("Bob waves at ME.")
+        );
     }
 
     /// The branch order would render your own name for a self-target, but the send side clears a

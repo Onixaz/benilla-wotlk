@@ -105,13 +105,10 @@ impl Plugin for UiChatPlugin {
             )
             // The slash-command table needs the VM's globals and the emote catalog, both `Startup`.
             .add_systems(PostStartup, commands::build_slash_commands)
-            // The language gate's feeds, ahead of the packet drain and the calls that read them.
+            // The garble word pool, ahead of the packet drain and the calls that read it.
             .add_systems(
                 Update,
-                (
-                    language::load_language_words,
-                    language::feed_language_skills,
-                )
+                language::load_language_words
                     .before(crate::net::apply_net_updates)
                     // Ahead of every call into Lua, whose item-text verbs read the tables at the call.
                     .before(crate::ui_script::UiPress),
@@ -185,19 +182,20 @@ impl Plugin for UiChatPlugin {
     }
 }
 
-/// The chat session end: the undrained feed, which outlives the Lua state, and both windows'
-/// lines. The Lua state is itself replaced at the session end, as the reference destroys its own
-/// at logout.
-///
-/// Deviation: not run on benilla's same-character reconnect, which the reference lacks (it
-/// returns to the login screen), so the window keeps its scrollback there.
+/// The chat session end (`0x529172` -> `0x5072b0`): both logs closed and both logging flags
+/// zeroed, the held lines and both windows' lines dropped. It runs at every exit from the world,
+/// the unattended reconnect's re-entry included (an exit to the same state), as the reference's
+/// disconnect leaves its game UI.
 fn end_session_chat(world: &mut World) {
-    // The logout closes both logs (`0x5072b0`).
+    // Each log closed and its flag zeroed (`0x5072cb`-`0x5072d6`).
     if let Some(mut windows) = world.get_resource_mut::<ChatWindows>() {
         windows.logs.0.close();
     }
     if let Some(mut file) = world.get_resource_mut::<logging::CombatLogFile>() {
         file.0.close();
+    }
+    if let Some(mut script) = world.get_non_send_resource_mut::<benilla_ui::script::UiScript>() {
+        script.set_logging_flags(false, false);
     }
     let mut log = std::mem::take(&mut *world.resource_mut::<ChatLog>());
     // The windows' `Clear` runs Lua: the `World` is lent for it.
