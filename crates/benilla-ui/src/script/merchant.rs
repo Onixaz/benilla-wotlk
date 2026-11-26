@@ -53,6 +53,15 @@ pub struct ExtendedCost {
     pub required_rating: u32,
     /// The bracket that rating is for (`+0xc`): 0 two, 1 three, 2 five.
     pub arena_bracket: i32,
+    /// `ItemPurchaseGroup.dbc` row named by `+0x3c`, `None` when zero or missing (`0x62b727`).
+    pub purchase_group: Option<PurchaseGroup>,
+}
+
+/// One `ItemPurchaseGroup.dbc` row for the merchant tooltip (`0x62b732`..`0x62b79c`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PurchaseGroup {
+    pub name: String,
+    pub item_ids: [u32; 8],
 }
 
 /// One item an extended cost asks for.
@@ -1192,6 +1201,7 @@ mod tests {
                 ],
                 required_rating: 0,
                 arena_bracket: 0,
+                purchase_group: None,
             }),
             ..Default::default()
         }

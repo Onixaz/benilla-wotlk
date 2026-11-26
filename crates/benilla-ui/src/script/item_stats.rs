@@ -100,9 +100,11 @@ pub struct ItemTemplateView {
     /// `GetItemInfo`'s `itemTexture`, the `Interface\Icons\…` path through `ItemDisplayInfo.dbc`;
     /// `None` for a display row with no icon.
     pub icon: Option<String>,
-    /// `RandomProperty` (template `+0x1b8`): the item can roll a suffix, so a template tooltip
+    /// `RandomProperty` (template `+0x19c`): the item can roll a suffix, so a template tooltip
     /// prints `<Random enchantment>`.
     pub random_property: u32,
+    /// `RandomSuffix` (template `+0x1a0`): nonzero also prints `<Random enchantment>` (`0x62a872`).
+    pub random_suffix: u32,
     /// The item's five spell blocks, `spell != 0`, whatever their trigger.
     pub item_spells: Vec<ItemSpellView>,
     /// The bag family mask, `GetItemFamily`'s.
@@ -691,8 +693,47 @@ impl super::UiScript {
 pub struct ItemTables {
     pub random_properties: std::collections::HashMap<u32, super::RandomPropertyView>,
     pub random_suffixes: std::collections::HashMap<u32, RandomSuffixView>,
+    pub rand_prop_points: std::collections::HashMap<u32, RandPropPointsView>,
     pub enchant_rows: std::collections::HashMap<u32, EnchantRowView>,
     pub scaling: super::ScalingTables,
+}
+
+/// One `RandPropPoints.dbc` row (`0x7075a0`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RandPropPointsView {
+    pub epic: [i32; 5],
+    pub superior: [i32; 5],
+    pub good: [i32; 5],
+}
+
+impl ItemTables {
+    /// The random-suffix point budget for an item object (`0x7075a0`, slot bucket `0x707500`):
+    /// looked up by item level, indexed by quality (4 epic, 3 superior, 2 good) and inventory-type
+    /// slot bucket (`0..=4`). Other qualities, unmapped inventory types and missing rows answer 0.
+    pub(super) fn rand_prop_points(
+        &self,
+        item_level: u32,
+        quality: u32,
+        inventory_type: u32,
+    ) -> i32 {
+        let slot = match inventory_type {
+            1 | 4 | 5 | 7 | 17 | 20 => 0,
+            3 | 6 | 8 | 10 | 12 => 1,
+            2 | 9 | 11 | 14 | 16 | 23 => 2,
+            13 | 21 | 22 => 3,
+            15 | 25 | 26 => 4,
+            _ => return 0,
+        };
+        let Some(row) = self.rand_prop_points.get(&item_level) else {
+            return 0;
+        };
+        match quality {
+            4 => row.epic[slot],
+            3 => row.superior[slot],
+            2 => row.good[slot],
+            _ => 0,
+        }
+    }
 }
 
 /// `f` over the item tables through the lent view; empty tables with none lent.
@@ -750,9 +791,11 @@ pub struct RandomSuffixView {
 }
 
 impl RandomSuffixView {
-    /// The amount of enchant `index` (`0x707650`): its share of the seed's low word, truncated.
-    pub(super) fn value(&self, index: usize, seed: i32) -> i32 {
-        (self.allocation[index] as f32 * 0.0001 * f32::from(seed as u16)) as i32
+    /// The amount of enchant `index` (`0x707650`): `fild` allocation, `fmul` the `f32` `0.0001` at
+    /// `0x9e8cd0`, `fimul` `points` in one 53-bit x87 expression (preserved by `D3DCREATE_FPU_PRESERVE`
+    /// in D3D device creation), `fst` to `f32` once, then truncate.
+    pub(super) fn value(&self, index: usize, points: i32) -> i32 {
+        ((self.allocation[index] as f64 * f64::from(0.0001_f32) * points as f64) as f32) as i32
     }
 }
 

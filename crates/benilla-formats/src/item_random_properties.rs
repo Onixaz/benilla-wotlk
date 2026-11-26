@@ -14,7 +14,7 @@ use crate::Chain;
 use anyhow::{Context, Result};
 use benilla_dbc::{FieldType, Schema, SchemaField};
 
-use crate::dbc::{parse, str_at, u32_at};
+use crate::dbc::{i32_at, parse, str_at, u32_at};
 
 const ITEM_RANDOM_PROPERTIES: &str = "DBFilesClient\\ItemRandomProperties.dbc";
 
@@ -40,6 +40,19 @@ pub struct RandomPropertyCatalog {
     rows: HashMap<u32, RandomProperty>,
     /// `ItemRandomSuffix.dbc` by row, what a negative id takes.
     suffixes: HashMap<u32, RandomSuffix>,
+    /// `RandPropPoints.dbc` keyed by item level (`0x7075a0`).
+    rand_prop_points: HashMap<u32, RandPropPointsRow>,
+}
+
+/// One `RandPropPoints.dbc` row: stat-point budgets by quality and slot bucket (`0x7075a0`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RandPropPointsRow {
+    /// Quality 4 (`[row+0x4..+0x18]`).
+    pub epic: [i32; 5],
+    /// Quality 3 (`[row+0x18..+0x2c]`).
+    pub superior: [i32; 5],
+    /// Quality 2 (`[row+0x2c..+0x40]`).
+    pub good: [i32; 5],
 }
 
 /// One `ItemRandomSuffix` row: the enUS name, and the enchants with their budget shares.
@@ -86,6 +99,16 @@ impl RandomPropertyCatalog {
         self.suffixes.iter().map(|(&id, r)| (id, r))
     }
 
+    /// One `ItemRandomSuffix` row by positive id.
+    pub fn suffix_row(&self, id: u32) -> Option<&RandomSuffix> {
+        self.suffixes.get(&id)
+    }
+
+    /// Every `RandPropPoints` row by item level, for the whole-table push to the engine.
+    pub fn iter_rand_prop_points(&self) -> impl Iterator<Item = (u32, &RandPropPointsRow)> + '_ {
+        self.rand_prop_points.iter().map(|(&id, r)| (id, r))
+    }
+
     /// Every row as `(id, row)`, for the whole-table push to the engine.
     pub fn iter(&self) -> impl Iterator<Item = (u32, &RandomProperty)> + '_ {
         self.rows.iter().map(|(&id, row)| (id, row))
@@ -96,6 +119,7 @@ impl RandomPropertyCatalog {
         RandomPropertyCatalog {
             rows,
             suffixes: HashMap::new(),
+            rand_prop_points: HashMap::new(),
         }
     }
 
@@ -152,6 +176,7 @@ pub fn load_random_property_catalog(chain: &mut Chain) -> Result<RandomPropertyC
     Ok(RandomPropertyCatalog {
         rows,
         suffixes: load_suffixes(chain),
+        rand_prop_points: load_rand_prop_points(chain),
     })
 }
 
@@ -195,9 +220,50 @@ fn load_suffixes(chain: &mut Chain) -> HashMap<u32, RandomSuffix> {
             Some((
                 u32_at(r, 0)?,
                 RandomSuffix {
-                    name: str_at(&rs, r, 1)?,
+                    // An empty name keeps the row: 12340 still applies its enchants (`0x6277f0`,
+                    // `0x61fa20`) and yields an empty suffix in the name builder (`0x706d70`).
+                    name: str_at(&rs, r, 1).unwrap_or_default(),
                     enchants: at(SUFFIX_ENCHANT),
                     allocation: at(SUFFIX_ENCHANT + RANDOM_PROPERTY_SLOTS),
+                },
+            ))
+        })
+        .collect()
+}
+
+const RAND_PROP_POINTS: &str = "DBFilesClient\\RandPropPoints.dbc";
+
+/// `RandPropPoints.dbc`: 16 columns, 64 bytes: item level id, then five budgets each for epic (4),
+/// superior (3) and good (2) qualities (`0x7075a0`).
+pub(crate) fn rand_prop_points_schema() -> Schema {
+    let mut s = Schema::new("RandPropPoints");
+    s.add_field(SchemaField::new("ID", FieldType::UInt32));
+    for group in ["Epic", "Superior", "Good"] {
+        s.add_field(SchemaField::new_array(group, FieldType::Int32, 5));
+    }
+    s.set_key_field("ID");
+    s
+}
+
+fn load_rand_prop_points(chain: &mut Chain) -> HashMap<u32, RandPropPointsRow> {
+    let Ok(bytes) = chain.read_file(RAND_PROP_POINTS) else {
+        return HashMap::new();
+    };
+    let Ok(rs) = parse(&bytes, rand_prop_points_schema(), "RandPropPoints") else {
+        return HashMap::new();
+    };
+    rs.records()
+        .iter()
+        .filter_map(|r| {
+            let at = |base: usize| -> [i32; 5] {
+                std::array::from_fn(|i| i32_at(r, base + i).unwrap_or(0))
+            };
+            Some((
+                u32_at(r, 0)?,
+                RandPropPointsRow {
+                    epic: at(1),
+                    superior: at(6),
+                    good: at(11),
                 },
             ))
         })
@@ -221,6 +287,41 @@ mod tests {
             "a missing row still takes the suffix form"
         );
         assert_eq!(cat.suffix(0), None);
+    }
+
+    /// Shipped `ItemRandomSuffix.dbc` rows 94..=98 have an empty name and a nonzero enchant +
+    /// allocation: 12340 keeps them (`0x6277f0`, `0x61fa20`).
+    #[test]
+    fn empty_name_random_suffix_rows_still_load_their_enchants() {
+        let data = crate::wow_data_or_skip!();
+        let mut chain = crate::open_chain(&data).expect("open chain");
+        let cat = load_random_property_catalog(&mut chain).expect("load");
+        let row = cat.suffix_row(94).expect("row 94 must not be dropped");
+        assert_eq!(row.name, "");
+        assert!(
+            row.enchants.iter().any(|&e| e != 0),
+            "row 94 has an enchant"
+        );
+        assert!(
+            row.allocation.iter().any(|&a| a != 0),
+            "row 94 has a nonzero allocation"
+        );
+    }
+
+    /// `RandPropPoints.dbc` loads by item level with epic, superior and good slot budgets.
+    #[test]
+    fn the_shipped_rand_prop_points_table_loads() {
+        let data = crate::wow_data_or_skip!();
+        let mut chain = crate::open_chain(&data).expect("open chain");
+        let cat = load_random_property_catalog(&mut chain).expect("load");
+        let points: HashMap<u32, RandPropPointsRow> = cat
+            .iter_rand_prop_points()
+            .map(|(id, r)| (id, *r))
+            .collect();
+        let ilvl60 = points.get(&60).expect("item level 60 row");
+        assert!(ilvl60.epic[0] > ilvl60.superior[0]);
+        assert!(ilvl60.superior[0] > ilvl60.good[0]);
+        assert!(ilvl60.good[0] > 0);
     }
 
     use super::*;

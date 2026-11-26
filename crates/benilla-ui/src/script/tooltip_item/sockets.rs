@@ -189,17 +189,26 @@ pub(super) fn empty_socket(
 
 /// The slot walk over an instance's enchants: each line, a gem's icon, and the red lines of an
 /// unmet enchant or prismatic skill and level requirement.
-/// An enchant's text (`0x577260`): a random suffix's `$i` takes its share of the seed, which an
-/// item object's points read the same off the field the server writes.
-fn suffix_line(inst: &ItemInstance, e: &crate::script::EnchantView) -> String {
+/// An enchant's text (`0x577260`): a random suffix's `$i` takes its share of `RandPropPoints.dbc`
+/// for an item object (`0x6298d0` -> `0x7089b0`), or of the link's seed low word (`0x6298dd`).
+fn suffix_line(
+    v: &ItemTemplateView,
+    inst: &ItemInstance,
+    e: &crate::script::EnchantView,
+) -> String {
     let roll = inst.link.random_property;
     if roll >= 0 || !(7..=11).contains(&e.slot) || !e.name.contains("$i") {
         return e.name.clone();
     }
     let value = crate::script::item_stats::with_item_tables(|t| {
+        let points = if inst.is_object {
+            t.rand_prop_points(v.item_level, v.quality, v.inventory_type)
+        } else {
+            i32::from(inst.link.seed as u16)
+        };
         t.random_suffixes
             .get(&roll.unsigned_abs())
-            .map_or(0, |r| r.value(usize::from(e.slot) - 7, inst.link.seed))
+            .map_or(0, |r| r.value(usize::from(e.slot) - 7, points))
     });
     e.name.replace("$i", &value.to_string())
 }
@@ -331,7 +340,7 @@ pub(super) fn socket_lines(
                 Some(t) => t,
                 None => continue,
             },
-            None => suffix_line(inst, e),
+            None => suffix_line(v, inst, e),
         };
         // The slot's charges: ITEM_SPELL_CHARGES inside the literal `" (%s)"`.
         if let Some(charges) = charges_phrase(e.charges, get) {

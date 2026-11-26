@@ -140,6 +140,7 @@ fn starting_pants_decode_whole() {
             material: 7,
             sheath: 0,
             random_property: 0,
+            random_suffix: 0,
             block: 0,
             item_set: 0,
             max_durability: 25,

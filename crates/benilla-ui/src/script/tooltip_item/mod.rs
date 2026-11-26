@@ -247,6 +247,7 @@ fn slot_instance(s: &super::ContainerSlot, openable: bool) -> render::ItemInstan
         openable_source: openable,
         duration_ms: s.duration_ms,
         guid: s.guid,
+        is_object: true,
         ..Default::default()
     }
 }
@@ -988,6 +989,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                                         .as_deref()
                                         .and_then(ItemLinkFields::parse)
                                         .map_or_else(Default::default, |(_, f)| f),
+                                    is_object: true,
                                     ..Default::default()
                                 },
                             )

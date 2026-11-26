@@ -1104,6 +1104,229 @@ fn a_linked_suffix_fills_its_amount_and_its_enchant_prints() {
     });
 }
 
+/// `ITEM_RANDOM_ENCHANT` prints when either `RandomProperty` (`+0x19c`) or `RandomSuffix`
+/// (`+0x1a0`) is nonzero, and not when both are zero (`0x62a872`–`0x62a882`).
+#[test]
+fn random_enchant_placeholder_checks_property_and_suffix() {
+    let mut s = script();
+    s.set_item_template(
+        9001,
+        ItemTemplateView {
+            name: "Property Only".into(),
+            random_property: 10,
+            ..Default::default()
+        },
+    );
+    s.set_item_template(
+        9002,
+        ItemTemplateView {
+            name: "Suffix Only".into(),
+            random_suffix: 20,
+            ..Default::default()
+        },
+    );
+    s.set_item_template(
+        9003,
+        ItemTemplateView {
+            name: "Neither".into(),
+            ..Default::default()
+        },
+    );
+    s.run(
+        r#"
+        local a = CreateFrame("Button", "SlotRS"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
+        local tt = CreateFrame("GameTooltip", "TT")
+        tt:SetOwner(SlotRS, "ANCHOR_RIGHT")
+    "#,
+    )
+    .unwrap();
+    for (id, expect) in [(9001, true), (9002, true), (9003, false)] {
+        s.run(&format!("SetItemByIdForTest(TT, {id})")).unwrap();
+        let has = super::lines_of(&mut s)
+            .iter()
+            .any(|(t, _)| t == "[ITEM_RANDOM_ENCHANT]");
+        assert_eq!(has, expect, "item {id}");
+    }
+}
+
+/// An `ItemRandomSuffix` row with an empty name still prints its enchant line (`0x6277f0`), and
+/// allocation 4000 at seed 50 rounds once in 53-bit precision to 20, not 19 (`0x707650`).
+#[test]
+fn empty_name_suffix_prints_and_single_rounding_hits_twenty() {
+    let mut s = script();
+    s.set_item_template(
+        9004,
+        ItemTemplateView {
+            name: "Silent Ring".into(),
+            quality: 2,
+            class: 4,
+            ..Default::default()
+        },
+    );
+    let mut tables_v = lend_tables(ItemTables {
+        enchant_rows: HashMap::from([(
+            2802,
+            EnchantRowView {
+                line: Some(EnchantView {
+                    id: 2802,
+                    name: "+$i Stamina".into(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        )]),
+        random_suffixes: HashMap::from([(
+            94,
+            RandomSuffixView {
+                name: String::new(),
+                enchants: [2802, 0, 0, 0, 0],
+                allocation: [4000, 0, 0, 0, 0],
+            },
+        )]),
+        ..Default::default()
+    });
+    crate::script::live::lending(&mut tables_v, || {
+        s.run(
+            r#"
+            ITEM_SUFFIX_TEMPLATE = "%s %s"
+            local a = CreateFrame("Button", "SlotEmpty"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
+            local tt = CreateFrame("GameTooltip", "TT")
+            tt:SetOwner(SlotEmpty, "ANCHOR_RIGHT")
+            tt:SetHyperlink("item:9004:0:0:0:0:0:-94:50:80")
+        "#,
+        )
+        .unwrap();
+        let texts: Vec<String> = super::lines_of(&mut s)
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        assert!(
+            texts.iter().any(|t| t.contains("+20 Stamina")),
+            "empty-name suffix row 94 with alloc 4000 @ seed 50 must print +20: {texts:?}"
+        );
+    });
+}
+
+/// Carried item objects compute random-suffix amounts from `RandPropPoints.dbc` (`0x7089b0` ->
+/// `0x7075a0`, `0x707500`), while links use their seed (`0x6298dd`).
+#[test]
+fn carried_suffix_item_uses_rand_prop_points_while_link_uses_seed() {
+    let mut s = script();
+    let mut tables_v = lend_tables(ItemTables {
+        enchant_rows: HashMap::from([(
+            2802,
+            EnchantRowView {
+                line: Some(EnchantView {
+                    id: 2802,
+                    name: "+$i Stamina".into(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        )]),
+        random_suffixes: HashMap::from([(
+            39,
+            RandomSuffixView {
+                name: "of the Bear".into(),
+                enchants: [2802, 0, 0, 0, 0],
+                allocation: [5000, 0, 0, 0, 0],
+            },
+        )]),
+        rand_prop_points: HashMap::from([(
+            60,
+            crate::script::RandPropPointsView {
+                epic: [100, 80, 60, 40, 20],
+                superior: [80, 64, 48, 32, 16],
+                good: [60, 48, 36, 24, 12],
+            },
+        )]),
+        ..Default::default()
+    });
+    // Templates covering quality 4/3/2, quality 1 (outside 2..=4), unmapped slot (18 = bag), and
+    // missing RandPropPoints row (item_level 999).
+    let cases = [
+        (9101, 60, 4, 1, "+50 Stamina"), // epic, head (slot 0) -> 100 * 0.5 = 50
+        (9102, 60, 3, 3, "+32 Stamina"), // superior, shoulder (slot 1) -> 64 * 0.5 = 32
+        (9103, 60, 2, 11, "+18 Stamina"), // good, finger (slot 2) -> 36 * 0.5 = 18
+        (9104, 60, 1, 1, "+0 Stamina"),  // common (outside 2..=4) -> 0
+        (9105, 60, 4, 18, "+0 Stamina"), // bag (slot -1 / past 4) -> 0
+        (9106, 999, 4, 1, "+0 Stamina"), // missing RandPropPoints row -> 0
+    ];
+    let mut slots = HashMap::new();
+    for (idx, &(id, item_level, quality, inventory_type, _)) in cases.iter().enumerate() {
+        s.set_item_template(
+            id,
+            ItemTemplateView {
+                name: format!("Item {id}"),
+                item_level,
+                quality,
+                inventory_type,
+                class: 4,
+                ..Default::default()
+            },
+        );
+        slots.insert(
+            (idx + 1) as u32,
+            ContainerSlot {
+                count: 1,
+                quality: Some(quality),
+                item_id: id,
+                // Deliberately different seed (200 -> 100) to prove object path ignores seed.
+                link: Some(format!("|Hitem:{id}:0:0:0:0:0:-39:200:80|h[Item {id}]|h")),
+                enchants: vec![EnchantView {
+                    id: 2802,
+                    slot: 7,
+                    name: "+$i Stamina".into(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        );
+    }
+    s.set_container(
+        0,
+        Some(ContainerState {
+            bag_family: 0,
+            name: Some("Backpack".into()),
+            num_slots: 16,
+            slots,
+        }),
+    );
+    crate::script::live::lending(&mut tables_v, || {
+        s.run(
+            r#"
+            ITEM_SUFFIX_TEMPLATE = "%s %s"
+            local a = CreateFrame("Button", "SlotRPP"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
+            local tt = CreateFrame("GameTooltip", "TT")
+            tt:SetOwner(SlotRPP, "ANCHOR_RIGHT")
+        "#,
+        )
+        .unwrap();
+        for (idx, &(id, _, _, _, expected)) in cases.iter().enumerate() {
+            s.run(&format!("TT:SetBagItem(0, {})", idx + 1)).unwrap();
+            let texts: Vec<String> = super::lines_of(&mut s)
+                .into_iter()
+                .map(|(t, _)| t)
+                .collect();
+            assert!(
+                texts.iter().any(|t| t.contains(expected)),
+                "carried item {id} expected {expected:?}, got {texts:?}"
+            );
+        }
+        // Link path on the same item uses the link's seed (200 * 0.5 = 100), not RandPropPoints.
+        s.run(r#"TT:SetHyperlink("item:9101:0:0:0:0:0:-39:200:80")"#)
+            .unwrap();
+        let texts: Vec<String> = super::lines_of(&mut s)
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        assert!(
+            texts.iter().any(|t| t.contains("+100 Stamina")),
+            "link path must keep using seed, got {texts:?}"
+        );
+    });
+}
+
 /// A clicked link closes a tooltip already showing it, and each builder runs its script before
 /// the show (`0x62dae0`, `0x62d890`).
 #[test]
