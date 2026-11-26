@@ -11,9 +11,8 @@
 //! or not, and a miss raises `Unknown language`: a number is its text, so `7` raises. A tongue the
 //! character does not speak is the host's refusal, inside the call (`0x50d2b0`).
 //!
-//! Deviation: no truncation at 255 characters, because vmangos refuses a longer line itself
-//! (`Chat.cpp:2177`): it is dropped where the reference sends its first 255. The server throttles
-//! in both.
+//! The host's line passes cut the text at 255 bytes, its parse packing into 256 (`0x50d69f`,
+//! `0x577d65`).
 
 use mlua::{Lua, MultiValue, Value};
 
