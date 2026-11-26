@@ -11,7 +11,7 @@ use super::entries::{self, CombatLogClock, NameRef, NameSources, NewEntry};
 use super::producers::LogCtx;
 use crate::names::NameKey;
 
-/// The store and the name callbacks its entries wait on (`0xadb944`), in ask order.
+/// The store and the name callbacks its entries wait on (`0xadb950`), in ask order.
 #[derive(Resource, Default)]
 pub(crate) struct CombatLog {
     pub(crate) store: CombatLogStore,
@@ -112,7 +112,7 @@ fn build(
     let inputs = ctx.flag_inputs();
     let store_of = |g| ctx.store(g);
     let mut asks: Vec<Ask> = Vec::new();
-    // `GetObjectName` (`0x74fd40`): the name now, or `UNKNOWNOBJECT` and a callback on its record.
+    // The name lookup (`0x74fd40`): the name now, or `UNKNOWNOBJECT` and a callback on its record.
     let mut end = |guid: u64, mask: u8| -> benilla_ui::script::CombatLogUnit {
         if guid == 0 {
             return benilla_ui::script::CombatLogUnit::none();
@@ -190,7 +190,7 @@ fn sanitize(entry: &mut CombatLogEntry, sources: &NameSources) {
     entry.dest.guid = sources.shown_guid(entry.dest.guid);
 }
 
-/// `SendCombatLogEvents` (`0x74f910`): from the pending entry on, each entry's events fire with
+/// The send loop (`0x74f910`): from the pending entry on, each entry's events fire with
 /// the `World` lent, then its file line while `LoggingCombat` is on (the flag read once,
 /// `0x74f922`), until the log ends or an entry still waits on a name.
 pub(crate) fn send(world: &mut World) {
