@@ -1844,8 +1844,17 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
         sc.ui
             .world(move |world| crate::ui_items::watch::bag_slot_changed(world, guid, j, old));
     }
-    // Another unit's death logs its `UNIT_DIED` in its death anim (`0x72929d` -> `0x7561ed`), once per watch that ran it; our own logs in the player's death (`crate::death`).
-    if sc.self_guid.0 != Some(guid) {
+    // Another unit's death logs its `UNIT_DIED` in its death anim (`0x72929d` -> `0x7561ed`), once per watch that ran it, behind the anim's seated gate (`0x729277`-`0x729299`); our own logs in the player's death (`crate::death`).
+    let anim = merged.deaths > 0
+        && crate::death::runs_death_anim(
+            unit_seated(sc, guid),
+            sc.index
+                .0
+                .get(&guid)
+                .and_then(|&e| sc.stores.get(e).ok())
+                .map_or(0, |s| s.0.unit_flags2()),
+        );
+    if sc.self_guid.0 != Some(guid) && anim {
         for _ in 0..merged.deaths {
             sc.ui
                 .world(move |world| crate::combat_log::unit_dead(world, guid));
@@ -2637,6 +2646,15 @@ fn look_watch(sc: &mut Scene, old: u32, new: u32, byte: u32, dial: usize) {
     sc.signals.unique_signal("BARBER_SHOP_APPEARANCE_APPLIED");
 }
 
+/// The unit's passenger record is seated (`[unit+0xf60]`, state 3: `0x72927d`-`0x729285`).
+fn unit_seated(sc: &Scene, guid: u64) -> bool {
+    sc.index
+        .0
+        .get(&guid)
+        .and_then(|&e| sc.seated.get(e).ok())
+        .is_some_and(|p| p.state == crate::vehicle::SEATED)
+}
+
 /// Our own death fields' edges, in field order, through [`crate::death::own_fields_changed`].
 fn own_death_fields(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
     if edges.is_empty() {
@@ -2652,6 +2670,7 @@ fn own_death_fields(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
         return;
     };
     let arena = sc.arena.active();
+    let seated = unit_seated(sc, guid);
     let mut cx = crate::death::DeathCx {
         globals: &mut sc.death_globals,
         death_net: &mut sc.death_net,
@@ -2659,6 +2678,7 @@ fn own_death_fields(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
         net: &sc.net,
         now: sc.real.elapsed_secs_f64(),
         arena,
+        seated,
     };
     crate::death::own_fields_changed(guid, edges, &fields, &mut cx);
 }
