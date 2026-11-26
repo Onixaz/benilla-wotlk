@@ -353,11 +353,11 @@ means and records the difference here.
 ### Combat log: a listener's `CombatLogClearEntries`
 
 - **12340:** The send loop raises `COMBAT_LOG_EVENT_UNFILTERED` and `COMBAT_LOG_EVENT` for the
-  entry at its cursor. A listener that calls `CombatLogClearEntries` (`0x751120` -> `0x750390`)
-  while that entry is the last sets the cursor to null (`0x750393`, `0x7503a8`). The loop then reads
-  the cursor back and dereferences it (`0x74fa09` -> `0x74fa0f`), and passes it to the log file's
-  pack while `LoggingCombat` is on (`0x74f9e3`), so 12340 faults. Addons work around it by delaying
-  the clear.
+  entry at its cursor. A listener that calls `CombatLogClearEntries` recycles every entry
+  (`0x751120`, `0x75113b` -> `0x750390`); each recycle moves the cursor on and the last sets it to
+  null (`0x7503a8`). The loop then reads the cursor back and dereferences it (`0x74fa09` ->
+  `0x74fa0f`), and passes it to the log file's pack while `LoggingCombat` is on (`0x74f9e3`), so
+  12340 faults. Addons work around it by delaying the clear.
 - **benilla:** ends the send loop when no entry is left; the next entry logs as the first.
 
 ### Combat log: recycling the waiting entry
