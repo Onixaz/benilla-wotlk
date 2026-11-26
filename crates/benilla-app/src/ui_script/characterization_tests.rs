@@ -3613,13 +3613,19 @@ pub(super) const GOSSIP_NPC: u32 = crate::target::cursor_mode::npc_flags::GOSSIP
 
 /// A creature as a stream create sends it, with `npc_flags`.
 pub(super) fn npc_create(guid: u64, npc_flags: u32) -> SessionEvent {
-    let pairs = vec![
+    npc_create_with(guid, npc_flags, &[])
+}
+
+/// [`npc_create`] with `extra` fields.
+fn npc_create_with(guid: u64, npc_flags: u32, extra: &[(u16, u32)]) -> SessionEvent {
+    let mut pairs = vec![
         (2, 0x9),
         (FIELD_UNIT_HEALTH, 500),
         (FIELD_UNIT_MAXHEALTH, 500),
         (FIELD_UNIT_LEVEL, 30),
         (benilla_protocol::field::FIELD_UNIT_NPC_FLAGS, npc_flags),
     ];
+    pairs.extend_from_slice(extra);
     SessionEvent::ObjectCreate {
         guid,
         kind: EntityKind::Unit,
@@ -14110,15 +14116,23 @@ fn another_units_death_logs_once_per_watch_inside_its_update() {
 }
 
 /// Each run of the unit death logs `UNIT_DIED` and then clears the interact target (`0x72929d`,
-/// then `0x7293bf`), so a window open on the unit closes between the two watches' logs.
+/// then `0x7293bf`), so a gossip window open on the creature closes between the two watches' logs.
 #[test]
 fn another_units_death_closes_its_window_between_the_two_logs() {
-    use benilla_protocol::messages::GossipMenu;
-    const OTHER: u64 = 0x0000_0000_0000_0042;
+    use benilla_protocol::messages::{GossipMenu, NpcTextBlock};
+    const OTHER: u64 = 0xF130_0000_0400_0001;
+    const ENTRY: u32 = 0x400;
     let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
         return;
     };
-    rig.packets(vec![player_create(OTHER), name_answer(OTHER, "Othar")], 3);
+    rig.packets(
+        vec![
+            npc_create_with(OTHER, GOSSIP_NPC, &[(3, ENTRY)]),
+            creature_answer(ENTRY, "Othar"),
+        ],
+        3,
+    );
+    // The menu takes the interact target (`0x58a5b4`) and its text's draw fires `GOSSIP_SHOW` (`0x58aef6`).
     let menu = SessionEvent::GossipMenu(GossipMenu {
         npc: OTHER,
         menu_id: 1,
@@ -14126,7 +14140,15 @@ fn another_units_death_closes_its_window_between_the_two_logs() {
         options: Vec::new(),
         quests: Vec::new(),
     });
-    let opened = rig.packets(vec![menu], 3);
+    let greeting = SessionEvent::NpcGreeting {
+        text_id: 1,
+        blocks: vec![NpcTextBlock {
+            probability: 1.0,
+            male: "Well met.".into(),
+            ..Default::default()
+        }],
+    };
+    let opened = rig.packets(vec![menu, greeting], 3);
     assert_eq!(fired(&opened, &["GOSSIP_SHOW"]), ["GOSSIP_SHOW"]);
     let died = SessionEvent::ObjectValues {
         guid: OTHER,
