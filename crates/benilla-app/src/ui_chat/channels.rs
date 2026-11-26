@@ -83,13 +83,18 @@ pub(super) fn end_session_channels(
 }
 
 /// The other session end, a dead socket: a recoverable drop never leaves `InWorld`, but the
-/// reconnect gets a fresh server-side `Player` in no channels, so it clears the same state.
+/// reconnect gets a fresh server-side `Player` in no channels, so it clears the same state. A
+/// logout or a final drop leaves `InWorld`, where [`end_session_channels`] clears after the UI
+/// shutdown's PLAYER_LEAVING_WORLD (`0x529163` before `0x529172`).
 pub(super) fn end_session_channels_on_disconnect(
     mut channels: ResMut<ChannelState>,
     mut walk: ResMut<ZoneChannelWalk>,
     mut disconnects: MessageReader<crate::net::DisconnectedMessage>,
 ) {
-    if disconnects.read().next().is_none() {
+    let recoverable = |m: &crate::net::DisconnectedMessage| {
+        m.end == benilla_protocol::SessionEnd::Lost && !m.session_over
+    };
+    if !disconnects.read().any(recoverable) {
         return;
     }
     end_channel_session(&mut channels, &mut walk);

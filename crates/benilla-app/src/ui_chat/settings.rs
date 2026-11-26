@@ -1160,6 +1160,13 @@ POSITION "
         world
             .run_system_once(super::super::channels::end_session_channels_on_disconnect)
             .expect("the disconnect twin runs");
+        assert_eq!(
+            world
+                .resource::<super::super::edit::ChannelState>()
+                .number_of("MyChan"),
+            Some(1),
+            "a logout's disconnect leaves the records to the clear after PLAYER_LEAVING_WORLD"
+        );
         // …and `OnExit(InWorld)` flushes the dying VM's cache a frame later.
         crate::ui_script::end_ui_session(&mut world);
 
