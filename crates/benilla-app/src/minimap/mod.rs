@@ -837,23 +837,24 @@ fn emit_minimap(
 
     // The group dots, vehicle and object blips, in `0x581e80`'s order.
     if let Some(ctx) = &blip_ctx {
-        if let Some(party) = &assets.party_blips {
-            let class_of = |g: u64| {
-                let e = *guids.0.get(&g)?;
-                tracked.get(e).ok()?.3?.0.unit_class()
-            };
-            blips::emit_group_dots(
-                ctx,
-                &group,
-                &vehicles.possessors,
-                &guids,
-                &unit_pos,
-                class_of,
-                &names,
-                party,
-                &mut quads,
-            );
-        }
+        let class_of = |g: u64| {
+            let e = *guids.0.get(&g)?;
+            tracked.get(e).ok()?.3?.0.unit_class()
+        };
+        // The group dots name themselves first in the object half of the hover (`0x57c720`).
+        let mut hits = Vec::new();
+        blips::emit_group_dots(
+            ctx,
+            &group,
+            &vehicles.possessors,
+            &guids,
+            &unit_pos,
+            class_of,
+            &names,
+            assets.party_blips.as_ref(),
+            &mut quads,
+            &mut hits,
+        );
         blips::emit_vehicle_blips(ctx, &vehicles, &assets.vehicle_icons, &mut quads);
         if let Some(icons) = &assets.object_icons {
             let blip_world = blips::BlipWorld {
@@ -870,7 +871,6 @@ fn emit_minimap(
                 reputations: &reputations,
                 group: &group,
             };
-            let mut hits = Vec::new();
             let stamp = (residency.generation(), collider_epoch.get());
             indoor_memo.begin();
             // Everything a classification reads beyond the object's own store: the player, the
@@ -920,8 +920,8 @@ fn emit_minimap(
                     );
                 }
             }
-            hover.objects = hits;
         }
+        hover.objects = hits;
     }
     // The rim arrows close the blip pass: the landmarks', then the group's (`0x57d860`, `0x580ae0`,
     // `0x580ec0`).

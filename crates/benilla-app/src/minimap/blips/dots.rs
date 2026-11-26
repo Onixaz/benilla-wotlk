@@ -444,6 +444,10 @@ fn group_cell(class: u8, raid: bool) -> Option<[f32; 4]> {
 /// The in-range group dots, class-coloured, drawn before the object blips (`0x57ff70`): the raid's
 /// list, then the party's above it. A member's class is its descriptor's, else the name query's;
 /// a member a tracked vehicle stands for draws none.
+///
+/// The dots sit on the object lists the hover walks, so a hovered one names its member ahead of
+/// the object blips, the raid's before the party's (`0x57c720`); it does so with or without the
+/// class texture, as the reference's list fills before the draw checks it.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::minimap) fn emit_group_dots(
     ctx: &BlipCtx,
@@ -453,8 +457,9 @@ pub(in crate::minimap) fn emit_group_dots(
     unit_pos: &Query<&GlobalTransform, With<NetEntity>>,
     class_of: impl Fn(u64) -> Option<u8>,
     names: &NameCache,
-    blips: &Handle<Image>,
+    blips: Option<&Handle<Image>>,
     quads: &mut UiQuads,
+    hover: &mut Vec<ObjectHover>,
 ) {
     let rows = super::raid_rows(group)
         .map(|m| (m, true))
@@ -470,15 +475,29 @@ pub(in crate::minimap) fn emit_group_dots(
         if d / ctx.radius_yd > super::BLIP_EDGE_RATIO {
             continue; // out of range: the arrow pass drew it
         }
+        let rect = Rect::from_center_size(
+            ctx.center + ctx.offset([x, y, 0.0]),
+            Vec2::splat(ctx.side * (BLIP_PX / BLIP_BASIS_PX)),
+        );
+        if ctx.cursor.is_some_and(|p| rect.contains(p)) {
+            let name = if m.name.is_empty() {
+                HoverName::Guid(m.guid)
+            } else {
+                HoverName::Known(m.name.clone())
+            };
+            hover.push(ObjectHover {
+                name,
+                grey: false,
+                flight_master: false,
+                title: None,
+            });
+        }
         let class = class_of(m.guid).or_else(|| names.player_traits(m.guid).map(|t| t.1));
-        let Some(cell) = class.and_then(|c| group_cell(c, raid)) else {
+        let (Some(blips), Some(cell)) = (blips, class.and_then(|c| group_cell(c, raid))) else {
             continue;
         };
         quads.overlays.push(UiQuad {
-            rect: Rect::from_center_size(
-                ctx.center + ctx.offset([x, y, 0.0]),
-                Vec2::splat(ctx.side * (BLIP_PX / BLIP_BASIS_PX)),
-            ),
+            rect,
             z_key: ctx.z,
             texture: Some(blips.clone()),
             uv: UvRect::from_tex_coords(cell),

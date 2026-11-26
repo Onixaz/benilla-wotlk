@@ -981,6 +981,63 @@ mod tests {
         assert_eq!(hover.raid, ["Bert"]);
     }
 
+    /// An in-range group dot names its member on the object half of the hover, the raid's list
+    /// before the party's, even with no class to draw (`0x57c720` walks the lists, not the quads).
+    #[test]
+    fn an_in_range_group_dot_hovers_as_its_member() {
+        use benilla_protocol::messages::{GroupMemberEntry, PartyMemberStatsInfo};
+        use bevy::ecs::system::RunSystemOnce;
+        let row = |name: &str, guid: u64, flags: u8| GroupMemberEntry {
+            name: name.into(),
+            guid,
+            status: 1,
+            flags,
+            roles: 0,
+        };
+        let at = |x: i16| PartyMemberStatsInfo {
+            position: Some((x, 0)),
+            ..Default::default()
+        };
+        let group = crate::ui_party::GroupState {
+            own_flags: 0x00,
+            members: vec![
+                row("Anna", 2, 0x00),
+                row("Bert", 3, 0x01),
+                row("Cleo", 4, 0x00),
+            ],
+            // Anna and Bert a yard north of us, Cleo past the rim.
+            stats: [(2, at(1)), (3, at(1)), (4, at(1000))]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        };
+        let mut world = World::new();
+        let hits = world
+            .run_system_once(move |unit_pos: Query<&GlobalTransform, With<NetEntity>>| {
+                let mut quads = UiQuads::default();
+                let mut hits = Vec::new();
+                dots::emit_group_dots(
+                    &hover_ctx(Vec2::new(100.0, 100.0)),
+                    &group,
+                    &[],
+                    &GuidIndex::default(),
+                    &unit_pos,
+                    |_| None,
+                    &NameCache::default(),
+                    None,
+                    &mut quads,
+                    &mut hits,
+                );
+                hits
+            })
+            .unwrap();
+        let names: Vec<_> = hits.iter().map(|h| h.name.clone()).collect();
+        assert_eq!(
+            names,
+            [HoverName::Known("Bert".into()), HoverName::Known("Anna".into())]
+        );
+    }
+
     fn poi(importance: u32, flags: u32, x: f32, name: &str) -> AreaPoi {
         AreaPoi {
             importance,
