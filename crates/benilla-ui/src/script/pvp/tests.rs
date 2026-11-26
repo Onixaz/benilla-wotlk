@@ -329,6 +329,7 @@ fn the_rust_side_title_lookup_is_gendered_where_the_binding_is_not() {
         assert_eq!(s.pvp_rank_title(19, 1, true).as_deref(), Some("Leader (f)"));
         assert!(s.eval::<bool>("return GetPVPRankInfo(19) == nil").unwrap());
 
+        assert_eq!(s.pvp_rank_title(-1, 1, false), None);
         assert_eq!(s.pvp_rank_title(0, 1, false), None);
         assert_eq!(s.pvp_rank_title(17, 1, false), None, "no PVP_RANK_17_1");
         s.lua().globals().set("PVP_RANK_17_1", "").expect("global");
@@ -337,6 +338,11 @@ fn the_rust_side_title_lookup_is_gendered_where_the_binding_is_not() {
             None,
             "empty reads as absent"
         );
+        s.lua()
+            .globals()
+            .set("PVP_RANK_300_1", "High")
+            .expect("global");
+        assert_eq!(s.pvp_rank_title(300, 1, false).as_deref(), Some("High"));
     });
 }
 
