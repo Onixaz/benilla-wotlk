@@ -723,7 +723,7 @@ fn service_step(
                 let _ = net.0.send(ClientCommand::Chat {
                     kind: ChatKind::Say,
                     target: None,
-                    text: format!(".additem {SELL_ITEM_ENTRY} 1"),
+                    text: format!(".additem {SELL_ITEM_ENTRY} 1").into(),
                     language: None,
                 });
                 probe.phase = Phase::VendorArm { since: now, guid };
@@ -906,7 +906,7 @@ fn hop(probe: &mut ServiceProbe, net: &NetCommands, i: usize, h: usize, now: f64
     let _ = net.0.send(ClientCommand::Chat {
         kind: ChatKind::Say,
         target: None,
-        text: format!(".go xyz {x} {y} {z} {}", leg.map),
+        text: format!(".go xyz {x} {y} {z} {}", leg.map).into(),
         language: None,
     });
     probe.polls = 0;
@@ -931,7 +931,7 @@ fn next(probe: &mut ServiceProbe, net: &NetCommands, i: usize, now: f64) {
             let _ = net.0.send(ClientCommand::Chat {
                 kind: ChatKind::Say,
                 target: None,
-                text: format!(".go xyz {x} {y} {z} {VENDOR_MAP}"),
+                text: format!(".go xyz {x} {y} {z} {VENDOR_MAP}").into(),
                 language: None,
             });
             probe.phase = Phase::VendorHop { sent_at: now };

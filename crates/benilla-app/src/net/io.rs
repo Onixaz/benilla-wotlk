@@ -1460,9 +1460,15 @@ pub(super) fn writer_loop(
                         }
                     },
                     // The distribution is an enum, so its map to a chat type is total.
-                    ClientCommand::AddonMessage { distribution, text } => {
-                        w.send_addon_message(super::addon_wire_chat_type(distribution), &text)
-                    }
+                    ClientCommand::AddonMessage {
+                        distribution,
+                        target,
+                        text,
+                    } => w.send_addon_message(
+                        super::addon_wire_chat_type(distribution),
+                        target.as_deref(),
+                        &text,
+                    ),
                     ClientCommand::JoinChannel {
                         name,
                         password,

@@ -33,6 +33,11 @@ impl super::UiScript {
     pub fn set_zone_texts(&mut self, texts: ZoneTexts) {
         set_field!(self, zone, texts);
     }
+
+    /// The real zone text the host last pushed, `""` before any: what `GetRealZoneText` returns.
+    pub fn real_zone_text(&self) -> String {
+        self.model_ref().zone.real_zone.clone()
+    }
 }
 
 /// Register the five zone getters.

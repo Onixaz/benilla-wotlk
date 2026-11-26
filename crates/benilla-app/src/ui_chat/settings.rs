@@ -472,9 +472,16 @@ pub(crate) fn restore_chat_looks(world: &mut World, script: &mut UiScript) {
         // The custom re-join list, seated here, then moved only by a confirmed join or a leave.
         channels.custom = parsed.joined.clone();
     }
+    // The mode line's inline setter: a moved latch is stored and, with the chat ready, a move to
+    // 1 runs the cascade (`0x5087b5`-`0x5087dd`).
+    let mode = i32::from(parsed.guild_recruitment_auto);
+    let moved = script.guild_recruitment_mode() != mode;
+    script.set_guild_recruitment_mode(mode);
+    if moved && mode == 1 {
+        super::recruitment::update_guild_status(world, script);
+    }
     // The events read the client through the lent `World`.
     crate::ui_script::live::lend_world(world, script, |script| {
-        script.set_guild_recruitment_mode(u8::from(parsed.guild_recruitment_auto));
         script.set_chat_colors(parsed.colors);
         script.set_chat_window_looks(parsed.looks);
         // `UPDATE_CHAT_WINDOWS` once, then `UPDATE_CHAT_COLOR` for every registry entry, file or
@@ -495,9 +502,22 @@ pub(crate) fn restore_chat_looks(world: &mut World, script: &mut UiScript) {
     });
     // The header's `CHANNELS` re-join at login, as in the reference; zone channels are the walk's.
     // The list holds custom channels only, so each carries id 0; 3.3.5a's re-join is the client's
-    // own, auto 1.
-    if let Some(commands) = commands {
-        for c in parsed.joined {
+    // own, auto 1, a quiet join that claims its record at the saved number first (`0x50819c`).
+    for c in parsed.joined {
+        // The re-join passes its saved voice flag and the permanent flag (`0x508182`-`0x508189`).
+        let claimed = world
+            .get_resource_mut::<super::edit::ChannelState>()
+            .map(|mut ch| match ch.claim_for_join(&c.name, 0, c.number) {
+                super::edit::JoinRecord::Claimed(n) => {
+                    ch.set_join_flags(n, c.voice, true);
+                    true
+                }
+                _ => false,
+            });
+        if claimed != Some(true) {
+            continue;
+        }
+        if let Some(commands) = &commands {
             let _ = commands.send(ClientCommand::JoinChannel {
                 name: c.name,
                 password: String::new(),
@@ -507,6 +527,8 @@ pub(crate) fn restore_chat_looks(world: &mut World, script: &mut UiScript) {
             });
         }
     }
+    // The load ends in the chat's zone update (`0x5093b9`-`0x5093c3`).
+    super::recruitment::zone_update(world, script);
 }
 
 /// The reference's chat-settings save (`0x4ffda0`) at the UI shutdown: the whole file,
@@ -527,7 +549,8 @@ pub(crate) fn save_to_account_data(world: &mut World) {
                         &script.chat_colors(),
                         &channels.custom,
                         zone_mask,
-                        script.guild_recruitment_mode() != 0,
+                        // AUTO is the latch at 1 alone (`0x4fd392`).
+                        script.guild_recruitment_mode() == 1,
                     )
                 })
             }
@@ -792,16 +815,29 @@ POSITION "
         };
         state.note_custom_channel_joined("General - Elwynn Forest");
         assert!(state.custom.is_empty(), "a zone channel travels as its bit");
+        // A temporary join is not saved: the save reads the permanent flag (`0x4fd432`).
+        let super::super::edit::JoinRecord::Claimed(temp) = state.claim_for_join("Temp", 0, 0)
+        else {
+            panic!("claimed");
+        };
+        state.set_join_flags(temp, true, false);
+        state.note_custom_channel_joined("Temp");
+        assert!(state.custom.is_empty(), "a temporary channel is not saved");
+        let super::super::edit::JoinRecord::Claimed(n) = state.claim_for_join("MyChan", 0, 0)
+        else {
+            panic!("claimed");
+        };
+        state.set_join_flags(n, false, true);
         state.note_custom_channel_joined("MyChan");
         state.note_custom_channel_joined("mychan");
         assert_eq!(
             state
                 .custom
                 .iter()
-                .map(|c| c.name.as_str())
+                .map(|c| (c.name.as_str(), c.voice, c.number))
                 .collect::<Vec<_>>(),
-            ["MyChan"],
-            "once, by name"
+            [("MyChan", false, 2)],
+            "once, by name, with the record's voice flag and number (`0x4fd43e`)"
         );
         state.note_custom_channel_left("MYCHAN");
         assert!(state.custom.is_empty(), "an explicit leave drops it");
@@ -1088,7 +1124,6 @@ POSITION "
         world.init_resource::<crate::ui_script::ReloadUiPending>();
         world.init_resource::<super::super::edit::ChannelState>();
         world.init_resource::<super::super::channels::ZoneChannelWalk>();
-        world.init_resource::<super::super::recruitment::GuildRecruitmentCascade>();
         world.init_resource::<Messages<crate::net::DisconnectedMessage>>();
         world.init_resource::<ChatWindowFile>();
         crate::ui_script::setup_script(&mut world);
@@ -1125,6 +1160,13 @@ POSITION "
         world
             .run_system_once(super::super::channels::end_session_channels_on_disconnect)
             .expect("the disconnect twin runs");
+        assert_eq!(
+            world
+                .resource::<super::super::edit::ChannelState>()
+                .number_of("MyChan"),
+            Some(1),
+            "a logout's disconnect leaves the records to the clear after PLAYER_LEAVING_WORLD"
+        );
         // …and `OnExit(InWorld)` flushes the dying VM's cache a frame later.
         crate::ui_script::end_ui_session(&mut world);
 

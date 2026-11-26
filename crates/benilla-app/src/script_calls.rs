@@ -164,11 +164,12 @@ where
 
 /// Answer a verb's ask inside the Lua call that made it, over the lent `World`; `None` in a world without the state it reads, where the verb's request waits for its drain. A gate or a filing raises nothing here, and the verb signals what the answer leaves; the bind dialogs' answers run step by step, each raise fired at its own (`0x6e0273`, `0x6e02cd`).
 pub(crate) fn answer_in_call(
-    _lua: &mlua::Lua,
+    lua: &mlua::Lua,
     ask: &benilla_ui::script::HostAsk,
 ) -> Option<benilla_ui::script::HostAnswer> {
     use benilla_ui::script::{HostAnswer, HostAsk};
-    crate::ui_script::safe_world::with_world(|world| match ask.clone() {
+    crate::ui_script::safe_world::with_world(|world| {
+        match ask.clone() {
         HostAsk::GuildBank(request) => world
             .run_system_cached_with(crate::ui_guild_bank::decide, request)
             .ok()
@@ -198,6 +199,87 @@ pub(crate) fn answer_in_call(
                 .put_back(earlier);
             Some(HostAnswer::Done)
         }
+        // The active player's object, read at the call (`0x4d3790` -> `0x4d4db0`).
+        HostAsk::ActivePlayer => Some(
+            if world
+                .query_filtered::<(), (
+                    With<crate::net::ObjectStore>,
+                    With<crate::net::SelfPlayer>,
+                )>()
+                .iter(world)
+                .next()
+                .is_some()
+            {
+                HostAnswer::Done
+            } else {
+                HostAnswer::Declined
+            },
+        ),
+        // `SendChatMessage` past its argument reads, every line it adds added in the call
+        // (`0x50d170`).
+        // What an enclosing turn queued stays its own.
+        HostAsk::ChatSend(send) => {
+            let earlier = world
+                .get_resource_or_init::<crate::ui_script::live::UiEvents>()
+                .set_aside();
+            let refused =
+                crate::ui_chat::input::send_chat_message(world, &UiScript::in_call(lua), send);
+            crate::ui_script::live::fire_handler_events(world);
+            world
+                .resource_mut::<crate::ui_script::live::UiEvents>()
+                .put_back(earlier);
+            Some(refused.map_or(HostAnswer::Done, HostAnswer::LuaError))
+        }
+        // A channel verb's send inside its call.
+        HostAsk::Channel(cmd) => {
+            let earlier = world
+                .get_resource_or_init::<crate::ui_script::live::UiEvents>()
+                .set_aside();
+            // The calling VM's handle: the world-entry load runs its addons with the VM out of the
+            // `World`, and their joins claim and send as any other's (`0x507c47`, `0x507cc1`).
+            let went_on =
+                crate::ui_chat::input::run_channel_command(world, UiScript::in_call(lua), cmd);
+            crate::ui_script::live::fire_handler_events(world);
+            world
+                .resource_mut::<crate::ui_script::live::UiEvents>()
+                .put_back(earlier);
+            Some(if went_on {
+                HostAnswer::Done
+            } else {
+                HostAnswer::Declined
+            })
+        }
+        // The join's profanity test on its typed name, its line shown in the call (`0x50d9c7`,
+        // `0x50d9d8`).
+        HostAsk::ProfaneChannelName(name) => Some(
+            if crate::ui_chat::input::refuse_profane_channel_name(
+                world,
+                &UiScript::in_call(lua),
+                &name,
+            ) {
+                HostAnswer::Declined
+            } else {
+                HostAnswer::Done
+            },
+        ),
+        // `guildRecruitmentChannel`'s callback inside its `SetCVar` (`0x51275f` -> `0x508260`).
+        HostAsk::GuildRecruitmentMode(mode) => {
+            let earlier = world
+                .get_resource_or_init::<crate::ui_script::live::UiEvents>()
+                .set_aside();
+            crate::ui_chat::set_guild_recruitment_mode(world, &mut UiScript::in_call(lua), mode);
+            crate::ui_script::live::fire_handler_events(world);
+            world
+                .resource_mut::<crate::ui_script::live::UiEvents>()
+                .put_back(earlier);
+            Some(HostAnswer::Done)
+        }
+        // `SendAddonMessage`'s packet (`0x50071f`).
+        HostAsk::AddonSend(send) => {
+            crate::ui_chat::input::send_addon_message(world, send);
+            Some(HostAnswer::Done)
+        }
+    }
     })
     .flatten()
 }

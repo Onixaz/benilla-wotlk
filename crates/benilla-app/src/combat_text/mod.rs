@@ -508,6 +508,7 @@ mod tests {
                 name: name.into(),
                 old: "0".into(),
                 new: new.into(),
+                from_vm: false,
             });
             *app.world().resource::<DamageTextGates>()
         };

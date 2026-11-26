@@ -195,6 +195,8 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
         // Our own player's init runs its guild change (`0x6e82c0` -> `0x6df7a0`) before the active player's init (`0x6e8378`).
         if sc.self_guid.0 == Some(guid) && kind == EntityKind::Player {
             sc.ui.fire("TABARD_CANSAVE_CHANGED", Vec::new());
+            // Then the guild-recruitment cascade (`0x6e82c5`).
+            sc.ui.world(crate::ui_chat::update_guild_status_step);
         }
         // Our own create's init replays the known-spell buffer into the companion lists and updates them, and files the recipes by line (`0x6e8378` -> `0x6e7f50`), ahead of the control below.
         if sc.self_guid.0 == Some(guid) {
@@ -324,6 +326,8 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
         // Another player's init runs its guild change (`0x6e82c0` -> `0x6df7a0`).
         if kind == EntityKind::Player && sc.self_guid.0 != Some(guid) {
             sc.ui.fire("TABARD_CANSAVE_CHANGED", Vec::new());
+            // Then the guild-recruitment cascade, whoever the player is (`0x6e82c5`).
+            sc.ui.world(crate::ui_chat::update_guild_status_step);
         }
         // The bool reaches a creature's stand-state seed and an animated GameObject's Spawn.
         if spawned && matches!(kind, EntityKind::Unit | EntityKind::GameObject) {
@@ -1787,6 +1791,9 @@ fn pet_number_watch(sc: &mut Scene, guid: u64) {
 }
 
 /// Our own unit's watches in field order (`0x4d5550`): critter (`0x6cf6c0`), health (`0x73f330`), flags (`0x60c240`), dynamic and player flags (`0x6e103a`, `0x6e10fb`), honor.
+/// `UNIT_FIELD_FLAGS` bit `0x100000`, taxi flight.
+const UNIT_FLAG_TAXI_FLIGHT: u32 = 0x10_0000;
+
 fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     use benilla_protocol::field::{
         FIELD_PLAYER_FARSIGHT, FIELD_PLAYER_FLAGS, FIELD_UNIT_BYTES_2, FIELD_UNIT_DISPLAYID,
@@ -1984,6 +1991,10 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
             vec![benilla_ui::script::ScriptValue::Str("player".into())],
         );
     }
+    // A landing runs the chat's zone update (`0x728ff9`-`0x729002`).
+    if merged.taxi_landed {
+        sc.ui.world(crate::ui_chat::zone_update_on_landing);
+    }
     let split = after.partition_point(|&(index, ..)| index < FIELD_PLAYER_FLAGS);
     let (unit, player) = after.split_at(split);
     let split = unit.partition_point(|&(index, ..)| index < FIELD_UNIT_DISPLAYID);
@@ -2055,6 +2066,9 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
         sc.ui.fire("SPELLS_CHANGED", Vec::new());
     }
     if let Some((old, new)) = merged.pvp_flags {
+        // The player-flags watch's AFK mirror write (`0x6e1026`), ahead of its PvP stamp (`0x6e102c`).
+        sc.ui
+            .world(move |world| crate::ui_chat::away::flags_watch(world, old, new));
         sc.pvp.watch(old, new, std::time::Instant::now());
     }
     let split = player.partition_point(|&(index, ..)| index < FIELD_PLAYER_FARSIGHT);
@@ -2547,6 +2561,8 @@ fn own_player_watches(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
         if index == benilla_protocol::field::FIELD_PLAYER_GUILDID {
             if old != new {
                 sc.ui.fire("TABARD_CANSAVE_CHANGED", Vec::new());
+                // The active player's guild-recruitment cascade (`0x6e1beb`).
+                sc.ui.world(crate::ui_chat::update_guild_status_step);
                 // The merchant's refresh with a vendor set (`0x6e1c09`), ahead of the tabs' clear.
                 sc.ui.world(crate::ui_merchant::refresh);
                 crate::ui_guild_bank::guild_id_changed(&mut sc.ui);
@@ -2657,6 +2673,11 @@ fn merge_fields(
             mount_zeroed |=
                 e.unit_field(benilla_protocol::field::FIELD_UNIT_MOUNTDISPLAYID) && e.new == 0;
             merged.flags_moved |= e.unit_field(benilla_protocol::field::FIELD_UNIT_FLAGS);
+            // The active player's flags handler: the taxi bit moved and now clear (`0x728fcd`, `0x728fe6`).
+            merged.taxi_landed |= own
+                && e.unit_field(benilla_protocol::field::FIELD_UNIT_FLAGS)
+                && (e.old ^ e.new) & UNIT_FLAG_TAXI_FLIGHT != 0
+                && e.new & UNIT_FLAG_TAXI_FLIGHT == 0;
             merged.display_moved |=
                 own && e.unit_field(benilla_protocol::field::FIELD_UNIT_DISPLAYID);
             merged.level_moved |= own && e.unit_field(benilla_protocol::field::FIELD_UNIT_LEVEL);
@@ -2840,6 +2861,8 @@ type GuidHalves = (Option<u32>, Option<u32>);
 #[derive(Default)]
 struct Merged {
     flags_moved: bool,
+    /// Our flags' taxi bit cleared: a landing.
+    taxi_landed: bool,
     /// Our own `UNIT_FIELD_DISPLAYID` moved (`0x716860`).
     display_moved: bool,
     /// Our own `UNIT_FIELD_LEVEL` moved (`0x72e40c` -> `0x6d66e0`).

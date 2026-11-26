@@ -5,7 +5,7 @@
 
 use bevy::prelude::*;
 
-use crate::ui_script::{UiDrain, UiFeed};
+use crate::ui_script::UiDrain;
 
 #[cfg(test)]
 mod ace_gate_tests;
@@ -24,11 +24,11 @@ pub(crate) mod commands;
 /// `pub(crate)` for `ui_script::chat_tests`, which joins the stock file's token to this resolve.
 pub(crate) mod edit;
 mod event;
-mod feed;
+pub(crate) mod feed;
 mod frames;
 /// The idle handler: the 5-minute auto-sit and auto-AFK, and the 30-minute camp.
 pub(crate) mod idle;
-mod input;
+pub(crate) mod input;
 #[cfg(test)]
 pub(crate) use input::drain_chat_input;
 /// The language gate: the exemptions and fluency lookup behind the chat garble.
@@ -49,9 +49,14 @@ mod tests;
 
 pub(crate) use away::AfkMirror;
 pub(crate) use broadcast::Broadcast;
-/// The zone-channel catalog's seed, called from the world-entry UI load: addons read the catalog
-/// at file scope, before an `Update` push would land.
-pub(crate) use channels::seed_zone_channel_catalog;
+/// The channel records, mask and zone catalog the channel verbs read at the call.
+pub(crate) use channels::ChannelLive;
+/// The guild-recruitment cascade and the zone update's tail, run by their callers' steps.
+#[cfg(test)]
+pub(crate) use channels::ZoneChannelWalk;
+/// The zone walk's steps, which the characterization pins apply directly.
+#[cfg(test)]
+pub(crate) use channels::{apply_walk, WalkStep};
 /// The joined-channel roster and the `ChatChannels.dbc` catalog, named by `net`'s docs and tests.
 #[cfg_attr(not(test), allow(unused_imports))]
 pub(crate) use edit::ChannelState;
@@ -67,6 +72,11 @@ pub(crate) use feed::{
 /// The chat windows and the message display's in-call add, for the verbs' live view.
 pub(crate) use frames::{
     add_chat_line_in_call, add_chat_line_now, add_combat_line_now, ChatWindows,
+};
+pub(crate) use recruitment::{
+    set_mode_from_cvar as set_guild_recruitment_mode, update_guild_status_step,
+    zone_text_runs_zone_update, zone_update_after_cinematic, zone_update_on_landing,
+    zone_update_step,
 };
 /// The per-character chat cache's restore, called from the world-entry UI load: its two events
 /// must precede the session's first chat line and `PLAYER_LOGIN`.
@@ -85,12 +95,10 @@ impl Plugin for UiChatPlugin {
         app.add_observer(recruitment::on_cvar);
         app.init_resource::<ChatLog>()
             .init_resource::<away::AfkMirror>()
-            .init_resource::<away::AfkMirrorMemo>()
             .init_resource::<idle::LastInput>()
             .init_resource::<frames::ChatWindows>()
             .init_resource::<edit::ChannelState>()
             .init_resource::<channels::ZoneChannelWalk>()
-            .init_resource::<recruitment::GuildRecruitmentCascade>()
             .init_resource::<language::ChatLanguages>()
             // These DBC loads must follow `AssetSet::Open`: before it there is no chain, and each
             // silently loads nothing.
@@ -116,66 +124,36 @@ impl Plugin for UiChatPlugin {
             // The last-input stamp, ungated and ahead of the UI pass: the reference stamps raw
             // input before dispatch, so a key the chat box swallows still counts.
             .add_systems(Update, idle::stamp_input.before(crate::ui_script::UiPress))
-            // A fresh VM's joined-channel mirror.
-            .add_systems(
-                Update,
-                channels::seed_channels.in_set(crate::ui_script::UiFeed),
-            )
-            // The channel pane's roster names, as the name cache answers them.
-            .add_systems(Update, net::feed_channel_roster_names.in_set(UiFeed))
             .add_systems(
                 Update,
                 (
-                    // First, so a `/afk` typed this frame reads the descriptor's settled state.
-                    away::reconcile_afk_mirror,
-                    crate::ui_script::raises::then_fire(away::movement_clears_afk),
+                    away::movement_clears_afk,
                     // After the clears, so a press that stamps the clock and drops the flag is
                     // settled before the idle timer reads it.
-                    crate::ui_script::raises::then_fire(idle::idle_handler).in_set(idle::IdleStep),
+                    idle::idle_handler.in_set(idle::IdleStep),
                     input::drain_chat_input.in_set(ChatDrain),
-                    // After the box's drain, so a `SendChatMessage` or `SendAddonMessage` from a
-                    // slash handler it just ran goes out this frame.
-                    crate::ui_script::raises::then_fire(input::drain_addon_chat_sends),
-                    crate::ui_script::raises::then_fire(input::drain_addon_message_sends),
                 )
                     .chain()
                     .in_set(UiDrain)
-                    // Before the zone-channel walk renumbers or renames a slot, so a `/N` resolves
-                    // against the roster the script's `GetChannelName` read this frame.
+                    // Before a dead socket's clear empties the records, so a `/N` resolves against
+                    // the roster the script's `GetChannelName` read this frame.
                     .before(channels::end_session_channels_on_disconnect)
                     .in_set(crate::char_select::InWorldGated),
             )
-            // The zone-channel auto-join, which vmangos leaves to the client. The disconnect clear
-            // runs first, so a same-frame drop cannot leave the walk diffing stale membership.
-            // After `AreaAuthoritySet`, since a stale area joins and leaves the wrong channels. The
-            // guild-recruitment cascade follows the walk: it is the tail of the zone-channel
-            // refresh.
+            // A dead socket ends the channel session; the zone update's walk runs in its callers'
+            // steps (`0x520680`, `0x5093c3`, `0x51d915`, `0x729002`).
             .add_systems(
                 Update,
-                (
-                    crate::ui_script::raises::then_fire(
-                        channels::end_session_channels_on_disconnect,
-                    ),
-                    crate::ui_script::raises::then_fire(
-                        channels::auto_join_zone_channels.in_set(crate::char_select::InWorldGated),
-                    ),
-                    crate::ui_script::raises::then_fire(
-                        recruitment::guild_recruitment_cascade
-                            .in_set(crate::char_select::InWorldGated),
-                    ),
-                )
-                    .chain()
+                channels::end_session_channels_on_disconnect
                     .in_set(crate::ui_script::UiPaint)
-                    .after(benilla_world::terrain_stream::AreaAuthoritySet)
-                    // The selection and the pet's words its lent view reads are the clicks'.
                     .after(crate::target::TargetUpdate),
             )
+            // After the UI shutdown (`0x529163`), whose leave-world raises PLAYER_LEAVING_WORLD
+            // (`0x528edc`) with the channels still held; the chat shutdown follows (`0x529172`).
             .add_systems(
                 OnExit(crate::char_select::ClientState::InWorld),
-                (
-                    crate::ui_script::raises::then_fire(channels::end_session_channels),
-                    end_session_chat,
-                ),
+                (channels::end_session_channels, end_session_chat)
+                    .after(crate::ui_script::end_ui_session),
             );
         settings::plugin(app);
         logging::plugin(app);

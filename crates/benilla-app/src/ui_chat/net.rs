@@ -81,20 +81,27 @@ fn on_channel_list(In(ev): In<SessionEvent>, world: &mut World) {
     });
 }
 
-/// A member's name off the lent `World`'s name cache, asked for when not cached.
-fn player_name(guid: u64) -> Option<Option<String>> {
+/// Whether a member's name record is held, read off the lent `World`'s name cache; a miss asks the
+/// record with the roster's callback (`0x503bdb`, `0x50423b`).
+fn player_name(guid: u64) -> bool {
     crate::ui_script::safe_world::with_world(|w| {
-        let (Some(names), Some(commands)) = (
-            w.get_resource::<crate::names::NameCache>(),
-            w.get_resource::<NetCommands>(),
-        ) else {
-            return None;
+        let held = {
+            let (Some(names), Some(commands)) = (
+                w.get_resource::<crate::names::NameCache>(),
+                w.get_resource::<NetCommands>(),
+            ) else {
+                return true;
+            };
+            names
+                .answer(crate::names::NameKey::Player(guid), guid, commands)
+                .is_some()
         };
-        names
-            .answer(crate::names::NameKey::Player(guid), guid, commands)
-            .map(|name| name.map(str::to_string))
+        if !held {
+            super::feed::register_roster_wait(w, guid);
+        }
+        held
     })
-    .flatten()
+    .unwrap_or(true)
 }
 
 /// `SMSG_USERLIST_ADD`, `_REMOVE` and `_UPDATE`: the watched channel's roster follows its members, its events fired with the `World` lent.
@@ -122,22 +129,11 @@ fn on_channel_user_list(In(ev): In<SessionEvent>, world: &mut World) {
     });
 }
 
-/// The channel pane's roster waits on the name cache (`0x4ffe30`): each answer that has landed is
-/// handed over, and the last one fires the roster's events.
-pub(super) fn feed_channel_roster_names(
-    mut script: crate::ui_script::InTurn,
-    names: Option<Res<crate::names::NameCache>>,
-    commands: Option<Res<NetCommands>>,
-) {
-    let (Some(mut script), Some(names), Some(commands)) = (script.turn(), names, commands) else {
-        return;
-    };
-    for guid in script.channel_roster_unnamed() {
-        if let Some(answer) = names.answer(crate::names::NameKey::Player(guid), guid, &commands) {
-            let answer = answer.map(str::to_string);
-            script.channel_roster_named(guid, answer);
-        }
-    }
+/// The channel pane's name callback (`0x4ffe30`), run from the record's callback list: a member
+/// of the roster counts down its pending names, and the last fires its count and roster with the
+/// `World` lent.
+pub(crate) fn roster_callback(world: &mut World, guid: u64) {
+    crate::ui_script::safe_world::lend(world, |s| s.channel_roster_named(guid));
 }
 
 fn on_whisper_refusal(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
@@ -261,6 +257,7 @@ fn on_channel_notify(
     In(ev): In<SessionEvent>,
     mut chat_log: ResMut<crate::ui_script::live::UiEvents>,
     social: Res<SocialState>,
+    mut channels: ResMut<super::edit::ChannelState>,
 ) {
     if let SessionEvent::ChannelNotify {
         notice,
@@ -268,6 +265,14 @@ fn on_channel_notify(
         tail,
     } = ev
     {
+        use benilla_protocol::messages::channel_notice as n;
+        // A member's join or leave shows only on a record in state 0, found by name; any other
+        // ends the handler before the name is asked (`0x50e1b0` -> `0x4fdee0`, `0x4fdf19`).
+        if matches!(notice, n::JOINED | n::LEFT)
+            && channels.slot_state(&channel) != Some(super::edit::SlotState::Joined)
+        {
+            return;
+        }
         // An invite from an ignored or non-player guid is dropped whole (`0x50e76b`,
         // `0x50e778`-`0x50e798`).
         if notice == benilla_protocol::messages::channel_notice::INVITE {
@@ -278,7 +283,20 @@ fn on_channel_notify(
                 }
             }
         }
+        // The voice arms (jump table `0x50eb08`: `0x22` -> `0x50e964`, `0x23` -> `0x50ea05`, `0x24`
+        // -> `0x50e9bc`) write the record found by the wire name ahead of the line.
+        let on = match notice {
+            n::VOICE_ON | n::VOICE_ENABLED => Some(true),
+            n::VOICE_OFF => Some(false),
+            _ => None,
+        };
+        let rebuild = on.is_some_and(|on| channels.set_voice(&channel, on));
+        // `VOICE_ENABLED` adds no line (`0x50ea00` jumps past the add).
         chat_log.push_channel_notice(notice, channel, &tail);
+        // A found record's rebuild after the line, with its signal (`0x50eaf3` -> `0x504840`).
+        if rebuild {
+            chat_log.world(super::feed::channels_updated);
+        }
     }
 }
 
@@ -303,9 +321,11 @@ fn on_random_roll(
     }
 }
 
-/// Clear the chat log's session state when the session ends.
+/// The session's end drops the held lines and leaves the world as the UI's world exit does
+/// (`0x528cc9` -> `0x4fb190`): a same-character reconnect queues every line until its world entry.
 fn on_session_end(In(_): In<SessionEvent>, mut chat_log: ResMut<ChatLog>) {
     chat_log.clear_session();
+    chat_log.leave_world();
 }
 
 /// A spoken line (`SMSG_MESSAGECHAT`, `0x50be70`): the line the handler adds, `None` for one it
@@ -1061,29 +1081,38 @@ mod tests {
     /// `World` holds at the handler (`0x503990`), with no unit fixture: the owner gate reads it.
     #[test]
     fn a_display_list_seats_our_own_row_against_the_player_held() {
-        use benilla_ui::script::{ChannelSlotInfo, UiScript};
+        use benilla_ui::script::UiScript;
         const ME: u64 = 0x10;
         const GENERAL: &str = "General - Elwynn Forest";
         let mut world = World::new();
         world.init_resource::<ChatLog>();
         world.init_resource::<crate::ui_script::live::UiEvents>();
         world.spawn((crate::net::SelfPlayer, crate::net::Guid(ME)));
-        let mut script = UiScript::new().expect("a VM");
-        script.set_channel_slots(vec![Some(ChannelSlotInfo {
-            name: GENERAL.into(),
-            shortcut: Some("General".into()),
-            active: true,
-        })]);
-        script
-            .run("SetSelectedDisplayChannel(3)")
-            .expect("the channel is listed under the world header");
-        world.insert_non_send_resource(script);
-        let owner = |w: &World| {
-            w.non_send_resource::<UiScript>()
-                .eval::<bool>("return IsDisplayChannelOwner() == 1")
-                .unwrap()
+        world.insert_resource(crate::ui_chat::ChannelState {
+            joined: vec![Some(crate::ui_chat::edit::ChannelSlot::zone(GENERAL, 1))],
+            channels: benilla_formats::ChatChannelsCatalog::from_rows(vec![
+                benilla_formats::ChatChannelRow {
+                    id: 1,
+                    flags: 0x80003,
+                    pattern: "General - %s".into(),
+                    shortcut: "General".into(),
+                },
+            ]),
+            ..Default::default()
+        });
+        world.insert_non_send_resource(UiScript::new().expect("a VM"));
+        crate::ui_script::safe_world::lend(&mut world, |s| {
+            s.run("GetNumDisplayChannels() SetSelectedDisplayChannel(3)")
+                .expect("the channel is listed under the world header")
+        });
+        let owner = |w: &mut World| {
+            crate::ui_script::safe_world::lend(w, |s| {
+                s.eval::<bool>("return IsDisplayChannelOwner() == 1")
+                    .unwrap()
+            })
+            .unwrap()
         };
-        assert!(!owner(&world));
+        assert!(!owner(&mut world));
         world
             .run_system_once_with(
                 on_channel_list,
@@ -1096,7 +1125,81 @@ mod tests {
             )
             .unwrap();
         crate::ui_script::live::fire_handler_events(&mut world);
-        assert!(owner(&world), "our row carries the owner bit");
+        assert!(owner(&mut world), "our row carries the owner bit");
+    }
+
+    /// The pane's selection and collapsed headers are game state, which `GetSelectedDisplayChannel`
+    /// reads (`0x4ffa10`): a new VM, as `/reload` builds, answers them unchanged; only the
+    /// session's clear (`0x50f198`-`0x50f202`) empties them.
+    #[test]
+    fn the_pane_outlives_a_reload_and_ends_with_the_session() {
+        use benilla_ui::script::UiScript;
+        const GENERAL: &str = "General - Elwynn Forest";
+        let mut world = World::new();
+        world.init_resource::<ChatLog>();
+        world.init_resource::<crate::ui_script::live::UiEvents>();
+        world.init_resource::<super::super::channels::ZoneChannelWalk>();
+        world.spawn((crate::net::SelfPlayer, crate::net::Guid(0x10)));
+        world.insert_resource(crate::ui_chat::ChannelState {
+            joined: vec![
+                Some(crate::ui_chat::edit::ChannelSlot::zone(GENERAL, 1)),
+                Some(crate::ui_chat::edit::ChannelSlot::joined("MyChan")),
+            ],
+            channels: benilla_formats::ChatChannelsCatalog::from_rows(vec![
+                benilla_formats::ChatChannelRow {
+                    id: 1,
+                    flags: 0x80003,
+                    pattern: "General - %s".into(),
+                    shortcut: "General".into(),
+                },
+            ]),
+            ..Default::default()
+        });
+        world.insert_non_send_resource(UiScript::new().expect("a VM"));
+        let pane = |w: &mut World| {
+            crate::ui_script::safe_world::lend(w, |s| {
+                s.eval::<(Option<i64>, Option<i64>)>(
+                    "GetNumDisplayChannels() local _, _, c = GetChannelDisplayInfo(2) \
+                     return GetSelectedDisplayChannel(), c",
+                )
+                .unwrap()
+            })
+            .unwrap()
+        };
+        crate::ui_script::safe_world::lend(&mut world, |s| {
+            s.run("GetNumDisplayChannels() SetSelectedDisplayChannel(5) CollapseChannelHeader(2)")
+                .unwrap()
+        });
+        assert_eq!(
+            pane(&mut world),
+            (Some(4), Some(1)),
+            "MyChan under the folded world header"
+        );
+        world.insert_non_send_resource(UiScript::new().expect("the reloaded VM"));
+        assert_eq!(pane(&mut world), (Some(4), Some(1)), "a reload keeps both");
+        world
+            .run_system_once(super::super::channels::end_session_channels)
+            .unwrap();
+        assert_eq!(pane(&mut world), (None, None), "the session clears both");
+    }
+
+    /// A dropped session leaves the world (`0x528cc9` -> `0x4fb190`): a line the reconnect brings
+    /// before its world entry is queued, not added.
+    #[test]
+    fn a_dropped_session_queues_the_chat_until_the_next_entry() {
+        let mut world = World::new();
+        world.insert_resource(ChatLog::default());
+        super::super::feed::enter_world(&mut world);
+        assert!(!world.resource::<ChatLog>().queues());
+        let lost = SessionEvent::Disconnected {
+            reason: String::new(),
+            end: benilla_protocol::SessionEnd::Lost,
+        };
+        world.run_system_once_with(on_session_end, lost).unwrap();
+        assert!(
+            world.resource::<ChatLog>().queues(),
+            "the add queues until the reconnect's world entry"
+        );
     }
 
     /// The answer seeds the active player's clock alone (`0x4013c6`-`0x4013f1`): with no active

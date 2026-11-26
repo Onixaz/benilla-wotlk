@@ -189,6 +189,8 @@ pub(crate) struct LiveView<'w, 's> {
     petition: Option<crate::ui_petition::PetitionLive<'w, 's>>,
     /// Every dressing-room pane's model and what a try-on reads.
     pub(crate) dressup: crate::ui_dressup::DressUpLive<'w>,
+    /// The channel records, the zone mask and the zone's channel catalog.
+    chat_channels: Option<crate::ui_chat::ChannelLive<'w>>,
 }
 
 impl crate::ui_items::ObjectLookup for LiveView<'_, '_> {
@@ -570,6 +572,36 @@ impl LiveState for LiveView<'_, '_> {
             Some(self.lent.chat.as_deref_mut()?.logs.0.open())
         } else {
             Some(self.lent.combat_log_file.as_deref_mut()?.0.open())
+        }
+    }
+
+    fn channel_slots(&self) -> Vec<Option<benilla_ui::script::ChannelSlotInfo>> {
+        self.chat_channels
+            .as_ref()
+            .map(|c| c.slots())
+            .unwrap_or_default()
+    }
+
+    fn set_channel_flags(&mut self, slot: usize, flags: u8) {
+        if let Some(c) = self.chat_channels.as_mut() {
+            c.set_flags(slot, flags);
+        }
+    }
+
+    fn channel_pane(&mut self) -> Option<&mut benilla_ui::script::ChannelPane> {
+        Some(self.chat_channels.as_mut()?.pane())
+    }
+
+    fn zone_channel_catalog(&self) -> Vec<benilla_ui::script::ZoneChannelRow> {
+        self.chat_channels
+            .as_ref()
+            .map(|c| c.catalog())
+            .unwrap_or_default()
+    }
+
+    fn add_zone_channel_bit(&mut self, id: u32) {
+        if let Some(c) = self.chat_channels.as_mut() {
+            c.add_zone_bit(id);
         }
     }
 

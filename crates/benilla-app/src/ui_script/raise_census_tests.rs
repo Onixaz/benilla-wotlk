@@ -46,18 +46,6 @@ const ON_THE_QUEUE: &[(&str, &str)] = &[
     ("ui_aura.rs", "drain_aura_cancels"),
     ("ui_battlefield.rs", "drain_battlefield"),
     ("ui_calendar.rs", "feed_calendar"),
-    ("ui_chat/away.rs", "movement_clears_afk"),
-    ("ui_chat/channels.rs", "auto_join_zone_channels"),
-    ("ui_chat/channels.rs", "end_session_channels"),
-    ("ui_chat/channels.rs", "end_session_channels_on_disconnect"),
-    ("ui_chat/channels.rs", "seed_channels"),
-    ("ui_chat/idle.rs", "idle_handler"),
-    ("ui_chat/input/mod.rs", "chat_arm"),
-    ("ui_chat/input/mod.rs", "drain_addon_chat_sends"),
-    ("ui_chat/input/mod.rs", "drain_addon_message_sends"),
-    ("ui_chat/input/mod.rs", "take_chat_lines"),
-    ("ui_chat/net.rs", "feed_channel_roster_names"),
-    ("ui_chat/recruitment.rs", "guild_recruitment_cascade"),
     ("ui_companion.rs", "drain_companions"),
     ("ui_companion.rs", "feed_companion_booth"),
     ("ui_duel.rs", "drain_duel"),
@@ -144,7 +132,7 @@ const ON_THE_QUEUE: &[(&str, &str)] = &[
 ];
 
 /// The raise steps: the five between the UI phases and each `then_fire` chain.
-const RAISE_STEPS: usize = 61;
+const RAISE_STEPS: usize = 53;
 
 /// `source` with every inline test module cut out, to its closing brace.
 pub(super) fn production(source: &str) -> String {

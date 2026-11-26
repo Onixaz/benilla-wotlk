@@ -301,7 +301,7 @@ fn binder_step(
             let _ = net.0.send(ClientCommand::Chat {
                 kind: ChatKind::Say,
                 target: None,
-                text: format!(".go xyz {x} {y} {z} {INNKEEPER_MAP}"),
+                text: format!(".go xyz {x} {y} {z} {INNKEEPER_MAP}").into(),
                 language: None,
             });
             probe.phase = Phase::Settling { sent_at: now };

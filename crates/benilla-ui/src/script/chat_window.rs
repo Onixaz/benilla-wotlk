@@ -339,6 +339,12 @@ impl super::Model {
 }
 
 impl super::UiScript {
+    /// Host-side [`Model::strip_window_channel`], for the guild-recruitment leaves, which strip
+    /// the row's Shortcut from every window.
+    pub fn strip_chat_window_channel(&mut self, key: &str) -> bool {
+        self.model_mut().strip_window_channel(key)
+    }
+
     /// Host-side [`Model::register_window_channel`], for the guild-recruitment join, which
     /// registers `GuildRecruitment` in window 1.
     pub fn register_chat_window_channel(&mut self, window: usize, name: &str, id: u32) -> bool {
@@ -366,11 +372,6 @@ impl super::UiScript {
         self.model_mut().chat_window_looks.to_vec()
     }
 
-    /// Drains the zone channel ids `ResetChatWindows` put back in the auto-join mask.
-    pub fn take_zone_mask_additions(&mut self) -> Vec<u32> {
-        drain_field!(self, zone_mask_additions)
-    }
-
     /// Drains the 0-based windows Lua changed since the last call, deduplicated and ascending.
     pub fn take_chat_window_changes(&mut self) -> Vec<usize> {
         let mut v: Vec<usize> = drain_field!(self, chat_window_changes)
@@ -387,6 +388,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "ResetChatWindows",
         lua.create_function(|lua, ()| {
+            let catalog = super::channel::zone_catalog();
             let colors = {
                 let mut model = crate::script::model_mut_of(lua);
                 super::chat_types::reset_all(&mut model.chat_colors);
@@ -396,15 +398,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     model.chat_window_looks[i] = ChatWindowLook::reset(i);
                     model.chat_window_changes.insert(i);
                 }
-                let rows: Vec<(String, u32)> = model
-                    .zone_channel_catalog
-                    .iter()
-                    .filter(|r| r.auto_join)
-                    .map(|r| (r.shortcut.clone(), r.id))
-                    .collect();
-                for (shortcut, id) in rows {
-                    model.zone_mask_additions.push(id);
-                    model.register_window_channel(0, shortcut, id);
+                for r in catalog.iter().filter(|r| r.auto_join) {
+                    super::write_live(|l| l.add_zone_channel_bit(r.id));
+                    model.register_window_channel(0, r.shortcut.clone(), r.id);
                 }
                 model.chat_colors.clone()
             };
@@ -720,16 +716,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(name) = name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty()) else {
                 return Ok(MultiValue::new());
             };
-            let matched = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                model
-                    .zone_channel_catalog
-                    .iter()
-                    .find(|r| r.shortcut.eq_ignore_ascii_case(&name))
-                    .cloned()
-            };
+            let matched = super::channel::zone_catalog()
+                .into_iter()
+                .find(|r| r.shortcut.eq_ignore_ascii_case(&name));
             let (name, zone_id) = match matched {
                 None => (name, 0),
                 Some(ZoneChannelRow { resolved: None, .. }) => return Ok(MultiValue::new()),
@@ -766,15 +755,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(());
             };
             let key = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
                 let n = leading_int(&key);
                 let key = if n > 0 {
                     match usize::try_from(n)
                         .ok()
-                        .and_then(|n| model.joined_channels.get(n - 1))
-                        .and_then(|c| c.clone())
+                        .and_then(|n| super::channel::joined_names().get(n - 1).cloned())
+                        .flatten()
                     {
                         Some(name) => name,
                         None => return Ok(()),
@@ -782,8 +768,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 } else {
                     key.trim().to_string()
                 };
-                match model
-                    .zone_channel_catalog
+                match super::channel::zone_catalog()
                     .iter()
                     .find(|r| r.shortcut.eq_ignore_ascii_case(&key))
                 {
@@ -1385,58 +1370,65 @@ mod record_tests {
     #[test]
     fn channels_carry_the_zone_id_and_answer_it_on_add() {
         let mut s = UiScript::new().unwrap();
-        s.set_zone_channel_catalog(vec![
-            ZoneChannelRow {
-                id: 1,
-                shortcut: "General".into(),
-                resolved: Some("General - Elwynn Forest".into()),
-                listed: true,
-                auto_join: false,
-            },
-            ZoneChannelRow {
-                id: 2,
-                shortcut: "Trade".into(),
-                resolved: None,
-                listed: false,
-                auto_join: false,
-            },
-        ]);
-        s.run(
-            "A = {AddChatWindowChannel(1, 'general')} \
-             B = {AddChatWindowChannel(1, 'MyChan')} \
-             C = {AddChatWindowChannel(1, 'mychan')} \
-             D = {AddChatWindowChannel(1, 'Trade')} \
-             E = {AddChatWindowChannel(1, '')}",
-        )
-        .unwrap();
-        assert_eq!(
-            s.eval::<(i64, i64, i64)>("return A[1], B[1], C[1]")
-                .unwrap(),
-            (1, 0, 0)
-        );
-        assert!(s
-            .eval::<bool>("return table.getn(D) == 0 and table.getn(E) == 0")
-            .unwrap());
-        assert_eq!(
-            s.eval::<Vec<mlua::Value>>("return {GetChatWindowChannels(1)}")
-                .unwrap()
-                .len(),
-            4,
-            "name, id, name, id — the duplicate was not stored twice"
-        );
-        assert_eq!(
-            s.chat_window_looks()[0].channels,
-            vec![("General".to_string(), 1), ("MyChan".to_string(), 0)],
-            "the DBC's spelling for the shortcut, the typed one for the custom channel"
-        );
-        s.run("RemoveChatWindowChannel(1, 'MYCHAN') RemoveChatWindowChannel(1, '3')")
+        let mut view = crate::script::live::TestView {
+            zone_channels: vec![
+                ZoneChannelRow {
+                    id: 1,
+                    shortcut: "General".into(),
+                    resolved: Some("General - Elwynn Forest".into()),
+                    listed: true,
+                    auto_join: false,
+                    guild_recruitment: false,
+                },
+                ZoneChannelRow {
+                    id: 2,
+                    shortcut: "Trade".into(),
+                    resolved: None,
+                    listed: false,
+                    auto_join: false,
+                    guild_recruitment: false,
+                },
+            ],
+            ..Default::default()
+        };
+        s.with_live(&mut view, |s| {
+            s.run(
+                "A = {AddChatWindowChannel(1, 'general')} \
+                 B = {AddChatWindowChannel(1, 'MyChan')} \
+                 C = {AddChatWindowChannel(1, 'mychan')} \
+                 D = {AddChatWindowChannel(1, 'Trade')} \
+                 E = {AddChatWindowChannel(1, '')}",
+            )
             .unwrap();
-        assert_eq!(
-            s.chat_window_looks()[0].channels,
-            vec![("General".to_string(), 1)],
-            "a number names a joined slot; with none joined it removes nothing"
-        );
-        assert_eq!(s.take_chat_window_changes(), vec![0]);
+            assert_eq!(
+                s.eval::<(i64, i64, i64)>("return A[1], B[1], C[1]")
+                    .unwrap(),
+                (1, 0, 0)
+            );
+            assert!(s
+                .eval::<bool>("return table.getn(D) == 0 and table.getn(E) == 0")
+                .unwrap());
+            assert_eq!(
+                s.eval::<Vec<mlua::Value>>("return {GetChatWindowChannels(1)}")
+                    .unwrap()
+                    .len(),
+                4,
+                "name, id, name, id — the duplicate was not stored twice"
+            );
+            assert_eq!(
+                s.chat_window_looks()[0].channels,
+                vec![("General".to_string(), 1), ("MyChan".to_string(), 0)],
+                "the DBC's spelling for the shortcut, the typed one for the custom channel"
+            );
+            s.run("RemoveChatWindowChannel(1, 'MYCHAN') RemoveChatWindowChannel(1, '3')")
+                .unwrap();
+            assert_eq!(
+                s.chat_window_looks()[0].channels,
+                vec![("General".to_string(), 1)],
+                "a number names a joined slot; with none joined it removes nothing"
+            );
+            assert_eq!(s.take_chat_window_changes(), vec![0]);
+        });
     }
 
     #[test]

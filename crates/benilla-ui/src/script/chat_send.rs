@@ -2,18 +2,17 @@
 //! through, with no FrameXML between it and the wire. `chatType` defaults to `"SAY"`; the fourth
 //! argument is the whisper target or the channel's number.
 //!
-//! It queues a [`ChatSend`] rather than going through the edit box, whose drain runs the slash
+//! It hands a [`ChatSend`] to the host inside the call, never through the edit box's slash
 //! grammar: an addon's `SendChatMessage("/dance")` says the characters. The reference splits the
 //! same way, `ChatEdit_SendText` parsing and `SendChatMessage` not.
 //!
 //! `language` starts as the speaker's race base language. A string or number third argument is
 //! matched by name, case-insensitively, against every `Languages.dbc` row, known to the character
-//! or not, and a miss raises `Unknown language`: a number is its text, so `7` raises. Refusing a
-//! tongue the character never learned is the server's (vmangos `ChatHandler.cpp:175`).
+//! or not, and a miss raises `Unknown language`: a number is its text, so `7` raises. A tongue the
+//! character does not speak is the host's refusal, inside the call (`0x50d2b0`).
 //!
-//! Deviation: no truncation at 255 characters, because vmangos refuses a longer line itself
-//! (`Chat.cpp:2177`): it is dropped where the reference sends its first 255. The server throttles
-//! in both.
+//! The host's line passes cut the text at 255 bytes, its parse packing into 256 (`0x50d69f`,
+//! `0x577d65`).
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -29,8 +28,9 @@ impl super::UiScript {
 /// One queued `SendChatMessage` line, plain data: this crate holds no wire types.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChatSend {
-    /// The line, verbatim: a leading `/` is text, not a command.
-    pub text: String,
+    /// The line's bytes, verbatim: a leading `/` is text, not a command, and the bytes need not be
+    /// valid UTF-8 (the walk at `0x47bd40` passes overlong and cut forms).
+    pub text: Vec<u8>,
     /// The chat type token (`"SAY"`, `"WHISPER"`, `"CHANNEL"`, …), uppercased, since the
     /// reference's compare ignores case.
     pub chat_type: String,
@@ -43,16 +43,114 @@ pub struct ChatSend {
 
 impl ChatSend {
     /// The empty-line gate: a line whose first byte is NUL ends the call, before the language is
-    /// read or anything is sent, unless its type is AFK (`0x14`) or DND (`0x15`). The chat-type
+    /// read or anything is sent, unless its type is AFK (`0x17`) or DND (`0x18`). The chat-type
     /// lookup and its "Unknown chat type" come first.
     pub fn ends_at_empty_line(&self) -> bool {
         ends_at_empty_line(&self.text, &self.chat_type)
     }
 }
 
+/// The chat-type names `SendChatMessage` accepts, compared ignoring case (`0x4fbb20`): no
+/// `RAID_LEADER` or `BATTLEGROUND_LEADER`, which the verb picks itself for a leader.
+pub const CHAT_TYPES: [&str; 17] = [
+    "SAY",
+    "PARTY",
+    "RAID",
+    "GUILD",
+    "OFFICER",
+    "YELL",
+    "WHISPER",
+    "EMOTE",
+    "CHANNEL",
+    "AFK",
+    "DND",
+    "RAID_WARNING",
+    "BATTLEGROUND",
+    "BN",
+    "BN_WHISPER",
+    "BN_WHISPER_INFORM",
+    "BN_CONVERSATION",
+];
+
+/// Whether an uppercased token names a [`CHAT_TYPES`] row.
+fn chat_type_known(token: &str) -> bool {
+    CHAT_TYPES.contains(&token)
+}
+
 /// [`ChatSend::ends_at_empty_line`] on the binding's arguments, before the line is built.
-fn ends_at_empty_line(text: &str, chat_type: &str) -> bool {
-    text.bytes().next().unwrap_or(0) == 0 && !matches!(chat_type, "AFK" | "DND")
+fn ends_at_empty_line(text: &[u8], chat_type: &str) -> bool {
+    text.first().copied().unwrap_or(0) == 0 && !matches!(chat_type, "AFK" | "DND")
+}
+
+/// `SendChatMessage`'s escape walk (`0x50d6ff`-`0x50d7ae`): whether the line passes. After each
+/// `|`: `||` skips both bytes; `|c` skips past the first later `|r` (a case-sensitive search),
+/// leaving the run between unchecked; `|c` with no `|r` cuts `text` at the `|` and passes; anything
+/// else, the NUL after a trailing `|` included, fails.
+pub fn chat_escapes_valid(text: &mut Vec<u8>) -> bool {
+    let mut i = 0usize;
+    while let Some(off) = text[i..].iter().position(|&b| b == b'|') {
+        let pipe = i + off;
+        match text.get(pipe + 1) {
+            Some(b'|') => i = pipe + 2,
+            Some(b'c') => {
+                // The search starts at the `|c`, which cannot itself match `|r`.
+                match text[pipe..]
+                    .windows(2)
+                    .position(|w| w == b"|r")
+                    .map(|p| pipe + p)
+                {
+                    // Past the closer: its `|` must not reach the loop head, where `|r` fails.
+                    Some(closer) => i = closer + 2,
+                    None => {
+                        text.truncate(pipe);
+                        return true;
+                    }
+                }
+            }
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// The UTF-8 test (`0x7e0ec0`), walking the line with the decoder (`0x47bd40`): a lead byte
+/// `10xxxxxx`, `0xFE` or `0xFF` (`0x47be35`), or a trail byte not `10xxxxxx` (`0x47be0b`), fails;
+/// a NUL, one that cuts a sequence included (`0x47bdfa`), ends the walk valid. Forms of up to six
+/// bytes and overlong ones pass.
+fn utf8_valid(bytes: &[u8]) -> bool {
+    let mut at = 0;
+    loop {
+        let lead = bytes.get(at).copied().unwrap_or(0);
+        if lead == 0 {
+            return true;
+        }
+        at += 1;
+        let extra = if lead & 0xFE == 0xFC {
+            5
+        } else if lead & 0xFC == 0xF8 {
+            4
+        } else if lead & 0xF8 == 0xF0 {
+            3
+        } else if lead & 0xF0 == 0xE0 {
+            2
+        } else if lead & 0xE0 == 0xC0 {
+            1
+        } else if lead & 0x80 != 0 {
+            return false;
+        } else {
+            0
+        };
+        for _ in 0..extra {
+            let next = bytes.get(at).copied().unwrap_or(0);
+            if next == 0 {
+                return true;
+            }
+            at += 1;
+            if next & 0xC0 != 0x80 {
+                return false;
+            }
+        }
+    }
 }
 
 impl super::UiScript {
@@ -149,36 +247,75 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "SendChatMessage",
         lua.create_function(
-            |lua, (text, chat_type, language, target): (String, Option<String>, Value, Value)| {
-                let chat_type = chat_type
-                    .unwrap_or_else(|| "SAY".into())
-                    .to_ascii_uppercase();
-                // The language is read only past the empty-line gate. The line is queued
-                // anyway: the type check that precedes the gate is the app's, and the drain
-                // applies the gate after it.
-                let reads_language = !ends_at_empty_line(&text, &chat_type);
+            |lua, (text, chat_type, language, target): (Value, Value, Value, Value)| {
+                // The action gate with kind 10 passes every caller (`0x50d17b` -> `0x5191d9`, its
+                // table row 3, `0x519247`); with no active player the call returns silently
+                // (`0x50d18b`-`0x50d1ab`), before any argument is read.
+                if super::calls::ask_host(lua, &super::HostAsk::ActivePlayer)
+                    == Some(super::HostAnswer::Declined)
+                {
+                    return Ok(());
+                }
+                // A non-string line is the usage error (`0x50d889`).
+                let Some(line) = lua.coerce_string(text)? else {
+                    return Err(mlua::Error::RuntimeError(
+                        "Usage: SendChatMessage(text [,type] [,language] [,targetPlayer])".into(),
+                    ));
+                };
+                let text = line.as_bytes().to_vec();
+                // A string type is looked up (`0x50d203` -> `0x4fbb20`) and a miss is the error
+                // (`0x50d20f`); any other value keeps SAY, all ahead of the language.
+                let chat_type = super::binding_abi::optional_string(lua, &chat_type)
+                    .map_or_else(|| "SAY".into(), |t| t.to_ascii_uppercase());
+                if !chat_type_known(&chat_type) {
+                    return Err(mlua::Error::RuntimeError(
+                        "SendChatMessage(): Unknown chat type".into(),
+                    ));
+                }
+                // An empty line of any type but AFK and DND ends the call (`0x50d229`-`0x50d231`).
+                if ends_at_empty_line(&text, &chat_type) {
+                    return Ok(());
+                }
+                // The line must walk as UTF-8 (`0x50d238` -> `0x7e0ec0`), else the error (`0x50d244`).
+                if !utf8_valid(&text) {
+                    return Err(mlua::Error::RuntimeError(
+                        "SendChatMessage(): Chat message must be UTF-8 text".into(),
+                    ));
+                }
+                // A string language is looked up and a miss is the error (`0x50d28b`, `0x50d297`).
                 let language = match super::binding_abi::optional_string(lua, &language) {
-                    Some(name) if reads_language => {
+                    Some(name) => {
                         let model = lua
                             .app_data_ref::<crate::script::ModelCell>()
                             .expect("model app_data");
                         let id = language_id(&model.language_table, &name);
-                        Some(
-                            id.ok_or_else(|| mlua::Error::RuntimeError("Unknown language".into()))?,
-                        )
+                        Some(id.ok_or_else(|| {
+                            mlua::Error::RuntimeError("SendChatMessage(): Unknown language".into())
+                        })?)
                     }
-                    _ => None,
+                    None => None,
                 };
                 // `lua_isstring` then `lua_tostring`: a number is its text, so `2.7` reaches the
                 // channel's string-to-int as "2.7", which reads 2.
                 let target = super::binding_abi::optional_string(lua, &target);
-                crate::script::model_mut_of(lua).chat_sends.push(ChatSend {
+                let send = ChatSend {
                     text,
                     chat_type,
                     target,
                     language,
-                });
-                Ok(())
+                };
+                // The rest of the verb runs on the host inside the call (`0x50d170`).
+                match super::calls::ask_host(lua, &super::HostAsk::ChatSend(send.clone())) {
+                    Some(super::HostAnswer::LuaError(msg)) => {
+                        Err(mlua::Error::RuntimeError(msg.into()))
+                    }
+                    Some(_) => Ok(()),
+                    // No host lent: the VM's own record, which only its tests read.
+                    None => {
+                        crate::script::model_mut_of(lua).chat_sends.push(send);
+                        Ok(())
+                    }
+                }
             },
         )?,
     )?;
@@ -186,7 +323,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 }
 
 impl super::UiScript {
-    /// Drain the lines `SendChatMessage` queued since the last call.
+    /// Drain the lines `SendChatMessage` recorded with no host lent, which only the VM's tests make.
     pub fn take_chat_sends(&mut self) -> Vec<ChatSend> {
         drain_field!(self, chat_sends)
     }
@@ -377,5 +514,46 @@ mod language_tests {
             1,
             "the list changing fires once; the same list again is silent"
         );
+    }
+
+    /// The escape walk (`0x50d6ff`-`0x50d7ae`): colour runs, links inside them and even pipe runs
+    /// pass; any other escape, a bare closer and a trailing pipe fail; an unclosed `|c` cuts.
+    #[test]
+    fn the_escape_walk_passes_runs_and_cuts_an_unclosed_colour() {
+        for ok in [
+            "|cffff0000red|r",
+            "before |cffff0000red|r after",
+            "|cffAA0000 a |cff00BB00 b |r",
+            "|cffa335ee|Hitem:12345:0:0:0|h[Thunderfury]|h|r",
+            "a || b",
+            "||||",
+        ] {
+            let mut line = ok.as_bytes().to_vec();
+            assert!(crate::script::chat_escapes_valid(&mut line), "{ok:?}");
+            assert_eq!(line, ok.as_bytes(), "{ok:?} verbatim");
+        }
+        for bad in [
+            "|r",
+            "|Hitem:1:0:0:0|h[x]|h",
+            "|h",
+            "|T",
+            "|n",
+            "|C",
+            "trailing |",
+            "|||",
+        ] {
+            assert!(
+                !crate::script::chat_escapes_valid(&mut bad.as_bytes().to_vec()),
+                "{bad:?}"
+            );
+        }
+        for (line, cut) in [
+            ("keep|cff00ff00dropped", "keep"),
+            ("keep|cff00ff00x|Ry", "keep"),
+        ] {
+            let mut bytes = line.as_bytes().to_vec();
+            assert!(crate::script::chat_escapes_valid(&mut bytes), "{line:?}");
+            assert_eq!(bytes, cut.as_bytes(), "{line:?}");
+        }
     }
 }

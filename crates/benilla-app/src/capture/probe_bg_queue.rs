@@ -86,7 +86,7 @@ fn bg_queue_probe(
             let _ = net.0.send(ClientCommand::Chat {
                 kind: crate::net::ChatKind::Say,
                 target: None,
-                text: ".revive".to_string(),
+                text: ".revive".to_string().into(),
                 language: None,
             });
             // A body under the bracket floor is refused at the hello, with no list to join from.
@@ -96,7 +96,7 @@ fn bg_queue_probe(
                 let _ = net.0.send(ClientCommand::Chat {
                     kind: crate::net::ChatKind::Say,
                     target: None,
-                    text: format!(".levelup {}", QUEUE_LEVEL - level),
+                    text: format!(".levelup {}", QUEUE_LEVEL - level).into(),
                     language: None,
                 });
             }
@@ -105,7 +105,7 @@ fn bg_queue_probe(
             let _ = net.0.send(ClientCommand::Chat {
                 kind: crate::net::ChatKind::Say,
                 target: None,
-                text: format!(".go xyz {x} {y} {z} 0"),
+                text: format!(".go xyz {x} {y} {z} 0").into(),
                 language: None,
             });
             probe.phase = Phase::Hopped { sent_at: now };

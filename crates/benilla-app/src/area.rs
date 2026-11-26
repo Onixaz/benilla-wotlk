@@ -176,6 +176,8 @@ struct ZoneCache {
     zone_id: Option<u32>,
     zone_text: String,
     subzone_text: String,
+    /// The real zone text (`[0xbd0780]`), the channels' zone name.
+    real_zone_text: String,
     minimap_text: String,
     /// Whether the last resolve was indoors.
     indoor: bool,
@@ -225,6 +227,7 @@ fn feed_zone_events(
     mut cache: Local<crate::ui_script::VmMemo<ZoneCache>>,
     mut place: ResMut<PlayerPlace>,
     mut ids: ResMut<ZoneIds>,
+    cinematic: Option<Res<crate::cinematic::Cinematic>>,
 ) {
     let (Some(mut script), Some(areas)) = (vm.turn(), areas) else {
         return;
@@ -382,6 +385,13 @@ fn feed_zone_events(
     };
     let pvp_type = pvp.map_or("", |(ty, _)| ty);
 
+    // A new, non-empty real zone text is stored, then runs the chat's zone update ahead of the
+    // zone event (`0x5205e7`-`0x520680`, `0x5206a6`).
+    let zone_update = !real_zone_text.is_empty()
+        && real_zone_text.to_lowercase() != cache.real_zone_text.to_lowercase();
+    if zone_update {
+        cache.real_zone_text = real_zone_text.clone();
+    }
     script.set_zone_texts(benilla_ui::script::ZoneTexts {
         zone: signal.zone_text.clone(),
         real_zone: real_zone_text,
@@ -396,6 +406,15 @@ fn feed_zone_events(
         pvp_poi: leaf_row.flags & 0x8000 != 0,
     });
 
+    let flags = self_store.single().ok().map(|s| s.0.unit_flags());
+    let (running, waiting) = cinematic
+        .as_deref()
+        .map_or((false, false), |c| (c.is_playing(), c.is_waiting()));
+    if zone_update && crate::ui_chat::zone_text_runs_zone_update(flags, running, waiting) {
+        if let Some(ui) = script.queue() {
+            ui.world(crate::ui_chat::zone_update_step);
+        }
+    }
     if let Some(event) = event {
         script.fire_event(event, vec![]);
         debug!(

@@ -42,6 +42,10 @@ local function button2()
 end
 local VERBS = {
     { "taxi", function() return UnitOnTaxi("player") end },
+    { "chan1", function() return (select(2, GetChannelName(1))) end },
+    { "chann", function() return select("#", GetChannelList()) end },
+    { "chanl", function() return table.concat({ GetChannelList() }, ",") end },
+    { "roster1", function() return CHARZ_CHAN and (GetChannelRosterInfo(CHARZ_CHAN, 1)) end },
     { "achcan", function() return CanShowAchievementUI() end },
     { "achcrit", function() return CHARZ_CRIT and (select(4, GetAchievementCriteriaInfo(CHARZ_CRIT))) end },
     { "achtracked", function() return GetNumTrackedAchievements() end },
@@ -13113,6 +13117,656 @@ fn remove_glyph_from_socket_sends_inside_the_call() {
         "socket 2 alone, sent before the chunk returned"
     );
     assert_eq!(left, i64::from(spell), "the glyph waits for the server");
+}
+
+// ── Chat channels: the records read live, the list's update and the roster's names (#1283) ──────
+
+/// `SMSG_CHANNEL_NOTIFY` for `channel`.
+fn channel_notice(
+    notice: u8,
+    channel: &str,
+    tail: benilla_protocol::messages::ChannelNoticeTail,
+) -> SessionEvent {
+    SessionEvent::ChannelNotify {
+        notice,
+        channel: channel.into(),
+        tail,
+    }
+}
+
+/// Our `YOU_JOINED` and `YOU_LEFT` for `channel`.
+/// The join verb ahead of its confirm: 12340 claims the record at the join (`0x507c47`), and a
+/// `YOU_JOINED` with no record writes nothing (`0x5078a4`).
+fn join_charz(rig: &mut Rig) {
+    if !rig
+        .app
+        .world()
+        .contains_resource::<crate::net::NetCommands>()
+    {
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        rig.app.insert_resource(crate::net::NetCommands(tx));
+    }
+    super::live::with_live_world(rig.app.world_mut(), |s| s.run("JoinChannelByName('Charz')"))
+        .expect("a VM")
+        .unwrap();
+}
+
+fn joined_notice(channel: &str) -> SessionEvent {
+    use benilla_protocol::messages::{channel_notice, ChannelNoticeTail};
+    channel_notice(
+        channel_notice::YOU_JOINED,
+        channel,
+        ChannelNoticeTail::YouJoined {
+            flags: 0,
+            instance: 0,
+            text: None,
+        },
+    )
+}
+
+fn left_notice(channel: &str) -> SessionEvent {
+    use benilla_protocol::messages::{channel_notice, ChannelNoticeTail};
+    channel_notice(
+        channel_notice::YOU_LEFT,
+        channel,
+        ChannelNoticeTail::YouLeft { constant: false },
+    )
+}
+
+/// The channel events and the auction marker (`|`), with the channel verbs' answers at each.
+fn channel_order(seen: &[Seen]) -> Vec<String> {
+    seen.iter()
+        .filter_map(|s| match s.event.as_str() {
+            "CHANNEL_UI_UPDATE" | "CHANNEL_COUNT_UPDATE" | "CHANNEL_ROSTER_UPDATE" => {
+                Some(s.line(&["chan1", "chanl", "roster1"]))
+            }
+            "CHAT_MSG_CHANNEL_NOTICE" => Some(format!(
+                "{} {} | {}",
+                s.event,
+                s.args.split(' ').next().unwrap_or_default(),
+                s.line(&["chan1", "chanl"])
+                    .split(" | ")
+                    .nth(1)
+                    .unwrap_or_default()
+            )),
+            "AUCTION_HOUSE_DISABLED" => Some("|".to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The join's confirm relists in its handler before the notice line (`0x507880` -> `0x505d40`);
+/// the leave marks the record left and relists before its line (`0x507900`: `0x50792c`,
+/// `0x507a18`), then drops it and relists again after (`0x50eaa5` -> `0x507a30`, `0x507a78`), and
+/// `GetChannelName` and `GetChannelList` read the records at each event (`0xbcf094`): a left record
+/// answers neither from the first relist on. Each fires between the packets around it.
+#[test]
+fn a_join_and_a_leave_relist_in_their_handlers_and_read_the_records_live() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    join_charz(&mut rig);
+    let seen = rig.packets(
+        vec![
+            closed_house(),
+            joined_notice("Charz"),
+            closed_house(),
+            left_notice("Charz"),
+            closed_house(),
+        ],
+        1,
+    );
+    assert_eq!(
+        channel_order(&seen),
+        [
+            "|",
+            "CHANNEL_UI_UPDATE | chan1=Charz chanl=1,Charz roster1=nil",
+            "CHAT_MSG_CHANNEL_NOTICE YOU_JOINED | chan1=Charz chanl=1,Charz",
+            "|",
+            "CHANNEL_UI_UPDATE | chan1=nil chanl= roster1=nil",
+            "CHAT_MSG_CHANNEL_NOTICE YOU_LEFT | chan1=nil chanl=",
+            "CHANNEL_UI_UPDATE | chan1=nil chanl= roster1=nil",
+            "|",
+        ]
+    );
+}
+
+/// The channel records outlive the UI shutdown's `PLAYER_LEAVING_WORLD` (`0x528edc`) and
+/// `PLAYER_LOGOUT`: the game shutdown runs the UI's (`0x529163` -> `0x528f00`) before the chat's
+/// (`0x529172` -> `0x5072b0`), so a logout handler still reads the joined channel.
+#[test]
+fn the_channels_answer_at_the_logout_events() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    join_charz(&mut rig);
+    rig.packets(vec![joined_notice("Charz")], 1);
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run(
+            "RegisterCVar('charzChanLeaving', '-') RegisterCVar('charzChanLogout', '-') \
+             local f = CreateFrame('Frame') \
+             f:RegisterEvent('PLAYER_LEAVING_WORLD') f:RegisterEvent('PLAYER_LOGOUT') \
+             f:SetScript('OnEvent', function(_, e) \
+               local n = GetChannelName('Charz') \
+               SetCVar(e == 'PLAYER_LOGOUT' and 'charzChanLogout' or 'charzChanLeaving', \
+                 n .. ':' .. table.concat({ GetChannelList() }, ',')) end)",
+        )
+    })
+    .expect("a VM")
+    .unwrap();
+    rig.app
+        .world_mut()
+        .resource_mut::<NextState<crate::char_select::ClientState>>()
+        .set(crate::char_select::ClientState::CharSelect);
+    rig.run(2);
+    let cvars = rig.app.world().resource::<crate::cvars::Cvars>();
+    assert_eq!(cvars.get("charzChanLeaving"), Some("1:1,Charz"));
+    assert_eq!(cvars.get("charzChanLogout"), Some("1:1,Charz"));
+}
+
+/// A reload reads the records where they live: the fresh files' `GetChannelName` answers the joined
+/// channel from `PLAYER_LOGIN` on, and nothing relists, as 12340's UI load fires no
+/// `CHANNEL_UI_UPDATE`.
+#[test]
+fn a_reload_reads_the_joined_channels_with_no_relist() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    join_charz(&mut rig);
+    rig.packets(vec![joined_notice("Charz")], 1);
+    super::live::with_live_world(rig.app.world_mut(), |s| s.run("ReloadUI()"))
+        .expect("a VM")
+        .unwrap();
+    rig.run(4);
+    let seen = rig.take();
+    assert_eq!(
+        pin(
+            &seen,
+            &["PLAYER_LOGIN", "CHANNEL_UI_UPDATE"],
+            &["chan1", "chann"]
+        ),
+        ["PLAYER_LOGIN | chan1=Charz chann=2"]
+    );
+}
+
+/// The selected channel's display list (`0x503990`) waits on a member's name; the name answer's
+/// callback (`0x4ffe30`) fires the count and the roster in the answer's handler, with the roster
+/// reading the name, in whichever order the two packets come. A name cached before the list fires
+/// them in the list's handler.
+#[test]
+fn the_roster_fires_at_its_last_name_in_either_packet_order() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    join_charz(&mut rig);
+    rig.packets(vec![joined_notice("Charz")], 1);
+    // The custom header's one entry: group header, world header, custom header, Charz.
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("GetNumDisplayChannels() SetSelectedDisplayChannel(4) CHARZ_CHAN = 4")
+    })
+    .expect("a VM")
+    .unwrap();
+    const ANN: u64 = 0x41;
+    const BOB: u64 = 0x42;
+    let list = |guid| SessionEvent::ChannelList {
+        display: true,
+        channel: "Charz".into(),
+        flags: 0,
+        members: vec![(guid, 0)],
+    };
+    let seen = rig.packets(
+        vec![
+            list(ANN),
+            closed_house(),
+            name_answer(ANN, "Ann"),
+            closed_house(),
+        ],
+        1,
+    );
+    assert_eq!(
+        channel_order(&seen),
+        [
+            "|",
+            "CHANNEL_COUNT_UPDATE 4 1 | chan1=Charz chanl=1,Charz roster1=Ann",
+            "CHANNEL_ROSTER_UPDATE 4 1 | chan1=Charz chanl=1,Charz roster1=Ann",
+            "|",
+        ],
+        "the list waits; the answer's handler fires the roster"
+    );
+    assert!(
+        rx.try_iter()
+            .any(|c| matches!(c, crate::net::ClientCommand::NameQuery { guid: ANN })),
+        "the list asks the uncached name"
+    );
+    let seen = rig.packets(
+        vec![
+            name_answer(BOB, "Bob"),
+            closed_house(),
+            list(BOB),
+            closed_house(),
+        ],
+        1,
+    );
+    assert_eq!(
+        channel_order(&seen),
+        [
+            "|",
+            "CHANNEL_COUNT_UPDATE 4 1 | chan1=Charz chanl=1,Charz roster1=Bob",
+            "CHANNEL_ROSTER_UPDATE 4 1 | chan1=Charz chanl=1,Charz roster1=Bob",
+            "|",
+        ],
+        "a cached name: the list's own handler fires the roster"
+    );
+}
+
+/// The roster's name callback (`0x4ffe30`) joins the chat module's callbacks on the record in the
+/// order they were registered (`0x67d880` appends, `0x680d03`-`0x680d2c` runs): an uncached
+/// speaker's line asked first adds before the roster fires, and a display list asked first fires
+/// the roster before the line, at the one name answer.
+#[test]
+fn the_roster_and_a_held_line_run_in_registration_order() {
+    const EVENTS: &[&str] = &[
+        "CHAT_MSG_SAY",
+        "CHANNEL_COUNT_UPDATE",
+        "CHANNEL_ROSTER_UPDATE",
+    ];
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    join_charz(&mut rig);
+    rig.packets(vec![joined_notice("Charz")], 1);
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("GetNumDisplayChannels() SetSelectedDisplayChannel(4)")
+    })
+    .expect("a VM")
+    .unwrap();
+    let list = |guid| SessionEvent::ChannelList {
+        display: true,
+        channel: "Charz".into(),
+        flags: 0,
+        members: vec![(guid, 0)],
+    };
+    for (line_first, guid, name) in [(true, 0x61, "Ann"), (false, 0x62, "Bob")] {
+        let asks = if line_first {
+            vec![say_from(guid, "hi"), list(guid)]
+        } else {
+            vec![list(guid), say_from(guid, "hi")]
+        };
+        let seen = rig.packets(asks, 2);
+        assert!(
+            fired(&seen, EVENTS).is_empty(),
+            "{:?}",
+            fired(&seen, EVENTS)
+        );
+        let seen = rig.packets(vec![name_answer(guid, name)], 2);
+        let expected: &[&str] = if line_first {
+            &[
+                "CHAT_MSG_SAY",
+                "CHANNEL_COUNT_UPDATE",
+                "CHANNEL_ROSTER_UPDATE",
+            ]
+        } else {
+            &[
+                "CHANNEL_COUNT_UPDATE",
+                "CHANNEL_ROSTER_UPDATE",
+                "CHAT_MSG_SAY",
+            ]
+        };
+        assert_eq!(
+            fired(&seen, EVENTS),
+            expected,
+            "line registered first: {line_first}"
+        );
+    }
+}
+
+/// The confirmed join writes the notice's flags byte into the record (`0x5078e1`, `0x5078eb`), so a
+/// display list carrying the same flags finds them equal at `0x503a62` and fires nothing; one with
+/// other flags fires `CHANNEL_FLAGS_UPDATED`.
+#[test]
+fn the_join_writes_its_flags_and_an_equal_display_list_fires_nothing() {
+    use benilla_protocol::messages::{channel_notice, ChannelNoticeTail};
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    join_charz(&mut rig);
+    rig.packets(
+        vec![channel_notice(
+            channel_notice::YOU_JOINED,
+            "Charz",
+            ChannelNoticeTail::YouJoined {
+                flags: 0x18,
+                instance: 0,
+                text: None,
+            },
+        )],
+        1,
+    );
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("GetNumDisplayChannels() SetSelectedDisplayChannel(4)")
+    })
+    .expect("a VM")
+    .unwrap();
+    let list = |flags| SessionEvent::ChannelList {
+        display: true,
+        channel: "Charz".into(),
+        flags,
+        members: Vec::new(),
+    };
+    let seen = rig.packets(vec![list(0x18)], 1);
+    assert!(
+        fired(&seen, &["CHANNEL_FLAGS_UPDATED"]).is_empty(),
+        "the join's flags are the record's"
+    );
+    let seen = rig.packets(vec![list(0x1a)], 1);
+    assert_eq!(
+        fired(&seen, &["CHANNEL_FLAGS_UPDATED"]),
+        ["CHANNEL_FLAGS_UPDATED"]
+    );
+}
+
+/// The voice notices write the record's flags byte ahead of their line and rebuild after it
+/// (`0x50e9b0`, `0x50ea4d`, `0x50e9f2`; `0x50eaf3` -> `0x504840`): `VOICE_ON` fires its line then
+/// `CHANNEL_UI_UPDATE`, `VOICE_ENABLED` only the rebuild, and a display list then compares against
+/// the written byte (`0x503a62`). A notice for a channel with no record writes and rebuilds nothing.
+#[test]
+fn the_voice_notices_write_the_record_and_rebuild_after_the_line() {
+    use benilla_protocol::messages::{channel_notice, ChannelNoticeTail};
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    join_charz(&mut rig);
+    rig.packets(
+        vec![channel_notice(
+            channel_notice::YOU_JOINED,
+            "Charz",
+            ChannelNoticeTail::YouJoined {
+                flags: 0x18,
+                instance: 0,
+                text: None,
+            },
+        )],
+        1,
+    );
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("GetNumDisplayChannels() SetSelectedDisplayChannel(4)")
+    })
+    .expect("a VM")
+    .unwrap();
+    let voice =
+        |notice, channel: &str| channel_notice(notice, channel, ChannelNoticeTail::Actor(ME));
+    let list = |flags| SessionEvent::ChannelList {
+        display: true,
+        channel: "Charz".into(),
+        flags,
+        members: Vec::new(),
+    };
+    const EVENTS: &[&str] = &[
+        "CHAT_MSG_CHANNEL_NOTICE_USER",
+        "CHANNEL_UI_UPDATE",
+        "CHANNEL_FLAGS_UPDATED",
+        "AUCTION_HOUSE_DISABLED",
+    ];
+    let seen = rig.packets(
+        vec![
+            voice(channel_notice::VOICE_ON, "Charz"),
+            closed_house(),
+            list(0x98),
+        ],
+        1,
+    );
+    assert_eq!(
+        fired(&seen, EVENTS),
+        [
+            "CHAT_MSG_CHANNEL_NOTICE_USER",
+            "CHANNEL_UI_UPDATE",
+            "AUCTION_HOUSE_DISABLED"
+        ],
+        "the line, then the rebuild; the list's 0x98 is the record's"
+    );
+    let seen = rig.packets(
+        vec![
+            voice(channel_notice::VOICE_OFF, "Charz"),
+            closed_house(),
+            list(0x18),
+        ],
+        1,
+    );
+    assert_eq!(
+        fired(&seen, EVENTS),
+        [
+            "CHAT_MSG_CHANNEL_NOTICE_USER",
+            "CHANNEL_UI_UPDATE",
+            "AUCTION_HOUSE_DISABLED"
+        ],
+        "the clear brings the record back to 0x18"
+    );
+    let seen = rig.packets(
+        vec![
+            voice(channel_notice::VOICE_ENABLED, "Charz"),
+            closed_house(),
+            list(0x98),
+        ],
+        1,
+    );
+    assert_eq!(
+        fired(&seen, EVENTS),
+        ["CHANNEL_UI_UPDATE", "AUCTION_HOUSE_DISABLED"],
+        "the set adds no line"
+    );
+    let seen = rig.packets(vec![voice(channel_notice::VOICE_ON, "Elsewhere")], 1);
+    assert_eq!(
+        fired(&seen, EVENTS),
+        ["CHAT_MSG_CHANNEL_NOTICE_USER"],
+        "no record: the line alone"
+    );
+}
+
+/// The roster's callback is registered only on a member the cache missed at list time (`0x503bdb`):
+/// a re-answer for a member that was cached then (here after `SMSG_INVALIDATE_PLAYER`) leaves the
+/// count, and the uncached member's answer fires the count and the roster.
+#[test]
+fn a_cached_members_answer_leaves_the_rosters_count() {
+    const EVENTS: &[&str] = &["CHANNEL_COUNT_UPDATE", "CHANNEL_ROSTER_UPDATE"];
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    join_charz(&mut rig);
+    rig.packets(vec![joined_notice("Charz")], 1);
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("GetNumDisplayChannels() SetSelectedDisplayChannel(4)")
+    })
+    .expect("a VM")
+    .unwrap();
+    const ANN: u64 = 0x71;
+    const CAL: u64 = 0x73;
+    rig.packets(vec![name_answer(CAL, "Cal")], 1);
+    let seen = rig.packets(
+        vec![SessionEvent::ChannelList {
+            display: true,
+            channel: "Charz".into(),
+            flags: 0,
+            members: vec![(ANN, 0), (CAL, 0)],
+        }],
+        1,
+    );
+    assert!(fired(&seen, EVENTS).is_empty(), "Ann's name is out");
+    let seen = rig.packets(
+        vec![
+            SessionEvent::InvalidatePlayer { guid: CAL },
+            name_answer(CAL, "Cal"),
+        ],
+        1,
+    );
+    assert!(
+        fired(&seen, EVENTS).is_empty(),
+        "Cal's record carries no roster callback"
+    );
+    let seen = rig.packets(vec![name_answer(ANN, "Ann")], 1);
+    assert_eq!(fired(&seen, EVENTS), EVENTS);
+}
+
+/// `JoinChannelByName("General")` sends the join and claims a zone channel's record inside the call
+/// (`0x507a80`) with no `CHANNEL_UI_UPDATE`, and `GetChannelName` reads the claimed record in the
+/// same chunk; the zone walk's rename relists nothing either (`0x508090` calls no `0x505d40`), and
+/// the next `GetChannelName` reads the renamed record.
+#[test]
+fn a_join_verb_and_the_walks_rename_claim_records_with_no_relist() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    // The rig has no asset chain: `ChatChannels.dbc` is read here, as the startup load reads it.
+    let data = benilla_formats::wow_data().expect("install");
+    let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+    rig.app
+        .world_mut()
+        .resource_mut::<crate::ui_chat::ChannelState>()
+        .channels =
+        benilla_formats::load_chat_channels_catalog(&mut chain).expect("ChatChannels.dbc");
+    let areas = benilla_formats::load_area_table_catalog(&mut chain).expect("AreaTable.dbc");
+    rig.app.insert_resource(crate::area::AreaTableRes(areas));
+    rig.run(1);
+    rig.take();
+    // Elwynn Forest, the zone id the verbs compose the catalog for.
+    rig.app
+        .insert_resource(crate::area::ZoneIds { zone: 12, area: 12 });
+    let number = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run("JoinChannelByName('General')")?;
+        s.eval::<i64>("return (GetChannelName('General - Elwynn Forest'))")
+    })
+    .expect("a VM")
+    .unwrap();
+    assert_ne!(number, 0, "the record is claimed inside the call");
+    assert!(
+        rx.try_iter().any(|c| matches!(
+            c,
+            crate::net::ClientCommand::JoinChannel { ref name, .. } if name == "General - Elwynn Forest"
+        )),
+        "the join went out inside the call"
+    );
+    rig.run(2);
+    assert!(
+        fired(&rig.take(), &["CHANNEL_UI_UPDATE"]).is_empty(),
+        "the join verb relists nothing"
+    );
+    crate::ui_chat::apply_walk(
+        &[crate::ui_chat::WalkStep::Rename {
+            old: "General - Elwynn Forest".into(),
+            new: "General - Westfall".into(),
+        }],
+        &mut rig
+            .app
+            .world_mut()
+            .resource_mut::<crate::ui_chat::ChannelState>(),
+        &crate::net::NetCommands(crossbeam_channel::unbounded().0),
+    );
+    rig.run(2);
+    assert!(
+        fired(&rig.take(), &["CHANNEL_UI_UPDATE"]).is_empty(),
+        "the walk's rename relists nothing"
+    );
+    // The name leg finds the record whatever its state (`0x4fe8e4`).
+    let renamed = super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.eval::<i64>("return (GetChannelName('General - Westfall'))")
+    })
+    .expect("a VM")
+    .unwrap();
+    assert_eq!(renamed, number, "the record read at the call");
+}
+
+/// The join's record is in state 1 until its `YOU_JOINED` (`0x5077a7`, `0x5078b3`): the number leg
+/// misses (`0x4fe8a3`), the name leg finds it (`0x4fe8e4`), `GetChannelList` and `ListChannels`
+/// skip it (`0x4fe681`, `0x50db1a`), a `CHANNEL` send to its number goes nowhere (`0x50d565`) and
+/// `LeaveChannelByName` sends nothing (`0x5095b8`); the confirm makes each read it.
+#[test]
+fn a_join_awaiting_its_confirm_reads_as_joined_by_nothing() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let (tx, rx) = crossbeam_channel::unbounded();
+    rig.app.insert_resource(crate::net::NetCommands(tx));
+    join_charz(&mut rig);
+    rx.try_iter().for_each(drop);
+    const READ: &str = "local n, name, i = GetChannelName(1)
+        local byname = GetChannelName('Charz')
+        return table.concat({ n, tostring(name), i, byname, select('#', GetChannelList()) }, ',')";
+    let read = |rig: &mut Rig| {
+        super::live::with_live_world(rig.app.world_mut(), |s| s.eval::<String>(READ))
+            .expect("a VM")
+            .unwrap()
+    };
+    let lines = |rig: &mut Rig| {
+        super::live::with_live_world(rig.app.world_mut(), |s| {
+            s.run(
+                "LINES = {} local f = CreateFrame('Frame') f:RegisterEvent('CHAT_MSG_CHANNEL_LIST')
+                 f:SetScript('OnEvent', function(_, _, text) LINES[#LINES + 1] = text end)
+                 ListChannels() f:UnregisterAllEvents()",
+            )?;
+            s.eval::<String>("return table.concat(LINES, '|')")
+        })
+        .expect("a VM")
+        .unwrap()
+    };
+    let sends = |rig: &mut Rig| {
+        super::live::with_live_world(rig.app.world_mut(), |s| {
+            s.run("SendChatMessage('hi', 'CHANNEL', nil, 1) LeaveChannelByName('Charz')")
+        })
+        .expect("a VM")
+        .unwrap();
+        rx.try_iter()
+            .filter(|c| {
+                matches!(
+                    c,
+                    crate::net::ClientCommand::LeaveChannel { .. }
+                        | crate::net::ClientCommand::Chat { .. }
+                )
+            })
+            .count()
+    };
+    // A member's join shows only on a record in state 0, and asks no name before (`0x4fdf19`).
+    const ANN: u64 = 0x51;
+    let member = || {
+        channel_notice(
+            benilla_protocol::messages::channel_notice::JOINED,
+            "Charz",
+            benilla_protocol::messages::ChannelNoticeTail::Guid(ANN),
+        )
+    };
+    let seen = rig.packets(vec![member()], 1);
+    assert!(fired(&seen, &["CHAT_MSG_CHANNEL_JOIN"]).is_empty());
+    assert!(
+        !rx.try_iter()
+            .any(|c| matches!(c, crate::net::ClientCommand::NameQuery { guid: ANN })),
+        "the pending record's member notice ends before the name ask"
+    );
+    assert_eq!(read(&mut rig), "0,nil,0,1,0", "pending: only the name leg");
+    assert_eq!(lines(&mut rig), "", "ListChannels skips the pending record");
+    assert_eq!(
+        sends(&mut rig),
+        0,
+        "neither the send nor the leave goes out"
+    );
+    rig.packets(vec![joined_notice("Charz"), name_answer(ANN, "Ann")], 1);
+    let seen = rig.packets(vec![member()], 1);
+    assert_eq!(
+        fired(&seen, &["CHAT_MSG_CHANNEL_JOIN"]),
+        ["CHAT_MSG_CHANNEL_JOIN"]
+    );
+    assert_eq!(read(&mut rig), "1,Charz,0,1,2", "confirmed: every leg");
+    assert_eq!(lines(&mut rig), "[1. Charz] ");
+    assert_eq!(sends(&mut rig), 2, "the send and the leave go out");
 }
 
 /// A combat line's uncached item: the tradeskill line asks its record with its callback and shows

@@ -65,6 +65,20 @@ pub enum HostAsk {
     BindAnswers,
     /// The message display's chat arm: `text` through the chat add on `chat_type` (`0x521814` -> `0x509dd0`).
     ChatLine { chat_type: u8, text: String },
+    /// Whether the active player's object is held (`0x4d3790` -> `0x4d4db0`): `Done` when it is, `Declined` when not.
+    ActivePlayer,
+    /// `SendChatMessage`'s body past its argument reads: the language skill, the group gates, the AFK clear and the send (`0x50d2a5`-`0x50d695`).
+    ChatSend(super::ChatSend),
+    /// `SendAddonMessage`'s send (`0x500560`).
+    AddonSend(super::AddonSend),
+    /// A channel verb's send and its record writes (`0x507a80`, `0x5096d0`, `0x50dae0`).
+    Channel(super::ChannelCommand),
+    /// The join's profanity test on its typed name (`0x50d9c7` -> `0x509a50`, forced on): `Declined`
+    /// after `ERR_PROFANE_CHAT_NAME` shows (`0x50d9d8`), else `Done`.
+    ProfaneChannelName(String),
+    /// `guildRecruitmentChannel`'s change callback (`0x512750`): the mode setter on the value's
+    /// integer (`0x51275f` -> `0x508260`), its cascade or leave run in the call.
+    GuildRecruitmentMode(i32),
 }
 
 /// What the host answered a [`HostAsk`].
@@ -75,6 +89,10 @@ pub enum HostAnswer {
     BindIndex(u32),
     /// The step ran.
     Done,
+    /// The verb returned before its work, answering nothing.
+    Declined,
+    /// The verb raises this Lua error (`luaL_error`).
+    LuaError(&'static str),
 }
 
 /// What a guild bank swap's gates left for the verb to do.

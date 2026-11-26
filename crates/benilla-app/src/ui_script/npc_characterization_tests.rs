@@ -704,6 +704,98 @@ fn our_guild_id_watch_runs_before_the_stamp_drops_the_record() {
     );
 }
 
+/// Our guild id's watch runs the guild-recruitment cascade after its guild change and in the same update (`0x6e1bd9`, `0x6e1beb`): leaving the guild under AUTO with the chat ready signals `UPDATE_CHAT_WINDOWS` after `TABARD_CANSAVE_CHANGED`; another player's watch runs no cascade (`0x6e1be5`).
+#[test]
+fn our_guild_id_watch_runs_the_recruitment_cascade_after_its_guild_change() {
+    let Some(mut rig) = Rig::login(&guild_master()) else {
+        return;
+    };
+    let events = &["TABARD_CANSAVE_CHANGED", "UPDATE_CHAT_WINDOWS"];
+    rig.app
+        .world_mut()
+        .insert_resource(crate::ui_chat::ZoneChannelWalk::ready_chat());
+    const OTHER: u64 = 0x11;
+    rig.packets(vec![player_in(OTHER, 7)], 2);
+    let seen = rig.packets(
+        vec![SessionEvent::ObjectValues {
+            guid: OTHER,
+            fields: ObjectFields::from_pairs(&[(benilla_protocol::field::FIELD_PLAYER_GUILDID, 8)]),
+        }],
+        2,
+    );
+    assert_eq!(pin(&seen, events, &[]), ["TABARD_CANSAVE_CHANGED"]);
+    // The next packet's watch fires after it: the cascade ran in the update's own turn.
+    let seen = rig.packets(
+        vec![
+            self_values(&[(benilla_protocol::field::FIELD_PLAYER_GUILDID, 0)]),
+            self_values(&[(
+                benilla_protocol::field::FIELD_PLAYER_WATCHED_FACTION_INDEX,
+                3,
+            )]),
+        ],
+        2,
+    );
+    assert_eq!(
+        pin(
+            &seen,
+            &[
+                "TABARD_CANSAVE_CHANGED",
+                "UPDATE_CHAT_WINDOWS",
+                "UPDATE_FACTION"
+            ],
+            &[]
+        ),
+        [
+            "TABARD_CANSAVE_CHANGED",
+            "UPDATE_CHAT_WINDOWS",
+            "UPDATE_FACTION player"
+        ]
+    );
+}
+
+/// The player-flags watch writes the AFK mirror at the packet's step (`0x6e0fe7`, `0x6e1026`): a handler of the next packet's event that sends sees the server's clear, so no `CLEARED_AFK` and no empty AFK packet; a move of `0x8000` alone resyncs a refused optimistic `/afk`, a move outside `0x800e` (resting) does not.
+#[test]
+fn the_player_flags_watch_writes_the_afk_mirror_at_its_step() {
+    use crate::ui_chat::AfkMirror;
+    use benilla_protocol::field::{FIELD_PLAYER_FLAGS, FIELD_PLAYER_WATCHED_FACTION_INDEX};
+
+    let Some(mut rig) = Rig::login(&guild_master()) else {
+        return;
+    };
+    rig.packets(vec![self_values(&[(FIELD_PLAYER_FLAGS, 0x2)])], 2);
+    assert_eq!(rig.app.world().resource::<AfkMirror>().0, 2);
+    call(
+        &mut rig,
+        "local f = CreateFrame('Frame') f:RegisterEvent('UPDATE_FACTION')          f:SetScript('OnEvent', function() SendChatMessage('hi', 'SAY') end)",
+    );
+    let rx = tap(&mut rig);
+    rig.packets(
+        vec![
+            self_values(&[(FIELD_PLAYER_FLAGS, 0)]),
+            self_values(&[(FIELD_PLAYER_WATCHED_FACTION_INDEX, 3)]),
+        ],
+        2,
+    );
+    let kinds: Vec<_> = rx
+        .try_iter()
+        .filter_map(|c| match c {
+            ClientCommand::Chat { kind, .. } => Some(kind),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(kinds, [crate::net::ChatKind::Say], "no auto clear");
+    // A refused `/afk`: the mirror set with the bit clear; `0x8000` moving alone resyncs it.
+    rig.app.world_mut().resource_mut::<AfkMirror>().0 = 1;
+    rig.packets(vec![self_values(&[(FIELD_PLAYER_FLAGS, 0x20)])], 2);
+    assert_eq!(
+        rig.app.world().resource::<AfkMirror>().0,
+        1,
+        "resting is outside the mask"
+    );
+    rig.packets(vec![self_values(&[(FIELD_PLAYER_FLAGS, 0x8020)])], 2);
+    assert_eq!(rig.app.world().resource::<AfkMirror>().0, 0);
+}
+
 /// A stamp moving twice before its guild's answer: the second drop runs the first ask's callback unfound (`0x67a610` -> `0x67a61f` -> `0x67a533`), which the walk skips (`0x6e1b93`), so the answer walks once.
 #[test]
 fn a_pending_stamp_ask_dropped_with_its_record_never_walks() {

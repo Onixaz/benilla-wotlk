@@ -246,6 +246,7 @@ fn our_own_join_notice_is_unchanged() {
         "Mychan",
         ChannelNoticeTail::YouJoined {
             flags: 0,
+            instance: 0,
             text: None,
         },
     );
@@ -405,6 +406,7 @@ fn the_join_text_queues_a_second_line_and_the_voice_flag_nothing() {
         "Mychan".into(),
         &ChannelNoticeTail::YouJoined {
             flags: 0,
+            instance: 0,
             text: Some("Welcome".into()),
         },
     );

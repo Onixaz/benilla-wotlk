@@ -21,8 +21,6 @@ const FEEDS: &[&str] = &[
     "benilla_app::tutorial::feed_tutorials",
     "benilla_app::ui_action::feed::feed_actions",
     "benilla_app::ui_calendar::feed_calendar",
-    "benilla_app::ui_chat::channels::seed_channels",
-    "benilla_app::ui_chat::net::feed_channel_roster_names",
     "benilla_app::ui_focus::feed_focus",
     "benilla_app::ui_follow::feed_follow",
     "benilla_app::ui_gm_ticket::feed_gm_ticket",

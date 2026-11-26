@@ -362,9 +362,24 @@ fn store(model: &mut Model, key: &str, value: String) -> Option<String> {
 /// A by-name write from a binding (`SetCVar`, `ConsoleExec`, `SetGamma`, `SetWorldDetail`): the
 /// change is queued only when the value moved. `false`, with a warning, for an unknown name.
 /// A registered row's callback, run ahead of the store on every set, whichever verb sets it (`0x7668c0`).
-pub(super) fn set_callback(lua: &Lua, name: &str) {
+pub(super) fn set_callback(lua: &Lua, name: &str, value: &str) {
     if name.eq_ignore_ascii_case("previewTalents") && read_cvar(lua, name, |_| ()).is_some() {
         super::talent::preview_talents_changed(lua);
+    }
+    if name.eq_ignore_ascii_case("guildRecruitmentChannel")
+        && read_cvar(lua, name, |_| ()).is_some()
+    {
+        // `0x512750`: the mode setter on the value's integer, in the call (`0x51275f`). With no
+        // host lent there is no chat to act on: the setter's store alone (`0x508275`).
+        let mode = sstr_to_int(value);
+        let ask = super::HostAsk::GuildRecruitmentMode(mode);
+        if super::calls::ask_host(lua, &ask).is_none() {
+            let mut model = crate::script::model_mut_of(lua);
+            if model.guild_recruitment_mode != mode {
+                model.guild_recruitment_mode = mode;
+                model.guild_recruitment_changed = true;
+            }
+        }
     }
 }
 
@@ -669,7 +684,7 @@ pub(super) fn install_cvar_verbs(lua: &Lua) -> mlua::Result<()> {
                     return Err(mlua::Error::runtime(format!("\"{name}\" is read-only")));
                 }
             }
-            set_callback(lua, &name);
+            set_callback(lua, &name, &value);
             {
                 let mut model = crate::script::model_mut_of(lua);
                 if !write_cvar(&mut model, &name, value.clone()) {

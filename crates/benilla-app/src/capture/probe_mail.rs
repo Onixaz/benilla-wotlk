@@ -224,7 +224,7 @@ fn say(net: &NetCommands, text: String) {
     let _ = net.0.send(ClientCommand::Chat {
         kind: ChatKind::Say,
         target: None,
-        text,
+        text: text.into(),
         language: None,
     });
 }

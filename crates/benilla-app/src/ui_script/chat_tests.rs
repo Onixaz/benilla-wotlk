@@ -123,7 +123,7 @@ fn input_editbox_enter_drains_the_typed_line() {
     assert_eq!(
         sends
             .iter()
-            .map(|c| (c.text.as_str(), c.chat_type.as_str()))
+            .map(|c| (std::str::from_utf8(&c.text).unwrap(), c.chat_type.as_str()))
             .collect::<Vec<_>>(),
         vec![("hi", "YELL")]
     );
@@ -156,7 +156,11 @@ fn the_edit_box_speaks_the_language_picked_in_the_chat_menu() {
     assert_eq!(
         sends
             .iter()
-            .map(|c| (c.text.as_str(), c.chat_type.as_str(), c.language))
+            .map(|c| (
+                std::str::from_utf8(&c.text).unwrap(),
+                c.chat_type.as_str(),
+                c.language
+            ))
             .collect::<Vec<_>>(),
         vec![
             ("before", "SAY", Some(2)),
@@ -207,7 +211,7 @@ fn chat_box_arrows_edit_and_history_recalls() {
     assert_eq!(
         sends
             .iter()
-            .map(|c| (c.text.as_str(), c.chat_type.as_str()))
+            .map(|c| (std::str::from_utf8(&c.text).unwrap(), c.chat_type.as_str()))
             .collect::<Vec<_>>(),
         vec![("hi", "YELL")]
     );
@@ -1103,7 +1107,10 @@ fn the_stock_afk_and_dnd_commands_reach_the_wire() {
         assert!(s.key_input("ENTER"), "the box consumes ENTER");
         let sends = s.take_chat_sends();
         assert_eq!(sends.len(), 1, "{line:?} produced one send");
-        (sends[0].text.clone(), sends[0].chat_type.clone())
+        (
+            String::from_utf8(sends[0].text.clone()).unwrap(),
+            sends[0].chat_type.clone(),
+        )
     };
 
     // Half one: the stock `SlashCmdList` body sends the token.

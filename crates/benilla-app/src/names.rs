@@ -544,7 +544,7 @@ pub(crate) mod net {
             ui.world(move |world| crate::ui_guild_bank::name_landed(world, guid));
             ui.world(move |world| crate::ui_item_text::name_landed(world, guid));
             ui.world(move |world| crate::ui_achievement::name_landed(world, guid, true));
-            // The chat module's callbacks on the record (`0x503c80`, `0x503fb0`, `0x6cb990`).
+            // The chat module's callbacks on the record (`0x503c80`, `0x503fb0`, `0x6cb990`, `0x4ffe30`).
             ui.world(move |world| crate::ui_chat::name_landed(world, super::NameKey::Player(guid)));
         }
     }

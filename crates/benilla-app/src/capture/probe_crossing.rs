@@ -133,7 +133,7 @@ fn crossing_probe(
                 let _ = net.0.send(ClientCommand::Chat {
                     kind: crate::net::ChatKind::Say,
                     target: None,
-                    text: format!(".go xyz {x} {y} {z} {}", m as i32),
+                    text: format!(".go xyz {x} {y} {z} {}", m as i32).into(),
                     language: None,
                 });
                 return;
@@ -167,7 +167,7 @@ fn crossing_probe(
                 let _ = net.0.send(ClientCommand::Chat {
                     kind: crate::net::ChatKind::Say,
                     target: None,
-                    text: format!(".go xyz {x} {y} {} ", z + DROP_HEIGHT),
+                    text: format!(".go xyz {x} {y} {} ", z + DROP_HEIGHT).into(),
                     language: None,
                 });
                 probe.phase = Phase::Boarding {

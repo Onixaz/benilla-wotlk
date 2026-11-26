@@ -15,11 +15,14 @@ use crate::area::AreaTableRes;
 use crate::net::NetCommands;
 
 use super::edit::{ChannelState, SlotState};
-use super::recruitment::GuildRecruitmentCascade;
 
 /// `AreaTable.dbc` flag `0x08`, the walk's city gate, set on the six capitals; vmangos names it
 /// `AREA_FLAG_SLAVE_CAPITAL`, "Allow trade channel" (`DBCEnums.h:58`).
 const AREA_FLAG_TRADE_CHANNEL: u32 = 0x08;
+
+/// `AreaTable.dbc` flag `0x100`, the capital test the channel verbs' composition reads (`0x507b7d`,
+/// `0x5094be`).
+const AREA_FLAG_CAPITAL: u32 = 0x100;
 
 /// `AreaTable.dbc` flag `0x200`: the one row (id 3459, "City"), cached at load, whose localized
 /// name the city-named channels take.
@@ -34,95 +37,130 @@ pub(crate) fn city_word(areas: &benilla_formats::AreaTableCatalog) -> Option<&st
         .filter(|n| !n.is_empty())
 }
 
-/// The walk's own state; the joined list is not copied here, as the reference's pass 1 walks the
-/// slot array itself ([`ChannelState::joined`]).
+/// The zone update's own state; the joined list is not copied here, as the walk reads the records
+/// themselves ([`ChannelState::joined`]).
 #[derive(Resource, Default)]
 pub(crate) struct ZoneChannelWalk {
-    /// The top-level zone the session's one walk ran for, the reference's registered flag; `None`
-    /// walks from scratch.
-    at: Option<u32>,
-    /// The zone the walk may act on this frame, the reference's `ds:`, read by the walk and the
-    /// guild-recruitment cascade; `None` while a gate holds.
-    pub(super) zone_id: Option<u32>,
-    /// A character session is live: without it the logout frame, still `InWorld` with `at` just
-    /// cleared, would join the zone being left.
-    live: bool,
+    /// The chat's ready flag (`[0xbcefe8]`), set by the first zone update's walk (`0x508249`).
+    ready: bool,
 }
 
 impl ZoneChannelWalk {
-    /// Forget the session: the next world entry re-joins from nothing.
+    /// The chat's ready flag (`[0xbcefe8]`): read by the zone update (`0x5080ba`), the
+    /// guild-recruitment cascade (`0x507d43`) and the mode setter (`0x50826e`).
+    pub(super) fn ready(&self) -> bool {
+        self.ready
+    }
+
+    /// A session whose walk ran, the chat ready.
+    #[cfg(test)]
+    pub(crate) fn ready_chat() -> Self {
+        ZoneChannelWalk { ready: true }
+    }
+
+    /// Forget the session: the next world entry walks from nothing.
     fn clear_session(&mut self) {
-        self.at = None;
-        self.zone_id = None;
-        self.live = false;
+        self.ready = false;
     }
 }
 
-/// End the channel session: vmangos leaves every channel with the session
-/// (`Player::CleanupChannels`, `Objects/Player.cpp:5107`), so the next one starts in none. The
-/// mask stays, as it belongs to the character's file.
-fn end_channel_session(
-    script: Option<&mut benilla_ui::script::UiScript>,
-    channels: &mut ChannelState,
-    walk: &mut ZoneChannelWalk,
-    cascade: &mut GuildRecruitmentCascade,
-) {
+/// End the channel session: the server leaves every channel with the session, so the next one
+/// starts in none, and the pane starts empty, as the session init clears it (`0x50f198`-`0x50f202`).
+/// The verbs read the records live, so nothing reaches the VM. The mask stays, as it belongs to the
+/// character's file.
+fn end_channel_session(channels: &mut ChannelState, walk: &mut ZoneChannelWalk) {
     walk.clear_session();
-    cascade.clear_session();
     channels.joined.clear();
-    if let Some(script) = script {
-        script.set_channel_slots(Vec::new());
-    }
-}
-
-/// Seed a fresh VM's joined-channel mirror, which is otherwise pushed only on a join or a leave, so
-/// a `/reload` would leave `GetChannelName` and `/N` empty until the next one.
-pub(super) fn seed_channels(
-    mut script: crate::ui_script::InTurn,
-    channels: Res<ChannelState>,
-    mut seeded: Local<crate::ui_script::VmMemo<bool>>,
-) {
-    let Some(mut script) = script.turn() else {
-        return;
-    };
-    if seeded.claim(&script) {
-        script.set_channel_slots(channels.ui_slots());
-    }
+    channels.pane = Default::default();
 }
 
 /// The session-end edge: a confirmed `/logout` back to the glue screens (`OnExit(InWorld)`).
 pub(super) fn end_session_channels(
-    mut script: crate::ui_script::InTurn,
     mut channels: ResMut<ChannelState>,
     mut walk: ResMut<ZoneChannelWalk>,
-    mut cascade: ResMut<GuildRecruitmentCascade>,
 ) {
-    end_channel_session(
-        script.turn().as_deref_mut(),
-        &mut channels,
-        &mut walk,
-        &mut cascade,
-    );
+    end_channel_session(&mut channels, &mut walk);
 }
 
 /// The other session end, a dead socket: a recoverable drop never leaves `InWorld`, but the
-/// reconnect gets a fresh server-side `Player` in no channels, so it clears the same state.
+/// reconnect gets a fresh server-side `Player` in no channels, so it clears the same state. A
+/// logout or a final drop leaves `InWorld`, where [`end_session_channels`] clears after the UI
+/// shutdown's PLAYER_LEAVING_WORLD (`0x529163` before `0x529172`).
 pub(super) fn end_session_channels_on_disconnect(
-    mut script: crate::ui_script::InTurn,
     mut channels: ResMut<ChannelState>,
     mut walk: ResMut<ZoneChannelWalk>,
-    mut cascade: ResMut<GuildRecruitmentCascade>,
     mut disconnects: MessageReader<crate::net::DisconnectedMessage>,
 ) {
-    if disconnects.read().next().is_none() {
+    let recoverable = |m: &crate::net::DisconnectedMessage| {
+        m.end == benilla_protocol::SessionEnd::Lost && !m.session_over
+    };
+    if !disconnects.read().any(recoverable) {
         return;
     }
-    end_channel_session(
-        script.turn().as_deref_mut(),
-        &mut channels,
-        &mut walk,
-        &mut cascade,
-    );
+    end_channel_session(&mut channels, &mut walk);
+}
+
+/// What the channel verbs read and write at the call: the channel records, the `ZONECHANNELS`
+/// mask (`0xbcf010`) and `ChatChannels.dbc` composed for the client's zone id (`0xbd080c`).
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct ChannelLive<'w> {
+    channels: ResMut<'w, ChannelState>,
+    zone: Option<Res<'w, crate::area::ZoneIds>>,
+    areas: Option<Res<'w, AreaTableRes>>,
+}
+
+impl ChannelLive<'_> {
+    /// The records in slot order, holes kept.
+    pub(crate) fn slots(&self) -> Vec<Option<benilla_ui::script::ChannelSlotInfo>> {
+        self.channels.ui_slots()
+    }
+
+    /// The channel pane's state.
+    pub(crate) fn pane(&mut self) -> &mut benilla_ui::script::ChannelPane {
+        &mut self.channels.pane
+    }
+
+    /// A record's flags byte, as a display list writes it (`0x503a69`).
+    pub(crate) fn set_flags(&mut self, slot: usize, flags: u8) {
+        if let Some(Some(s)) = self.channels.joined.get_mut(slot) {
+            s.flags = flags;
+        }
+    }
+
+    /// The catalog composed for the zone id at the call; zone-less while it is 0 or unknown, and
+    /// empty without `ChatChannels.dbc`.
+    pub(crate) fn catalog(&self) -> Vec<benilla_ui::script::ZoneChannelRow> {
+        if self.channels.channels.is_empty() {
+            return Vec::new();
+        }
+        let areas = self.areas.as_deref();
+        let zone = self.zone.as_deref().map_or(0, |z| z.zone);
+        // The zone's area record and text (`0x507ab3`, `0x507aad`).
+        let (name, in_city, capital) = areas
+            .and_then(|a| a.0.get(zone))
+            .map(|r| {
+                (
+                    r.name.clone(),
+                    r.flags & AREA_FLAG_TRADE_CHANNEL != 0,
+                    r.flags & AREA_FLAG_CAPITAL != 0,
+                )
+            })
+            .unwrap_or_default();
+        zone_channel_catalog(
+            &self.channels.channels,
+            &name,
+            in_city,
+            capital,
+            areas.and_then(|a| city_record_name(&a.0)),
+        )
+    }
+
+    /// A channel id's `ZONECHANNELS` bit set, once the mask is seated.
+    pub(crate) fn add_zone_bit(&mut self, id: u32) {
+        if let Some(mask) = &mut self.channels.zone_mask {
+            *mask |= super::edit::zone_bit(id);
+        }
+    }
 }
 
 /// Startup: read `ChatChannels.dbc`; without an install nothing auto-joins and arg7 stays 0.
@@ -144,14 +182,56 @@ pub(super) fn load_chat_channels(
     }
 }
 
-/// The name `row` composes to in `zone_name`; `None` when there is nothing to substitute. A
-/// city-named row takes the city word in every zone here; the reference takes it only in an area
-/// with flag `0x100` and the zone name elsewhere.
-///
-/// Deviation: with a blank city word the reference composes `"Trade - "` (its capital arm checks
-/// the row pointer, not the string); we decline, because a wrong channel name is joined silently
-/// and for good.
+/// The name a channel verb composes for `row` (`0x507b70`-`0x507bc0` for the join,
+/// `0x5094b1`-`0x509505` for the leave): the city record's name when the zone's area is a capital
+/// (`AreaTable.Flags & 0x100`), the row is city-named (`flags & 0x20`) and the record is cached,
+/// else the zone text; `None`, the verb's bail, when that subject is empty, whatever the row.
 fn compose(
+    row: &benilla_formats::ChatChannelRow,
+    zone_name: &str,
+    capital: bool,
+    city: Option<&str>,
+) -> Option<String> {
+    let subject = match city {
+        Some(city) if capital && row.takes_city_name() => city,
+        _ => zone_name,
+    };
+    if subject.is_empty() {
+        return None;
+    }
+    Some(row.pattern.replacen("%s", subject, 1))
+}
+
+/// The name a channel verb composes for `row` in the zone at the call (`[0xbd080c]`, its area record
+/// and text): [`compose`] over the live inputs.
+pub(super) fn verb_name(
+    row: &benilla_formats::ChatChannelRow,
+    areas: Option<&AreaTableRes>,
+    zone: u32,
+) -> Option<String> {
+    let (name, capital) = areas
+        .and_then(|a| a.0.get(zone))
+        .map(|r| (r.name.clone(), r.flags & AREA_FLAG_CAPITAL != 0))
+        .unwrap_or_default();
+    compose(
+        row,
+        &name,
+        capital,
+        areas.and_then(|a| city_record_name(&a.0)),
+    )
+}
+
+/// The cached city record's name (`[0xb74464] + 0x2c`), empty or not: the `AreaTable.dbc` row with
+/// flag `0x200`.
+fn city_record_name(areas: &benilla_formats::AreaTableCatalog) -> Option<&str> {
+    areas
+        .rows()
+        .find(|r| r.flags & AREA_FLAG_CITY_NAME_ROW != 0)
+        .map(|r| r.name.as_str())
+}
+
+/// The zone walk's composition, as [`plan_walk`] reads its names (the walk's own shape is #1515).
+fn walk_compose(
     row: &benilla_formats::ChatChannelRow,
     zone_name: &str,
     city_word: Option<&str>,
@@ -179,7 +259,7 @@ pub(crate) fn tracked_channels(
         .rows()
         .iter()
         .filter(|r| zone_mask & super::edit::zone_bit(r.id) != 0)
-        .filter_map(|r| compose(r, zone_name, city_word))
+        .filter_map(|r| walk_compose(r, zone_name, city_word))
         .collect()
 }
 
@@ -198,7 +278,7 @@ pub(crate) fn wanted_channels(
         .iter()
         .filter(|r| zone_mask & super::edit::zone_bit(r.id) != 0)
         .filter(|r| in_city || !r.is_city_only())
-        .filter_map(|r| compose(r, zone_name, city_word))
+        .filter_map(|r| walk_compose(r, zone_name, city_word))
         .collect()
 }
 
@@ -211,8 +291,8 @@ pub(crate) enum WalkStep {
     Join(String),
     /// Renamed in place at send time ([`ChannelState::rename_slot`]).
     Rename { old: String, new: String },
-    /// A slot claimed for an untracked row, before the city gate.
-    Register(String),
+    /// A slot claimed for an untracked row, before the city gate, with the row's ChannelID.
+    Register(String, u32),
     /// State 3, the row stopped applying; the record and its number survive.
     Suspend(String),
     /// The state-3 bypass with the name unchanged: the reference writes `(old == 3) ? 1 : 2`, so
@@ -225,7 +305,7 @@ pub(crate) enum WalkStep {
 /// confirmed, then the city gate suspends it or renames and re-joins it; a suspended slot the gate
 /// admits re-joins (the state-3 bypass). A row that stopped applying under an unchanged name, or no
 /// longer composes, leaves and suspends here, where the reference skips any other unchanged name:
-/// its city-named rows move to the zone name outside a capital ([`compose`]). Pass 2 registers the
+/// its city-named rows move to the zone name outside a capital ([`walk_compose`]). Pass 2 registers the
 /// unslotted rows whose mask bit is set, in DBC order, before the gate.
 pub(crate) fn plan_walk(
     channels: &ChannelState,
@@ -246,7 +326,7 @@ pub(crate) fn plan_walk(
         };
         tracked_rows.push(row.id);
         let old = slot.name.as_str();
-        match compose(row, zone_name, city_word) {
+        match walk_compose(row, zone_name, city_word) {
             Some(new) if new.eq_ignore_ascii_case(old) => {
                 if slot.state == SlotState::Suspended {
                     if eligible(row) {
@@ -290,10 +370,10 @@ pub(crate) fn plan_walk(
         if !channels.zone_row_wanted(row.id) || tracked_rows.contains(&row.id) {
             continue;
         }
-        let Some(name) = compose(row, zone_name, city_word) else {
+        let Some(name) = walk_compose(row, zone_name, city_word) else {
             continue;
         };
-        steps.push(W::Register(name.clone()));
+        steps.push(W::Register(name.clone(), row.id));
         if eligible(row) {
             steps.push(W::Join(name));
         } else {
@@ -303,9 +383,9 @@ pub(crate) fn plan_walk(
     steps
 }
 
-/// Apply a plan in order; answers whether a slot name moved, the VM mirror's cue.
-fn apply_walk(steps: &[WalkStep], channels: &mut ChannelState, commands: &NetCommands) -> bool {
-    let mut names_moved = false;
+/// Apply a plan in order. Nothing relists: neither the walk nor its join (`0x507a80`) calls the
+/// list's update (`0x505d40`).
+pub(crate) fn apply_walk(steps: &[WalkStep], channels: &mut ChannelState, commands: &NetCommands) {
     for step in steps {
         match step {
             WalkStep::Leave(name) => {
@@ -314,8 +394,10 @@ fn apply_walk(steps: &[WalkStep], channels: &mut ChannelState, commands: &NetCom
             }
             WalkStep::Join(name) => {
                 debug!("chat: joining zone channel {name:?}");
-                // The walk's own join: 3.3.5a's passes auto 1, voice 0.
+                // The walk's own join: 3.3.5a's passes auto 1, voice 0, and the row's ChannelID,
+                // which the record it registered or renamed carries.
                 let _ = commands.0.send(channels.join_command(
+                    channels.slot_id(name),
                     name.clone(),
                     String::new(),
                     true,
@@ -325,14 +407,10 @@ fn apply_walk(steps: &[WalkStep], channels: &mut ChannelState, commands: &NetCom
             WalkStep::Rename { old, new } => {
                 if let Some(n) = channels.rename_slot(old, new) {
                     debug!("chat: zone channel slot {n} renamed {old:?} → {new:?}");
-                    names_moved = true;
                 }
             }
-            WalkStep::Register(name) => match channels.claim_slot(name) {
-                Some(n) => {
-                    debug!("chat: zone channel {name:?} registered as slot {n}");
-                    names_moved = true;
-                }
+            WalkStep::Register(name, id) => match channels.claim_walk_slot(name, *id) {
+                Some(n) => debug!("chat: zone channel {name:?} registered as slot {n}"),
                 None => warn!(
                     "chat: no free slot for zone channel {name:?} — all {} are taken",
                     super::edit::MAX_CHANNELS
@@ -346,125 +424,35 @@ fn apply_walk(steps: &[WalkStep], channels: &mut ChannelState, commands: &NetCom
             WalkStep::Confirm(name) => channels.confirm_slot(name),
         }
     }
-    names_moved
 }
 
-/// Whether the zone under the player is final: an active avatar done settling, benilla's stand-in
-/// for the loading screen the reference walks after.
-fn zone_is_settled(player: Option<&crate::player::Player>) -> bool {
-    player.is_some_and(|p| p.active && !p.settling)
-}
-
-/// The walk, run once per session. It composes from the real zone name, the `GetRealZoneText`
-/// cache, never the display text, which the indoor override renames.
-///
-/// The reference calls its walk from each zone-text update, which acts only until its registered
-/// flag is set; this polls the same inputs every frame. It waits while the world arrives
-/// (`Player::settling`), as the reference walks after its loading screen and our leaf area moves
-/// while terrain streams in, and for the chat cache to seat the mask, as the reference bails on its
-/// ready flag until the cache loader calls the walk.
-pub(super) fn auto_join_zone_channels(
+/// The zone update's walk leg (`0x5080ba`-`0x508249`) over `real_zone`, the stored real zone text
+/// (`[0xbd0780]`), in the zone id (`[0xbd080c]`, `0x5080c0`): whether the update goes on to the
+/// cascade. A ready chat goes straight on (`0x5080ca`), a zone with no area record stops there
+/// (`0x5080dd`), else the walk runs and sets the ready flag (`0x508249`).
+pub(super) fn zone_walk(
+    In(real_zone): In<String>,
     commands: Res<NetCommands>,
     mut channels: ResMut<ChannelState>,
     areas: Option<Res<AreaTableRes>>,
-    world: benilla_world::world_point::WorldPoint,
-    // One parameter for clippy's argument limit: the body's settle and a cinematic's view.
-    body: (
-        Option<Res<crate::player::Player>>,
-        Option<Res<crate::cinematic::Cinematic>>,
-    ),
+    ids: Option<Res<crate::area::ZoneIds>>,
     mut walk: ResMut<ZoneChannelWalk>,
-    mut entered: MessageReader<crate::net::EnteredWorldMessage>,
-    mut script: crate::ui_script::InTurn,
-    mut catalog_fed: Local<crate::ui_script::VmMemo<Option<(String, bool)>>>,
-) {
-    let (player, cinematic) = (&body.0, &body.1);
-    if let Some(mut script) = script.turn() {
-        for id in script.take_zone_mask_additions() {
-            if let Some(mask) = &mut channels.zone_mask {
-                *mask |= super::edit::zone_bit(id);
-            }
-        }
+) -> bool {
+    let zone = ids.map_or(0, |z| z.zone);
+    if walk.ready {
+        return true;
     }
-    // World entry arms the walk; the session-end edges disarm it.
-    if entered.read().next().is_some() {
-        walk.live = true;
-    }
-
-    // A cinematic suppresses the rejoin: two of the six reads of the reference's cinematic cell,
-    // the zone-text update and an `UPDATEFLAGS` reflex, skip the refresh while one runs, and the
-    // cinematic's end calls it. A race intro flies the streaming focus far off a body that has not
-    // moved.
-    let cinematic_running = cinematic.as_deref().is_some_and(|c| c.is_playing());
-    let areas = areas.as_deref();
-
-    // `None` with no session, during a cinematic, while the world arrives, or with no area answer.
-    let zone_id = (walk.live && !cinematic_running && zone_is_settled(player.as_deref()))
-        .then(|| {
-            let areas = areas?;
-            world.area().and_then(|leaf| areas.0.top_zone(leaf))
-        })
-        .flatten();
-    walk.zone_id = zone_id;
-    let zone = zone_id
-        .and_then(|id| areas?.0.get(id))
-        .map(|row| (row.name.clone(), row.flags & AREA_FLAG_TRADE_CHANNEL != 0));
-
-    // The VM's catalog is fed before those gates: to its verbs an empty catalog means "no such
-    // built-in channel", which files `General` as a custom channel and joins one of that name.
-    // Zone-less, a zone row carries `resolved: None`, the reference's nil leg.
-    if !channels.channels.is_empty() {
-        if let Some(mut script) = script.turn() {
-            let at = zone.clone().unwrap_or_default();
-            let fed = catalog_fed.get(&script);
-            if fed.as_ref() != Some(&at) {
-                script.set_zone_channel_catalog(zone_channel_catalog(
-                    &channels.channels,
-                    &at.0,
-                    at.1,
-                    areas.and_then(|a| city_word(&a.0)),
-                ));
-                *fed = Some(at);
-            }
-        }
-    }
-
-    let (Some(zone_id), Some((zone_name, in_city)), Some(areas)) = (zone_id, zone, areas) else {
-        return; // nothing to walk against yet
+    let Some(areas) = areas else {
+        return false;
     };
-    if channels.zone_mask.is_none() {
-        return; // the mask is not seated: the reference's ready-flag bail
-    }
-    if walk.at.is_some() {
-        return; // registered: later zones are the server's to move (`0x508090`)
-    }
-
-    let steps = plan_walk(&channels, &zone_name, in_city, city_word(&areas.0));
-    if apply_walk(&steps, &mut channels, &commands) {
-        if let Some(mut script) = script.turn() {
-            // `GetChannelName(n)` answers the new name from this frame on, as in the reference.
-            script.set_channel_slots(channels.ui_slots());
-        }
-    }
-    walk.at = Some(zone_id);
-}
-
-/// Feed the VM the zone-less catalog before any interface file runs: world entry runs FrameXML,
-/// the addons and `PLAYER_LOGIN` in one call, ahead of the walk's first tick.
-pub(crate) fn seed_zone_channel_catalog(
-    world: &mut World,
-    script: &mut benilla_ui::script::UiScript,
-) {
-    let Some(channels) = world.get_resource::<ChannelState>() else {
-        return;
+    let Some(row) = areas.0.get(zone) else {
+        return false;
     };
-    if channels.channels.is_empty() {
-        return; // no `ChatChannels.dbc`: nothing to feed, as in the walk
-    }
-    let city = world
-        .get_resource::<AreaTableRes>()
-        .and_then(|a| city_word(&a.0));
-    script.set_zone_channel_catalog(zone_channel_catalog(&channels.channels, "", false, city));
+    let in_city = row.flags & AREA_FLAG_TRADE_CHANNEL != 0;
+    let steps = plan_walk(&channels, &real_zone, in_city, city_word(&areas.0));
+    apply_walk(&steps, &mut channels, &commands);
+    walk.ready = true;
+    true
 }
 
 /// Every `ChatChannels.dbc` row as the VM needs it: the id, the Shortcut the verbs match a typed
@@ -474,7 +462,8 @@ pub(crate) fn zone_channel_catalog(
     catalog: &ChatChannelsCatalog,
     zone_name: &str,
     in_city: bool,
-    city_word: Option<&str>,
+    capital: bool,
+    city: Option<&str>,
 ) -> Vec<benilla_ui::script::ZoneChannelRow> {
     catalog
         .rows()
@@ -482,9 +471,10 @@ pub(crate) fn zone_channel_catalog(
         .map(|r| benilla_ui::script::ZoneChannelRow {
             id: r.id,
             shortcut: r.shortcut.clone(),
-            resolved: compose(r, zone_name, city_word),
+            resolved: compose(r, zone_name, capital, city),
             listed: !r.is_city_only() || in_city,
             auto_join: r.flags & 1 != 0,
+            guild_recruitment: r.is_guild_recruitment(),
         })
         .collect()
 }
@@ -533,15 +523,24 @@ mod tests {
         }
     }
 
+    /// A record in state 0, carrying the ChannelID its claim stored.
     fn joined(name: &str) -> Option<crate::ui_chat::edit::ChannelSlot> {
-        Some(crate::ui_chat::edit::ChannelSlot::joined(name))
+        Some(crate::ui_chat::edit::ChannelSlot::zone(
+            name,
+            catalog().zone_channel_id(name),
+        ))
     }
 
     fn suspended(name: &str) -> Option<crate::ui_chat::edit::ChannelSlot> {
         Some(crate::ui_chat::edit::ChannelSlot {
             name: name.into(),
+            id: catalog().zone_channel_id(name),
             state: SlotState::Suspended,
             leave_asked: false,
+            flags: 0,
+            instance: 0,
+            voice: false,
+            permanent: false,
         })
     }
 
@@ -578,47 +577,18 @@ mod tests {
     }
 
     #[test]
-    fn the_walk_waits_for_the_world_under_the_player() {
-        use crate::player::Player;
-
-        assert!(!zone_is_settled(None), "no avatar: no zone to believe");
-
-        let mut p = Player::default();
-        assert!(!zone_is_settled(Some(&p)), "inactive avatar");
-
-        p.active = true;
-        p.settling = true;
-        assert!(
-            !zone_is_settled(Some(&p)),
-            "settling — the destination's terrain and WMOs are still arriving, so the leaf area \
-             under the body is still moving"
-        );
-
-        p.settling = false;
-        assert!(zone_is_settled(Some(&p)), "settled: the zone is now final");
-    }
-
-    #[test]
     fn leaving_the_world_ends_the_channel_session() {
         let mut channels = state(SEED);
         channels.joined = vec![
             joined("General - Tanaris"),
             joined("LocalDefense - Tanaris"),
         ];
-        let mut walk = ZoneChannelWalk {
-            at: Some(440),
-            zone_id: Some(440),
-            live: true,
-        };
-        let mut cascade = GuildRecruitmentCascade::default();
-        cascade.observe_guild_id(7);
+        let mut walk = ZoneChannelWalk::ready_chat();
 
         // No VM in a unit test: the mirror leg is the one line this cannot reach.
-        end_channel_session(None, &mut channels, &mut walk, &mut cascade);
+        end_channel_session(&mut channels, &mut walk);
 
-        assert_eq!(walk.at, None, "the next entry re-walks from scratch");
-        assert_eq!(walk.zone_id, None);
-        assert!(!walk.live);
+        assert!(!walk.ready(), "the next entry re-walks from scratch");
         assert!(
             channels.joined.is_empty(),
             "the confirmed list is the server's, and the server just destroyed it — a survivor \
@@ -628,11 +598,6 @@ mod tests {
             channels.zone_mask,
             Some(SEED),
             "the mask is the character's file, not the session's"
-        );
-        assert!(
-            cascade.observe_guild_id(7),
-            "the cascade's watcher forgot the guild id, so the next login's first sight of it is \
-             a change again — the reference's player-create trigger"
         );
     }
 
@@ -660,6 +625,44 @@ mod tests {
         assert_eq!(ids(&felwood), vec![1, 22]);
     }
 
+    /// The walk's join sends the ChannelID its record was registered with, and its leave the
+    /// record's own (`0x507c7e`, `0x5095f1`).
+    #[test]
+    fn the_walks_packets_carry_the_records_channel_ids() {
+        let mut c = state(SEED);
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let commands = crate::net::NetCommands(tx);
+        apply_walk(
+            &plan_walk(&c, "Elwynn Forest", false, CITY),
+            &mut c,
+            &commands,
+        );
+        apply_walk(&plan_walk(&c, "Westfall", false, CITY), &mut c, &commands);
+        let wire: Vec<(bool, u32, String)> = rx
+            .try_iter()
+            .filter_map(|cmd| match cmd {
+                crate::net::ClientCommand::JoinChannel {
+                    channel_id, name, ..
+                } => Some((true, channel_id, name)),
+                crate::net::ClientCommand::LeaveChannel { channel_id, name } => {
+                    Some((false, channel_id, name))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            wire,
+            vec![
+                (true, 1, s("General - Elwynn Forest")),
+                (true, 22, s("LocalDefense - Elwynn Forest")),
+                (false, 1, s("General - Elwynn Forest")),
+                (true, 1, s("General - Westfall")),
+                (false, 22, s("LocalDefense - Elwynn Forest")),
+                (true, 22, s("LocalDefense - Westfall")),
+            ]
+        );
+    }
+
     #[test]
     fn a_first_walk_registers_every_mask_row_before_the_gate() {
         let mut c = state(SEED);
@@ -667,11 +670,11 @@ mod tests {
         assert_eq!(
             steps,
             vec![
-                W::Register(s("General - Elwynn Forest")),
+                W::Register(s("General - Elwynn Forest"), 1),
                 W::Join(s("General - Elwynn Forest")),
-                W::Register(s("Trade - City")),
+                W::Register(s("Trade - City"), 2),
                 W::Suspend(s("Trade - City")),
-                W::Register(s("LocalDefense - Elwynn Forest")),
+                W::Register(s("LocalDefense - Elwynn Forest"), 22),
                 W::Join(s("LocalDefense - Elwynn Forest")),
             ]
         );
@@ -685,11 +688,11 @@ mod tests {
         assert_eq!(
             steps,
             vec![
-                W::Register(s("General - Stormwind City")),
+                W::Register(s("General - Stormwind City"), 1),
                 W::Join(s("General - Stormwind City")),
-                W::Register(s("Trade - City")),
+                W::Register(s("Trade - City"), 2),
                 W::Join(s("Trade - City")),
-                W::Register(s("LocalDefense - Stormwind City")),
+                W::Register(s("LocalDefense - Stormwind City"), 22),
                 W::Join(s("LocalDefense - Stormwind City")),
             ]
         );
@@ -703,8 +706,8 @@ mod tests {
                 W::Rename { old, new } => {
                     c.rename_slot(old, new);
                 }
-                W::Register(name) => {
-                    c.claim_slot(name);
+                W::Register(name, id) => {
+                    c.claim_walk_slot(name, *id);
                 }
                 W::Suspend(name) => {
                     c.suspend_slot(name);
@@ -837,12 +840,12 @@ mod tests {
 
         // `/leave General`: the stock `SlashCmdList["LEAVE"]` hands `LeaveChannelByName` the bare
         // token and the VM composes it for the zone; `/leave 1` names the slot here.
-        let target = c.leave_target("1").expect("slot 1 is confirmed");
+        let target = "General - Elwynn Forest";
         assert_eq!(target, "General - Elwynn Forest", "the slot's wire name");
-        c.note_zone_channel_left(&target);
+        c.note_zone_channel_left(target);
         assert_eq!(c.zone_mask, Some(SEED & !1), "bit 0 cleared");
         // The server's `YOU_LEFT` frees the slot in place.
-        assert_eq!(c.free_slot(&target), Some(1));
+        assert_eq!(c.free_slot(target), Some(1));
 
         // The next border: General is neither walked (no slot) nor registered (no bit).
         let steps = plan_walk(&c, "Westfall", false, CITY);
@@ -864,9 +867,9 @@ mod tests {
         assert_eq!(
             steps,
             vec![
-                W::Register(s("Trade - City")),
+                W::Register(s("Trade - City"), 2),
                 W::Suspend(s("Trade - City")),
-                W::Register(s("LocalDefense - Elwynn Forest")),
+                W::Register(s("LocalDefense - Elwynn Forest"), 22),
                 W::Join(s("LocalDefense - Elwynn Forest")),
             ],
             "General is gone for good; Trade is now number 1"
@@ -911,7 +914,7 @@ mod tests {
         assert_eq!(
             &steps[6..],
             &[
-                W::Register(s("GuildRecruitment - City")),
+                W::Register(s("GuildRecruitment - City"), 25),
                 W::Suspend(s("GuildRecruitment - City")),
             ],
             "registered and suspended out here, number 4"
@@ -925,7 +928,7 @@ mod tests {
         assert_eq!(
             &steps[6..],
             &[
-                W::Register(s("GuildRecruitment - City")),
+                W::Register(s("GuildRecruitment - City"), 25),
                 W::Join(s("GuildRecruitment - City")),
             ]
         );
@@ -951,7 +954,7 @@ mod tests {
         let steps = plan_walk(&c, "Elwynn Forest", false, CITY);
         assert!(steps.contains(&W::Leave(s("GuildRecruitment - City"))));
         assert!(steps.contains(&W::Suspend(s("GuildRecruitment - City"))));
-        assert!(!steps.iter().any(|st| matches!(st, W::Register(_))));
+        assert!(!steps.iter().any(|st| matches!(st, W::Register(..))));
     }
 
     /// State 3 sends no LEAVE, and the rename's `(old == 3) ? 1 : 2` lands it on 1, a plain
@@ -974,13 +977,13 @@ mod tests {
         apply_steps(&steps, &mut c);
         assert_eq!(
             c.slot_state("General - Westfall"),
-            Some(SlotState::Joined),
+            Some(SlotState::Pending),
             "3 → 1, not 2"
         );
     }
 
     #[test]
-    fn leave_target_resolves_a_number_to_a_confirmed_slot_or_to_nothing() {
+    fn the_leave_clears_the_mask_bit_of_a_slot_carrying_the_wire_name() {
         let mut c = state(SEED);
         c.joined = vec![
             joined("General - Elwynn Forest"),
@@ -988,43 +991,6 @@ mod tests {
             None,
             joined("MyChan"),
         ];
-        assert_eq!(
-            c.leave_target("1").as_deref(),
-            Some("General - Elwynn Forest")
-        );
-        assert_eq!(
-            c.leave_target("1abc").as_deref(),
-            Some("General - Elwynn Forest"),
-            "the integer parse takes the leading digits"
-        );
-        assert_eq!(
-            c.leave_target("2"),
-            None,
-            "suspended: state 3 fails, and the whole call is a no-op"
-        );
-        assert_eq!(c.leave_target("3"), None, "a hole");
-        assert_eq!(c.leave_target("9"), None, "out of range");
-        assert_eq!(c.leave_target("-1"), None);
-        assert_eq!(c.leave_target("0").as_deref(), Some("0"), "0 is a name");
-        assert_eq!(
-            c.leave_target("").as_deref(),
-            Some(""),
-            "`/leave` alone sends an empty name"
-        );
-        assert_eq!(
-            c.leave_target("General - Elwynn Forest").as_deref(),
-            Some("General - Elwynn Forest"),
-            "a composed name passes through"
-        );
-        assert_eq!(c.leave_target("mychan").as_deref(), Some("mychan"));
-        assert_eq!(c.leave_target("+1").as_deref(), Some("+1"), "no `+`");
-        assert_eq!(c.leave_target(" 1").as_deref(), Some(" 1"), "no space skip");
-        assert_eq!(
-            c.leave_target("4294967297").as_deref(),
-            Some("General - Elwynn Forest"),
-            "the integer parse wraps: 2^32 + 1 reads 1"
-        );
-
         // The mask clear needs a slot carrying the wire name.
         c.note_zone_channel_left("General - Nowhere");
         assert_eq!(c.zone_mask, Some(SEED), "no slot carries it: no clear");
@@ -1050,7 +1016,7 @@ mod tests {
     /// the reference's nil leg, not the custom-channel leg.
     #[test]
     fn a_zoneless_catalog_still_carries_every_row() {
-        let rows = zone_channel_catalog(&catalog(), "", false, None);
+        let rows = zone_channel_catalog(&catalog(), "", false, false, None);
         assert_eq!(rows.len(), 6, "every DBC row is present, zone or no zone");
 
         let by = |s: &str| rows.iter().find(|r| r.shortcut == s).unwrap().clone();
@@ -1063,12 +1029,12 @@ mod tests {
         assert_eq!(by("Trade").resolved, None);
         assert_eq!(
             by("WorldDefense").resolved,
-            Some("WorldDefense".to_string()),
-            "a row whose name carries no %s resolves with no zone at all"
+            None,
+            "an empty zone text bails every row, one with no %s included (`0x507b9b`)"
         );
 
         // Once a zone is known, the same rows resolve.
-        let rows = zone_channel_catalog(&catalog(), "Elwynn Forest", false, CITY);
+        let rows = zone_channel_catalog(&catalog(), "Elwynn Forest", false, false, CITY);
         let by = |s: &str| rows.iter().find(|r| r.shortcut == s).unwrap().clone();
         assert_eq!(
             by("General").resolved,
@@ -1077,6 +1043,44 @@ mod tests {
         assert!(
             !by("Trade").listed,
             "…and Trade is city-only, so it is not listed out here"
+        );
+    }
+
+    /// The verbs' composition (`0x507b70`, `0x5094b1`): a city-named row takes the city record's
+    /// name only in a capital's area, the zone text elsewhere or with no record; an empty subject
+    /// bails (`0x507b9e`, `0x5094e3`), which `LeaveChannelByName` composes exactly as the join.
+    #[test]
+    fn the_verbs_compose_the_city_name_only_in_a_capital() {
+        let resolved = |zone: &str, capital: bool, city: Option<&str>, shortcut: &str| {
+            zone_channel_catalog(&catalog(), zone, capital, capital, city)
+                .into_iter()
+                .find(|r| r.shortcut == shortcut)
+                .unwrap()
+                .resolved
+        };
+        assert_eq!(
+            resolved("Stormwind City", true, CITY, "Trade").as_deref(),
+            Some("Trade - City")
+        );
+        assert_eq!(
+            resolved("Stormwind City", true, CITY, "General").as_deref(),
+            Some("General - Stormwind City"),
+            "a row without the city bit takes the zone text in a capital"
+        );
+        assert_eq!(
+            resolved("Elwynn Forest", false, CITY, "Trade").as_deref(),
+            Some("Trade - Elwynn Forest"),
+            "outside a capital a city-named row takes the zone text"
+        );
+        assert_eq!(
+            resolved("Stormwind City", true, None, "Trade").as_deref(),
+            Some("Trade - Stormwind City"),
+            "no city record: the zone text"
+        );
+        assert_eq!(
+            resolved("Stormwind City", true, Some(""), "Trade"),
+            None,
+            "an empty city name is an empty subject"
         );
     }
 

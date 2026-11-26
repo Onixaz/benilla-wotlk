@@ -298,7 +298,7 @@ fn gm(net: &NetCommands, text: impl Into<String>) {
     let _ = net.0.send(ClientCommand::Chat {
         kind: ChatKind::Say,
         target: None,
-        text: text.into(),
+        text: text.into().into(),
         language: None,
     });
 }

@@ -335,13 +335,13 @@ pub use calls::{
 };
 pub use camera_view::{CameraViewRequest, CAMERA_VIEW_COUNT};
 pub use channel::{ChannelCommand, ZoneChannelRow};
-pub use channel_pane::ChannelSlotInfo;
+pub use channel_pane::{ChannelPane, ChannelSlotInfo};
 pub use char_stats::{
     weapon_subclass_skill, BankBagSlots, InvSlotView, InventorySlots, PaperDollSlotInfo,
     UnitCombatStats, BANK_BAG_SLOT_COUNT, INVENTORY_SLOT_COUNT, SKILL_DEFENSE, SKILL_UNARMED,
 };
 pub use chat_misc::{EmoteRequest, EmoteTarget};
-pub use chat_send::ChatSend;
+pub use chat_send::{chat_escapes_valid, ChatSend};
 pub use chat_types::{default_chat_color, ChatTypeColor};
 pub use chat_window::{
     frame_point_index, frame_point_name, message_group_index, ChatWindowLook,
@@ -375,6 +375,7 @@ pub use duel::DuelRequest;
 pub use follow::FollowRequest;
 pub use gm_ticket::{GmTicketIntent, SurveySubmission, SurveyTables};
 pub use gossip::{GossipOptionView, GossipQuestRow, GossipRead};
+pub use guild::{new_line_cut, truncate_new_lines};
 pub use guild::{
     GuildEventView, GuildMemberInfo, GuildRankEdit, GuildRankInfo, GuildRequest, GuildState,
     LastOnline, UnitGuild, MAX_RANKS, MIN_RANKS, RANK_RIGHT_BITS,

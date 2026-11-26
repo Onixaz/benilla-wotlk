@@ -9,9 +9,10 @@ use bevy::prelude::*;
 
 use super::event::{ChatEvent, ChatEventKind};
 
-/// The reference's optimistic mirror of our `PLAYER_FLAGS` AFK bit: written at command time,
-/// reconciled from the descriptor, reseeded at world enter. A `u32` tested for non-zero: the
-/// reconcile stores `PLAYER_FLAGS & 2`, so a set mirror can read 2. DND has no mirror, so a second
+/// The reference's optimistic mirror of our `PLAYER_FLAGS` AFK bit (`[0xbcefec]`): written at
+/// command time, by the player-flags watch ([`flags_watch`]) and at world entry
+/// ([`seed_on_enter_world`]). A `u32` tested for non-zero: the watch stores `PLAYER_FLAGS & 2`, so a
+/// set mirror can read 2. DND has no mirror, so a second
 /// `/dnd` before the server's update re-marks where a second `/afk` clears.
 #[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AfkMirror(pub(crate) u32);
@@ -23,116 +24,76 @@ impl AfkMirror {
     }
 }
 
-/// What a `/afk` or `/dnd` resolves to: the line to print, the mirror's new value, the wire body.
+/// What a `/dnd` resolves to: the line to print and the wire body; DND has no mirror.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AwayOutcome {
-    /// The `CHAT_MSG_SYSTEM` line, or `None` for the one row that prints nothing.
-    pub(crate) line: Option<String>,
-    /// The mirror's value afterwards. `None` = unchanged (every DND row, and `/afk M` while AFK).
-    pub(crate) mirror: Option<u32>,
-    /// The `CMSG_MESSAGECHAT` body, after the client's own default-message substitution.
-    pub(crate) body: String,
-}
-
-/// `/afk <msg>`, the AFK arm. The default text is substituted before the send, so the server stores
-/// `"Away from Keyboard"`, never an empty body, and the no-`%s` `MARKED_AFK` goes unused.
-pub(crate) fn afk_line(
-    msg: &str,
-    mirror: AfkMirror,
-    strings: &impl Fn(&str) -> Option<String>,
-) -> AwayOutcome {
-    let text = |key: &str| strings(key).unwrap_or_default();
-    if mirror.is_afk() {
-        if msg.is_empty() {
-            // The AFK clear prints `CLEARED_AFK` unformatted and still sends, with an empty body.
-            AwayOutcome {
-                line: Some(text("CLEARED_AFK")),
-                mirror: Some(0),
-                body: String::new(),
-            }
-        } else {
-            // Re-marking while AFK prints nothing, but the new text is still sent.
-            AwayOutcome {
-                line: None,
-                mirror: None,
-                body: msg.to_string(),
-            }
-        }
-    } else {
-        let body = if msg.is_empty() {
-            text("DEFAULT_AFK_MESSAGE")
-        } else {
-            msg.to_string()
-        };
-        AwayOutcome {
-            line: Some(fill_one(&text("MARKED_AFK_MESSAGE"), &body)),
-            mirror: Some(1),
-            body,
-        }
-    }
+    /// The `CHAT_MSG_SYSTEM` line.
+    pub(crate) line: String,
+    /// The `CMSG_MESSAGECHAT` body's bytes, after the client's own default-message substitution.
+    pub(crate) body: Vec<u8>,
 }
 
 /// `/dnd <msg>` against the live `PLAYER_FLAGS` bit `0x4`, the DND arm; unlike `/afk`, a repeat
 /// with a message re-prints. `MARKED_DND` carries its period inside the format string, so it is
 /// filled, never composed.
 pub(crate) fn dnd_line(
-    msg: &str,
+    msg: &[u8],
     is_dnd: bool,
     strings: &impl Fn(&str) -> Option<String>,
 ) -> AwayOutcome {
     let text = |key: &str| strings(key).unwrap_or_default();
     if is_dnd && msg.is_empty() {
         return AwayOutcome {
-            line: Some(text("CLEARED_DND")),
-            mirror: None,
-            body: String::new(),
+            line: text("CLEARED_DND"),
+            body: Vec::new(),
         };
     }
     let body = if msg.is_empty() {
-        text("DEFAULT_DND_MESSAGE")
+        text("DEFAULT_DND_MESSAGE").into_bytes()
     } else {
-        msg.to_string()
+        msg.to_vec()
     };
     AwayOutcome {
-        line: Some(fill_one(&text("MARKED_DND"), &body)),
-        mirror: None,
+        line: shown(&fill_one_bytes(text("MARKED_DND").as_bytes(), &body)),
         body,
     }
 }
 
-/// The implicit AFK clear on every chat send but type `0x14`, gated on `autoClearAFK`, so `/dnd`
-/// (`0x15`) clears AFK first. The caller sends the empty `0x14` packet and zeroes the mirror. It
-/// runs before the refusal arms: a ghost's `/say` clears AFK, then gets `ERR_CHAT_WHILE_DEAD`.
-pub(crate) fn auto_clear_line(
-    mirror: AfkMirror,
-    auto_clear_afk: bool,
-    strings: &impl Fn(&str) -> Option<String>,
-) -> Option<String> {
-    (auto_clear_afk && mirror.is_afk()).then(|| strings("CLEARED_AFK").unwrap_or_default())
+/// A composed line as the chat event's text: the line's bytes, a sequence that is no UTF-8 read
+/// as U+FFFD, since the event carries a `String` (#1517).
+pub(crate) fn shown(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
 }
 
-/// Fill the first `%s` of a GlobalString, which the reference `snprintf`s; `%%` is a percent.
-fn fill_one(template: &str, arg: &str) -> String {
-    let mut out = String::with_capacity(template.len() + arg.len());
-    let mut chars = template.chars().peekable();
+/// Fill the first `%s` of a GlobalString, as the reference's `snprintf` fills it with any bytes;
+/// `%%` is a percent.
+pub(crate) fn fill_one_bytes(template: &[u8], arg: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(template.len() + arg.len());
     let mut used = false;
-    while let Some(c) = chars.next() {
-        if c != '%' {
+    let mut i = 0;
+    while i < template.len() {
+        let c = template[i];
+        i += 1;
+        if c != b'%' {
             out.push(c);
             continue;
         }
-        match chars.next() {
-            Some('%') => out.push('%'),
-            Some('s') if !used => {
-                out.push_str(arg);
+        match template.get(i).copied() {
+            Some(b'%') => out.push(b'%'),
+            Some(b's') if !used => {
+                out.extend_from_slice(arg);
                 used = true;
             }
             Some(other) => {
-                out.push('%');
+                out.push(b'%');
                 out.push(other);
             }
-            None => out.push('%'),
+            None => {
+                out.push(b'%');
+                continue;
+            }
         }
+        i += 1;
     }
     out
 }
@@ -142,74 +103,64 @@ pub(crate) fn push_system(chat: &mut impl super::ChatSink, line: String) {
     chat.push_event(ChatEvent::text_only(ChatEventKind::System, line));
 }
 
-/// The last `PLAYER_FLAGS` the reconcile saw; `None` with no local player in the world.
-#[derive(Resource, Default)]
-pub(crate) struct AfkMirrorMemo(Option<u32>);
+/// Add one of the four lines as `CHAT_MSG_SYSTEM` through the chat add, in the caller's turn
+/// (`0x509dd0`).
+pub(crate) fn add_system(world: &mut World, line: String) {
+    super::feed::add(
+        world,
+        ChatEvent::text_only(ChatEventKind::System, line).into(),
+    );
+}
 
-/// Reconcile the mirror from our descriptor: the `PLAYER_FLAGS` delta arm and the world-enter
-/// reseed. The delta arm writes `flags & 2` only when AFK, DND or GM moved; writing on any delta
-/// would let an unrelated bit, such as resting, clear an optimistic AFK a round trip early.
-pub(crate) fn reconcile_afk_mirror(
-    self_q: Query<&crate::net::ObjectStore, With<crate::net::SelfPlayer>>,
-    mut mirror: ResMut<AfkMirror>,
-    mut memo: ResMut<AfkMirrorMemo>,
-) {
-    let Some(store) = self_q.iter().next() else {
-        // Forgetting the memo makes the next world enter reseed rather than diff.
-        memo.0 = None;
+/// The player-flags watch's mirror write on the active player (`0x6e0fd0`): a move in AFK, DND,
+/// GM or `0x8000` (`0x6e0fe7`) stores `flags & 2` (`0x6e1023`), at the packet's step.
+pub(crate) fn flags_watch(world: &mut World, old: u32, new: u32) {
+    if (old ^ new) & 0x800e == 0 {
         return;
-    };
-    let flags = store.0.player_flags();
-    match memo.0.replace(flags) {
-        // World enter: seed outright.
-        None => mirror.0 = flags & 0x2,
-        // The delta arm: only an AFK/DND/GM move reconciles.
-        Some(prev) if (prev ^ flags) & 0xE != 0 => mirror.0 = flags & 0x2,
-        Some(_) => {}
+    }
+    if let Some(mut mirror) = world.get_resource_mut::<AfkMirror>() {
+        mirror.0 = new & 0x2;
     }
 }
 
-/// The movement AFK clears: jump, forward/back, strafe and keyboard turn. They sit in the movement
-/// emitters, so only a key press clears; mouse-look turning never reaches the keyboard-turn
-/// emitter, and knockback, fear and splines press nothing. Jump is here but not in
-/// `player::follow`'s cancel set: two separate reference tables.
-pub(crate) fn movement_clears_afk(
-    binds: Res<crate::bindings::BindingsState>,
-    cvars: Res<crate::cvars::Cvars>,
-    mut script: crate::ui_script::InTurn,
-    commands: Res<crate::net::NetCommands>,
-    mut mirror: ResMut<AfkMirror>,
-) {
+/// The chat's world-entry seed (`0x50df80`): 1 when the active player's flags carry AFK
+/// (`0x50dfa7`), else 0, also with no active player (`0x50dfb7`).
+pub(crate) fn seed_on_enter_world(world: &mut World) {
+    let afk = world
+        .query_filtered::<&crate::net::ObjectStore, With<crate::net::SelfPlayer>>()
+        .iter(world)
+        .next()
+        .is_some_and(|store| store.0.player_flags() & 0x2 != 0);
+    if let Some(mut mirror) = world.get_resource_mut::<AfkMirror>() {
+        mirror.0 = u32::from(afk);
+    }
+}
+
+/// The movement AFK clears: jump, forward/back, strafe and keyboard turn, each calling the AFK
+/// clear unforced in its own turn (`0x5fae0c`, `0x5faf49`, `0x5fb056`, `0x5fb14e`, `0x5fc069`).
+/// They sit in the movement emitters, so only a key press clears; mouse-look turning never reaches
+/// the keyboard-turn emitter, and knockback, fear and splines press nothing. Jump is here but not
+/// in `player::follow`'s cancel set: two separate reference tables.
+pub(crate) fn movement_clears_afk(world: &mut World) {
     use crate::bindings::Input;
-    if !mirror.is_afk() || cvars.flag("autoClearAFK") == Some(false) {
-        return;
+    let moved = world
+        .get_resource::<crate::bindings::BindingsState>()
+        .is_some_and(|binds| {
+            [
+                Input::Jump,
+                Input::MoveForward,
+                Input::MoveBackward,
+                Input::StrafeLeft,
+                Input::StrafeRight,
+                Input::TurnLeft,
+                Input::TurnRight,
+            ]
+            .iter()
+            .any(|&c| binds.just_pressed(c))
+        });
+    if moved {
+        super::input::clear_afk(world, false);
     }
-    let moved = [
-        Input::Jump,
-        Input::MoveForward,
-        Input::MoveBackward,
-        Input::StrafeLeft,
-        Input::StrafeRight,
-        Input::TurnLeft,
-        Input::TurnRight,
-    ]
-    .iter()
-    .any(|&c| binds.just_pressed(c));
-    if !moved {
-        return;
-    }
-    if let Some(mut script) = script.turn() {
-        let line = super::combat::global_string(&script, "CLEARED_AFK").unwrap_or_default();
-        push_system(&mut script, line);
-    }
-    mirror.0 = 0;
-    // The AFK clear's own packet: the empty `0x14` the command path sends.
-    let _ = commands.0.send(crate::net::ClientCommand::Chat {
-        kind: crate::net::ChatKind::Afk,
-        target: None,
-        text: String::new(),
-        language: None,
-    });
 }
 
 #[cfg(test)]
@@ -232,67 +183,60 @@ mod tests {
         )
     }
 
+    /// The world-entry seed stores 1 for a set AFK bit and 0 otherwise or with no active player
+    /// (`0x50dfab`, `0x50dfb7`); the watch stores `flags & 2` on a `0x800e` move only (`0x6e0fe7`).
+    #[test]
+    fn the_mirror_is_seeded_at_entry_and_written_by_the_watch() {
+        use benilla_protocol::field::FIELD_PLAYER_FLAGS;
+        let mut world = World::new();
+        world.insert_resource(AfkMirror(2));
+        super::super::feed::enter_world(&mut world);
+        assert_eq!(world.resource::<AfkMirror>().0, 0, "no active player");
+        let me = world
+            .spawn((
+                crate::net::SelfPlayer,
+                crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+                    FIELD_PLAYER_FLAGS,
+                    0x22,
+                )])),
+            ))
+            .id();
+        super::super::feed::enter_world(&mut world);
+        assert_eq!(world.resource::<AfkMirror>().0, 1);
+        world.entity_mut(me).despawn();
+        flags_watch(&mut world, 0x2, 0x22);
+        assert_eq!(world.resource::<AfkMirror>().0, 1, "outside the mask");
+        flags_watch(&mut world, 0x0, 0x8002);
+        assert_eq!(world.resource::<AfkMirror>().0, 2);
+        flags_watch(&mut world, 0x8002, 0x2);
+        assert_eq!(world.resource::<AfkMirror>().0, 2);
+        world.resource_mut::<AfkMirror>().0 = 1;
+        flags_watch(&mut world, 0x0, 0x8000);
+        assert_eq!(world.resource::<AfkMirror>().0, 0, "0x8000 alone resyncs");
+    }
+
     #[test]
     fn the_truth_table_row_for_row() {
-        let afk = |msg: &str, m: u32| afk_line(msg, AfkMirror(m), &strings);
-        let dnd = |msg: &str, is: bool| dnd_line(msg, is, &strings);
-
-        assert_eq!(
-            afk("", 0),
-            AwayOutcome {
-                line: Some("You are now AFK: Away from Keyboard".into()),
-                mirror: Some(1),
-                body: "Away from Keyboard".into(),
-            },
-            "the server receives the literal default, never an empty body"
-        );
-        assert_eq!(
-            afk("", 1),
-            AwayOutcome {
-                line: Some("You are no longer AFK.".into()),
-                mirror: Some(0),
-                body: String::new(),
-            }
-        );
-        assert_eq!(
-            afk("brb", 0),
-            AwayOutcome {
-                line: Some("You are now AFK: brb".into()),
-                mirror: Some(1),
-                body: "brb".into(),
-            }
-        );
-        assert_eq!(
-            afk("brb", 1),
-            AwayOutcome {
-                line: None,
-                mirror: None,
-                body: "brb".into(),
-            },
-            "silent re-mark: the server still learns the new auto-reply"
-        );
+        let dnd = |msg: &str, is: bool| dnd_line(msg.as_bytes(), is, &strings);
 
         assert_eq!(
             dnd("", false),
             AwayOutcome {
-                line: Some("You are now DND: Do not Disturb.".into()),
-                mirror: None,
+                line: "You are now DND: Do not Disturb.".into(),
                 body: "Do not Disturb".into(),
             }
         );
         assert_eq!(
             dnd("", true),
             AwayOutcome {
-                line: Some("You are no longer marked DND.".into()),
-                mirror: None,
-                body: String::new(),
+                line: "You are no longer marked DND.".into(),
+                body: Vec::new(),
             }
         );
         assert_eq!(
             dnd("busy", false),
             AwayOutcome {
-                line: Some("You are now DND: busy.".into()),
-                mirror: None,
+                line: "You are now DND: busy.".into(),
                 body: "busy".into(),
             }
         );
@@ -300,31 +244,15 @@ mod tests {
         assert_eq!(
             dnd("busy", true),
             AwayOutcome {
-                line: Some("You are now DND: busy.".into()),
-                mirror: None,
+                line: "You are now DND: busy.".into(),
                 body: "busy".into(),
             },
             "DND re-marks where AFK stays silent — the reference's own asymmetry"
         );
     }
 
-    #[test]
-    fn the_auto_clear_is_gated_both_ways() {
-        assert!(
-            auto_clear_line(AfkMirror(1), false, &strings).is_none(),
-            "cvar off"
-        );
-        assert!(
-            auto_clear_line(AfkMirror(0), true, &strings).is_none(),
-            "not afk"
-        );
-        assert!(auto_clear_line(AfkMirror(1), true, &strings).is_some());
-        // The reconcile stores `PLAYER_FLAGS & 2`, so a set mirror can read 2.
-        assert!(
-            auto_clear_line(AfkMirror(2), true, &strings).is_some(),
-            "2 is truthy — every one of the reference's six readers is a non-zero test"
-        );
-        assert!(AfkMirror(2).is_afk());
+    fn fill_one(template: &str, arg: &str) -> String {
+        shown(&fill_one_bytes(template.as_bytes(), arg.as_bytes()))
     }
 
     #[test]
@@ -346,10 +274,10 @@ mod tests {
     #[test]
     fn a_missing_string_table_does_not_invent_english() {
         let none = |_: &str| None;
-        let out = afk_line("brb", AfkMirror(0), &none);
-        assert_eq!(out.line.as_deref(), Some(""));
+        let out = dnd_line(b"brb", false, &none);
+        assert_eq!(out.line, "");
         assert_eq!(
-            out.body, "brb",
+            out.body, b"brb",
             "the wire half never depends on the strings"
         );
     }

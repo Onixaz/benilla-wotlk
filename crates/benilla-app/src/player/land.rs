@@ -82,7 +82,7 @@ pub(crate) fn land_here(
     let _ = net.0.send(ClientCommand::Chat {
         kind: ChatKind::Say,
         target: None,
-        text,
+        text: text.into(),
         language: None,
     });
     *pending = Some(time.elapsed_secs() + LAND_TIMEOUT);

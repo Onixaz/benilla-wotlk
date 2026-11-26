@@ -173,6 +173,28 @@ pub trait LiveState {
         None
     }
 
+    /// The channel records at the call (`0xbcf090` count, `0xbcf094` array), holes kept.
+    fn channel_slots(&self) -> Vec<Option<super::ChannelSlotInfo>> {
+        Vec::new()
+    }
+
+    /// A display list or user-list notice writes the channel record's flags byte (`0x503a69`).
+    fn set_channel_flags(&mut self, _slot: usize, _flags: u8) {}
+
+    /// The channel pane's state, the game's: a reload keeps it, only the session init clears it
+    /// (`0x50f198`-`0x50f202`).
+    fn channel_pane(&mut self) -> Option<&mut super::ChannelPane> {
+        None
+    }
+
+    /// `ChatChannels.dbc` composed for the zone id at the call (`0xbd080c`).
+    fn zone_channel_catalog(&self) -> Vec<super::ZoneChannelRow> {
+        Vec::new()
+    }
+
+    /// Set a channel id's bit in the `ZONECHANNELS` mask (`0xbcf010`).
+    fn add_zone_channel_bit(&mut self, _id: u32) {}
+
     /// The world-state readout's admitted row count at the call (`0x548720`), `None` without one.
     fn world_state_ui_count(&self) -> Option<usize> {
         None
@@ -1940,6 +1962,13 @@ pub(crate) struct TestView {
     /// The open banker and whether the interact target is it.
     pub banker: Option<u64>,
     pub bank_interacting: bool,
+    /// The channel records and the zone's channel catalog.
+    pub channel_slots: Vec<Option<super::ChannelSlotInfo>>,
+    /// The channel pane's state.
+    pub channel_pane: super::ChannelPane,
+    pub zone_channels: Vec<super::ZoneChannelRow>,
+    /// The `ZONECHANNELS` bits set, in order.
+    pub zone_bits: Vec<u32>,
     /// The purchased bank bag slots, `None` without the active player, and the price rows.
     pub bank_slots: Option<u8>,
     pub bank_costs: std::collections::HashMap<u32, u32>,
@@ -2139,6 +2168,28 @@ impl TestView {
 
 #[cfg(test)]
 impl LiveState for TestView {
+    fn channel_slots(&self) -> Vec<Option<super::ChannelSlotInfo>> {
+        self.channel_slots.clone()
+    }
+
+    fn set_channel_flags(&mut self, slot: usize, flags: u8) {
+        if let Some(Some(s)) = self.channel_slots.get_mut(slot) {
+            s.flags = flags;
+        }
+    }
+
+    fn channel_pane(&mut self) -> Option<&mut super::ChannelPane> {
+        Some(&mut self.channel_pane)
+    }
+
+    fn zone_channel_catalog(&self) -> Vec<super::ZoneChannelRow> {
+        self.zone_channels.clone()
+    }
+
+    fn add_zone_channel_bit(&mut self, id: u32) {
+        self.zone_bits.push(id);
+    }
+
     fn reputation(
         &mut self,
         f: &mut dyn FnMut(&mut super::FactionList, &mut dyn super::FactionTable),

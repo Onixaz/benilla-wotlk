@@ -526,6 +526,11 @@ impl ObjectFields {
     pub fn player_drunk_byte(&self) -> Option<u8> {
         self.get_u32(FIELD_PLAYER_BYTES_3).map(|v| (v >> 8) as u8)
     }
+    /// `PLAYER_FAKE_INEBRIATION`, the signed fake drunk level the drunk test and fraction read
+    /// beside the drunk byte (`0x4ffd88`, `0x4f7290`).
+    pub fn player_fake_inebriation(&self) -> i32 {
+        self.get_u32(FIELD_PLAYER_FAKE_INEBRIATION).unwrap_or(0) as i32
+    }
     /// `PLAYER_FLAGS`: the player state flags.
     pub fn player_flags(&self) -> u32 {
         self.get_u32(FIELD_PLAYER_FLAGS).unwrap_or(0)

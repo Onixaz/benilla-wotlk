@@ -342,14 +342,19 @@ fn scrubbed_rank_name(name: &str) -> String {
 }
 
 /// The newline truncation (`0x7e1640`): a CR, an LF, or a `\n` or `|n` escape ends the text.
-fn truncate_new_lines(text: &str) -> &str {
-    let bytes = text.as_bytes();
-    let cut = (0..bytes.len()).find(|&i| match bytes[i] {
-        b'\r' | b'\n' => true,
-        b'\\' | b'|' => bytes.get(i + 1) == Some(&b'n'),
-        _ => false,
-    });
-    cut.map_or(text, |i| &text[..i])
+pub fn truncate_new_lines(text: &str) -> &str {
+    &text[..new_line_cut(text.as_bytes())]
+}
+
+/// [`truncate_new_lines`] on bytes: the length the truncation leaves, always before an ASCII byte.
+pub fn new_line_cut(bytes: &[u8]) -> usize {
+    (0..bytes.len())
+        .find(|&i| match bytes[i] {
+            b'\r' | b'\n' => true,
+            b'\\' | b'|' => bytes.get(i + 1) == Some(&b'n'),
+            _ => false,
+        })
+        .unwrap_or(bytes.len())
 }
 
 /// Register the guild globals.

@@ -502,7 +502,7 @@ fn dev_map_jump(
     let _ = net.0.send(crate::net::ClientCommand::Chat {
         kind: crate::net::ChatKind::Say,
         target: None,
-        text,
+        text: text.into(),
         language: None,
     });
 }

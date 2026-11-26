@@ -262,7 +262,7 @@ fn book_probe(
             let _ = net.0.send(ClientCommand::Chat {
                 kind: ChatKind::Say,
                 target: None,
-                text: format!(".go xyz {x} {y} {z} 0"),
+                text: format!(".go xyz {x} {y} {z} 0").into(),
                 language: None,
             });
             probe.phase = Phase::Settling { sent_at: now };
