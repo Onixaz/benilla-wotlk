@@ -10,6 +10,8 @@
 //!   nothing.
 //! - Out of range within 694.444 yd: the first 3 by (`Importance` signed ascending, distance),
 //!   on the 0.8 rim, each rotated to point at its POI in its source's art ([`RimArrow`]).
+//!   Indoors only the gossip POI's, the corpse's and `Flags & 0x100` rows' arrows draw; the
+//!   others keep their ranked slots hidden (`0x57d860`, `0x7f4b60`).
 //!
 //! The object blips are [`dots`]': the town tracking type, quest status, an unlearned flight
 //! master and the tracking masks each give a cell of `ObjectIcons.blp`, culled at 0.8 of the view
@@ -60,6 +62,8 @@ const BLIP_EDGE_RATIO: f32 = 0.8;
 const FLAG_CANDIDATE: u32 = 0x1;
 /// AreaPOI `Flags` bit 1, draw the in-range icon.
 const FLAG_IN_RANGE_ICON: u32 = 0x2;
+/// AreaPOI `Flags` bit 8, keep the rim arrow indoors (`0x7f4b60`).
+const FLAG_ALWAYS_SHOWN: u32 = 0x100;
 /// The basis every blip size is frozen against: the stock 140-unit widget at 140.8 px on the
 /// 1024×768 screen, computed once by the minimap frame's constructor.
 pub(super) const BLIP_BASIS_PX: f32 = 140.8;
@@ -275,18 +279,21 @@ pub(super) struct LandmarkSelection<'a> {
     /// In-range rows with [`FLAG_IN_RANGE_ICON`] and the `Icon` cell their world state picks,
     /// drawn at their position.
     pub(super) icons: Vec<(&'a AreaPoi, u32)>,
-    /// The rim arrows `(dist, poi, art)` in rank order.
-    pub(super) arrows: Vec<(f32, &'a AreaPoi, RimArrow)>,
+    /// The rim arrows `(dist, poi, art, always_shown)` in rank order. An always-shown arrow
+    /// still draws indoors: the gossip POI's and the corpse's (dynamic slots 1 and 2; slot 0's
+    /// quest point is not built), or a row with [`FLAG_ALWAYS_SHOWN`] (`0x7f4b60`).
+    pub(super) arrows: Vec<(f32, &'a AreaPoi, RimArrow, bool)>,
 }
 
 /// The static POI slots appended after the DBC scan, each placed on the shown map by its caller.
 #[derive(Clone, Copy, Default)]
 pub(super) struct StaticPois<'a> {
-    /// The guard-directions POI.
+    /// The guard-directions POI, the reference's gossip slot 1 (`0x7f4870`).
     pub(super) marker: Option<&'a AreaPoi>,
     /// The corpse's POI (`0x7f4990`), slot `0xd39540`.
     pub(super) corpse: Option<&'a AreaPoi>,
-    /// The release graveyard's spirit-healer POI (`0x7f4a00`), the slot after the corpse's.
+    /// The release graveyard's spirit-healer POI (`0x7f4a00`), the slot after the corpse's: slot
+    /// 3, the one dynamic slot hidden indoors.
     pub(super) release: Option<&'a AreaPoi>,
 }
 
@@ -302,14 +309,15 @@ pub(super) fn select_landmarks<'a>(
     world_state: impl Fn(u32) -> i32,
 ) -> LandmarkSelection<'a> {
     let mut icons = Vec::new();
-    let mut arrows: Vec<(f32, &AreaPoi, RimArrow)> = Vec::new();
+    let mut arrows: Vec<(f32, &AreaPoi, RimArrow, bool)> = Vec::new();
+    // `(poi, art, uncut, slot always shown)`.
     let candidates = pois
         .filter(|p| p.continent_id == map_id && p.flags & FLAG_CANDIDATE != 0)
-        .map(|p| (p, RimArrow::Landmark, false))
-        .chain(statics.marker.map(|m| (m, RimArrow::Guide, false)))
-        .chain(statics.corpse.map(|c| (c, RimArrow::Corpse, true)))
-        .chain(statics.release.map(|r| (r, RimArrow::Corpse, false)));
-    for (p, art, uncut) in candidates {
+        .map(|p| (p, RimArrow::Landmark, false, false))
+        .chain(statics.marker.map(|m| (m, RimArrow::Guide, false, true)))
+        .chain(statics.corpse.map(|c| (c, RimArrow::Corpse, true, true)))
+        .chain(statics.release.map(|r| (r, RimArrow::Corpse, false, false)));
+    for (p, art, uncut, slot_shown) in candidates {
         // Neither drawn nor on the rim: a row at (0, 0), or one whose world state reads 0
         // (`0x7f44a0`); Isle of Conquest keeps one row per node state.
         let unplaced = p.pos[0] == 0.0 && p.pos[1] == 0.0;
@@ -322,7 +330,7 @@ pub(super) fn select_landmarks<'a>(
                 icons.push((p, landmark_icon(p, &world_state)));
             }
         } else if uncut || d <= LANDMARK_RANK_YD {
-            arrows.push((d, p, art));
+            arrows.push((d, p, art, slot_shown || p.flags & FLAG_ALWAYS_SHOWN != 0));
         }
     }
     arrows.sort_by(|a, b| {
@@ -414,15 +422,21 @@ pub(super) fn emit_landmark_icons(
 }
 
 /// Draw the landmark rim arrows, after the object blips and before the group's (`0x57d860`).
+/// Indoors only the always-shown ones draw, and only a drawn one hovers (`0x57c720`); the three
+/// ranked slots stay taken by the hidden ones.
 pub(super) fn emit_landmark_arrows(
     ctx: &BlipCtx,
     sel: &LandmarkSelection,
     arrows: &RimArrowArt,
+    indoors: bool,
     quads: &mut UiQuads,
     hover: &mut MinimapBlipHover,
 ) {
-    for (_d, poi, art) in &sel.arrows {
-        let Some(tex) = arrows.get(*art) else {
+    for &(_d, poi, art, always_shown) in &sel.arrows {
+        if indoors && !always_shown {
+            continue;
+        }
+        let Some(tex) = arrows.get(art) else {
             continue;
         };
         let at = push_rim_arrow(ctx, poi.pos, tex, ARROW_QUAD_PX, quads);
@@ -778,7 +792,11 @@ mod tests {
             ..Default::default()
         };
         let sel = select_landmarks(rows.iter(), statics, 0, 0.0, 0.0, 133.0, |_| 0);
-        let names: Vec<&str> = sel.arrows.iter().map(|(_, p, _)| p.name.as_str()).collect();
+        let names: Vec<&str> = sel
+            .arrows
+            .iter()
+            .map(|(_, p, _, _)| p.name.as_str())
+            .collect();
         assert_eq!(names, ["Corpse", "minor-near", "minor-mid"]);
         assert_eq!(sel.arrows[0].2, RimArrow::Corpse);
     }
@@ -819,7 +837,7 @@ mod tests {
             |_| 0,
         );
         emit_landmark_icons(&ctx, &sel, Some(&atlas), &mut quads, &mut hover);
-        emit_landmark_arrows(&ctx, &sel, &arrows, &mut quads, &mut hover);
+        emit_landmark_arrows(&ctx, &sel, &arrows, false, &mut quads, &mut hover);
         hover
     }
 
@@ -981,6 +999,49 @@ mod tests {
         assert_eq!(hover.raid, ["Bert"]);
     }
 
+    /// Indoors a landmark's rim arrow neither draws nor hovers; the corpse's and a
+    /// `Flags & 0x100` row's still do (`0x57d860`, `0x57c720`).
+    #[test]
+    fn indoors_only_the_always_shown_rim_arrows_draw() {
+        let corpse = static_slot(1000.0, "Corpse");
+        let shown = poi(0, 0x101, 600.0, "Shown");
+        let rows = [poi(0, 0x1, 600.0, "Hidden"), shown];
+        let statics = StaticPois {
+            corpse: Some(&corpse),
+            ..Default::default()
+        };
+        let sel = select_landmarks(rows.iter(), statics, 0, 0.0, 0.0, 133.0, |_| 1);
+        let mut arrows = RimArrowArt::default();
+        for art in RimArrow::ALL {
+            arrows.set(art, Some(Handle::default()));
+        }
+        let drawn = |indoors: bool| {
+            let mut quads = UiQuads::default();
+            let mut hover = MinimapBlipHover::default();
+            emit_landmark_arrows(
+                &hover_ctx(Vec2::ZERO),
+                &sel,
+                &arrows,
+                indoors,
+                &mut quads,
+                &mut hover,
+            );
+            quads.overlays.len()
+        };
+        assert_eq!(sel.arrows.len(), 3);
+        let flags: Vec<(&str, bool)> = sel
+            .arrows
+            .iter()
+            .map(|(_, p, _, a)| (p.name.as_str(), *a))
+            .collect();
+        assert!(
+            flags.contains(&("Corpse", true)) && flags.contains(&("Shown", true)),
+            "{flags:?}"
+        );
+        assert_eq!(drawn(false), 3);
+        assert_eq!(drawn(true), 2);
+    }
+
     /// An in-range group dot names its member on the object half of the hover, the raid's list
     /// before the party's, even with no class to draw (`0x57c720` walks the lists, not the quads).
     #[test]
@@ -1034,7 +1095,10 @@ mod tests {
         let names: Vec<_> = hits.iter().map(|h| h.name.clone()).collect();
         assert_eq!(
             names,
-            [HoverName::Known("Bert".into()), HoverName::Known("Anna".into())]
+            [
+                HoverName::Known("Bert".into()),
+                HoverName::Known("Anna".into())
+            ]
         );
     }
 
@@ -1073,7 +1137,11 @@ mod tests {
             |_| 0,
         );
         assert!(sel.icons.is_empty(), "no Flags&2 row is in range");
-        let names: Vec<&str> = sel.arrows.iter().map(|(_, p, _)| p.name.as_str()).collect();
+        let names: Vec<&str> = sel
+            .arrows
+            .iter()
+            .map(|(_, p, _, _)| p.name.as_str())
+            .collect();
         assert_eq!(names, ["Stormwind", "Goldshire"]);
     }
 
@@ -1096,7 +1164,11 @@ mod tests {
             100.0,
             |_| 0,
         );
-        let names: Vec<&str> = sel.arrows.iter().map(|(_, p, _)| p.name.as_str()).collect();
+        let names: Vec<&str> = sel
+            .arrows
+            .iter()
+            .map(|(_, p, _, _)| p.name.as_str())
+            .collect();
         assert_eq!(names, ["minor-near", "minor-far", "city-near"]);
     }
 
@@ -1118,13 +1190,17 @@ mod tests {
             133.0,
             |_| 0,
         );
-        let names: Vec<&str> = sel.arrows.iter().map(|(_, p, _)| p.name.as_str()).collect();
+        let names: Vec<&str> = sel
+            .arrows
+            .iter()
+            .map(|(_, p, _, _)| p.name.as_str())
+            .collect();
         assert_eq!(
             names,
             ["Stormwind Warrior Trainer", "Stormwind", "Goldshire"],
             "Importance 0 ranks the marker first; the third city is crowded out"
         );
-        let arts: Vec<RimArrow> = sel.arrows.iter().map(|&(_, _, a)| a).collect();
+        let arts: Vec<RimArrow> = sel.arrows.iter().map(|&(_, _, a, _)| a).collect();
         assert_eq!(
             arts,
             [RimArrow::Guide, RimArrow::Landmark, RimArrow::Landmark],

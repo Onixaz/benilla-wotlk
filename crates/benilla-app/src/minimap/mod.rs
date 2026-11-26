@@ -926,7 +926,14 @@ fn emit_minimap(
     // The rim arrows close the blip pass: the landmarks', then the group's (`0x57d860`, `0x580ae0`,
     // `0x580ec0`).
     if let (Some(ctx), Some(sel)) = (&blip_ctx, &landmarks) {
-        blips::emit_landmark_arrows(ctx, sel, &assets.rim_arrows, &mut quads, &mut hover);
+        blips::emit_landmark_arrows(
+            ctx,
+            sel,
+            &assets.rim_arrows,
+            player_indoors,
+            &mut quads,
+            &mut hover,
+        );
     }
     if let Some(ctx) = &blip_ctx {
         blips::emit_group_arrows(
