@@ -340,3 +340,22 @@ means and records the difference here.
   instance type through the null record (`0x572f7c`), so 12340 faults. In the world the current
   map is always a `Map.dbc` row, so the fault is not reached.
 - **benilla:** treats a map with no record as neither.
+
+### Combat log: an entry queued behind a waiting one
+
+- **12340:** A new combat log entry hides the spawn counter of a creature whose template has type
+  flag `0x4000` (`0x74d210`, called at `0x74ff54` and `0x74ff5f`). When another entry is already
+  waiting for a name, the queue returns before that step (`0x74ff39`–`0x74ff40`) and the send loop
+  later sends the new entry as it is (`0x74fa1b`–`0x74fa25`), so that one `COMBAT_LOG_EVENT` shows
+  the counter every other entry hides.
+- **benilla:** hides it on every entry once its names are in.
+
+### Combat log: a listener's `CombatLogClearEntries`
+
+- **12340:** The send loop raises `COMBAT_LOG_EVENT_UNFILTERED` and `COMBAT_LOG_EVENT` for the
+  entry at its cursor. A listener that calls `CombatLogClearEntries` (`0x751120` -> `0x750390`)
+  while that entry is the last sets the cursor to null (`0x750393`, `0x7503a8`). The loop then reads
+  the cursor back and dereferences it (`0x74fa09` -> `0x74fa0f`), and passes it to the log file's
+  pack while `LoggingCombat` is on (`0x74f9e3`), so 12340 faults. Addons work around it by delaying
+  the clear.
+- **benilla:** ends the send loop when no entry is left; the next entry logs as the first.
