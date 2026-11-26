@@ -15,9 +15,8 @@ pub struct MatAnim {
     anim: std::sync::Arc<benilla_formats::AlphaAnim>,
     /// The entity whose `AnimationPlayer` names the sequence to read, re-resolved every frame (the
     /// unit lane: a voidwalker's upper armour is weight 0 in Stand, 1 in Death). `None` pins the
-    /// instance to [`Self::seq`] on its spawn clock: a spell effect, or a placed doodad, which
-    /// reads slot 0 where the reference reads the sequence each arm picks (called from the load
-    /// build and again on every re-roll).
+    /// instance to [`Self::seq`] on its spawn clock: a spell effect, or a placed doodad whose model
+    /// arms no player.
     host: Option<Entity>,
     /// The file sequence slot to read: fixed when pinned, the last one resolved from
     /// [`Self::host`] otherwise; `None` reads slot 0.
@@ -34,6 +33,9 @@ pub struct MatAnim {
     /// Composed by the unit lane without a [`Self::host`]: an attach model (a held weapon, a helm),
     /// pinned like a doodad but ordered against the wearer's appear-fade. See [`Self::resting`].
     unit_lane: bool,
+    /// A placed doodad reading its anim host's armed variation: the visibility authority composes
+    /// it, as for a pinned doodad, never the unit lane. See [`Self::on_doodad_host`].
+    doodad_lane: bool,
     /// The gseq attach anchor (secs, shared clock), stamped by the first [`sample_mat_anim`] pass:
     /// the reference snapshots the scene clock once per instance at attach (model `+0x68`).
     gseq_attach: Option<f64>,
@@ -57,6 +59,7 @@ impl MatAnim {
             frozen,
             drives_tag: false,
             unit_lane: false,
+            doodad_lane: false,
             gseq_attach: None,
             current,
         }
@@ -102,10 +105,19 @@ impl MatAnim {
         }
     }
 
+    /// The placed-doodad lane on an armed host: sequence and clock come from `host`'s player, the
+    /// variation each re-roll picks, as colours and transparency sample bone 0's armed sequence
+    /// (`0x82f0f0`). `None` leaves it pinned to slot 0 on its spawn clock.
+    pub(crate) fn on_doodad_host(mut self, host: Option<Entity>) -> Self {
+        self.host = host;
+        self.doodad_lane = true;
+        self
+    }
+
     /// Whether the unit lane composes this instance's tag: a hosted or attach-model batch, never an
-    /// effect part that drives its own.
+    /// effect part that drives its own or a placed doodad.
     pub fn composes_unit_tag(&self) -> bool {
-        (self.host.is_some() || self.unit_lane) && !self.drives_tag
+        (self.host.is_some() || self.unit_lane) && !self.drives_tag && !self.doodad_lane
     }
 }
 

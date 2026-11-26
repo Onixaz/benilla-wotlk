@@ -64,6 +64,15 @@ pub(crate) fn arms_for_sound(anims: &ModelAnimations) -> bool {
         })
 }
 
+/// Whether a batch reads the armed sequence's clock: a colour-alpha or transparency loop, or a UV
+/// or tint loop whose sequence slots disagree (`Apothecary_FX.m2`'s lightning, whose five Stand
+/// variations move no bone).
+pub(crate) fn arms_for_material(m: &M2Model) -> bool {
+    m.submeshes
+        .iter()
+        .any(|s| s.alpha_anim.is_some() || s.uv_seq.is_some() || s.rgb_seq.is_some())
+}
+
 /// Classify a placed model; a boneless one is `Static`, with no joints for a skin to index.
 pub fn classify<'a>(
     skeleton: &ModelSkeleton,
@@ -169,7 +178,14 @@ pub fn spawn_anim_host(
     let mut clip_info = None;
     let mut armed_seq = None;
     let mut arm_id = None;
-    if let DoodadAnimTier::FirstSeq(head) = tier {
+    // A bind-posed rig still arms when a batch reads the sequence: colours and transparency sample
+    // bone 0's armed sequence every frame (`0x82f0f0`), whether or not a bone moves.
+    let armed = match tier {
+        DoodadAnimTier::FirstSeq(head) => Some(head),
+        DoodadAnimTier::GlobalSeqOnly if arms_for_material(m) => anims.idle_clip(),
+        _ => None,
+    };
+    if let Some(head) = armed {
         // The loader's var-0 seed only. The effective arm is the holder's `variationIdx = -1` op4,
         // here `reroll_doodad_variation`'s first pass, the same frame, since the host is born with
         // an expired window.
@@ -775,6 +791,30 @@ mod tests {
             app.world().entity(part).get::<MatAnim>().unwrap().current,
             0.0
         );
+    }
+
+    /// A placed doodad on an armed host reads the variation the re-roll plays, not slot 0, and
+    /// stays the visibility authority's to compose.
+    #[test]
+    fn a_placed_doodad_mat_anim_follows_its_armed_variation() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_systems(Update, sample_mat_anim);
+        let anims = anims(vec![seq_clip(0, 0, 1), seq_clip(0, 1, 2)], Some(0), false);
+        let mut player = AnimationPlayer::default();
+        player.play(AnimationNodeIndex::new(2)).repeat();
+        let host = app.world_mut().spawn((player, anims)).id();
+        let part = app
+            .world_mut()
+            .spawn(MatAnim::new(two_seq_alpha(), 0.0, false).on_doodad_host(Some(host)))
+            .id();
+        app.update();
+        let m = app.world().entity(part).get::<MatAnim>().unwrap();
+        assert_eq!(m.current, 1.0, "variation slot 1 draws, where slot 0 hides");
+        assert!(!m.composes_unit_tag(), "a doodad is never the unit lane's");
+        let pinned = MatAnim::new(two_seq_alpha(), 0.0, false).on_doodad_host(None);
+        assert_eq!(pinned.current, 0.0, "no armed host: slot 0, as before");
+        assert!(!pinned.composes_unit_tag());
     }
 
     #[test]
