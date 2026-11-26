@@ -223,6 +223,7 @@ fn template_view(
         sell_price: t.sell_price,
         item_set: t.item_set,
         random_property: t.random_property,
+        random_suffix: t.random_suffix,
         recipe_creates: recipe_creates(t, spells),
         taught: taught_spell(t, spells),
         item_spells: t
@@ -457,6 +458,20 @@ fn build_random_properties(
                     name: r.name.clone(),
                     enchants: r.enchants,
                     allocation: r.allocation,
+                },
+            )
+        })
+        .collect();
+    out.rand_prop_points = props
+        .0
+        .iter_rand_prop_points()
+        .map(|(id, r)| {
+            (
+                id,
+                benilla_ui::script::RandPropPointsView {
+                    epic: r.epic,
+                    superior: r.superior,
+                    good: r.good,
                 },
             )
         })

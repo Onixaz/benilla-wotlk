@@ -433,7 +433,7 @@ pub use item_stats::equip_loc_token;
 pub use item_stats::{
     item_usable, item_use_refusal, EnchantEffectView, EnchantRowView, GemView, ItemLimitView,
     ItemRecordWait, ItemSetMember, ItemSetView, ItemSpellView, ItemTables, ItemTemplateView,
-    PlayerFields, PlayerReqState, RandomSuffixView, ReqFields,
+    PlayerFields, PlayerReqState, RandPropPointsView, RandomSuffixView, ReqFields,
 };
 pub use item_text::ItemTextRead;
 pub use layout_cache::PlacedFrame;
@@ -458,7 +458,7 @@ pub use mail::{
 pub use measure::TextMeasure;
 pub use merchant::{
     CostItem, ExtendedCost, ItemStatsHead, MerchantAct, MerchantItem, MerchantList,
-    MerchantOutcome, MerchantState, RepairAt, RepairCosts,
+    MerchantOutcome, MerchantState, PurchaseGroup, RepairAt, RepairCosts,
 };
 pub(crate) use minimap::apply_model_attrs as apply_minimap_model_attrs;
 pub use model::{FontProbe, MacroIconSource, TextureProbe, TextureSizeProbe};

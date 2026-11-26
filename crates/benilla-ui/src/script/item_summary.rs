@@ -409,8 +409,9 @@ impl StatSummary {
                 t.random_suffixes
                     .get(&f.random_property.unsigned_abs())
                     .map(|row| {
+                        let points = i32::from(f.seed as u16);
                         (0..row.enchants.len())
-                            .map(|slot| (row.enchants[slot], Some(row.value(slot, f.seed))))
+                            .map(|slot| (row.enchants[slot], Some(row.value(slot, points))))
                             .collect()
                     })
             }

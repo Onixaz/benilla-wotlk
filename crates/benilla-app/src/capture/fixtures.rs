@@ -183,6 +183,7 @@ pub(super) fn seed_ui_fixture(
         material: 0,
         sheath: 0,
         random_property: 0,
+        random_suffix: 0,
         block: 0,
         item_set: 0,
         max_durability: 0,

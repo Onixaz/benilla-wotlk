@@ -1080,7 +1080,13 @@ pub(crate) fn setup_entities(
         Err(e) => warn!("durability tables unavailable, repair costs show 0: {e:#}"),
     }
     match benilla_formats::load_item_extended_costs(&mut chain) {
-        Ok(costs) => commands.insert_resource(crate::ui_merchant::ExtendedCosts(costs)),
+        Ok(costs) => {
+            let groups = benilla_formats::load_item_purchase_groups(&mut chain).unwrap_or_else(|e| {
+                warn!("item purchase groups unavailable, no purchase-group requirement line: {e:#}");
+                Default::default()
+            });
+            commands.insert_resource(crate::ui_merchant::ExtendedCosts(costs, groups));
+        }
         Err(e) => warn!("item extended costs unavailable, token rows read copper only: {e:#}"),
     }
     match benilla_formats::load_bank_bag_slot_prices(&mut chain) {

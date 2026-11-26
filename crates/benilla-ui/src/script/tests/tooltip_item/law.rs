@@ -1226,6 +1226,7 @@ fn seed_requirement_strings(s: &mut UiScript) {
         ITEM_REQ_ARENA_RATING = "[ARENA %d]"
         ITEM_REQ_ARENA_RATING_3V3 = "[ARENA3 %d]"
         ITEM_REQ_ARENA_RATING_5V5 = "[ARENA5 %d]"
+        ITEM_REQ_PURCHASE_GROUP = "[GROUP %s]"
         ITEM_PROSPECTABLE = "[ITEM_PROSPECTABLE]"
         ITEM_MILLABLE = "[ITEM_MILLABLE]"
         local a = CreateFrame("Button", "Slot9"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
@@ -1315,6 +1316,88 @@ fn requirement_lines_come_out_in_the_reference_order() {
         assert!(!lines.iter().any(|(t, _)| t.starts_with("[ARENA")));
         assert_eq!(lines.len(), 7);
     });
+}
+
+/// The merchant tooltip's purchase group requirement (`0x62b727`..`0x62b7b5`): normal colour when
+/// any item in the group is held (including bank), red when none is held, and omitted when absent.
+#[test]
+fn merchant_purchase_group_requirement_line_reflects_ownership() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    seed_requirement_strings(&mut s);
+    s.set_item_template(
+        42,
+        ItemTemplateView {
+            name: "Upgraded Helm".into(),
+            quality: 4,
+            ..Default::default()
+        },
+    );
+    let group_merchant = |group: Option<crate::script::PurchaseGroup>| MerchantState {
+        items: vec![MerchantItem {
+            item_id: 42,
+            extended_cost: Some(ExtendedCost {
+                purchase_group: group,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let group = crate::script::PurchaseGroup {
+        name: "Tier 1 Helm".into(),
+        item_ids: [1001, 1002, 0, 0, 0, 0, 0, 0],
+    };
+    let red = [1.0, 32.0 / 255.0, 32.0 / 255.0, 1.0];
+    let white = [1.0, 1.0, 1.0, 1.0];
+
+    // Unowned: red line.
+    s.set_merchant(Some(group_merchant(Some(group.clone()))));
+    s.run("TT:SetOwner(Slot9, 'ANCHOR_RIGHT'); TT:SetMerchantItem(1)")
+        .unwrap();
+    let lines = lines_of(&mut s);
+    let req = lines
+        .iter()
+        .find(|(t, _)| t == "[GROUP Tier 1 Helm]")
+        .expect("unowned purchase group prints");
+    assert_eq!(req.1, red, "unowned is red");
+
+    // Owned in bank (`0x754a20` -> `0x7546f0` with flag `8`, searching equipped, bags, backpack,
+    // bank, keyring and currency): normal white colour.
+    let mut bank_slots = HashMap::new();
+    bank_slots.insert(
+        1,
+        ContainerSlot {
+            count: 1,
+            item_id: 1002,
+            ..Default::default()
+        },
+    );
+    s.set_container(
+        -1,
+        Some(ContainerState {
+            bag_family: 0,
+            name: Some("Bank".into()),
+            num_slots: 28,
+            slots: bank_slots,
+        }),
+    );
+    s.run("TT:SetMerchantItem(1)").unwrap();
+    let lines = lines_of(&mut s);
+    let req = lines
+        .iter()
+        .find(|(t, _)| t == "[GROUP Tier 1 Helm]")
+        .expect("owned purchase group prints");
+    assert_eq!(req.1, white, "owned is white");
+
+    // Missing / absent purchase group: no line.
+    s.set_merchant(Some(group_merchant(None)));
+    s.run("TT:SetMerchantItem(1)").unwrap();
+    let lines = lines_of(&mut s);
+    assert!(
+        !lines.iter().any(|(t, _)| t.starts_with("[GROUP ")),
+        "missing row prints no line: {lines:?}"
+    );
 }
 
 /// The arena line's key follows the bracket, and it reads white once a team of the bracket's size

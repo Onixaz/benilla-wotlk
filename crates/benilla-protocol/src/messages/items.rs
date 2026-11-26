@@ -101,6 +101,8 @@ pub struct ItemInfo {
     pub sheath: u32,
     /// `ItemRandomProperties.dbc` id for an "of the Whale" suffix, rolled per instance.
     pub random_property: u32,
+    /// `ItemRandomSuffix.dbc` group id (`[template+0x1a0]`), rolled per instance.
+    pub random_suffix: u32,
     /// A shield's block value.
     pub block: u32,
     /// `ItemSet.dbc` id; 0 for none.
@@ -405,7 +407,7 @@ pub(super) fn read_item_query_response_wotlk(r: &mut &[u8]) -> io::Result<(u32, 
     let material = read_u32_le(r)?;
     let sheath = read_u32_le(r)?;
     let random_property = read_u32_le(r)?;
-    let _random_suffix = read_u32_le(r)?;
+    let random_suffix = read_u32_le(r)?;
     let block = read_u32_le(r)?;
     let item_set = read_u32_le(r)?;
     let max_durability = read_u32_le(r)?;
@@ -476,6 +478,7 @@ pub(super) fn read_item_query_response_wotlk(r: &mut &[u8]) -> io::Result<(u32, 
             material,
             sheath,
             random_property,
+            random_suffix,
             block,
             item_set,
             max_durability,
