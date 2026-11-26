@@ -71,8 +71,6 @@ impl Plugin for CombatLogPlugin {
             .net_handler(K::EnvironmentalDamageLog, on_environmental_damage_log)
             .net_handler(K::BuildingDamage, on_building_damage)
             .net_handler(K::DestroyedOnDeath, on_destroyed_on_death)
-            .net_handler(K::SpellStart, on_spell_start)
-            .net_handler(K::SpellGo, on_spell_go)
             .net_handler(K::AuraUpdate, on_aura_update)
             .net_handler(K::XpGain, on_xp_gain)
             .net_handler(K::ExplorationXp, on_exploration_xp)
@@ -225,44 +223,65 @@ fn on_destroyed_on_death(
     }
 }
 
-/// `OnSpellStartPacket` (`0x806700`): a shown cast logs its start.
-fn on_spell_start(In(ev): In<SessionEvent>, mut log: Log) {
-    if let SessionEvent::SpellStart {
-        caster,
-        spell_id,
-        cast_flags,
-        ..
-    } = ev
-    {
-        if cast_flags & 0x1 == 0 {
-            log.cast_start(caster, spell_id);
-        }
+/// The start handler's log (`0x8069e0`), queued by the cast's handler at its step: after the start's
+/// `UNIT_SPELLCAST_START` (`0x806961`) and ahead of the rest of the handler; a hidden start logs
+/// nothing (`0x8069c4`).
+pub(crate) fn queue_cast_start(
+    ui: &mut crate::ui_script::live::UiEvents,
+    caster: u64,
+    spell_id: u32,
+    cast_flags: u32,
+) {
+    if cast_flags & 0x1 == 0 {
+        ui.world(move |world| run_log(world, log_cast_start, (caster, spell_id)));
     }
 }
 
-fn on_spell_go(In(ev): In<SessionEvent>, mut log: Log) {
-    if let SessionEvent::SpellGo {
-        caster,
-        spell_id,
-        cast_flags,
-        misses,
-        reflects,
-        target,
-        go_target,
-        item_caster,
-        ..
-    } = ev
-    {
-        let object = target.or(go_target).unwrap_or(0);
-        log.spell_go(
-            caster,
-            item_caster,
-            spell_id,
-            cast_flags,
-            object,
-            &misses,
-            &reflects,
-        );
+fn log_cast_start(In((caster, spell_id)): In<(u64, u32)>, mut log: Log) {
+    log.cast_start(caster, spell_id);
+}
+
+/// What the go handler's log reads off the packet (`0x80e9f3`-`0x80ec6c`).
+pub(crate) struct SpellGoLog {
+    pub(crate) caster: u64,
+    pub(crate) item_caster: Option<u64>,
+    pub(crate) spell_id: u32,
+    pub(crate) cast_flags: u32,
+    pub(crate) object: u64,
+    pub(crate) misses: Vec<(u64, u8)>,
+    pub(crate) reflects: Vec<(u64, u8)>,
+}
+
+/// The go handler's log block (`0x80e9f3`: the cast or proc entry, `0x80ec6c` / `0x80ea21`, then
+/// the misses, `0x80ea7f`), queued by the cast's handler at its step: after the end's
+/// `UNIT_SPELLCAST_SUCCEEDED` (`0x80e763`) and ahead of the visuals and the effect loop.
+pub(crate) fn queue_spell_go(ui: &mut crate::ui_script::live::UiEvents, go: SpellGoLog) {
+    ui.world(move |world| run_log(world, log_spell_go, go));
+}
+
+fn log_spell_go(In(go): In<SpellGoLog>, mut log: Log) {
+    log.spell_go(
+        go.caster,
+        go.item_caster,
+        go.spell_id,
+        go.cast_flags,
+        go.object,
+        &go.misses,
+        &go.reflects,
+    );
+}
+
+/// Runs a log step where the combat log is built; a world without it (a handler test) logs nothing.
+fn run_log<I, M, S>(world: &mut World, system: S, input: I::Inner<'_>)
+where
+    I: bevy::ecs::system::SystemInput + 'static,
+    S: IntoSystem<I, (), M> + 'static,
+{
+    if !world.contains_resource::<CombatLog>() {
+        return;
+    }
+    if let Err(e) = world.run_system_cached_with(system, input) {
+        error!("combat log: a cast's log step did not run: {e}");
     }
 }
 

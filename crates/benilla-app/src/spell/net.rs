@@ -1763,6 +1763,8 @@ fn spell_start(
     if self_guid.0 == Some(caster) && cast_count != 0 && !hidden {
         crate::ui_action::signals::selection(ui);
     }
+    // The combat log's start entry, behind the start's visuals (`0x8069e0`).
+    crate::combat_log::queue_cast_start(ui, caster, spell_id, cast_flags);
     if let Some(&e) = index.0.get(&caster).filter(|_| !hidden) {
         let fresh = Casting {
             spell_id,
@@ -1957,6 +1959,19 @@ fn spell_go(
         cast_count,
         cast_flags,
     });
+    // The combat log's cast or proc entry and the misses, behind the end (`0x80e9f3`).
+    crate::combat_log::queue_spell_go(
+        ui,
+        crate::combat_log::SpellGoLog {
+            caster,
+            item_caster,
+            spell_id,
+            cast_flags,
+            object: target.or(go_target).unwrap_or(0),
+            misses: misses.clone(),
+            reflects: reflects.clone(),
+        },
+    );
     // The `use` trace's third link, after `target::click`: a caster we never streamed drops every
     // visual below. A SPELLCASTER GameObject (type 22) is its own caster; vmangos writes that guid
     // as 0 and the decode resolves it (`benilla_protocol::events`' `spell_caster`).

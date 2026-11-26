@@ -5917,6 +5917,111 @@ fn cast_bar_events_fire_from_the_spell_handlers_in_wire_order() {
     );
 }
 
+/// A cast's log entries fire inside the cast's handlers behind its unit events: the start's
+/// `UNIT_SPELLCAST_START` (`0x806961` -> `0x805496`) before its `SPELL_CAST_START` (`0x8069e0`),
+/// and the go's `UNIT_SPELLCAST_SUCCEEDED` (`0x80e763`) before its `SPELL_CAST_SUCCESS`
+/// (`0x80ec6c`), each before the next packet's events.
+#[test]
+fn a_casts_log_entries_fire_behind_its_unit_events() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.run(2);
+    const FIREBALL: u32 = 133;
+    const RENEW: u32 = 139;
+    let start = SessionEvent::SpellStart {
+        caster: ME,
+        cast_count: 4,
+        spell_id: FIREBALL,
+        cast_flags: 0,
+        cast_time_ms: 1500,
+        target: None,
+        ammo_display_id: None,
+        immunities: None,
+    };
+    let go = SessionEvent::SpellGo {
+        caster: ME,
+        cast_count: 5,
+        spell_id: RENEW,
+        cast_flags: 0,
+        server_time: 0,
+        hits: vec![ME],
+        misses: vec![],
+        reflects: vec![],
+        target: Some(ME),
+        go_target: None,
+        target_mask: 0x2,
+        src: None,
+        dest: None,
+        ammo: None,
+        item_caster: None,
+        trajectory: None,
+        dest_counter: 0,
+        points: vec![],
+    };
+    let seen = rig.packets(vec![start, control(false), go, control(true)], 2);
+    let events = &[
+        "UNIT_SPELLCAST_START",
+        "UNIT_SPELLCAST_SUCCEEDED",
+        "PLAYER_CONTROL_LOST",
+        "PLAYER_CONTROL_GAINED",
+    ];
+    assert_eq!(
+        log_pin(&seen, events, &["clnum"]),
+        vec![
+            "UNIT_SPELLCAST_START player Fireball Rank 1 4 | clnum=0",
+            "COMBAT_LOG_EVENT_UNFILTERED SPELL_CAST_START nil 133 | clnum=1",
+            "PLAYER_CONTROL_LOST | clnum=1",
+            "UNIT_SPELLCAST_SUCCEEDED player Renew Rank 1 5 | clnum=1",
+            "COMBAT_LOG_EVENT_UNFILTERED SPELL_CAST_SUCCESS Probesix 139 | clnum=2",
+            "PLAYER_CONTROL_GAINED | clnum=2",
+        ]
+    );
+}
+
+/// A go whose dest lies on a transport not here ends at the pending cast's release (`0x80e647` ->
+/// `0x80e66e`): it jumps past the end and the log block, so nothing logs.
+#[test]
+fn a_go_on_a_transport_not_here_logs_nothing() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.run(2);
+    const RENEW: u32 = 139;
+    let go = |dest| SessionEvent::SpellGo {
+        caster: ME,
+        cast_count: 0,
+        spell_id: RENEW,
+        cast_flags: 0,
+        server_time: 0,
+        hits: vec![ME],
+        misses: vec![],
+        reflects: vec![],
+        target: Some(ME),
+        go_target: None,
+        target_mask: 0x40,
+        src: None,
+        dest,
+        ammo: None,
+        item_caster: None,
+        trajectory: None,
+        dest_counter: 0,
+        points: vec![],
+    };
+    const NO_TRANSPORT: u64 = 0x1FC0_0000_0000_0099;
+    let seen = rig.packets(
+        vec![go(Some(([0.0; 3], NO_TRANSPORT))), go(Some(([0.0; 3], 0)))],
+        2,
+    );
+    assert_eq!(
+        log_pin(&seen, &["UNIT_SPELLCAST_SUCCEEDED"], &["clnum"]),
+        vec![
+            "UNIT_SPELLCAST_SUCCEEDED player Renew Rank 1 0 | clnum=0",
+            "COMBAT_LOG_EVENT_UNFILTERED SPELL_CAST_SUCCESS Probesix 139 | clnum=1",
+        ]
+    );
+}
+
 /// The requirement state is the active player's, read at the call: a level update's own events read the new level's green band (`0x5e28a1`) with no frame between.
 #[test]
 fn a_level_update_reads_the_new_level_in_its_own_events() {
