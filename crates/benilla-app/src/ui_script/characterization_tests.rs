@@ -13231,6 +13231,39 @@ fn a_join_and_a_leave_relist_in_their_handlers_and_read_the_records_live() {
     );
 }
 
+/// The channel records outlive the UI shutdown's `PLAYER_LEAVING_WORLD` (`0x528edc`) and
+/// `PLAYER_LOGOUT`: the game shutdown runs the UI's (`0x529163` -> `0x528f00`) before the chat's
+/// (`0x529172` -> `0x5072b0`), so a logout handler still reads the joined channel.
+#[test]
+fn the_channels_answer_at_the_logout_events() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    join_charz(&mut rig);
+    rig.packets(vec![joined_notice("Charz")], 1);
+    super::live::with_live_world(rig.app.world_mut(), |s| {
+        s.run(
+            "RegisterCVar('charzChanLeaving', '-') RegisterCVar('charzChanLogout', '-') \
+             local f = CreateFrame('Frame') \
+             f:RegisterEvent('PLAYER_LEAVING_WORLD') f:RegisterEvent('PLAYER_LOGOUT') \
+             f:SetScript('OnEvent', function(_, e) \
+               local n = GetChannelName('Charz') \
+               SetCVar(e == 'PLAYER_LOGOUT' and 'charzChanLogout' or 'charzChanLeaving', \
+                 n .. ':' .. table.concat({ GetChannelList() }, ',')) end)",
+        )
+    })
+    .expect("a VM")
+    .unwrap();
+    rig.app
+        .world_mut()
+        .resource_mut::<NextState<crate::char_select::ClientState>>()
+        .set(crate::char_select::ClientState::CharSelect);
+    rig.run(2);
+    let cvars = rig.app.world().resource::<crate::cvars::Cvars>();
+    assert_eq!(cvars.get("charzChanLeaving").as_deref(), Some("1:1,Charz"));
+    assert_eq!(cvars.get("charzChanLogout").as_deref(), Some("1:1,Charz"));
+}
+
 /// A reload reads the records where they live: the fresh files' `GetChannelName` answers the joined
 /// channel from `PLAYER_LOGIN` on, and nothing relists, as 12340's UI load fires no
 /// `CHANNEL_UI_UPDATE`.

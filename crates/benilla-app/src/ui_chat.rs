@@ -148,9 +148,12 @@ impl Plugin for UiChatPlugin {
                     .in_set(crate::ui_script::UiPaint)
                     .after(crate::target::TargetUpdate),
             )
+            // After the UI shutdown (`0x529163`), whose leave-world raises PLAYER_LEAVING_WORLD
+            // (`0x528edc`) with the channels still held; the chat shutdown follows (`0x529172`).
             .add_systems(
                 OnExit(crate::char_select::ClientState::InWorld),
-                (channels::end_session_channels, end_session_chat),
+                (channels::end_session_channels, end_session_chat)
+                    .after(crate::ui_script::end_ui_session),
             );
         settings::plugin(app);
         logging::plugin(app);
