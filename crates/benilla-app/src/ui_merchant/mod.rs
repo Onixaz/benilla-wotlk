@@ -36,9 +36,13 @@ const BUYBACK_SLOT_FIRST: u32 = 74;
 #[derive(Resource)]
 pub(crate) struct RepairTables(pub(crate) benilla_formats::DurabilityTables);
 
-/// `ItemExtendedCost.dbc`, a row's costs beyond copper; absent, no row has an extended cost.
+/// `ItemExtendedCost.dbc` and `ItemPurchaseGroup.dbc`, a row's costs beyond copper; absent, no row
+/// has an extended cost.
 #[derive(Resource)]
-pub(crate) struct ExtendedCosts(pub(crate) benilla_formats::ItemExtendedCosts);
+pub(crate) struct ExtendedCosts(
+    pub(crate) benilla_formats::ItemExtendedCosts,
+    pub(crate) benilla_formats::ItemPurchaseGroups,
+);
 
 /// The merchant globals: the vendor (`0xbfa3e8`), its rows (`0xbf9128`, count `0xbfa3f0`), the record misses its rows' reads left waiting (`0xbfa3f8`) and the sorted buyback slots (`0xbf90f8`, count `0xbfa3f4`).
 #[derive(Resource, Default)]
@@ -304,7 +308,8 @@ fn resolve_extended_cost(
     icons: Option<&ItemDisplays>,
     commands: &NetCommands,
 ) -> Option<ExtendedCost> {
-    let row = costs?.0.get(id)?;
+    let costs = costs?;
+    let row = costs.0.get(id)?;
     let items = row
         .items
         .iter()
@@ -319,12 +324,20 @@ fn resolve_extended_cost(
             }
         })
         .collect();
+    let purchase_group = (row.purchase_group != 0)
+        .then(|| costs.1.get(row.purchase_group))
+        .flatten()
+        .map(|g| benilla_ui::script::PurchaseGroup {
+            name: g.name.clone(),
+            item_ids: g.item_ids,
+        });
     Some(ExtendedCost {
         honor: row.honor,
         arena: row.arena,
         items,
         required_rating: row.personal_rating,
         arena_bracket: row.arena_slot as i32,
+        purchase_group,
     })
 }
 
@@ -1520,29 +1533,48 @@ mod tests {
     /// record order, and the rating demand with its bracket.
     #[test]
     fn an_extended_cost_row_resolves_its_record() {
-        use benilla_formats::{ExtendedCostRow, ItemExtendedCosts};
+        use benilla_formats::{
+            ExtendedCostRow, ItemExtendedCosts, ItemPurchaseGroups, PurchaseGroupRow,
+        };
         let items = Items::default();
         let (tx, _rx) = crossbeam_channel::unbounded();
         let commands = NetCommands(tx);
-        let costs = ExtendedCosts(ItemExtendedCosts::from_iter([
-            (
-                2276,
-                ExtendedCostRow {
-                    honor: 7000,
-                    items: [(0, 0), (20560, 3), (0, 0), (0, 0), (0, 0)],
-                    ..Default::default()
+        let costs = ExtendedCosts(
+            ItemExtendedCosts::from_iter([
+                (
+                    2276,
+                    ExtendedCostRow {
+                        honor: 7000,
+                        items: [(0, 0), (20560, 3), (0, 0), (0, 0), (0, 0)],
+                        ..Default::default()
+                    },
+                ),
+                (
+                    2277,
+                    ExtendedCostRow {
+                        arena: 150,
+                        arena_slot: 1,
+                        personal_rating: 1800,
+                        purchase_group: 1,
+                        ..Default::default()
+                    },
+                ),
+                (
+                    2278,
+                    ExtendedCostRow {
+                        purchase_group: 99,
+                        ..Default::default()
+                    },
+                ),
+            ]),
+            ItemPurchaseGroups::from_iter([(
+                1,
+                PurchaseGroupRow {
+                    item_ids: [100, 101, 0, 0, 0, 0, 0, 0],
+                    name: "Tier 1".into(),
                 },
-            ),
-            (
-                2277,
-                ExtendedCostRow {
-                    arena: 150,
-                    arena_slot: 1,
-                    personal_rating: 1800,
-                    ..Default::default()
-                },
-            ),
-        ]));
+            )]),
+        );
         let mut token = row(42133, 1, STOCK_UNLIMITED);
         token.extended_cost = 2276;
         let cost = resolve_item(&token, &items, None, Some(&costs), &commands)
@@ -1637,6 +1669,7 @@ mod tests {
                 material: 0,
                 sheath: 4,
                 random_property: 0,
+                random_suffix: 0,
                 block: 1,
                 item_set: 0,
                 max_durability: 0,

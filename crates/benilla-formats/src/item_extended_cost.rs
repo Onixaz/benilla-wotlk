@@ -9,13 +9,17 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 use benilla_dbc::{FieldType, Schema, SchemaField};
 
-use crate::dbc::{parse, u32_at};
+use crate::dbc::{parse, str_at, u32_at};
 use crate::Chain;
 
 const ITEM_EXTENDED_COST: &str = "DBFilesClient\\ItemExtendedCost.dbc";
+const ITEM_PURCHASE_GROUP: &str = "DBFilesClient\\ItemPurchaseGroup.dbc";
 
 /// The required-item slots a record carries.
 pub const EXTENDED_COST_ITEMS: usize = 5;
+
+/// The item-id slots an `ItemPurchaseGroup.dbc` record carries (`0x62b789`).
+pub const PURCHASE_GROUP_ITEMS: usize = 8;
 
 /// One record.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -28,6 +32,8 @@ pub struct ExtendedCostRow {
     pub items: [(u32, u32); EXTENDED_COST_ITEMS],
     /// The personal arena rating required, 0 for none.
     pub personal_rating: u32,
+    /// `ItemPurchaseGroup.dbc` id (`[cost+0x3c]`), 0 for none.
+    pub purchase_group: u32,
 }
 
 /// The table by id.
@@ -99,8 +105,82 @@ fn table_from(bytes: &[u8]) -> Result<ItemExtendedCosts> {
                     arena_slot: field(r, 3),
                     items: std::array::from_fn(|i| (field(r, 4 + i), field(r, 9 + i))),
                     personal_rating: field(r, 14),
+                    purchase_group: field(r, 15),
                 },
             ))
+        })
+        .collect())
+}
+
+/// One `ItemPurchaseGroup.dbc` record (`0x62b732`..`0x62b79c`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PurchaseGroupRow {
+    /// The eight item ids checked against the player's items; zero entries are skipped.
+    pub item_ids: [u32; PURCHASE_GROUP_ITEMS],
+    /// The localized display name formatted into `ITEM_REQ_PURCHASE_GROUP`.
+    pub name: String,
+}
+
+/// `ItemPurchaseGroup.dbc` keyed by id.
+#[derive(Clone, Debug, Default)]
+pub struct ItemPurchaseGroups(HashMap<u32, PurchaseGroupRow>);
+
+impl ItemPurchaseGroups {
+    pub fn get(&self, id: u32) -> Option<&PurchaseGroupRow> {
+        self.0.get(&id)
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl FromIterator<(u32, PurchaseGroupRow)> for ItemPurchaseGroups {
+    fn from_iter<I: IntoIterator<Item = (u32, PurchaseGroupRow)>>(rows: I) -> Self {
+        Self(rows.into_iter().collect())
+    }
+}
+
+/// `ItemPurchaseGroup.dbc`: 26 columns, 104 bytes: id, eight item ids, sixteen locale names and
+/// their mask.
+pub(crate) fn purchase_group_schema() -> Schema {
+    let mut s = Schema::new("ItemPurchaseGroup");
+    s.add_field(SchemaField::new("ID", FieldType::UInt32));
+    s.add_field(SchemaField::new_array(
+        "ItemID",
+        FieldType::UInt32,
+        PURCHASE_GROUP_ITEMS,
+    ));
+    for i in 0..16 {
+        s.add_field(SchemaField::new(format!("Name{i}"), FieldType::String));
+    }
+    s.add_field(SchemaField::new("NameFlags", FieldType::UInt32));
+    s.set_key_field("ID");
+    s
+}
+
+/// Load `ItemPurchaseGroup.dbc` from the patch chain.
+pub fn load_item_purchase_groups(chain: &mut Chain) -> Result<ItemPurchaseGroups> {
+    let bytes = chain
+        .read_file(ITEM_PURCHASE_GROUP)
+        .with_context(|| format!("reading {ITEM_PURCHASE_GROUP}"))?;
+    purchase_groups_from(&bytes)
+}
+
+fn purchase_groups_from(bytes: &[u8]) -> Result<ItemPurchaseGroups> {
+    let rs = parse(bytes, purchase_group_schema(), "ItemPurchaseGroup")?;
+    Ok(rs
+        .records()
+        .iter()
+        .filter_map(|r| {
+            let id = u32_at(r, 0)?;
+            let item_ids = std::array::from_fn(|i| u32_at(r, 1 + i).unwrap_or(0));
+            let name = str_at(&rs, r, 9).unwrap_or_default();
+            Some((id, PurchaseGroupRow { item_ids, name }))
         })
         .collect())
 }
@@ -126,9 +206,9 @@ mod tests {
     }
 
     #[test]
-    fn a_record_reads_its_points_items_and_rating() {
+    fn a_record_reads_its_points_items_rating_and_purchase_group() {
         let table = table_from(&synthesize(&[[
-            2276, 7000, 150, 1, 20560, 29434, 0, 0, 0, 3, 1, 0, 0, 0, 1800, 0,
+            2276, 7000, 150, 1, 20560, 29434, 0, 0, 0, 3, 1, 0, 0, 0, 1800, 1,
         ]]))
         .unwrap();
         let row = table.get(2276).expect("the record");
@@ -137,6 +217,15 @@ mod tests {
         assert_eq!(row.items[1], (29434, 1));
         assert_eq!(row.items[2], (0, 0));
         assert_eq!(row.personal_rating, 1800);
+        assert_eq!(row.purchase_group, 1);
         assert!(table.get(1).is_none());
+    }
+
+    #[test]
+    fn the_shipped_purchase_group_table_loads() {
+        let data = crate::wow_data_or_skip!();
+        let mut chain = crate::open_chain(&data).expect("open chain");
+        let groups = load_item_purchase_groups(&mut chain).expect("load ItemPurchaseGroup.dbc");
+        assert!(!groups.is_empty(), "shipped table carries at least one row");
     }
 }

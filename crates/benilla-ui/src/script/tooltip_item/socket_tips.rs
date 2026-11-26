@@ -28,6 +28,7 @@ fn instance_of(held: &Held) -> (ItemInstance, u32) {
                 socket_preview: None,
                 inspected: false,
                 link: link_of(s.link.as_deref()),
+                is_object: true,
                 ..Default::default()
             },
             s.count.max(1),
@@ -48,6 +49,7 @@ fn instance_of(held: &Held) -> (ItemInstance, u32) {
                 socket_preview: None,
                 inspected: false,
                 link: link_of(s.link.as_deref()),
+                is_object: true,
                 ..Default::default()
             },
             s.count.max(1),
