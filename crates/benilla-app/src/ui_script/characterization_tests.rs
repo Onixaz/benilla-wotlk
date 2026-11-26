@@ -13956,7 +13956,7 @@ fn an_unnamed_creature_holds_the_log_until_its_record_answers() {
 /// (`0x751120` -> `0x750390`, the send cursor nulled at `0x7503a8`); `COMBAT_LOG_EVENT_UNFILTERED`
 /// still fires off the values pushed before it (`0x74f9ba`). 12340 then reads the null cursor at
 /// `0x74fa09` and dereferences it at `0x74fa0f` (and at `0x74f9e3` while logging), an access
-/// violation; the branch ends the send loop there and the next entry logs as the first.
+/// violation; benilla ends the send loop there and the next entry logs as the first.
 #[test]
 fn a_listener_clearing_the_log_ends_the_send_loop() {
     let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {

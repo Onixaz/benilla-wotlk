@@ -546,7 +546,7 @@ pub(crate) mod net {
             ui.world(move |world| crate::ui_achievement::name_landed(world, guid, true));
             // The chat module's callbacks on the record (`0x503c80`, `0x503fb0`, `0x6cb990`, `0x4ffe30`).
             ui.world(move |world| crate::ui_chat::name_landed(world, super::NameKey::Player(guid)));
-            // The combat log's callbacks on the record (`0x74fe90`).
+            // The combat log's callbacks on the record (`0x74fe90`), last by module, not in the record's registration order (#1487).
             ui.world(move |world| {
                 crate::combat_log::name_landed(
                     world,
@@ -573,6 +573,7 @@ pub(crate) mod net {
                 ui.world(move |world| {
                     crate::ui_chat::name_landed(world, super::NameKey::Player(guid));
                 });
+                // The combat log's callbacks (`0x74fe90`), last by module (#1487).
                 ui.world(move |world| {
                     crate::combat_log::name_landed(
                         world,
@@ -605,6 +606,7 @@ pub(crate) mod net {
             ui.world(move |world| {
                 crate::ui_chat::name_landed(world, super::NameKey::Pet(pet_number));
             });
+            // The combat log's callbacks after the chat's, by module, not in the record's registration order (#1487).
             ui.world(move |world| {
                 crate::combat_log::name_landed(
                     world,

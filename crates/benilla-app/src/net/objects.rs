@@ -979,7 +979,7 @@ fn on_gameobject_info(In(ev): In<SessionEvent>, mut sc: Scene) {
         );
         sc.ui
             .world(move |world| crate::ui_item_text::go_template_landed(world, entry));
-        // The combat log's callbacks on the template (`0x74fe90`).
+        // The combat log's callbacks on the template (`0x74fe90`), after the item text's by module (#1487).
         sc.ui.world(move |world| {
             crate::combat_log::name_landed(world, crate::combat_log::Landed::GameObject(entry));
         });
