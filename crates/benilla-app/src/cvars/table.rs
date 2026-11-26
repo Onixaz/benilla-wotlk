@@ -734,72 +734,158 @@ pub(crate) const REGISTERED: &[Registered] = &[
     same("ShowAllSpellRanks", "1").per_account(),
     // `autoFilledMultiCastSlots` (`0x51f38b`, default `0x9e14a0` "0"): elements the bar seeded.
     same(crate::spell::multicast::CVAR_AUTO_FILLED, "0"),
-    // The five saved camera views and the live index, at the reference's names and default strings;
-    // owned by [`crate::player::camera_view`]. Registered so a `SaveView` persists.
+    // The eight saved camera views (`0x5fdcb3`, names `0xad1b54` × `0xad1b74`, defaults `0xad1ba8`,
+    // flags `0x50` per account and hidden from Lua) and the live index `cameraView` (`0x5fdc3c`,
+    // flags `0x10`, default `"2"` at `0xad1b90`); owned by [`crate::player::camera_view`].
     same(
         crate::player::camera_view::CVAR_ACTIVE_VIEW,
         crate::player::camera_view::ACTIVE_VIEW_DEFAULT,
-    ),
+    )
+    .per_account(),
     same(
         crate::player::camera_view::VIEW_CVARS[0][0],
         crate::player::camera_view::VIEW_DEFAULTS[0][0],
-    ),
+    )
+    .per_account()
+    .hidden(),
     same(
         crate::player::camera_view::VIEW_CVARS[0][1],
         crate::player::camera_view::VIEW_DEFAULTS[0][1],
-    ),
+    )
+    .per_account()
+    .hidden(),
     same(
         crate::player::camera_view::VIEW_CVARS[0][2],
         crate::player::camera_view::VIEW_DEFAULTS[0][2],
-    ),
+    )
+    .per_account()
+    .hidden(),
     same(
         crate::player::camera_view::VIEW_CVARS[1][0],
         crate::player::camera_view::VIEW_DEFAULTS[1][0],
-    ),
+    )
+    .per_account()
+    .hidden(),
     same(
         crate::player::camera_view::VIEW_CVARS[1][1],
         crate::player::camera_view::VIEW_DEFAULTS[1][1],
-    ),
+    )
+    .per_account()
+    .hidden(),
     same(
         crate::player::camera_view::VIEW_CVARS[1][2],
         crate::player::camera_view::VIEW_DEFAULTS[1][2],
-    ),
+    )
+    .per_account()
+    .hidden(),
     same(
         crate::player::camera_view::VIEW_CVARS[2][0],
         crate::player::camera_view::VIEW_DEFAULTS[2][0],
-    ),
+    )
+    .per_account()
+    .hidden(),
     same(
         crate::player::camera_view::VIEW_CVARS[2][1],
         crate::player::camera_view::VIEW_DEFAULTS[2][1],
-    ),
+    )
+    .per_account()
+    .hidden(),
     same(
         crate::player::camera_view::VIEW_CVARS[2][2],
         crate::player::camera_view::VIEW_DEFAULTS[2][2],
-    ),
+    )
+    .per_account()
+    .hidden(),
     same(
         crate::player::camera_view::VIEW_CVARS[3][0],
         crate::player::camera_view::VIEW_DEFAULTS[3][0],
-    ),
+    )
+    .per_account()
+    .hidden(),
     same(
         crate::player::camera_view::VIEW_CVARS[3][1],
         crate::player::camera_view::VIEW_DEFAULTS[3][1],
-    ),
+    )
+    .per_account()
+    .hidden(),
     same(
         crate::player::camera_view::VIEW_CVARS[3][2],
         crate::player::camera_view::VIEW_DEFAULTS[3][2],
-    ),
+    )
+    .per_account()
+    .hidden(),
     same(
         crate::player::camera_view::VIEW_CVARS[4][0],
         crate::player::camera_view::VIEW_DEFAULTS[4][0],
-    ),
+    )
+    .per_account()
+    .hidden(),
     same(
         crate::player::camera_view::VIEW_CVARS[4][1],
         crate::player::camera_view::VIEW_DEFAULTS[4][1],
-    ),
+    )
+    .per_account()
+    .hidden(),
     same(
         crate::player::camera_view::VIEW_CVARS[4][2],
         crate::player::camera_view::VIEW_DEFAULTS[4][2],
-    ),
+    )
+    .per_account()
+    .hidden(),
+    same(
+        crate::player::camera_view::VIEW_CVARS[5][0],
+        crate::player::camera_view::VIEW_DEFAULTS[5][0],
+    )
+    .per_account()
+    .hidden(),
+    same(
+        crate::player::camera_view::VIEW_CVARS[5][1],
+        crate::player::camera_view::VIEW_DEFAULTS[5][1],
+    )
+    .per_account()
+    .hidden(),
+    same(
+        crate::player::camera_view::VIEW_CVARS[5][2],
+        crate::player::camera_view::VIEW_DEFAULTS[5][2],
+    )
+    .per_account()
+    .hidden(),
+    same(
+        crate::player::camera_view::VIEW_CVARS[6][0],
+        crate::player::camera_view::VIEW_DEFAULTS[6][0],
+    )
+    .per_account()
+    .hidden(),
+    same(
+        crate::player::camera_view::VIEW_CVARS[6][1],
+        crate::player::camera_view::VIEW_DEFAULTS[6][1],
+    )
+    .per_account()
+    .hidden(),
+    same(
+        crate::player::camera_view::VIEW_CVARS[6][2],
+        crate::player::camera_view::VIEW_DEFAULTS[6][2],
+    )
+    .per_account()
+    .hidden(),
+    same(
+        crate::player::camera_view::VIEW_CVARS[7][0],
+        crate::player::camera_view::VIEW_DEFAULTS[7][0],
+    )
+    .per_account()
+    .hidden(),
+    same(
+        crate::player::camera_view::VIEW_CVARS[7][1],
+        crate::player::camera_view::VIEW_DEFAULTS[7][1],
+    )
+    .per_account()
+    .hidden(),
+    same(
+        crate::player::camera_view::VIEW_CVARS[7][2],
+        crate::player::camera_view::VIEW_DEFAULTS[7][2],
+    )
+    .per_account()
+    .hidden(),
     same("mouseInvertPitch", "0").per_account(),
     // `autoLootDefault` (`0x51db43`, "0"): a loot opens without the auto-loot modifier's sweep.
     same("autoLootDefault", "0").per_account(),

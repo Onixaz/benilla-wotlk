@@ -438,8 +438,8 @@ pub(crate) struct Model {
     pub(crate) mirror_timers: [Option<mirror_timer::MirrorTimer>; 3],
     /// `FollowUnit` and follow-by-name calls; Lua sees following only as `AUTOFOLLOW_*` events.
     pub(crate) follow_requests: Vec<follow::FollowRequest>,
-    /// `SetView`, `SaveView`, `ResetView`, `NextView`, `PrevView` and `FlipCameraYaw` calls; the
-    /// views reach Lua only as CVars, `cameraView` and `camera{Distance,Pitch,Yaw}{,A..D}`.
+    /// `SetView`, `SaveView`, `ResetView`, `NextView`, `PrevView` and `FlipCameraYaw` calls;
+    /// `cameraView` is visible to Lua while the 24 view-data CVars are hidden (`0x40`).
     pub(crate) camera_view_requests: Vec<camera_view::CameraViewRequest>,
     /// `Logout`, `Quit`, `CancelLogout`, `ForceQuit` calls; Lua sees the countdown only as events.
     pub(crate) session_requests: Vec<session::SessionRequest>,

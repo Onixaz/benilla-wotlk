@@ -174,6 +174,7 @@ pub(crate) fn load_config_slots(world: &mut World) {
         world.trigger(event);
     }
     crate::player::restore_camera_from_cvars(world);
+    crate::player::camera_view::load_from_cvars(world);
 }
 
 /// The slot save (`0x6b9be0`) for each `(slot, bytes)`: written now, uploaded per the gate.
