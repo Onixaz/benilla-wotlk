@@ -70,34 +70,29 @@ pub(super) const BLIP_BASIS_PX: f32 = 140.8;
 /// The player arrow's art, on the minimap and the world map, whose stock `WorldMapFrame.lua`
 /// `SetModel`s a pane to the same M2.
 pub(crate) const PLAYER_ARROW_TEXTURE: &str = "Interface\\Minimap\\MinimapArrow";
-/// The rim arrow's quad: `Rotating-MinimapArrow.m2`'s 0.0500-unit full-texture quads at 768 px
-/// per model unit (modelScale 0.6 × 1280), so the sprite needs no uv crop.
-const ARROW_QUAD_PX: f32 = 38.4;
-/// A group member's rim arrow: `0x580ae0` and `0x580ec0` draw the flat group-arrow texture on a
-/// quad of `0.045` of the screen height × 1.6667 (`0x57ded7`), 57.6 px on the 140.8-px basis, its
-/// uv square turned about the centre with corners at radius 1, so the art fills `1/√2` of it.
-const GROUP_ARROW_PX: f32 = 57.6 * std::f32::consts::FRAC_1_SQRT_2;
+/// Every rim arrow's art: the landmark pass (`0x57d860`) and the group passes (`0x580ae0`,
+/// `0x580ec0`) draw their flat texture on one quad, `0.045` of the screen height × 1.6667
+/// (`0x57ded7`), 57.6 px on the 140.8-px basis, its uv square turned about the centre with
+/// corners at radius 1, so the art fills `1/√2` of it.
+const RIM_ARROW_PX: f32 = 57.6 * std::f32::consts::FRAC_1_SQRT_2;
 /// The raid roster's capacity (`0x7f4390`).
 const RAID_ROWS_MAX: usize = 40;
 
-/// Which rim-arrow art a blip source draws. The minimap's one arrow model,
-/// `Rotating-MinimapArrow.m2`, picks among four arrow layers by sequence: in each looping sequence
-/// exactly one layer's stepped alpha is 1.0, untinted, so one flat sprite per source is exact.
-/// `AnimationData.dbc` names them 165 `GroupArrow`, 166 `Arrow`, 167 `CorpseArrow`, 168
-/// `GuideArrow`.
-///
-/// The selector is `0xa7` when the output record's `+0x48 == 2`, else `0xa6 + 2·(v != -2)`, so
-/// everything but a DBC landmark and the corpse draws the guide arrow.
+/// Which rim-arrow texture a blip source draws. The minimap creates the four flat textures once
+/// (`0x5832f0`); the landmark pass picks the corpse arrow for dynamic slot 2, the plain arrow for
+/// a DBC row, and the guide arrow for every other slot (`0x57d860`). `Rotating-MinimapArrow.m2`
+/// lights the same four, one per sequence (`AnimationData.dbc` 165 `GroupArrow`, 166 `Arrow`, 167
+/// `CorpseArrow`, 168 `GuideArrow`), which the test checks.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum RimArrow {
     /// An `AreaPOI.dbc` landmark: sequence `0xa6`, `+0x48 == -2`, the white one.
     Landmark,
-    /// A party or raid member, or your pet: sequence `0xa5`; the group passes draw its texture
-    /// flat ([`GROUP_ARROW_PX`]).
+    /// A party or raid member, or your pet: sequence `0xa5`.
     Group,
-    /// Your own corpse and the release graveyard: sequence `0xa7`, `+0x48 == 2`.
+    /// Your own corpse, dynamic slot 2: sequence `0xa7`.
     Corpse,
-    /// The guard's directions ([`crate::poi_marker`]): sequence `0xa8`, the default arm, gold.
+    /// The guard's directions ([`crate::poi_marker`]) and the release graveyard, dynamic slots 1
+    /// and 3: sequence `0xa8`, gold.
     Guide,
 }
 
@@ -316,7 +311,7 @@ pub(super) fn select_landmarks<'a>(
         .map(|p| (p, RimArrow::Landmark, false, false))
         .chain(statics.marker.map(|m| (m, RimArrow::Guide, false, true)))
         .chain(statics.corpse.map(|c| (c, RimArrow::Corpse, true, true)))
-        .chain(statics.release.map(|r| (r, RimArrow::Corpse, false, false)));
+        .chain(statics.release.map(|r| (r, RimArrow::Guide, false, false)));
     for (p, art, uncut, slot_shown) in candidates {
         // Neither drawn nor on the rim: a row at (0, 0), or one whose world state reads 0
         // (`0x7f44a0`); Isle of Conquest keeps one row per node state.
@@ -439,7 +434,7 @@ pub(super) fn emit_landmark_arrows(
         let Some(tex) = arrows.get(art) else {
             continue;
         };
-        let at = push_rim_arrow(ctx, poi.pos, tex, ARROW_QUAD_PX, quads);
+        let at = push_rim_arrow(ctx, poi.pos, tex, RIM_ARROW_PX, quads);
         if arrow_hovered(ctx, at) {
             hover.directions.push(poi.name.clone());
         }
@@ -547,7 +542,7 @@ pub(super) fn emit_group_arrows(
         let Some(tex) = arrows.get(RimArrow::Group) else {
             continue;
         };
-        let at = push_rim_arrow(ctx, [x, y, 0.0], tex, GROUP_ARROW_PX, quads);
+        let at = push_rim_arrow(ctx, [x, y, 0.0], tex, RIM_ARROW_PX, quads);
         if arrow_hovered(ctx, at) {
             let names = if raid {
                 &mut hover.raid
@@ -841,6 +836,20 @@ mod tests {
         hover
     }
 
+    /// The release graveyard's arrow is the guide arrow: only dynamic slot 2, the corpse's,
+    /// draws the corpse arrow (`0x57d860`).
+    #[test]
+    fn the_release_graveyard_draws_the_guide_arrow() {
+        let release = static_slot(300.0, "Spirit Healer");
+        let statics = StaticPois {
+            release: Some(&release),
+            ..Default::default()
+        };
+        let sel = select_landmarks([].iter(), statics, 0, 0.0, 0.0, 133.0, |_| 0);
+        let arts: Vec<RimArrow> = sel.arrows.iter().map(|&(_, _, a, _)| a).collect();
+        assert_eq!(arts, [RimArrow::Guide]);
+    }
+
     /// The in-range corpse icon names itself on hover, as every POI in the tooltip walk does
     /// (`0x57c720`, the POI's name at `+0x3c`); off its 16-px quad nothing is hovered.
     #[test]
@@ -872,7 +881,7 @@ mod tests {
     }
 
     /// A rim arrow hovers within 6.4 px of its centre on each axis (`0x57c720`), not over its
-    /// whole 38.4-px art.
+    /// whole 40.7-px art.
     #[test]
     fn a_rim_arrow_hovers_only_near_its_centre() {
         let corpse = static_slot(1000.0, "Corpse");
