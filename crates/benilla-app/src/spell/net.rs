@@ -31,6 +31,7 @@ use crate::net::{GuidIndex, NetCommands, NetHandlerApp, ObjectStore, SelfGuid, S
 /// Register the spell's handlers; called from [`super::SpellPlugin`].
 pub(super) fn register(app: &mut App) {
     use SessionEventKind as K;
+    app.init_resource::<crate::ui_action::LastFailure>();
     app.net_handler(K::SpellBook, on_spell_book)
         .net_handler(K::ActionButtons, on_action_buttons)
         .net_handler(K::Disconnected, on_session_end)
@@ -206,9 +207,17 @@ fn on_action_buttons(In(ev): In<SessionEvent>, mut l: Lifecycle) {
 
 /// Every session end returns to glue, whose next world entry zeroes the bar (`0x5a79d0`, via
 /// `0x52b550` from `0x405540`) before the login goes out; the lock lives on the player object.
-fn on_session_end(In(ev): In<SessionEvent>, mut slots: ResMut<crate::ui_action::ActionSlots>) {
+fn on_session_end(
+    In(ev): In<SessionEvent>,
+    mut slots: ResMut<crate::ui_action::ActionSlots>,
+    last_failure: Option<ResMut<crate::ui_action::LastFailure>>,
+) {
     if let SessionEvent::Disconnected { .. } = ev {
         clear_bar(&mut slots);
+        // The same entry's spell init zeroes the failure repeat's kept spell (`0x742a5c` -> `0x8102f9`).
+        if let Some(mut last) = last_failure {
+            last.clear_spell();
+        }
     }
 }
 
@@ -642,12 +651,17 @@ fn on_cast_result(In(ev): In<SessionEvent>, mut ladder: CastLadder, mut r: Reply
                 ..crate::ui_action::CastFail::local(spell_id, reason)
             };
             match (reason, r.self_guid.0) {
-                (0x17, Some(caster)) => r.ui.cast_edge(CastBarEdge::Failed {
-                    caster,
-                    spell_id,
-                    cast_count,
-                    reason,
-                }),
+                (0x17, Some(caster)) => {
+                    r.ui.world(move |world| {
+                        crate::ui_action::note_dont_report(world, spell_id, reason);
+                    });
+                    r.ui.cast_edge(CastBarEdge::Failed {
+                        caster,
+                        spell_id,
+                        cast_count,
+                        reason,
+                    });
+                }
                 (0x17, None) => {}
                 // The line, then the end, on `DONT_REPORT` after a silent exit (`0x8086ff`).
                 (_, Some(caster)) => r.ui.world(move |world| {

@@ -52,7 +52,8 @@ pub(crate) struct ActionRanks;
 #[cfg(test)]
 pub(crate) use cast_refusal::take_refusals;
 pub(crate) use cast_refusal::{
-    refuse_then_end, show_refusal, CastFailShow, CastRefusals, RefusalsSeen, WaitRecord,
+    note_dont_report, refuse_then_end, show_refusal, CastFailShow, CastRefusals, LastFailure,
+    RefusalsSeen, WaitRecord,
 };
 #[cfg(test)]
 pub(crate) use errors::take_lines_in_turn;

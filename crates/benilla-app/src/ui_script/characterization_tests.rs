@@ -14221,6 +14221,101 @@ fn a_spell_failure_logs_behind_its_line_inside_its_handler() {
     );
 }
 
+/// A failure that repeats our last one's spell and reason less than 3000 ms after the last shows no
+/// line and logs nothing (`0x808413`-`0x808433`, `0x808af2`); the time is stamped on every call
+/// (`0x808448`), a new pair is kept (`0x80843c`), and a go of ours zeroes the kept spell
+/// (`0x80e759`). The cast's end still runs (`0x808b75`).
+#[test]
+fn a_repeated_spell_failure_within_3s_of_the_last_is_silent() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.run(2);
+    // Each frame advances the async clock by half a second; each `packets` call runs two.
+    rig.app
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            std::time::Duration::from_millis(500),
+        ));
+    let fail = |reason: u8| SessionEvent::CastResult {
+        cast_count: 0,
+        spell_id: 133,
+        success: false,
+        reason: Some(reason),
+        arg: None,
+        arg2: None,
+        wire_reason: Some(reason),
+    };
+    let shown = |seen: &[Seen]| {
+        let line = seen
+            .iter()
+            .filter(|s| s.event == "UI_ERROR_MESSAGE")
+            .count();
+        let log = seen
+            .iter()
+            .filter(|s| {
+                s.event == "COMBAT_LOG_EVENT_UNFILTERED" && s.args.contains("SPELL_CAST_FAILED")
+            })
+            .count();
+        let end = seen
+            .iter()
+            .filter(|s| s.event == "UNIT_SPELLCAST_FAILED")
+            .count();
+        (line, log, end)
+    };
+    const OUT_OF_RANGE: u8 = 0x59;
+    const LINE_OF_SIGHT: u8 = 0x2a;
+    let first = rig.packets(vec![fail(OUT_OF_RANGE)], 2);
+    assert_eq!(shown(&first), (1, 1, 1), "the first shows");
+    // One second later: the same pair is silent; the end still fires.
+    let second = rig.packets(vec![fail(OUT_OF_RANGE)], 2);
+    assert_eq!(shown(&second), (0, 0, 1), "a repeat within 3 s is silent");
+    // 3.5 s after the first, 2.5 s after the second, which stamped the time: still silent.
+    rig.run(3);
+    let third = rig.packets(vec![fail(OUT_OF_RANGE)], 2);
+    assert_eq!(
+        shown(&third),
+        (0, 0, 1),
+        "the silent repeat stamped the time"
+    );
+    // 4 s of quiet: shown again.
+    rig.run(6);
+    let fourth = rig.packets(vec![fail(OUT_OF_RANGE)], 2);
+    assert_eq!(shown(&fourth), (1, 1, 1), "past 3 s it shows again");
+    // A different reason within the window shows, and becomes the kept pair.
+    let other = rig.packets(vec![fail(LINE_OF_SIGHT)], 2);
+    assert_eq!(shown(&other), (1, 1, 1), "a new reason shows");
+    let back = rig.packets(vec![fail(OUT_OF_RANGE)], 2);
+    assert_eq!(
+        shown(&back),
+        (1, 1, 1),
+        "the pair moved on, so the old one shows"
+    );
+    // A go of ours between two same failures zeroes the kept spell, so the second shows.
+    let go = SessionEvent::SpellGo {
+        caster: ME,
+        cast_count: 0,
+        spell_id: 133,
+        cast_flags: 0,
+        server_time: 0,
+        hits: vec![],
+        misses: vec![],
+        reflects: vec![],
+        target: None,
+        go_target: None,
+        target_mask: 0,
+        src: None,
+        dest: None,
+        ammo: None,
+        item_caster: None,
+        trajectory: None,
+        dest_counter: 0,
+        points: vec![],
+    };
+    rig.packets(vec![go], 2);
+    let after_go = rig.packets(vec![fail(OUT_OF_RANGE)], 2);
+    assert_eq!(shown(&after_go), (1, 1, 1), "a go resets the kept spell");
+}
+
 /// Each missile arrival that missed logs its miss inside its own arrival (`0x702fc0` ->
 /// `0x703080` -> `0x751b80` -> `0x750500`), whose entry sends at once (`0x750624`): the first
 /// arrival's events fire with only its entry in the store, before the second arrival logs.

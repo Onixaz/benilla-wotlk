@@ -124,6 +124,42 @@ impl FailNameTables<'_> {
 #[derive(Resource, Default)]
 pub(crate) struct RefusalsSeen(pub(crate) Vec<CastFail>);
 
+/// Our last spell failure's spell, reason and async-clock time (`0xd397c4`, `0xd397c0`,
+/// `0xd397bc`); the spell is zeroed at world entry (`0x8102f9`). The auto-ranged spell's own
+/// repeat test (`0x8083eb`-`0x808405`) waits for that mode (#671).
+#[derive(Resource, Default)]
+pub(crate) struct LastFailure {
+    spell: u32,
+    reason: u8,
+    at_ms: u32,
+}
+
+impl LastFailure {
+    /// `0x80840b`-`0x808448`: whether `spell` failing on `reason` at `now_ms` repeats the kept
+    /// pair less than 3000 ms after the last failure; a new pair is kept, the time on every call.
+    pub(crate) fn repeats(&mut self, spell: u32, reason: u8, now_ms: u32) -> bool {
+        let repeat = if spell == self.spell && reason == self.reason {
+            (now_ms.wrapping_sub(self.at_ms).wrapping_sub(3000) as i32) < 0
+        } else {
+            self.spell = spell;
+            self.reason = reason;
+            false
+        };
+        self.at_ms = now_ms;
+        repeat
+    }
+
+    /// A go's reset on its way to the cast's end (`0x80e759`): the kept spell is zeroed.
+    pub(crate) fn clear_spell(&mut self) {
+        self.spell = 0;
+    }
+}
+
+/// The async clock the repeat test reads (`0x86ae20`), in ms, wrapping as a `u32` does.
+fn async_ms(time: Option<&Time<Real>>) -> u32 {
+    time.map_or(0, |t| t.elapsed().as_millis() as u32)
+}
+
 /// Everything a refusal's line reads and where it lands.
 #[derive(SystemParam)]
 pub(crate) struct CastFailShow<'w, 's> {
@@ -135,6 +171,8 @@ pub(crate) struct CastFailShow<'w, 's> {
     sub_classes: Option<Res<'w, crate::ui_items::ItemSubClasses>>,
     name_tables: FailNameTables<'w>,
     sounds: Option<ResMut<'w, MessageSounds>>,
+    last: Option<ResMut<'w, LastFailure>>,
+    time: Option<Res<'w, Time<Real>>>,
 }
 
 impl CastFailShow<'_, '_> {
@@ -150,6 +188,8 @@ impl CastFailShow<'_, '_> {
         let Some(script) = script else {
             return (false, None);
         };
+        // With our player present, the repeat test runs on every call before any arm (`0x80834b`, `0x80840b`); the record's callback is not this handler.
+        let repeat = fail.caster == Caster::Player && !fail.redisplay && self.repeats(fail);
         let mut wait = None;
         let line = self.resolve(script, fail, &mut wait);
         // The first pass shows nothing; the record's answer shows it (`0x808200`'s callbacks,
@@ -171,6 +211,10 @@ impl CastFailShow<'_, '_> {
         let Some(line) = line else {
             return (quiet, None);
         };
+        // A repeat skips the shared tail's line and log (`0x808af2`); the custom arm and 129's row show their own (`0x7fef4f`, `0x808aa5`).
+        if repeat && !shows_itself(fail.reason, &line) {
+            return (quiet, None);
+        }
         let logged = (line.logs && fail.caster == Caster::Player && !fail.redisplay)
             .then(|| line.logged().to_string());
         show_one(
@@ -181,6 +225,17 @@ impl CastFailShow<'_, '_> {
         );
         // The log entry takes the shown text; nothing for a redisplay, the pet or a custom line.
         (false, logged)
+    }
+
+    /// `0x80840b`-`0x808448` for our failure, when our player is present (`0x80834b`).
+    fn repeats(&mut self, fail: CastFail) -> bool {
+        if self.self_q.iter().next().is_none() {
+            return false;
+        }
+        let now = async_ms(self.time.as_deref());
+        self.last
+            .as_deref_mut()
+            .is_some_and(|last| last.repeats(fail.spell_id, fail.reason, now))
     }
 
     /// The player's arms that end in the silent exit with no line ([`cast_fail::exits_quietly`]).
@@ -372,6 +427,27 @@ impl CastFailShow<'_, '_> {
     }
 }
 
+/// The player's arms that show their line themselves, past the repeat's gate: the custom error
+/// (`0x808528` -> `0x7fef4f`) and 129 on an `ItemLimitCategory.dbc` row (`0x808a86`, `0x808aa5`).
+fn shows_itself(reason: u8, line: &cast_fail::CastFailLine) -> bool {
+    reason == cast_fail::CUSTOM_ERROR
+        || (reason == 0x77 && line.key == "ERR_ITEM_MAX_LIMIT_CATEGORY_COUNT_EXCEEDED_IS")
+}
+
+/// `DONT_REPORT`'s pass through `0x808200`: the repeat test keeps its pair and time with our
+/// player present (`0x80834b`, `0x80840b`-`0x808448`) before the handler's early end (`0x80844d`).
+pub(crate) fn note_dont_report(world: &mut World, spell_id: u32, reason: u8) {
+    let present = world
+        .query_filtered::<(), (With<ObjectStore>, With<SelfPlayer>)>()
+        .iter(world)
+        .next()
+        .is_some();
+    let now = async_ms(world.get_resource::<Time<Real>>());
+    if let (true, Some(mut last)) = (present, world.get_resource_mut::<LastFailure>()) {
+        last.repeats(spell_id, reason, now);
+    }
+}
+
 /// Show `fail` from a world step: a handler's refusal in its turn. Whether the display took its silent exit (`0x8086ff`).
 pub(crate) fn show_refusal(world: &mut World, fail: CastFail) -> bool {
     if let Some(mut seen) = world.get_resource_mut::<RefusalsSeen>() {
@@ -454,4 +530,35 @@ pub(crate) fn take_refusals(world: &mut World) -> Vec<CastFail> {
         out.extend(ui.take_refusals());
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LastFailure;
+
+    /// `0x80840b`-`0x808448`: the same pair under 3000 ms repeats and keeps the time fresh; a
+    /// new spell or reason is kept and shows; the go's reset (`0x80e759`) lets the pair show.
+    #[test]
+    fn the_repeat_test_keeps_its_pair_and_stamps_every_call() {
+        let mut last = LastFailure::default();
+        assert!(!last.repeats(133, 0x59, 10_000));
+        assert!(last.repeats(133, 0x59, 11_000));
+        assert!(
+            last.repeats(133, 0x59, 13_500),
+            "stamped by the hidden repeat"
+        );
+        assert!(!last.repeats(133, 0x59, 16_500), "exactly 3000 ms shows");
+        assert!(!last.repeats(133, 0x2a, 16_600), "a new reason");
+        assert!(!last.repeats(116, 0x2a, 16_700), "a new spell");
+        assert!(last.repeats(116, 0x2a, 16_800));
+        last.clear_spell();
+        assert!(
+            !last.repeats(116, 0x2a, 16_900),
+            "the go zeroed the kept spell"
+        );
+        // The clock wraps as a `u32` does.
+        let mut last = LastFailure::default();
+        assert!(!last.repeats(133, 0x59, u32::MAX - 500));
+        assert!(last.repeats(133, 0x59, 1_000));
+    }
 }
