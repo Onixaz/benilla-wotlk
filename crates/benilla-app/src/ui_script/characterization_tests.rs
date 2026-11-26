@@ -13260,8 +13260,8 @@ fn the_channels_answer_at_the_logout_events() {
         .set(crate::char_select::ClientState::CharSelect);
     rig.run(2);
     let cvars = rig.app.world().resource::<crate::cvars::Cvars>();
-    assert_eq!(cvars.get("charzChanLeaving").as_deref(), Some("1:1,Charz"));
-    assert_eq!(cvars.get("charzChanLogout").as_deref(), Some("1:1,Charz"));
+    assert_eq!(cvars.get("charzChanLeaving"), Some("1:1,Charz"));
+    assert_eq!(cvars.get("charzChanLogout"), Some("1:1,Charz"));
 }
 
 /// A reload reads the records where they live: the fresh files' `GetChannelName` answers the joined
