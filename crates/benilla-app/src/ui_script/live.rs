@@ -2322,6 +2322,12 @@ impl LiveState for LiveView<'_, '_> {
         self.combat_log.as_deref_mut().map(|l| &mut l.store)
     }
 
+    fn cancel_combat_log_waits(&mut self, gone: &[u64]) {
+        if let Some(log) = self.combat_log.as_deref_mut() {
+            crate::combat_log::cancel_waits(log, self.record_waits.as_deref_mut(), gone);
+        }
+    }
+
     fn skill_list_mut(&mut self) -> Option<&mut benilla_ui::script::SkillList> {
         self.skills.as_deref_mut().map(|l| &mut l.0)
     }

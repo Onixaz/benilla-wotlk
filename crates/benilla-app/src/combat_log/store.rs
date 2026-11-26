@@ -1,8 +1,4 @@
-//! The client's combat log (`0xadb974`) in the ECS: each entry is allocated and named at its
-//! producer's step (`0x750400`), queued (`0x74ff20`) and, once nothing waits ahead of it, sent
-//! inside that step (`0x74f910`): `COMBAT_LOG_EVENT` when the filters pass it,
-//! `COMBAT_LOG_EVENT_UNFILTERED`, then the combat-log file's line. An entry that waits on a name
-//! holds every later one until the name's answer runs its callback (`0x74fe90`).
+//! The client's combat log (`0xadb974`): entries allocated (`0x750400`), queued (`0x74ff20`) and sent (`0x74f910`) at their producer's step.
 
 use benilla_ui::script::{CombatLogEntry, CombatLogStore, UiScript};
 use bevy::prelude::*;
@@ -29,6 +25,14 @@ struct Wait {
     guid: u64,
 }
 
+impl CombatLog {
+    /// The name callbacks still held, for the tests.
+    #[cfg(test)]
+    pub(crate) fn waits_held(&self) -> usize {
+        self.waits.len()
+    }
+}
+
 /// A login's reset (`0x756bd0` -> `0x7538a0`): the entries, the cursors, the filters, the name
 /// callbacks and the combat-text unit cleared, and the timestamp base taken now.
 pub(crate) fn reset(world: &mut World) {
@@ -45,44 +49,60 @@ pub(crate) fn reset(world: &mut World) {
 /// `0x750400` then `0x74ff20` for `new` at its producer's step: the entry allocated, its flags
 /// and names read now, linked at the tail, and sent at once when it is the head and names all.
 pub(crate) fn queue(world: &mut World, new: NewEntry) {
-    let Ok((entry, asks)) = world.run_system_cached_with(build, new) else {
-        return;
-    };
     let now = now_ms(world.get_resource::<Time<bevy::time::Real>>());
     let retention_ms = world
         .get_non_send_resource::<UiScript>()
         // Without a VM there is no CVar to read, and nothing reads the log: it keeps every entry.
         .map_or(i64::MAX, |s| s.combat_log_retention_secs() * 1000);
     let mut record_waits = world.remove_non_send_resource::<crate::items::RecordWaits>();
-    let send_now = {
-        let Some(mut log) = world.get_resource_mut::<CombatLog>() else {
-            if let Some(waits) = record_waits {
-                world.insert_non_send_resource(waits);
-            }
-            return;
-        };
-        // A free entry, else the oldest once past the retention time (`0x750400`).
-        if let Some(gone) = log.store.allocate(now, retention_ms) {
-            cancel(&mut log, record_waits.as_mut(), &[gone]);
+    // A free entry, else the oldest once past the retention time (`0x750400`), before the names.
+    let stalled = world.get_resource_mut::<CombatLog>().map(|mut log| {
+        let was = log.store.pending();
+        let gone = log.store.allocate(now, retention_ms);
+        if let Some(gone) = gone {
+            cancel_waits(&mut log, record_waits.as_mut(), &[gone]);
         }
-        let waiting = asks.iter().fold(0, |m, a| m | a.0);
-        let (id, head) = log.store.link(entry, waiting);
-        for (mask, key, guid) in asks {
-            let wait = log.next_wait;
-            log.next_wait = log.next_wait.wrapping_add(1);
-            log.waits.push(Wait {
-                id: wait,
-                entry: id,
-                mask,
-                key,
-                guid,
-            });
-            if let (NameRef::Item(item), Some(waits)) = (key, record_waits.as_mut()) {
-                waits.wait(item, crate::items::RecordWait::CombatLog(wait), false);
-            }
-        }
-        head && waiting == 0
+        // 12340 bug: recycling the pending entry moves the cursor on (`0x7503b0`) and sends nothing, a ready next entry stalls the log for good (`0x74ff39`); it sends here.
+        gone.is_some()
+            && gone == was
+            && log
+                .store
+                .pending()
+                .is_some_and(|id| log.store.waiting(id) == 0)
+    });
+    if let Some(waits) = record_waits {
+        world.insert_non_send_resource(waits);
+    }
+    match stalled {
+        None => return,
+        Some(true) => send(world),
+        Some(false) => {}
+    }
+    let Ok((entry, asks)) = world.run_system_cached_with(build, new) else {
+        return;
     };
+    let mut record_waits = world.remove_non_send_resource::<crate::items::RecordWaits>();
+    let send_now = world
+        .get_resource_mut::<CombatLog>()
+        .is_some_and(|mut log| {
+            let waiting = asks.iter().fold(0, |m, a| m | a.0);
+            let (id, head) = log.store.link(entry, waiting);
+            for (mask, key, guid) in asks {
+                let wait = log.next_wait;
+                log.next_wait = log.next_wait.wrapping_add(1);
+                log.waits.push(Wait {
+                    id: wait,
+                    entry: id,
+                    mask,
+                    key,
+                    guid,
+                });
+                if let (NameRef::Item(item), Some(waits)) = (key, record_waits.as_mut()) {
+                    waits.wait(item, crate::items::RecordWait::CombatLog(wait), false);
+                }
+            }
+            head && waiting == 0
+        });
     if let Some(waits) = record_waits {
         world.insert_non_send_resource(waits);
     }
@@ -160,9 +180,7 @@ fn build(
         spell: new.spell,
         info,
     };
-    // An entry named in full shows its creature guids sanitized before it sends (`0x74ff54`,
-    // `0x74ff5f`). 12340 bug: one queued behind a waiting entry skips it (`0x74ff40` returns
-    // first, `0x74fa25` sends it as is); every entry is meant to show sanitized, so it is here.
+    // Sanitized when named in full (`0x74ff54`); 12340 bug: one queued behind a waiting entry skips it (`0x74ff40`, `0x74fa25`), here it does not.
     if asks.is_empty() {
         sanitize(&mut entry, &sources);
     }
@@ -170,7 +188,11 @@ fn build(
 }
 
 /// `0x750270` for the recycled entries: their name callbacks and item record waits go.
-fn cancel(log: &mut CombatLog, record_waits: Option<&mut crate::items::RecordWaits>, gone: &[u64]) {
+pub(crate) fn cancel_waits(
+    log: &mut CombatLog,
+    record_waits: Option<&mut crate::items::RecordWaits>,
+    gone: &[u64],
+) {
     let ids: Vec<u32> = log
         .waits
         .iter()
@@ -217,9 +239,7 @@ pub(crate) fn send(world: &mut World) {
                 script.fire_event("COMBAT_LOG_EVENT_UNFILTERED", args);
             });
         }
-        // The pending entry read again past the listeners (`0x74f9e3`, `0x74fa09`). 12340 bug: a
-        // listener's `CombatLogClearEntries` nulls it (`0x7503a8`) and 12340 dereferences the null
-        // (`0x74fa0f`); a cleared log has nothing left to send, so the loop ends here.
+        // 12340 bug: a listener's clear nulls the cursor (`0x7503a8`) that 12340 then reads and dereferences (`0x74fa09`, `0x74fa0f`); the loop ends here.
         let Some(id) = world
             .get_resource::<CombatLog>()
             .and_then(|log| log.store.pending())

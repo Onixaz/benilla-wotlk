@@ -1179,7 +1179,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "CombatLogClearEntries",
         lua.create_function(|_, ()| {
-            write_log(|log| log.clear_entries());
+            // `0x751120`: each entry recycled (`0x750390`), its callbacks cancelled (`0x750270`).
+            super::live::write_live(|l| {
+                let gone = l.combat_log_mut()?.clear_entries();
+                l.cancel_combat_log_waits(&gone);
+                Some(())
+            });
             Ok(())
         })?,
     )?;

@@ -24,7 +24,7 @@ mod store;
 mod tests;
 
 pub(crate) use producers::Log;
-pub(crate) use store::{name_landed, record_landed, CombatLog, Landed};
+pub(crate) use store::{cancel_waits, name_landed, record_landed, CombatLog, Landed};
 
 /// The combat log's handler registration. Added ahead of [`crate::creature_anim::CreatureAnimPlugin`]
 /// and [`crate::unit_auras::UnitAurasPlugin`], so the aura handler reads the table before the packet

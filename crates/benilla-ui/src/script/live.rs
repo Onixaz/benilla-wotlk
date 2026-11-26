@@ -1141,6 +1141,9 @@ pub trait LiveState {
         None
     }
 
+    /// The recycled entries' name callbacks and item record waits cancelled (`0x7503d0`, `0x7503e9` -> `0x750270`).
+    fn cancel_combat_log_waits(&mut self, _gone: &[u64]) {}
+
     /// The client's skill list at the call (`0xc22ae8`-`0xc22b18`), which a UI reload keeps; `None` where no view lends it.
     fn skill_list(&self) -> Option<&super::SkillList> {
         None

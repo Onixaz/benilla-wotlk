@@ -13900,8 +13900,8 @@ fn log_pin(seen: &[Seen], events: &[&str], verbs: &[&str]) -> Vec<String> {
 }
 
 /// Each combat packet's entry fires its log events inside its handler, in wire order with the
-/// other handlers' events: `0x7512b0` queues the swing (`0x74ff20`), which sends at once
-/// (`0x74ff65` -> `0x74f910`), before the next packet's handler runs. The entry is in the store at
+/// other handlers' events: `0x7512b0` links the swing inline (`0x751402`) and sends it at once
+/// (`0x751432` -> `0x74f910`), before the next packet's handler runs. The entry is in the store at
 /// its event (`CombatLogGetNumEntries` `0x74fa70`).
 #[test]
 fn a_swing_logs_inside_its_handler_in_wire_order() {
@@ -13987,6 +13987,72 @@ end)
     );
 }
 
+/// An allocation past the retention time recycles the oldest entry (`0x75043f` -> `0x750390`);
+/// when that is the pending one, still waiting on a name that never answers, the cursor moves to
+/// the next (`0x7503b0`). 12340 sends nothing there and the ready entries behind it never fire
+/// again; benilla sends them in order from the new pending entry, then the new one.
+#[test]
+fn recycling_a_waiting_entry_sends_the_ready_ones_behind_it() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.run(2);
+    let held = rig.packets(vec![swing(KOBOLD, 5), swing(ME, 6), swing(ME, 7)], 2);
+    assert_eq!(log_pin(&held, &[], &["clnum"]), Vec::<String>::new());
+    lua(&mut rig, "SetCVar('combatLogRetentionTime', '0')");
+    let seen = rig.packets(vec![swing(ME, 8), control(false)], 2);
+    assert_eq!(
+        log_pin(&seen, &["PLAYER_CONTROL_LOST"], &["clnum"]),
+        vec![
+            "COMBAT_LOG_EVENT SWING_DAMAGE Probesix 6 | clnum=2",
+            "COMBAT_LOG_EVENT_UNFILTERED SWING_DAMAGE Probesix 6 | clnum=2",
+            "COMBAT_LOG_EVENT SWING_DAMAGE Probesix 7 | clnum=2",
+            "COMBAT_LOG_EVENT_UNFILTERED SWING_DAMAGE Probesix 7 | clnum=2",
+            "COMBAT_LOG_EVENT SWING_DAMAGE Probesix 8 | clnum=3",
+            "COMBAT_LOG_EVENT_UNFILTERED SWING_DAMAGE Probesix 8 | clnum=3",
+            "PLAYER_CONTROL_LOST | clnum=3",
+        ]
+    );
+    assert_eq!(
+        rig.app
+            .world()
+            .resource::<crate::combat_log::CombatLog>()
+            .waits_held(),
+        0,
+        "the recycled entry's name callback is cancelled (`0x7503e9` -> `0x750270`)"
+    );
+}
+
+/// `CombatLogClearEntries` recycles every entry (`0x751120` -> `0x750390`), and each recycle
+/// cancels the entry's name callbacks (`0x7503d0`, `0x7503e9` -> `0x750270`): the name's later
+/// answer finds nothing to send.
+#[test]
+fn clearing_the_log_cancels_its_name_waits() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.run(2);
+    let held = rig.packets(vec![swing(KOBOLD, 5), swing(ME, 6)], 2);
+    assert_eq!(log_pin(&held, &[], &["clnum"]), Vec::<String>::new());
+    let waits = |rig: &Rig| {
+        rig.app
+            .world()
+            .resource::<crate::combat_log::CombatLog>()
+            .waits_held()
+    };
+    assert_eq!(waits(&rig), 1, "the kobold's entry waits on its name");
+    lua(&mut rig, "CombatLogClearEntries()");
+    assert_eq!(waits(&rig), 0);
+    let seen = rig.packets(
+        vec![creature_name(KOBOLD_ENTRY, "Kobold"), control(false)],
+        2,
+    );
+    assert_eq!(
+        log_pin(&seen, &["PLAYER_CONTROL_LOST"], &["clnum"]),
+        vec!["PLAYER_CONTROL_LOST | clnum=0"]
+    );
+}
+
 /// Our death logs `UNIT_DIED` in the death anim ahead of its dead-or-alive refresh (`0x7561ed`
 /// before `0x756238`), so the entry fires before `PLAYER_DEAD`, inside the update's handler.
 #[test]
@@ -14051,8 +14117,8 @@ fn a_spell_failure_logs_behind_its_line_inside_its_handler() {
 }
 
 /// Each missile arrival that missed logs its miss inside its own arrival (`0x702fc0` ->
-/// `0x703080` -> `0x751b80`), whose entry sends at once (`0x74ff65`): the first arrival's events
-/// fire with only its entry in the store, before the second arrival logs.
+/// `0x703080` -> `0x751b80` -> `0x750500`), whose entry sends at once (`0x750624`): the first
+/// arrival's events fire with only its entry in the store, before the second arrival logs.
 #[test]
 fn each_missile_miss_fires_at_its_arrival() {
     let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
