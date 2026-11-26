@@ -713,7 +713,7 @@ fn our_guild_id_watch_runs_the_recruitment_cascade_after_its_guild_change() {
     let events = &["TABARD_CANSAVE_CHANGED", "UPDATE_CHAT_WINDOWS"];
     rig.app
         .world_mut()
-        .insert_resource(crate::ui_chat::ZoneChannelWalk::ready_in(0));
+        .insert_resource(crate::ui_chat::ZoneChannelWalk::ready_chat());
     const OTHER: u64 = 0x11;
     rig.packets(vec![player_in(OTHER, 7)], 2);
     let seen = rig.packets(

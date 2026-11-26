@@ -37,42 +37,30 @@ pub(crate) fn city_word(areas: &benilla_formats::AreaTableCatalog) -> Option<&st
         .filter(|n| !n.is_empty())
 }
 
-/// The walk's own state; the joined list is not copied here, as the reference's pass 1 walks the
-/// slot array itself ([`ChannelState::joined`]).
+/// The zone update's own state; the joined list is not copied here, as the walk reads the records
+/// themselves ([`ChannelState::joined`]).
 #[derive(Resource, Default)]
 pub(crate) struct ZoneChannelWalk {
-    /// The top-level zone the session's one walk ran for, the reference's registered flag; `None`
-    /// walks from scratch.
-    at: Option<u32>,
-    /// The zone the walk may act on this frame, the reference's `ds:`; `None` while a gate holds.
-    pub(super) zone_id: Option<u32>,
-    /// A character session is live: without it the logout frame, still `InWorld` with `at` just
-    /// cleared, would join the zone being left.
-    live: bool,
+    /// The chat's ready flag (`[0xbcefe8]`), set by the first zone update's walk (`0x508249`).
+    ready: bool,
 }
 
 impl ZoneChannelWalk {
-    /// The chat's ready flag (`[0xbcefe8]`): set by the first zone update's walk (`0x508249`) and
-    /// read by the guild-recruitment cascade (`0x507d43`) and the mode setter (`0x50826e`).
+    /// The chat's ready flag (`[0xbcefe8]`): read by the zone update (`0x5080ba`), the
+    /// guild-recruitment cascade (`0x507d43`) and the mode setter (`0x50826e`).
     pub(super) fn ready(&self) -> bool {
-        self.at.is_some()
+        self.ready
     }
 
-    /// A session whose walk ran in `zone`, the chat ready.
+    /// A session whose walk ran, the chat ready.
     #[cfg(test)]
-    pub(crate) fn ready_in(zone: u32) -> Self {
-        ZoneChannelWalk {
-            at: Some(zone),
-            zone_id: Some(zone),
-            live: true,
-        }
+    pub(crate) fn ready_chat() -> Self {
+        ZoneChannelWalk { ready: true }
     }
 
-    /// Forget the session: the next world entry re-joins from nothing.
+    /// Forget the session: the next world entry walks from nothing.
     fn clear_session(&mut self) {
-        self.at = None;
-        self.zone_id = None;
-        self.live = false;
+        self.ready = false;
     }
 }
 
@@ -424,83 +412,32 @@ pub(crate) fn apply_walk(steps: &[WalkStep], channels: &mut ChannelState, comman
     }
 }
 
-/// Whether the zone under the player is final: an active avatar done settling, benilla's stand-in
-/// for the loading screen the reference walks after.
-fn zone_is_settled(player: Option<&crate::player::Player>) -> bool {
-    player.is_some_and(|p| p.active && !p.settling)
-}
-
-/// The zone update before the chat is ready: the walk, then its tail, the ready flag
-/// (`0x508249`) and the guild-recruitment cascade (`0x508254`), in one step.
-pub(super) fn zone_channel_walk(world: &mut World) {
-    if world
-        .run_system_cached(auto_join_zone_channels)
-        .unwrap_or(false)
-    {
-        super::recruitment::update_guild_status_step(world);
-    }
-}
-
-/// The walk, run once per session; whether it walked. It composes from the real zone name, the `GetRealZoneText`
-/// cache, never the display text, which the indoor override renames.
-///
-/// The reference calls its walk from each zone-text update, which acts only until its registered
-/// flag is set; this polls the same inputs every frame. It waits while the world arrives
-/// (`Player::settling`), as the reference walks after its loading screen and our leaf area moves
-/// while terrain streams in, and for the chat cache to seat the mask, as the reference bails on its
-/// ready flag until the cache loader calls the walk.
-pub(super) fn auto_join_zone_channels(
+/// The zone update's walk leg (`0x5080ba`-`0x508249`) over `real_zone`, the stored real zone text
+/// (`[0xbd0780]`), in the zone id (`[0xbd080c]`, `0x5080c0`): whether the update goes on to the
+/// cascade. A ready chat goes straight on (`0x5080ca`), a zone with no area record stops there
+/// (`0x5080dd`), else the walk runs and sets the ready flag (`0x508249`).
+pub(super) fn zone_walk(
+    In(real_zone): In<String>,
     commands: Res<NetCommands>,
     mut channels: ResMut<ChannelState>,
     areas: Option<Res<AreaTableRes>>,
-    world: benilla_world::world_point::WorldPoint,
-    // One parameter for clippy's argument limit: the body's settle and a cinematic's view.
-    body: (
-        Option<Res<crate::player::Player>>,
-        Option<Res<crate::cinematic::Cinematic>>,
-    ),
+    ids: Option<Res<crate::area::ZoneIds>>,
     mut walk: ResMut<ZoneChannelWalk>,
-    mut entered: MessageReader<crate::net::EnteredWorldMessage>,
 ) -> bool {
-    let (player, cinematic) = (&body.0, &body.1);
-    // World entry arms the walk; the session-end edges disarm it.
-    if entered.read().next().is_some() {
-        walk.live = true;
+    let zone = ids.map_or(0, |z| z.zone);
+    if walk.ready {
+        return true;
     }
-
-    // A cinematic suppresses the rejoin: two of the six reads of the reference's cinematic cell,
-    // the zone-text update and an `UPDATEFLAGS` reflex, skip the refresh while one runs, and the
-    // cinematic's end calls it. A race intro flies the streaming focus far off a body that has not
-    // moved.
-    let cinematic_running = cinematic.as_deref().is_some_and(|c| c.is_playing());
-    let areas = areas.as_deref();
-
-    // `None` with no session, during a cinematic, while the world arrives, or with no area answer.
-    let zone_id = (walk.live && !cinematic_running && zone_is_settled(player.as_deref()))
-        .then(|| {
-            let areas = areas?;
-            world.area().and_then(|leaf| areas.0.top_zone(leaf))
-        })
-        .flatten();
-    walk.zone_id = zone_id;
-    let zone = zone_id
-        .and_then(|id| areas?.0.get(id))
-        .map(|row| (row.name.clone(), row.flags & AREA_FLAG_TRADE_CHANNEL != 0));
-
-    let (Some(zone_id), Some((zone_name, in_city)), Some(areas)) = (zone_id, zone, areas) else {
-        return false; // nothing to walk against yet
+    let Some(areas) = areas else {
+        return false;
     };
-    if channels.zone_mask.is_none() {
-        return false; // the mask is not seated: the reference's ready-flag bail
-    }
-    if walk.at.is_some() {
-        return false; // registered: later zones are the server's to move (`0x508090`)
-    }
-
-    let steps = plan_walk(&channels, &zone_name, in_city, city_word(&areas.0));
+    let Some(row) = areas.0.get(zone) else {
+        return false;
+    };
+    let in_city = row.flags & AREA_FLAG_TRADE_CHANNEL != 0;
+    let steps = plan_walk(&channels, &real_zone, in_city, city_word(&areas.0));
     apply_walk(&steps, &mut channels, &commands);
-    // The ready flag (`0x508249`), ahead of the cascade the update ends with.
-    walk.at = Some(zone_id);
+    walk.ready = true;
     true
 }
 
@@ -621,41 +558,18 @@ mod tests {
     }
 
     #[test]
-    fn the_walk_waits_for_the_world_under_the_player() {
-        use crate::player::Player;
-
-        assert!(!zone_is_settled(None), "no avatar: no zone to believe");
-
-        let mut p = Player::default();
-        assert!(!zone_is_settled(Some(&p)), "inactive avatar");
-
-        p.active = true;
-        p.settling = true;
-        assert!(
-            !zone_is_settled(Some(&p)),
-            "settling — the destination's terrain and WMOs are still arriving, so the leaf area \
-             under the body is still moving"
-        );
-
-        p.settling = false;
-        assert!(zone_is_settled(Some(&p)), "settled: the zone is now final");
-    }
-
-    #[test]
     fn leaving_the_world_ends_the_channel_session() {
         let mut channels = state(SEED);
         channels.joined = vec![
             joined("General - Tanaris"),
             joined("LocalDefense - Tanaris"),
         ];
-        let mut walk = ZoneChannelWalk::ready_in(440);
+        let mut walk = ZoneChannelWalk::ready_chat();
 
         // No VM in a unit test: the mirror leg is the one line this cannot reach.
         end_channel_session(&mut channels, &mut walk);
 
-        assert_eq!(walk.at, None, "the next entry re-walks from scratch");
-        assert_eq!(walk.zone_id, None);
-        assert!(!walk.live);
+        assert!(!walk.ready(), "the next entry re-walks from scratch");
         assert!(
             channels.joined.is_empty(),
             "the confirmed list is the server's, and the server just destroyed it — a survivor \

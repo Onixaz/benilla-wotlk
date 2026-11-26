@@ -135,25 +135,17 @@ impl Plugin for UiChatPlugin {
                 )
                     .chain()
                     .in_set(UiDrain)
-                    // Before the zone-channel walk renumbers or renames a slot, so a `/N` resolves
-                    // against the roster the script's `GetChannelName` read this frame.
+                    // Before a dead socket's clear empties the records, so a `/N` resolves against
+                    // the roster the script's `GetChannelName` read this frame.
                     .before(channels::end_session_channels_on_disconnect)
                     .in_set(crate::char_select::InWorldGated),
             )
-            // The zone-channel auto-join, which vmangos leaves to the client. The disconnect clear
-            // runs first, so a same-frame drop cannot leave the walk diffing stale membership.
-            // After `AreaAuthoritySet`, since a stale area joins and leaves the wrong channels. The
-            // walk ends in the guild-recruitment cascade, the zone update's tail.
+            // A dead socket ends the channel session; the zone update's walk runs in its callers'
+            // steps (`0x520680`, `0x5093c3`, `0x51d915`, `0x729002`).
             .add_systems(
                 Update,
-                (
-                    channels::end_session_channels_on_disconnect,
-                    channels::zone_channel_walk.in_set(crate::char_select::InWorldGated),
-                )
-                    .chain()
+                channels::end_session_channels_on_disconnect
                     .in_set(crate::ui_script::UiPaint)
-                    .after(benilla_world::terrain_stream::AreaAuthoritySet)
-                    // The selection and the pet's words its lent view reads are the clicks'.
                     .after(crate::target::TargetUpdate),
             )
             .add_systems(

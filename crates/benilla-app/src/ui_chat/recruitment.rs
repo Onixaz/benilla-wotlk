@@ -145,18 +145,26 @@ pub(crate) fn zone_text_runs_zone_update(
 /// `UNIT_FIELD_FLAGS` bit `0x100000`, taxi flight.
 const UNIT_FLAG_TAXI_FLIGHT: u32 = 0x10_0000;
 
-/// The zone update once the walk has run: with the chat cache loaded (`[0xbcefe4]`, `0x50809f`)
-/// it ends in the cascade, at once for a ready chat (`0x5080ca` -> `0x508254`) and for an empty
-/// zone text (`0x5080ac`), where an unready chat returns in the cascade (`0x507d43`). Before the
-/// chat is ready the update is the walk, [`super::channels::zone_channel_walk`], which ends in the
-/// cascade itself.
+/// The chat's zone update (`0x508090`) on `vm`, the calling VM: nothing before the chat cache is
+/// loaded (`[0xbcefe4]`, `0x508099`); with the real zone text it holds (`[0xbd0780]`, `0x5080a5`)
+/// the walk leg, [`super::channels::zone_walk`], which may stop it (`0x5080dd`); then the cascade
+/// (`0x508254`), at once for an empty text (`0x5080ac`).
 pub(crate) fn zone_update(world: &mut World, vm: &mut UiScript) {
     let loaded = world
         .get_resource::<ChannelState>()
         .is_some_and(|c| c.zone_mask.is_some());
-    if loaded && ready(world) {
-        update_guild_status(world, vm);
+    if !loaded {
+        return;
     }
+    let real_zone = vm.real_zone_text();
+    if !real_zone.is_empty()
+        && !world
+            .run_system_cached_with(super::channels::zone_walk, real_zone)
+            .unwrap_or(false)
+    {
+        return;
+    }
+    update_guild_status(world, vm);
 }
 
 /// What an acting cascade run did, for the events that follow it.
@@ -456,7 +464,7 @@ mod tests {
         world.insert_resource(areas());
         world.insert_resource(crate::area::ZoneIds { zone, area: zone });
         world.insert_resource(channels());
-        world.insert_resource(ZoneChannelWalk::ready_in(zone));
+        world.insert_resource(ZoneChannelWalk::ready_chat());
         world.init_resource::<crate::ui_script::live::UiEvents>();
         world.spawn((
             SelfPlayer,
@@ -589,7 +597,7 @@ mod tests {
         world.insert_resource(ZoneChannelWalk::default());
         update_guild_status_step(&mut world);
         assert!(joins(&rx).is_empty());
-        world.insert_resource(ZoneChannelWalk::ready_in(CAPITAL));
+        world.insert_resource(ZoneChannelWalk::ready_chat());
         world
             .non_send_resource_mut::<UiScript>()
             .set_guild_recruitment_mode(0);
@@ -691,6 +699,116 @@ mod tests {
             joins(&rx),
             ["GuildRecruitment - City"],
             "the cinematic end's run"
+        );
+    }
+
+    /// `General`, the first mask row the walk joins, and the recruitment row the cascade joins.
+    fn general_row() -> benilla_formats::ChatChannelRow {
+        benilla_formats::ChatChannelRow {
+            id: 1,
+            flags: 0x8_0003,
+            pattern: "General - %s".into(),
+            shortcut: "General".into(),
+        }
+    }
+
+    /// [`cascade_world`] before the first zone update: the chat not ready, the mask holding
+    /// `General` alone, the real zone text `real_zone` pushed and the zone id `zone` stored.
+    fn walk_world(
+        zone: u32,
+        real_zone: &str,
+    ) -> (
+        World,
+        crossbeam_channel::Receiver<crate::net::ClientCommand>,
+    ) {
+        let (mut world, rx) = cascade_world(zone);
+        world.insert_resource(ZoneChannelWalk::default());
+        world.insert_resource(ChannelState {
+            channels: benilla_formats::ChatChannelsCatalog::from_rows(vec![
+                general_row(),
+                recruitment_row(),
+            ]),
+            zone_mask: Some(1),
+            ..Default::default()
+        });
+        world
+            .non_send_resource_mut::<UiScript>()
+            .set_zone_texts(benilla_ui::script::ZoneTexts {
+                real_zone: real_zone.into(),
+                ..Default::default()
+            });
+        (world, rx)
+    }
+
+    /// The zone update (`0x508090`) is the walk: nothing before the cache load (`0x508099`), only
+    /// the cascade with no real zone text (`0x5080ac`), a stop with no area record (`0x5080dd`),
+    /// else the walk joins the mask's rows, sets the ready flag (`0x508249`) and runs the cascade
+    /// (`0x508254`); once ready, later updates run the cascade alone (`0x5080ca`).
+    #[test]
+    fn the_zone_update_walks_once_then_runs_the_cascade() {
+        let (mut world, rx) = walk_world(FOREST, "");
+        world.resource_mut::<ChannelState>().zone_mask = None;
+        zone_update_step(&mut world);
+        world.resource_mut::<ChannelState>().zone_mask = Some(1);
+        zone_update_step(&mut world);
+        assert!(joins(&rx).is_empty(), "unloaded, then no real zone text");
+        assert!(!ready(&world));
+
+        let (mut world, rx) = walk_world(999, "Nowhere");
+        zone_update_step(&mut world);
+        assert!(joins(&rx).is_empty(), "no area record: no walk, no cascade");
+        assert!(!ready(&world));
+
+        let (mut world, rx) = walk_world(FOREST, "Elwynn Forest");
+        zone_update_step(&mut world);
+        assert_eq!(
+            joins(&rx),
+            [
+                "General - Elwynn Forest",
+                "GuildRecruitment - Elwynn Forest"
+            ],
+            "the walk's join, then the cascade's"
+        );
+        assert!(ready(&world));
+        assert_eq!(seen(&world), "GuildRecruitment");
+        zone_update_step(&mut world);
+        assert!(
+            joins(&rx).is_empty(),
+            "walked once; the cascade holds its record"
+        );
+    }
+
+    /// The zone text's update runs the zone update before its zone event (`0x520680`, `0x5206a6`),
+    /// as the area feed queues them: a `ZONE_CHANGED_NEW_AREA` listener at login finds the walk's
+    /// record by name in any state (`0x4fe8e4`) and the cascade's `UPDATE_CHAT_WINDOWS` already
+    /// fired (`0x507df6`), every join sent.
+    #[test]
+    fn the_login_walk_runs_before_the_zone_event() {
+        let (mut world, rx) = walk_world(FOREST, "Elwynn Forest");
+        run(
+            &mut world,
+            "local f = CreateFrame('Frame') f:RegisterEvent('ZONE_CHANGED_NEW_AREA')
+             f:SetScript('OnEvent', function()
+               AT_ZONE = GetChannelName('General - Elwynn Forest') .. ':' .. #SEEN
+             end)",
+        );
+        {
+            let mut ui = world.resource_mut::<crate::ui_script::live::UiEvents>();
+            ui.world(zone_update_step);
+            ui.fire("ZONE_CHANGED_NEW_AREA", vec![]);
+        }
+        crate::ui_script::live::fire_handler_events(&mut world);
+        let at_zone: String = world
+            .non_send_resource::<UiScript>()
+            .eval("return AT_ZONE")
+            .unwrap();
+        assert_eq!(at_zone, "1:1", "the number, and the cascade's event before");
+        assert_eq!(
+            joins(&rx),
+            [
+                "General - Elwynn Forest",
+                "GuildRecruitment - Elwynn Forest"
+            ]
         );
     }
 
