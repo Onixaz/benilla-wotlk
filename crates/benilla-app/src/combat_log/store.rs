@@ -218,7 +218,7 @@ pub(crate) fn send(world: &mut World) {
             });
         }
         // The pending entry read again past the listeners (`0x74f9e3`, `0x74fa09`); a listener's
-        // `CombatLogClearEntries` leaves none, where 12340 reads through the null.
+        // `CombatLogClearEntries` leaves none, where 12340 dereferences the null (`0x74fa0f`).
         let Some(id) = world
             .get_resource::<CombatLog>()
             .and_then(|log| log.store.pending())

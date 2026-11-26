@@ -837,3 +837,52 @@ fn a_waiting_name_holds_the_log_until_its_record_answers() {
         Some("Kobold Vermin")
     );
 }
+
+/// A ready entry queued behind a waiting one shows its creature guids sanitized like every other
+/// entry (`0x74d210`). 12340 skips the sanitize for it (`0x74ff40` returns before `0x74ff54` and
+/// `0x74ff5f`, and the send loop sends it as is at `0x74fa25`), so its guid keeps the spawn
+/// counter there; the branch sanitizes it at its build.
+#[test]
+fn an_entry_queued_behind_a_waiting_one_is_sanitized() {
+    let mut app = rig();
+    // `MOB`'s template (entry `0x45`) hides its spawn counter.
+    app.world_mut()
+        .resource_mut::<crate::names::NameCache>()
+        .insert_creature(
+            0x45,
+            Some(crate::names::CreatureRecord {
+                name: "Hidden".into(),
+                type_flags: 0x4000,
+                ..Default::default()
+            }),
+        );
+    app.world_mut()
+        .resource_mut::<crate::names::NameCache>()
+        .insert_player(ME, "Claude".into(), None);
+    let kobold = 0xF130_0006_0100_0002;
+    let swing = |victim| AttackerState {
+        attacker: ME,
+        victim,
+        hit_info: hit_info::AFFECTS_VICTIM,
+        damage: 5,
+        overkill: 0,
+        victim_state: 1,
+        absorb: 0,
+        resist: 0,
+        blocked: 0,
+        melee_spell_id: 0,
+        school_mask: 1,
+    };
+    run(&mut app, move |log| {
+        log.swing(&swing(kobold));
+        log.swing(&swing(MOB));
+    });
+    let held = entries(&mut app);
+    assert_eq!(held.len(), 2);
+    assert_eq!(
+        app.world().resource::<super::CombatLog>().store.pending(),
+        Some(0),
+        "the kobold's entry waits"
+    );
+    assert_eq!(held[1].dest.guid, MOB & !0xff_ffff, "sanitized behind it");
+}

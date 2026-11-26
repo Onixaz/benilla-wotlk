@@ -13946,6 +13946,41 @@ fn an_unnamed_creature_holds_the_log_until_its_record_answers() {
     );
 }
 
+/// A `COMBAT_LOG_EVENT` listener that calls `CombatLogClearEntries` recycles the sending entry
+/// (`0x751120` -> `0x750390`, the send cursor nulled at `0x7503a8`); `COMBAT_LOG_EVENT_UNFILTERED`
+/// still fires off the values pushed before it (`0x74f9ba`). 12340 then reads the null cursor at
+/// `0x74fa09` and dereferences it at `0x74fa0f` (and at `0x74f9e3` while logging), an access
+/// violation; the branch ends the send loop there and the next entry logs as the first.
+#[test]
+fn a_listener_clearing_the_log_ends_the_send_loop() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.run(2);
+    lua(
+        &mut rig,
+        r#"
+local f = CreateFrame("Frame")
+f:RegisterEvent("COMBAT_LOG_EVENT")
+f:SetScript("OnEvent", function(self)
+    self:UnregisterAllEvents()
+    CombatLogClearEntries()
+end)
+"#,
+    );
+    let seen = rig.packets(vec![swing(ME, 7), control(false), swing(ME, 9)], 2);
+    assert_eq!(
+        log_pin(&seen, &["PLAYER_CONTROL_LOST"], &["clnum"]),
+        vec![
+            "COMBAT_LOG_EVENT SWING_DAMAGE Probesix 7 | clnum=0",
+            "COMBAT_LOG_EVENT_UNFILTERED SWING_DAMAGE Probesix 7 | clnum=0",
+            "PLAYER_CONTROL_LOST | clnum=0",
+            "COMBAT_LOG_EVENT SWING_DAMAGE Probesix 9 | clnum=1",
+            "COMBAT_LOG_EVENT_UNFILTERED SWING_DAMAGE Probesix 9 | clnum=1",
+        ]
+    );
+}
+
 /// Our death logs `UNIT_DIED` in the death anim ahead of its dead-or-alive refresh (`0x7561ed`
 /// before `0x756238`), so the entry fires before `PLAYER_DEAD`, inside the update's handler.
 #[test]
