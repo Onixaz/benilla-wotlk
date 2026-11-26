@@ -68,9 +68,10 @@ pub(crate) enum ChatLine {
     },
     /// An XP line, its victim's name read in the call (`0x50b20a`).
     XpGain { line: XpLine },
-    /// An honor award, its victim's name read in the call (`0x50b7c0`); `rank` (0 none) becomes a
-    /// title at the add, from the victim's faction template.
-    HonorGain { victim: u64, honor: i32, rank: u8 },
+    /// An honor award, its victim's name read in the call (`0x50b7c0`); a non-negative `rank`
+    /// becomes a title at the add from the victim's faction template, and a negative one takes the
+    /// no-rank form (`0x50b6d0`).
+    HonorGain { victim: u64, honor: i32, rank: i32 },
     /// A text emote (`0x504070`): shown at once when its performer's name is cached (`0x503660`),
     /// else queued on the text emotes' own list (`0x504107`) for their callback (`0x503fb0`).
     /// `target` is the wire's name, empty when untargeted, used as sent.
@@ -402,7 +403,7 @@ pub(crate) trait ChatSink {
     }
 
     /// Add an honor award's line (`SMSG_PVP_CREDIT`); victim 0 is a bonus or objective award.
-    fn push_pvp_credit(&mut self, honor: i32, victim: u64, rank: u8) {
+    fn push_pvp_credit(&mut self, honor: i32, victim: u64, rank: i32) {
         self.push_line(ChatLine::HonorGain {
             victim,
             honor,
@@ -1497,23 +1498,24 @@ fn build(In((item, script, passes)): In<(ChatLine, UiScript, bool)>, p: AddParam
             }
             let name =
                 store.map(|store| unit_name(&script, victim, Some(store), &names, &commands));
-            // The title's side is the victim's faction template group: Horde (`0x4`) side 0, else
-            // Alliance (`0x2`) side 1 (`0x50b755`-`0x50b784`); its gender ours (the title lookup
-            // genders against the local player). A side-less victim skips the title's write
-            // (`0x50b787`) and 12340 reads an uninitialized buffer; benilla keeps side 0 (a bug).
+            // `rank < 0` takes `COMBATLOG_HONORGAIN_NO_RANK`; `rank >= 0` takes
+            // `COMBATLOG_HONORGAIN` (`0x50b717`-`0x50b72f`). The title's side is the victim's
+            // faction template group: Horde (`0x4`) side 0, else Alliance (`0x2`) side 1
+            // (`0x50b755`-`0x50b784`); its gender ours (`0x50b7ab`). A side-less victim skips the
+            // title's write (`0x50b787`) and 12340 reads an uninitialized buffer; benilla keeps
+            // side 0 (a bug). A missing global resolves to `""` (`0x819d40`).
             let team = crate::target::ring::faction_group_mask(factions.as_deref(), store)
                 .map_or(0, |mask| u8::from(mask & 0x4 == 0 && mask & 0x2 != 0));
             let female = self_guid
                 .0
                 .and_then(|g| names.player_traits(g))
                 .is_some_and(|(_, _, gender)| gender == 1);
-            let title = (victim != 0).then(|| script.pvp_rank_title(rank, team, female));
-            let line = honor_gain_line(
-                name.as_deref(),
-                title.flatten().as_deref(),
-                honor,
-                &globals(&script),
-            );
+            let title = (victim != 0 && rank >= 0).then(|| {
+                script
+                    .pvp_rank_title(rank, team, female)
+                    .unwrap_or_default()
+            });
+            let line = honor_gain_line(name.as_deref(), title.as_deref(), honor, &globals(&script));
             if let Some(text) = line {
                 steps.push(Step::Route(ChatEvent::text_only(
                     ChatEventKind::CombatHonorGain,
