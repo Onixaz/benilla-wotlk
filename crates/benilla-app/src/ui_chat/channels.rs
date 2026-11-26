@@ -613,6 +613,44 @@ mod tests {
         assert_eq!(ids(&felwood), vec![1, 22]);
     }
 
+    /// The walk's join sends the ChannelID its record was registered with, and its leave the
+    /// record's own (`0x507c7e`, `0x5095f1`).
+    #[test]
+    fn the_walks_packets_carry_the_records_channel_ids() {
+        let mut c = state(SEED);
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let commands = crate::net::NetCommands(tx);
+        apply_walk(
+            &plan_walk(&c, "Elwynn Forest", false, CITY),
+            &mut c,
+            &commands,
+        );
+        apply_walk(&plan_walk(&c, "Westfall", false, CITY), &mut c, &commands);
+        let wire: Vec<(bool, u32, String)> = rx
+            .try_iter()
+            .filter_map(|cmd| match cmd {
+                crate::net::ClientCommand::JoinChannel {
+                    channel_id, name, ..
+                } => Some((true, channel_id, name)),
+                crate::net::ClientCommand::LeaveChannel { channel_id, name } => {
+                    Some((false, channel_id, name))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            wire,
+            vec![
+                (true, 1, s("General - Elwynn Forest")),
+                (true, 22, s("LocalDefense - Elwynn Forest")),
+                (false, 1, s("General - Elwynn Forest")),
+                (true, 1, s("General - Westfall")),
+                (false, 22, s("LocalDefense - Elwynn Forest")),
+                (true, 22, s("LocalDefense - Westfall")),
+            ]
+        );
+    }
+
     #[test]
     fn a_first_walk_registers_every_mask_row_before_the_gate() {
         let mut c = state(SEED);
