@@ -28,15 +28,18 @@ pub enum ChannelCommand {
     /// `JoinChannelByName(name, password)`, sent on both non-nil legs; `voice` is the `hasVoice`
     /// argument, kept on the record (`+0xa4`, `0x5077c8`), and `permanent` is
     /// `JoinPermanentChannel`'s flag (`+0xa5`, `0x5077d9`), which the chat cache's save reads
-    /// (`0x4fd432`).
+    /// (`0x4fd432`). `id` is the matched row's ChannelID (`0x507baa`), 0 for a custom channel.
     Join {
+        id: u32,
         name: String,
         password: String,
         voice: bool,
         permanent: bool,
     },
-    /// `LeaveChannelByName(name)`.
+    /// `LeaveChannelByName(name)`; `id` is the matched row's ChannelID (`0x509502`), 0 for a
+    /// custom channel.
     Leave {
+        id: u32,
         name: String,
     },
     /// `ListChannelByName(name)`: `CMSG_CHANNEL_LIST`.
@@ -189,8 +192,33 @@ fn push(lua: &Lua, cmd: ChannelCommand) -> bool {
     }
 }
 
-fn non_empty(s: Option<String>) -> Option<String> {
-    s.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+/// The verbs' channel argument (`0x4fe160`): an empty name is nothing (`0x4fe16b`); a non-zero
+/// integer parse names the record whose own number it is and whose state is 0 (`0x4fe197`,
+/// `0x4fe19f`) and answers that record's name, else nothing; any other name passes as typed.
+fn channel_string(key: &str) -> Option<String> {
+    if key.is_empty() {
+        return None;
+    }
+    match super::cvars::sstr_to_int(key) {
+        0 => Some(key.to_string()),
+        n => usize::try_from(n)
+            .ok()
+            .and_then(|n| n.checked_sub(1))
+            .and_then(|i| super::channel_pane::live_slots().get(i).cloned().flatten())
+            .filter(|s| s.active)
+            .map(|s| s.name),
+    }
+}
+
+/// A channel verb's string argument as `lua_isstring` and `lua_tolstring` read it: a string, or a
+/// number in its string form; anything else is `None`.
+fn lua_string(lua: &Lua, v: &Value) -> mlua::Result<Option<String>> {
+    match v {
+        Value::String(_) | Value::Integer(_) | Value::Number(_) => {
+            Ok(lua.coerce_string(v.clone())?.map(|s| s.to_string_lossy()))
+        }
+        _ => Ok(None),
+    }
 }
 
 /// The joined channels' names at the call, in slot order with holes, read live off the channel
@@ -206,13 +234,6 @@ pub(crate) fn joined_names() -> Vec<Option<String>> {
 /// `ChatChannels.dbc` composed for the zone at the call; none with nothing lent.
 pub(crate) fn zone_catalog() -> Vec<ZoneChannelRow> {
     super::read_live(|l| l.zone_channel_catalog()).unwrap_or_default()
-}
-
-/// The name in slot `n` (1-based), `None` out of range or for a freed slot: the reference's lookup
-/// requires the entry's own number to equal `n`, which a leave zeroes, so a left channel's number
-/// answers "not joined" while every channel above it keeps its own.
-fn name_at(joined: &[Option<String>], n: usize) -> Option<&str> {
-    joined.get(n.checked_sub(1)?)?.as_deref()
 }
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
@@ -288,8 +309,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // The three joins: `JoinTemporaryChannel` and `JoinChannelByName` are one binding (`0x50daa0`),
     // `JoinPermanentChannel` (`0x50dac0`) the same with the permanent flag, each
-    // `(name [, password [, frameId [, hasVoice]]])`. A DBC row answers `(ChannelID, resolvedName)`
-    // and a custom channel `(0, nil)`, both sending; a `frameId` that truncates to 1..=10 registers
+    // `(name [, password [, frameId [, hasVoice]]])`. A DBC row answers `(ChannelID, Shortcut)`,
+    // the row's `+0x10` the join writes out (`0x507ba0`) and the verb pushes (`0x50da72`), and a
+    // custom channel `(0, nil)` (`0x50da86`), both sending; a `frameId` that truncates to 1..=10 registers
     // the channel in that window's list, deduplicated by name. A non-string name raises the usage;
     // a space, a row whose zone text is empty, or a name or password of 128 bytes or more, answers
     // nothing (`0x50d974`-`0x50d99e`), as does a profane name, after its `ERR_PROFANE_CHAT_NAME`
@@ -364,31 +386,23 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let row = zone_catalog()
                 .into_iter()
                 .find(|r| r.shortcut.eq_ignore_ascii_case(&key));
-            // The number leg: the record at that number, held in state 0, or nothing.
-            let key = match super::cvars::sstr_to_int(&key) {
-                0 => key,
-                n => {
-                    let slots = super::channel_pane::live_slots();
-                    let held = usize::try_from(n)
-                        .ok()
-                        .and_then(|n| n.checked_sub(1))
-                        .and_then(|i| slots.get(i).cloned().flatten())
-                        .filter(|s| s.active);
-                    match held {
-                        Some(slot) => slot.name,
-                        None => return Ok(()),
-                    }
-                }
+            // The channel string: an empty name, or a number naming no record in state 0, is
+            // nothing (`0x509403` -> `0x4fe160`, `0x509410`).
+            let Some(key) = channel_string(&key) else {
+                return Ok(());
             };
-            let (wire, strip_key, guild_row) = match row {
+            // A matched row composes its name and takes its ChannelID (`0x5094e9`, `0x509502`);
+            // a custom channel's id is 0, its record found by name (`0x50959f`).
+            let (id, wire, strip_key, guild_row) = match row {
                 Some(ZoneChannelRow { resolved: None, .. }) => return Ok(()),
                 Some(ZoneChannelRow {
+                    id,
                     resolved: Some(r),
                     shortcut,
                     guild_recruitment,
                     ..
-                }) => (r, shortcut, guild_recruitment),
-                None => (key.clone(), key, false),
+                }) => (id, r, shortcut, guild_recruitment),
+                None => (0, key.clone(), key, false),
             };
             let mut model = crate::script::model_mut_of(lua);
             // The verb's manual leave on the `GUILD_REQ` row stores STANDARD (`0x50950d`-`0x509525`).
@@ -397,52 +411,54 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             }
             model.strip_window_channel(&strip_key);
             drop(model);
-            push(lua, ChannelCommand::Leave { name: wire });
+            push(lua, ChannelCommand::Leave { id, name: wire });
             Ok(())
         })?,
     )?;
 
-    // DeclineInvite(channel) (`0x4ffcc0`): a number names a joined slot, a name passes as it is.
-    g.set(
-        "DeclineInvite",
-        lua.create_function(|lua, channel: Value| {
-            let channel =
-                super::binding_abi::string_arg(lua, channel, "Usage: DeclineInvite(\"channel\")")?;
-            let name = match channel.trim().parse::<usize>() {
-                Ok(n) => name_at(&joined_names(), n).map(str::to_string),
-                Err(_) => Some(channel),
-            };
-            if let Some(name) = name {
-                push(lua, ChannelCommand::DeclineInvite { name });
-            }
-            Ok(())
-        })?,
-    )?;
-
-    // The one-name verbs: each queues its `CMSG_*` and returns nothing.
+    // The one-channel verbs (`0x4fe460`): a non-string channel is the `Usage: %s("channel")` error
+    // (`0x4fe47f`); the channel string (`0x4fe4b7` -> `0x4fe160`) refused sends nothing, else the
+    // packet carries what it answered (`0x4fe4eb`). `DeclineInvite` (`0x4ffcc0`),
+    // `ListChannelByName` (`0x4fe630`), `DisplayChannelOwner` (`0x4fe830`) and
+    // `ChannelToggleAnnouncements` (`0x4fea50`) are this body.
     for (verb, make) in [
         (
-            "ListChannelByName",
-            (|name| ChannelCommand::List { name }) as fn(String) -> ChannelCommand,
+            "DeclineInvite",
+            (|name| ChannelCommand::DeclineInvite { name }) as fn(String) -> ChannelCommand,
         ),
+        ("ListChannelByName", |name| ChannelCommand::List { name }),
         ("DisplayChannelOwner", |name| ChannelCommand::DisplayOwner {
             name,
         }),
-        ("ChannelModerate", |name| ChannelCommand::Moderate { name }),
         ("ChannelToggleAnnouncements", |name| {
             ChannelCommand::ToggleAnnouncements { name }
         }),
     ] {
         g.set(
             verb,
-            lua.create_function(move |lua, name: Option<String>| {
-                if let Some(name) = non_empty(name) {
+            lua.create_function(move |lua, name: Value| {
+                let Some(name) = lua_string(lua, &name)? else {
+                    return Err(mlua::Error::runtime(format!("Usage: {verb}(\"channel\")")));
+                };
+                if let Some(name) = channel_string(&name) {
                     push(lua, make(name));
                 }
                 Ok(())
             })?,
         )?;
     }
+
+    // ChannelModerate is a 1.12.1 global 3.3.5a does not have (#52): its 1.12 body, kept until
+    // that removal.
+    g.set(
+        "ChannelModerate",
+        lua.create_function(|lua, name: Option<String>| {
+            if let Some(name) = name.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+                push(lua, ChannelCommand::Moderate { name });
+            }
+            Ok(())
+        })?,
+    )?;
 
     g.set(
         "ListChannels",
@@ -452,16 +468,36 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // The two-name verbs: (channel, player), or (channel, password) for the password.
+    // SetChannelPassword(name, password) (`0x4fe720`): either argument not a string is its usage
+    // error (`0x4fe7ef`); the channel string refused sends nothing (`0x4fe76a`), else the packet
+    // carries it and the password as typed, empty included (`0x4fe797`, `0x4fe7b0`).
+    g.set(
+        "SetChannelPassword",
+        lua.create_function(|lua, (name, password): (Value, Value)| {
+            let (Some(name), Some(password)) =
+                (lua_string(lua, &name)?, lua_string(lua, &password)?)
+            else {
+                return Err(mlua::Error::runtime(
+                    r#"Usage: SetChannelPassword("name", "password")"#,
+                ));
+            };
+            if let Some(name) = channel_string(&name) {
+                push(lua, ChannelCommand::SetPassword { name, password });
+            }
+            Ok(())
+        })?,
+    )?;
+
+    // The channel-and-player verbs (`0x4fe330`): either argument not a string is the
+    // `Usage: %s("channel", "name")` error (`0x4fe426`); the channel string refused sends nothing
+    // (`0x4fe37c`); a player name over 0x30 bytes is the `Name too long` error (`0x4fe397`,
+    // `0x4fe39c`); else the packet carries both, an empty name included (`0x4fe3d6`, `0x4fe3e2`).
     for (verb, make) in [
         (
             "SetChannelOwner",
             (|name, player| ChannelCommand::SetOwner { name, player })
                 as fn(String, String) -> ChannelCommand,
         ),
-        ("SetChannelPassword", |name, password| {
-            ChannelCommand::SetPassword { name, password }
-        }),
         ("ChannelBan", |name, player| ChannelCommand::Ban {
             name,
             player,
@@ -495,19 +531,23 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     ] {
         g.set(
             verb,
-            lua.create_function(
-                move |lua, (name, second): (Option<String>, Option<String>)| {
-                    if let Some(name) = non_empty(name) {
-                        // A password may be empty (`/password General` clears it); a player name
-                        // may not.
-                        let second = second.unwrap_or_default();
-                        if verb == "SetChannelPassword" || !second.trim().is_empty() {
-                            push(lua, make(name, second.trim().to_string()));
-                        }
-                    }
-                    Ok(())
-                },
-            )?,
+            lua.create_function(move |lua, (name, player): (Value, Value)| {
+                let (Some(name), Some(player)) =
+                    (lua_string(lua, &name)?, lua_string(lua, &player)?)
+                else {
+                    return Err(mlua::Error::runtime(format!(
+                        "Usage: {verb}(\"channel\", \"name\")"
+                    )));
+                };
+                let Some(name) = channel_string(&name) else {
+                    return Ok(());
+                };
+                if player.len() > 0x30 {
+                    return Err(mlua::Error::runtime("Name too long"));
+                }
+                push(lua, make(name, player));
+                Ok(())
+            })?,
         )?;
     }
 
@@ -546,8 +586,8 @@ fn join_by_name(
     let row = zone_catalog()
         .into_iter()
         .find(|r| r.shortcut.eq_ignore_ascii_case(&name));
-    let (id, resolved, listed_as) = match row {
-        None => (0, None, name.clone()),
+    let (id, resolved, shortcut) = match row {
+        None => (0, None, None),
         Some(ZoneChannelRow { resolved: None, .. }) => return Ok(None),
         Some(ZoneChannelRow {
             id,
@@ -561,7 +601,7 @@ fn join_by_name(
             if guild_recruitment {
                 manual_reset(&mut crate::script::model_mut_of(lua));
             }
-            (id, resolved, shortcut)
+            (id, resolved, Some(shortcut))
         }
     };
     // The reference takes the frame number less one (a missing one reads -1) and skips a window
@@ -580,7 +620,8 @@ fn join_by_name(
     if !push(
         lua,
         ChannelCommand::Join {
-            name: resolved.clone().unwrap_or_else(|| name.clone()),
+            id,
+            name: resolved.unwrap_or_else(|| name.clone()),
             password,
             voice,
             permanent,
@@ -588,11 +629,13 @@ fn join_by_name(
     ) {
         return Ok(None);
     }
-    // The window registration comes after the send, held record or new (`0x507cea`-`0x507d11`).
+    // The window registration comes after the send, held record or new, under the Shortcut, a
+    // custom channel under its name (`0x507cea`-`0x507d11`).
     if let Some(i) = window {
+        let listed_as = shortcut.clone().unwrap_or(name);
         crate::script::model_mut_of(lua).register_window_channel(i, listed_as, id);
     }
-    Ok(Some((i64::from(id), resolved)))
+    Ok(Some((i64::from(id), shortcut)))
 }
 
 #[cfg(test)]
@@ -644,7 +687,7 @@ mod command_tests {
     }
 
     #[test]
-    fn the_management_verbs_queue_in_call_order_and_drop_empty_names() {
+    fn the_management_verbs_queue_in_call_order_and_drop_empty_channels() {
         let mut s = UiScript::new().unwrap();
         s.run(
             "LeaveChannelByName('General') ListChannelByName('') ListChannels() \
@@ -657,6 +700,7 @@ mod command_tests {
             s.take_channel_commands(),
             vec![
                 ChannelCommand::Leave {
+                    id: 0,
                     name: "General".into()
                 },
                 ChannelCommand::ListAll,
@@ -667,6 +711,10 @@ mod command_tests {
                 ChannelCommand::Kick {
                     name: "General".into(),
                     player: "Bob".into()
+                },
+                ChannelCommand::Kick {
+                    name: "General".into(),
+                    player: String::new()
                 },
                 ChannelCommand::Moderate {
                     name: "General".into()
@@ -760,6 +808,7 @@ mod command_tests {
                 s.take_channel_commands(),
                 vec![
                     ChannelCommand::Leave {
+                        id: 0,
                         name: "GuildRecruitment - City".into()
                     };
                     2
@@ -820,6 +869,7 @@ mod command_tests {
             assert_eq!(
                 s.take_channel_commands(),
                 vec![ChannelCommand::Leave {
+                    id: 0,
                     name: "Other".into()
                 }],
                 "a number names its confirmed record"
@@ -840,6 +890,7 @@ mod command_tests {
                 s.take_channel_commands(),
                 vec![
                     ChannelCommand::Leave {
+                        id: 0,
                         name: "Other".into()
                     };
                     2
@@ -851,8 +902,14 @@ mod command_tests {
             assert_eq!(
                 s.take_channel_commands(),
                 vec![
-                    ChannelCommand::Leave { name: "+1".into() },
-                    ChannelCommand::Leave { name: "0".into() },
+                    ChannelCommand::Leave {
+                        id: 0,
+                        name: "+1".into()
+                    },
+                    ChannelCommand::Leave {
+                        id: 0,
+                        name: "0".into()
+                    },
                 ],
                 "no `+`, and 0 is a name"
             );
@@ -861,6 +918,7 @@ mod command_tests {
             assert_eq!(
                 s.take_channel_commands(),
                 vec![ChannelCommand::Leave {
+                    id: 1,
                     name: "General - Elwynn Forest".into()
                 }],
                 "a shortcut composes for the zone"
@@ -887,6 +945,7 @@ mod command_tests {
             assert_eq!(
                 s.take_channel_commands(),
                 vec![ChannelCommand::Leave {
+                    id: 0,
                     name: "mychan".into()
                 }],
                 "custom: verbatim"
@@ -920,7 +979,8 @@ mod command_tests {
             .unwrap();
             assert_eq!(
                 s.eval::<(i64, String)>("return A[1], A[2]").unwrap(),
-                (1, "General - Elwynn Forest".to_string())
+                (1, "General".to_string()),
+                "the row's Shortcut, written out at `0x507ba0` and pushed at `0x50da72`"
             );
             assert!(s.eval::<bool>("return B[1] == 0").unwrap());
             assert_eq!(s.eval::<i64>("return N").unwrap(), 0);
@@ -929,12 +989,14 @@ mod command_tests {
                 s.take_channel_commands(),
                 vec![
                     ChannelCommand::Join {
+                        id: 1,
                         name: "General - Elwynn Forest".into(),
                         password: String::new(),
                         voice: true,
                         permanent: true,
                     },
                     ChannelCommand::Join {
+                        id: 0,
                         name: "MyChan".into(),
                         password: "secret".into(),
                         voice: false,
@@ -942,6 +1004,90 @@ mod command_tests {
                     },
                 ]
             );
+        });
+    }
+
+    /// The channel verbs take their channel through the channel string (`0x4fe160`): a number
+    /// names the record whose own number it is in state 0 and the packet carries its name
+    /// (`0x4fe197`, `0x4fe19f`), any other number or an empty name sends nothing. A non-string
+    /// argument is the usage error (`0x4fe47f`, `0x4fe426`, `0x4fe7ef`), a player name over 0x30
+    /// bytes `Name too long` (`0x4fe397`), and an empty one is sent (`0x4fe3e2`).
+    #[test]
+    fn the_channel_verbs_read_the_records_at_the_call() {
+        let mut s = UiScript::new().unwrap();
+        let slot = |name: &str, active: bool| {
+            Some(crate::script::ChannelSlotInfo {
+                name: name.into(),
+                shortcut: None,
+                active,
+                flags: 0,
+                instance: 0,
+            })
+        };
+        let mut view = crate::script::live::TestView {
+            zone_channels: catalog(),
+            channel_slots: vec![
+                slot("General - Elwynn Forest", true),
+                slot("Waiting", false),
+            ],
+            ..Default::default()
+        };
+        s.with_live(&mut view, |s| {
+            s.run(
+                "ChannelKick('1', 'Bob') ChannelKick(1, '') SetChannelPassword('1', 'pw')                  ListChannelByName(1) DisplayChannelOwner('1') ChannelToggleAnnouncements('1')                  DeclineInvite('1') ChannelBan('Mine', 'Ann')",
+            )
+            .unwrap();
+            let general = || "General - Elwynn Forest".to_string();
+            assert_eq!(
+                s.take_channel_commands(),
+                vec![
+                    ChannelCommand::Kick {
+                        name: general(),
+                        player: "Bob".into()
+                    },
+                    ChannelCommand::Kick {
+                        name: general(),
+                        player: String::new()
+                    },
+                    ChannelCommand::SetPassword {
+                        name: general(),
+                        password: "pw".into()
+                    },
+                    ChannelCommand::List { name: general() },
+                    ChannelCommand::DisplayOwner { name: general() },
+                    ChannelCommand::ToggleAnnouncements { name: general() },
+                    ChannelCommand::DeclineInvite { name: general() },
+                    ChannelCommand::Ban {
+                        name: "Mine".into(),
+                        player: "Ann".into()
+                    },
+                ],
+                "a number sends its record's name, a name passes as typed"
+            );
+            s.run(
+                "ChannelKick('2', 'Bob') ChannelKick('3', 'Bob') ChannelKick('', 'Bob')                  DeclineInvite('2') ListChannelByName('') SetChannelPassword('7', 'pw')                  ChannelKick('2', string.rep('x', 49))",
+            )
+            .unwrap();
+            assert!(
+                s.take_channel_commands().is_empty(),
+                "a pending record, no record or an empty name: nothing, ahead of the name check"
+            );
+            for (call, usage) in [
+                ("ChannelKick('General')", r#"Usage: ChannelKick("channel", "name")"#),
+                ("ChannelKick(nil, 'Bob')", r#"Usage: ChannelKick("channel", "name")"#),
+                ("DeclineInvite()", r#"Usage: DeclineInvite("channel")"#),
+                ("ListChannelByName({})", r#"Usage: ListChannelByName("channel")"#),
+                (
+                    "SetChannelPassword('General')",
+                    r#"Usage: SetChannelPassword("name", "password")"#,
+                ),
+                ("ChannelKick('General', string.rep('x', 49))", "Name too long"),
+            ] {
+                let e = s.run(call).unwrap_err();
+                assert!(e.to_string().contains(usage), "{call}: {e}");
+            }
+            s.run("ChannelKick('General', string.rep('x', 48))").unwrap();
+            assert_eq!(s.take_channel_commands().len(), 1, "0x30 bytes is in range");
         });
     }
 }

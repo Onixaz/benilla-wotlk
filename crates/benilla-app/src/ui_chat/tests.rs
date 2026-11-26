@@ -3036,11 +3036,12 @@ fn a_channel_send_carries_the_numbered_slots_name() {
     let (mut world, rx) = send_world(benilla_ui::script::UiScript::new().expect("VM"));
     world.insert_resource(ChannelState {
         joined: vec![
-            Some(ChannelSlot::joined("General - Elwynn Forest")),
-            Some(ChannelSlot::joined("Trade - City")),
+            Some(ChannelSlot::zone("General - Elwynn Forest", 1)),
+            Some(ChannelSlot::zone("Trade - City", 2)),
             None,
             Some(ChannelSlot {
                 name: "LocalDefense - Elwynn Forest".into(),
+                id: 22,
                 state: SlotState::Suspended,
                 leave_asked: false,
                 flags: 0,
@@ -3876,6 +3877,55 @@ fn a_server_join_renames_the_zone_slot_by_id_and_an_unasked_one_takes_nothing() 
     );
     assert_eq!(channels.number_of("LookingForGroup"), None);
     assert_eq!(channels.zone_mask, Some(1), "no LookingForGroup bit");
+}
+
+/// The join and the leave take a channel's ChannelID only from their verb's Shortcut match
+/// (`0x507baa`, `0x509502`); a custom channel has id 0 and its record is found by name
+/// (`0x507c0a`, `0x50959f`), never by a row its name contains. The leave sends and clears the
+/// record's own ChannelID (`0x5095f1`, `0x509618`-`0x509639`).
+#[test]
+fn a_custom_channel_is_found_by_name_never_by_a_row_its_name_contains() {
+    use super::edit::JoinRecord;
+    let mut c = super::edit::ChannelState {
+        channels: benilla_formats::ChatChannelsCatalog::from_rows(vec![
+            benilla_formats::ChatChannelRow {
+                id: 26,
+                flags: 0x4_0039,
+                pattern: "LookingForGroup".into(),
+                shortcut: "LookingForGroup".into(),
+            },
+        ]),
+        zone_mask: Some(1 << 25),
+        ..Default::default()
+    };
+    assert_eq!(c.claim_walk_slot("LookingForGroup", 26), Some(1));
+    assert_eq!(
+        c.claim_for_join("LookingForGroupDK", 0, 0),
+        JoinRecord::Claimed(2),
+        "/join LookingForGroupDK claims its own record"
+    );
+    assert_eq!(c.slot(2).map(|s| s.id), Some(0));
+    assert_eq!(
+        c.claim_for_join("LookingForGroup", 26, 0),
+        JoinRecord::Held,
+        "the Shortcut's join finds the row's record by its id"
+    );
+    c.confirm_slot("LookingForGroupDK");
+    assert_eq!(c.leave_record("LookingForGroupDK", 0), Some(2));
+    assert_eq!(c.leave_record("LookingForGroup", 26), Some(1));
+    assert!(matches!(
+        c.leave_command("LookingForGroupDK".into()),
+        crate::net::ClientCommand::LeaveChannel { channel_id: 0, ref name }
+            if name == "LookingForGroupDK"
+    ));
+    c.note_zone_channel_left("LookingForGroupDK");
+    assert_eq!(c.zone_mask, Some(1 << 25), "the custom leave keeps bit 26");
+    assert!(matches!(
+        c.leave_command("LookingForGroup".into()),
+        crate::net::ClientCommand::LeaveChannel { channel_id: 26, .. }
+    ));
+    c.note_zone_channel_left("LookingForGroup");
+    assert_eq!(c.zone_mask, Some(0));
 }
 
 /// A channel verb sends inside its call (`0x50daa0` -> `0x507a80`): the join is on the wire before

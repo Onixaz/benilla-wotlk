@@ -1089,7 +1089,7 @@ mod tests {
         world.init_resource::<crate::ui_script::live::UiEvents>();
         world.spawn((crate::net::SelfPlayer, crate::net::Guid(ME)));
         world.insert_resource(crate::ui_chat::ChannelState {
-            joined: vec![Some(crate::ui_chat::edit::ChannelSlot::joined(GENERAL))],
+            joined: vec![Some(crate::ui_chat::edit::ChannelSlot::zone(GENERAL, 1))],
             channels: benilla_formats::ChatChannelsCatalog::from_rows(vec![
                 benilla_formats::ChatChannelRow {
                     id: 1,

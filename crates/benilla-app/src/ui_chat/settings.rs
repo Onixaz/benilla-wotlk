@@ -507,7 +507,7 @@ pub(crate) fn restore_chat_looks(world: &mut World, script: &mut UiScript) {
         // The re-join passes its saved voice flag and the permanent flag (`0x508182`-`0x508189`).
         let claimed = world
             .get_resource_mut::<super::edit::ChannelState>()
-            .map(|mut ch| match ch.claim_for_join(&c.name, c.number) {
+            .map(|mut ch| match ch.claim_for_join(&c.name, 0, c.number) {
                 super::edit::JoinRecord::Claimed(n) => {
                     ch.set_join_flags(n, c.voice, true);
                     true
@@ -816,13 +816,15 @@ POSITION "
         state.note_custom_channel_joined("General - Elwynn Forest");
         assert!(state.custom.is_empty(), "a zone channel travels as its bit");
         // A temporary join is not saved: the save reads the permanent flag (`0x4fd432`).
-        let super::super::edit::JoinRecord::Claimed(temp) = state.claim_for_join("Temp", 0) else {
+        let super::super::edit::JoinRecord::Claimed(temp) = state.claim_for_join("Temp", 0, 0)
+        else {
             panic!("claimed");
         };
         state.set_join_flags(temp, true, false);
         state.note_custom_channel_joined("Temp");
         assert!(state.custom.is_empty(), "a temporary channel is not saved");
-        let super::super::edit::JoinRecord::Claimed(n) = state.claim_for_join("MyChan", 0) else {
+        let super::super::edit::JoinRecord::Claimed(n) = state.claim_for_join("MyChan", 0, 0)
+        else {
             panic!("claimed");
         };
         state.set_join_flags(n, false, true);

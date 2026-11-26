@@ -969,13 +969,14 @@ pub(crate) fn channel_arm(
     use benilla_ui::script::ChannelCommand as C;
     let cmd = match cmd {
         C::Join {
+            id,
             name,
             password,
             voice,
             permanent,
         } => {
             // The record is found or claimed before the send, with no relist (`0x507a80`).
-            match channels.claim_for_join(&name, 0) {
+            match channels.claim_for_join(&name, id, 0) {
                 super::edit::JoinRecord::Claimed(n) => {
                     debug!("chat: joining {name:?} as slot {n}");
                     channels.set_join_flags(n, voice, permanent);
@@ -985,16 +986,16 @@ pub(crate) fn channel_arm(
                 super::edit::JoinRecord::Full => return ArmOutcome::TooManyChannels,
                 super::edit::JoinRecord::Refused => return ArmOutcome::Declined,
             }
-            channels.join_command(name, password, false, voice)
+            channels.join_command(id, name, password, false, voice)
         }
-        C::Leave { name } => {
+        C::Leave { id, name } => {
             // `LeaveChannelByName` past its name (the binding resolved a number and composed a
             // Shortcut, the guild-recruitment latch's reset with it). Only this path clears the
             // zone mask and the custom re-join list.
             // The verb's leave sends only for a record in state 0, under the record's own name
             // (`0x5095b0`, `0x5095b8`-`0x5095c4`, `0x509600`).
             let Some(name) = channels
-                .leave_record(&name)
+                .leave_record(&name, id)
                 .and_then(|n| channels.slot(n))
                 .filter(|s| s.state == super::edit::SlotState::Joined)
                 .map(|s| s.name.clone())

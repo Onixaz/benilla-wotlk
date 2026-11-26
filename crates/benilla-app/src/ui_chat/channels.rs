@@ -279,8 +279,8 @@ pub(crate) enum WalkStep {
     Join(String),
     /// Renamed in place at send time ([`ChannelState::rename_slot`]).
     Rename { old: String, new: String },
-    /// A slot claimed for an untracked row, before the city gate.
-    Register(String),
+    /// A slot claimed for an untracked row, before the city gate, with the row's ChannelID.
+    Register(String, u32),
     /// State 3, the row stopped applying; the record and its number survive.
     Suspend(String),
     /// The state-3 bypass with the name unchanged: the reference writes `(old == 3) ? 1 : 2`, so
@@ -361,7 +361,7 @@ pub(crate) fn plan_walk(
         let Some(name) = walk_compose(row, zone_name, city_word) else {
             continue;
         };
-        steps.push(W::Register(name.clone()));
+        steps.push(W::Register(name.clone(), row.id));
         if eligible(row) {
             steps.push(W::Join(name));
         } else {
@@ -382,8 +382,10 @@ pub(crate) fn apply_walk(steps: &[WalkStep], channels: &mut ChannelState, comman
             }
             WalkStep::Join(name) => {
                 debug!("chat: joining zone channel {name:?}");
-                // The walk's own join: 3.3.5a's passes auto 1, voice 0.
+                // The walk's own join: 3.3.5a's passes auto 1, voice 0, and the row's ChannelID,
+                // which the record it registered or renamed carries.
                 let _ = commands.0.send(channels.join_command(
+                    channels.slot_id(name),
                     name.clone(),
                     String::new(),
                     true,
@@ -395,7 +397,7 @@ pub(crate) fn apply_walk(steps: &[WalkStep], channels: &mut ChannelState, comman
                     debug!("chat: zone channel slot {n} renamed {old:?} → {new:?}");
                 }
             }
-            WalkStep::Register(name) => match channels.claim_slot(name) {
+            WalkStep::Register(name, id) => match channels.claim_walk_slot(name, *id) {
                 Some(n) => debug!("chat: zone channel {name:?} registered as slot {n}"),
                 None => warn!(
                     "chat: no free slot for zone channel {name:?} — all {} are taken",
@@ -509,13 +511,18 @@ mod tests {
         }
     }
 
+    /// A record in state 0, carrying the ChannelID its claim stored.
     fn joined(name: &str) -> Option<crate::ui_chat::edit::ChannelSlot> {
-        Some(crate::ui_chat::edit::ChannelSlot::joined(name))
+        Some(crate::ui_chat::edit::ChannelSlot::zone(
+            name,
+            catalog().zone_channel_id(name),
+        ))
     }
 
     fn suspended(name: &str) -> Option<crate::ui_chat::edit::ChannelSlot> {
         Some(crate::ui_chat::edit::ChannelSlot {
             name: name.into(),
+            id: catalog().zone_channel_id(name),
             state: SlotState::Suspended,
             leave_asked: false,
             flags: 0,
@@ -613,11 +620,11 @@ mod tests {
         assert_eq!(
             steps,
             vec![
-                W::Register(s("General - Elwynn Forest")),
+                W::Register(s("General - Elwynn Forest"), 1),
                 W::Join(s("General - Elwynn Forest")),
-                W::Register(s("Trade - City")),
+                W::Register(s("Trade - City"), 2),
                 W::Suspend(s("Trade - City")),
-                W::Register(s("LocalDefense - Elwynn Forest")),
+                W::Register(s("LocalDefense - Elwynn Forest"), 22),
                 W::Join(s("LocalDefense - Elwynn Forest")),
             ]
         );
@@ -631,11 +638,11 @@ mod tests {
         assert_eq!(
             steps,
             vec![
-                W::Register(s("General - Stormwind City")),
+                W::Register(s("General - Stormwind City"), 1),
                 W::Join(s("General - Stormwind City")),
-                W::Register(s("Trade - City")),
+                W::Register(s("Trade - City"), 2),
                 W::Join(s("Trade - City")),
-                W::Register(s("LocalDefense - Stormwind City")),
+                W::Register(s("LocalDefense - Stormwind City"), 22),
                 W::Join(s("LocalDefense - Stormwind City")),
             ]
         );
@@ -649,8 +656,8 @@ mod tests {
                 W::Rename { old, new } => {
                     c.rename_slot(old, new);
                 }
-                W::Register(name) => {
-                    c.claim_slot(name);
+                W::Register(name, id) => {
+                    c.claim_walk_slot(name, *id);
                 }
                 W::Suspend(name) => {
                     c.suspend_slot(name);
@@ -810,9 +817,9 @@ mod tests {
         assert_eq!(
             steps,
             vec![
-                W::Register(s("Trade - City")),
+                W::Register(s("Trade - City"), 2),
                 W::Suspend(s("Trade - City")),
-                W::Register(s("LocalDefense - Elwynn Forest")),
+                W::Register(s("LocalDefense - Elwynn Forest"), 22),
                 W::Join(s("LocalDefense - Elwynn Forest")),
             ],
             "General is gone for good; Trade is now number 1"
@@ -857,7 +864,7 @@ mod tests {
         assert_eq!(
             &steps[6..],
             &[
-                W::Register(s("GuildRecruitment - City")),
+                W::Register(s("GuildRecruitment - City"), 25),
                 W::Suspend(s("GuildRecruitment - City")),
             ],
             "registered and suspended out here, number 4"
@@ -871,7 +878,7 @@ mod tests {
         assert_eq!(
             &steps[6..],
             &[
-                W::Register(s("GuildRecruitment - City")),
+                W::Register(s("GuildRecruitment - City"), 25),
                 W::Join(s("GuildRecruitment - City")),
             ]
         );
@@ -897,7 +904,7 @@ mod tests {
         let steps = plan_walk(&c, "Elwynn Forest", false, CITY);
         assert!(steps.contains(&W::Leave(s("GuildRecruitment - City"))));
         assert!(steps.contains(&W::Suspend(s("GuildRecruitment - City"))));
-        assert!(!steps.iter().any(|st| matches!(st, W::Register(_))));
+        assert!(!steps.iter().any(|st| matches!(st, W::Register(..))));
     }
 
     /// State 3 sends no LEAVE, and the rename's `(old == 3) ? 1 : 2` lands it on 1, a plain

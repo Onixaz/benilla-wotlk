@@ -227,11 +227,7 @@ fn cascade_run(
         .find(|r| r.is_guild_recruitment())?
         .clone();
     // The record by the row's ChannelID, in any state (`0x507d85` -> `0x4fe020`).
-    let held = channels
-        .joined
-        .iter()
-        .flatten()
-        .any(|s| channels.channels.zone_channel_id(&s.name) == row.id);
+    let held = channels.joined.iter().flatten().any(|s| s.id == row.id);
     let zone = zone.map_or(0, |z| z.zone);
     if guild_id != 0 {
         // Guilded with a record: the forced leave (`0x507da7`); with none, nothing (`0x507dc0`).
@@ -264,13 +260,14 @@ fn cascade_run(
     };
     info!("chat: guild recruitment cascade — unguilded, joining {name:?}");
     // The claim, quiet: a full table adds no line (`0x50774f`) and no window entry.
-    match channels.claim_for_join(&name, 0) {
+    match channels.claim_for_join(&name, row.id, 0) {
         super::edit::JoinRecord::Claimed(n) => {
             // Voice 0, permanent 1 (`0x507dcb`, `0x507dc9`).
             channels.set_join_flags(n, false, true);
-            let _ = commands
-                .0
-                .send(channels.join_command(name, String::new(), true, false));
+            let _ =
+                commands
+                    .0
+                    .send(channels.join_command(row.id, name, String::new(), true, false));
         }
         super::edit::JoinRecord::Held => {}
         super::edit::JoinRecord::Full | super::edit::JoinRecord::Refused => {
@@ -300,10 +297,7 @@ fn cascade_leave(
     let n = channels
         .joined
         .iter()
-        .position(|s| {
-            s.as_ref()
-                .is_some_and(|s| channels.channels.zone_channel_id(&s.name) == row.id)
-        })
+        .position(|s| s.as_ref().is_some_and(|s| s.id == row.id))
         .map(|i| i as u32 + 1)?;
     let slot = channels.slot(n)?;
     let (name, pending) = (
@@ -437,7 +431,7 @@ mod tests {
             script.chat_window_looks()[0].channels.is_empty(),
             "the strip runs ahead of the record lookup, with no record too"
         );
-        channels.claim_for_join("GuildRecruitment - City", 0);
+        channels.claim_for_join("GuildRecruitment - City", GUILD_RECRUITMENT, 0);
         assert_eq!(
             leave(&mut channels, &mut script, CAPITAL),
             Some(true),

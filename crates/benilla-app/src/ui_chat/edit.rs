@@ -126,6 +126,9 @@ pub(crate) struct SavedChannel {
 pub(crate) struct ChannelSlot {
     /// `+0x04`, the current name; the zone walk renames it in place.
     pub name: String,
+    /// `+0x94`, the ChannelID the claim stored (`0x507795`), 0 for a custom channel: the join and
+    /// the leave find a zone channel's record by it (`0x507b56`, `0x509581`).
+    pub id: u32,
     /// `+0x9c`, the slot's state.
     pub state: SlotState,
     /// `+0xa0`: we asked to leave (`0x509628`); a join request clears it (`0x5077b4`).
@@ -168,6 +171,7 @@ impl ChannelSlot {
     pub(crate) fn joined(name: &str) -> Self {
         ChannelSlot {
             name: name.to_string(),
+            id: 0,
             state: SlotState::Joined,
             leave_asked: false,
             flags: 0,
@@ -177,10 +181,20 @@ impl ChannelSlot {
         }
     }
 
-    /// The join's new record, in state 1 until its `YOU_JOINED` (`0x5077a7`).
-    pub(crate) fn pending(name: &str) -> Self {
+    /// The join's new record for ChannelID `id`, in state 1 until its `YOU_JOINED` (`0x5077a7`).
+    pub(crate) fn pending(name: &str, id: u32) -> Self {
         ChannelSlot {
             state: SlotState::Pending,
+            id,
+            ..Self::joined(name)
+        }
+    }
+
+    /// A zone channel's record in state 0, ChannelID `id`.
+    #[cfg(test)]
+    pub(crate) fn zone(name: &str, id: u32) -> Self {
+        ChannelSlot {
+            id,
             ..Self::joined(name)
         }
     }
@@ -210,18 +224,19 @@ pub(crate) fn zone_bit(id: u32) -> u32 {
 }
 
 impl ChannelState {
-    /// The `CMSG_JOIN_CHANNEL` ask for `name`, carrying the `ChatChannels.dbc` id the name
-    /// resolves to as the server resolves it (0 for a custom channel). `auto_joined` is the
-    /// client's own join, the zone walk's and the login re-join's.
+    /// The `CMSG_JOIN_CHANNEL` ask for `name`, carrying the ChannelID its join matched
+    /// (`0x507c7e`), 0 for a custom channel. `auto_joined` is the client's own join, the zone
+    /// walk's and the login re-join's.
     pub(crate) fn join_command(
         &self,
+        id: u32,
         name: String,
         password: String,
         auto_joined: bool,
         voice: bool,
     ) -> crate::net::ClientCommand {
         crate::net::ClientCommand::JoinChannel {
-            channel_id: self.channels.zone_channel_id(&name),
+            channel_id: id,
             name,
             password,
             auto_joined,
@@ -229,12 +244,20 @@ impl ChannelState {
         }
     }
 
-    /// The `CMSG_LEAVE_CHANNEL` ask for `name`, with its `ChatChannels.dbc` id.
+    /// The `CMSG_LEAVE_CHANNEL` ask for the record holding `name`, with the record's ChannelID
+    /// (`0x5095f1`); no record sends id 0.
     pub(crate) fn leave_command(&self, name: String) -> crate::net::ClientCommand {
         crate::net::ClientCommand::LeaveChannel {
-            channel_id: self.channels.zone_channel_id(&name),
+            channel_id: self.slot_id(&name),
             name,
         }
+    }
+
+    /// The ChannelID (`+0x94`) of the record holding `name`, 0 with none.
+    pub(crate) fn slot_id(&self, name: &str) -> u32 {
+        self.number_of(name)
+            .and_then(|n| self.slot(n))
+            .map_or(0, |s| s.id)
     }
 
     /// A confirmed join sets the channel's mask bit (in the `YOU_JOINED` arm), only on a held slot:
@@ -243,7 +266,8 @@ impl ChannelState {
         if self.number_of(name).is_none() {
             return;
         }
-        let bit = zone_bit(self.channels.zone_channel_id(name));
+        // The bit is the record's ChannelID's (`0x5078ab`).
+        let bit = zone_bit(self.slot_id(name));
         match &mut self.zone_mask {
             Some(mask) => *mask |= bit,
             // No join precedes the cache loader, so this is a broken ordering.
@@ -260,20 +284,22 @@ impl ChannelState {
         if self.number_of(name).is_none() {
             return;
         }
+        // The bit is the record's ChannelID's (`0x509618`-`0x509639`).
+        let bit = zone_bit(self.slot_id(name));
         if let Some(mask) = &mut self.zone_mask {
-            *mask &= !zone_bit(self.channels.zone_channel_id(name));
+            *mask &= !bit;
         }
     }
 
     /// A confirmed join of a channel with no `ChatChannels.dbc` id enters [`Self::custom`] under
     /// the number it holds, or moves an entry already there to it.
     pub(crate) fn note_custom_channel_joined(&mut self, name: &str) {
-        if self.channels.zone_channel_id(name) != 0 {
-            return;
-        }
         let Some(number) = self.number_of(name) else {
             return;
         };
+        if self.slot_id(name) != 0 {
+            return;
+        }
         // The save writes a custom record only with its permanent flag, and its voice flag
         // (`0x4fd432`, `0x4fd43e`).
         let Some((voice, true)) = self.slot(number).map(|s| (s.voice, s.permanent)) else {
@@ -371,9 +397,11 @@ impl ChannelState {
         if id == 0 || self.number_of(name).is_some() {
             return None;
         }
-        self.iter_names()
-            .find(|held| self.channels.zone_channel_id(held) == id)
-            .map(str::to_string)
+        self.joined
+            .iter()
+            .flatten()
+            .find(|s| s.id == id)
+            .map(|s| s.name.clone())
     }
 
     /// The confirming `YOU_JOINED` writes state 0 unconditionally; separate from
@@ -455,9 +483,10 @@ impl ChannelState {
             .map(|s| {
                 s.as_ref().map(|s| benilla_ui::script::ChannelSlotInfo {
                     name: s.name.clone(),
-                    shortcut: self
-                        .channels
-                        .row_for_name(&s.name)
+                    // The record's ChannelID's row (`0x4fdf8f`-`0x4fdfa5`).
+                    shortcut: (s.id != 0)
+                        .then(|| self.channels.rows().iter().find(|r| r.id == s.id))
+                        .flatten()
                         .map(|r| r.shortcut.clone()),
                     active: s.state == SlotState::Joined,
                     flags: s.flags,
@@ -483,10 +512,18 @@ impl ChannelState {
             .map(|i| i as u32 + 1)
     }
 
-    /// Give `name` the first free slot, else a new one under [`MAX_CHANNELS`]; a name already held
-    /// keeps its number. The zone walk's registration; a join claims through
-    /// [`Self::claim_for_join`].
+    /// Give `name` the first free slot, else a new one under [`MAX_CHANNELS`], for a test: the
+    /// ChannelID is the one the catalog resolves the name to.
+    #[cfg(test)]
     pub(crate) fn claim_slot(&mut self, name: &str) -> Option<u32> {
+        let id = self.channels.zone_channel_id(name);
+        self.claim_walk_slot(name, id)
+    }
+
+    /// The zone walk's registration of row `id` under `name`: the first free slot, else a new one
+    /// under [`MAX_CHANNELS`]; a name already held keeps its number. A join claims through
+    /// [`Self::claim_for_join`].
+    pub(crate) fn claim_walk_slot(&mut self, name: &str, id: u32) -> Option<u32> {
         if let Some(n) = self.number_of(name) {
             // A confirmed join on a held slot clears its suspension: the other half of the state-3
             // bypass.
@@ -496,30 +533,40 @@ impl ChannelState {
             }
             return Some(n);
         }
+        let slot = ChannelSlot {
+            id,
+            ..ChannelSlot::joined(name)
+        };
         if let Some(i) = self.joined.iter().position(Option::is_none) {
-            self.joined[i] = Some(ChannelSlot::joined(name));
+            self.joined[i] = Some(slot);
             return Some(i as u32 + 1);
         }
         if self.joined.len() >= MAX_CHANNELS {
             return None;
         }
-        self.joined.push(Some(ChannelSlot::joined(name)));
+        self.joined.push(Some(slot));
         Some(self.joined.len() as u32)
     }
 
-    /// The join's record (`0x507a80`): a zone channel's found by its ChannelID, a custom one's by
-    /// name (`0x507b3a`-`0x507c11`); one already held skips the claim and the send (`0x507c1b`).
+    /// The record of ChannelID `id`, else for a custom channel (`id` 0) the one holding `name`:
+    /// the join's and the leave's lookup (`0x507b3a`-`0x507c11`, `0x509562`-`0x5095ae`).
+    fn record_for(&self, name: &str, id: u32) -> Option<u32> {
+        if id == 0 {
+            return self.number_of(name);
+        }
+        self.joined
+            .iter()
+            .position(|s| s.as_ref().is_some_and(|s| s.id == id))
+            .map(|i| i as u32 + 1)
+    }
+
+    /// The join's record (`0x507a80`) for `name` and the ChannelID its verb matched (`0x507baa`),
+    /// 0 for a custom channel: a zone channel's found by that id, a custom one's by name
+    /// (`0x507b3a`-`0x507c11`); one already held skips the claim and the send (`0x507c1b`).
     /// Otherwise a new record is claimed (`0x507c47` -> `0x5076b0`), at `number` when that slot is
     /// free (`0x5076f6`-`0x507727`), else at the first free one or a new one under ten.
-    pub(crate) fn claim_for_join(&mut self, name: &str, number: u32) -> JoinRecord {
-        let id = self.channels.zone_channel_id(name);
-        let held = if id != 0 {
-            self.iter_names()
-                .any(|held| self.channels.zone_channel_id(held) == id)
-        } else {
-            self.number_of(name).is_some()
-        };
-        if held {
+    pub(crate) fn claim_for_join(&mut self, name: &str, id: u32, number: u32) -> JoinRecord {
+        if self.record_for(name, id).is_some() {
             return JoinRecord::Held;
         }
         // The claim refuses a name another record holds (`0x5076b7`).
@@ -547,25 +594,16 @@ impl ChannelState {
                 self.joined.len() - 1
             }
         };
-        // State 1 until the server's `YOU_JOINED` (`0x5077a7`, `0x5078b3`).
-        self.joined[i] = Some(ChannelSlot::pending(name));
+        // State 1 until the server's `YOU_JOINED` (`0x5077a7`, `0x5078b3`), the id stored
+        // (`0x507795`).
+        self.joined[i] = Some(ChannelSlot::pending(name, id));
         JoinRecord::Claimed(i as u32 + 1)
     }
 
-    /// The leave's record (`0x509562`-`0x5095ae`): a zone channel's found by its ChannelID, a
-    /// custom one's by name; its 1-based number.
-    pub(crate) fn leave_record(&self, name: &str) -> Option<u32> {
-        let id = self.channels.zone_channel_id(name);
-        if id == 0 {
-            return self.number_of(name);
-        }
-        self.joined
-            .iter()
-            .position(|s| {
-                s.as_ref()
-                    .is_some_and(|s| self.channels.zone_channel_id(&s.name) == id)
-            })
-            .map(|i| i as u32 + 1)
+    /// The leave's record (`0x509562`-`0x5095ae`) for `name` and the ChannelID its verb matched
+    /// (`0x509502`): a zone channel's found by that id, a custom one's by name; its 1-based number.
+    pub(crate) fn leave_record(&self, name: &str, id: u32) -> Option<u32> {
+        self.record_for(name, id)
     }
 
     /// The record numbered `n` (1-based).
@@ -585,8 +623,7 @@ impl ChannelState {
     /// Stamp an event's channel args from our slot, as the reference reads them off one record
     /// (`+0x00` number, `+0x04` name, `+0x94` ChannelID, `+0x98` split index): held, arg4 becomes
     /// `"N. Name"`, arg8 the number, arg9 the name with its zone tail and arg7 the ChannelID; not
-    /// held, nothing is stamped. arg7 comes from the name, as vmangos resolves it
-    /// (`DBCStores.cpp:531`).
+    /// held, nothing is stamped.
     pub(crate) fn stamp_channel(&self, event: &mut super::event::ChatEvent) {
         // A miss stamps nothing: the four args are one record.
         let Some(n) = self
@@ -596,7 +633,7 @@ impl ChannelState {
             return;
         };
         event.channel_base = event.channel.clone();
-        event.zone_channel_id = self.channels.zone_channel_id(&event.channel_base);
+        event.zone_channel_id = self.slot(n).map_or(0, |s| s.id);
         event.channel_number = n;
         event.channel = format!("{n}. {}", event.channel_base);
     }
