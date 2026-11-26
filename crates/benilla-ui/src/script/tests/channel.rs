@@ -525,6 +525,43 @@ fn a_relist_keeps_a_pending_selection_and_only_its_own_leave_clears_it() {
     });
 }
 
+/// The pane's state is the game's, which a reload's UI shutdown and FrameXML init never touch
+/// (only the session init clears it, `0x50f198`-`0x50f202`): a new VM over the same game state answers the same
+/// selection (`0x4ffa10`), collapsed header, roster and owner flag, and asks nothing again.
+#[test]
+fn a_reload_keeps_the_selection_the_collapsed_headers_and_the_roster() {
+    let (mut s, mut v) = pane();
+    s.with_live(&mut v, |s| {
+        s.run("SetSelectedDisplayChannel(6)").unwrap();
+        s.display_channel_list("MyChan", 0, &[(OWN, 0x1), (0x40, 0)], |_| true);
+        s.run("CollapseChannelHeader(2)").unwrap();
+        assert_eq!(
+            s.eval::<i64>("return GetSelectedDisplayChannel()").unwrap(),
+            4
+        );
+        s.take_channel_commands();
+    });
+    let mut reloaded = script();
+    reloaded.with_live(&mut v, |s| {
+        assert_eq!(
+            s.eval::<i64>("return GetSelectedDisplayChannel()").unwrap(),
+            4,
+            "the selection outlives the VM"
+        );
+        s.run(
+            "local _, h, c = GetChannelDisplayInfo(2) assert(h == 1 and c == 1, 'world collapsed') \
+             assert(GetNumDisplayChannels() == 4, 'the rebuild keeps the fold') \
+             assert(GetNumChannelMembers(4) == 2, 'the roster outlives the VM') \
+             assert(IsDisplayChannelOwner() == 1, 'the own flags outlive the VM')",
+        )
+        .unwrap();
+        assert!(
+            s.take_channel_commands().is_empty(),
+            "the kept selection asks nothing"
+        );
+    });
+}
+
 /// `GetChannelRosterInfo` reads the member's name off the cache at the call (`0x504f30`): a record
 /// that changes after the roster fired answers its new name, and one that is gone reads `UNKNOWN`
 /// (`0x50505a`); the roster's order stays as the last name sorted it.

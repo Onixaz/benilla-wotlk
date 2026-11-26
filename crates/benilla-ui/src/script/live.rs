@@ -181,6 +181,12 @@ pub trait LiveState {
     /// A display list or user-list notice writes the channel record's flags byte (`0x503a69`).
     fn set_channel_flags(&mut self, _slot: usize, _flags: u8) {}
 
+    /// The channel pane's state, the game's: a reload keeps it, only the session init clears it
+    /// (`0x50f198`-`0x50f202`).
+    fn channel_pane(&mut self) -> Option<&mut super::ChannelPane> {
+        None
+    }
+
     /// `ChatChannels.dbc` composed for the zone id at the call (`0xbd080c`).
     fn zone_channel_catalog(&self) -> Vec<super::ZoneChannelRow> {
         Vec::new()
@@ -1958,6 +1964,8 @@ pub(crate) struct TestView {
     pub bank_interacting: bool,
     /// The channel records and the zone's channel catalog.
     pub channel_slots: Vec<Option<super::ChannelSlotInfo>>,
+    /// The channel pane's state.
+    pub channel_pane: super::ChannelPane,
     pub zone_channels: Vec<super::ZoneChannelRow>,
     /// The `ZONECHANNELS` bits set, in order.
     pub zone_bits: Vec<u32>,
@@ -2168,6 +2176,10 @@ impl LiveState for TestView {
         if let Some(Some(s)) = self.channel_slots.get_mut(slot) {
             s.flags = flags;
         }
+    }
+
+    fn channel_pane(&mut self) -> Option<&mut super::ChannelPane> {
+        Some(&mut self.channel_pane)
     }
 
     fn zone_channel_catalog(&self) -> Vec<super::ZoneChannelRow> {

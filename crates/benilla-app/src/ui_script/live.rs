@@ -588,6 +588,10 @@ impl LiveState for LiveView<'_, '_> {
         }
     }
 
+    fn channel_pane(&mut self) -> Option<&mut benilla_ui::script::ChannelPane> {
+        Some(self.chat_channels.as_mut()?.pane())
+    }
+
     fn zone_channel_catalog(&self) -> Vec<benilla_ui::script::ZoneChannelRow> {
         self.chat_channels
             .as_ref()

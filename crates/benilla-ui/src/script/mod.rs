@@ -335,7 +335,7 @@ pub use calls::{
 };
 pub use camera_view::{CameraViewRequest, CAMERA_VIEW_COUNT};
 pub use channel::{ChannelCommand, ZoneChannelRow};
-pub use channel_pane::ChannelSlotInfo;
+pub use channel_pane::{ChannelPane, ChannelSlotInfo};
 pub use char_stats::{
     weapon_subclass_skill, BankBagSlots, InvSlotView, InventorySlots, PaperDollSlotInfo,
     UnitCombatStats, BANK_BAG_SLOT_COUNT, INVENTORY_SLOT_COUNT, SKILL_DEFENSE, SKILL_UNARMED,

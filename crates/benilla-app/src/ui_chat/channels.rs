@@ -65,11 +65,13 @@ impl ZoneChannelWalk {
 }
 
 /// End the channel session: the server leaves every channel with the session, so the next one
-/// starts in none. The verbs read the records live, so nothing reaches the VM. The mask stays, as
-/// it belongs to the character's file.
+/// starts in none, and the pane starts empty, as the session init clears it (`0x50f198`-`0x50f202`).
+/// The verbs read the records live, so nothing reaches the VM. The mask stays, as it belongs to the
+/// character's file.
 fn end_channel_session(channels: &mut ChannelState, walk: &mut ZoneChannelWalk) {
     walk.clear_session();
     channels.joined.clear();
+    channels.pane = Default::default();
 }
 
 /// The session-end edge: a confirmed `/logout` back to the glue screens (`OnExit(InWorld)`).
@@ -106,6 +108,11 @@ impl ChannelLive<'_> {
     /// The records in slot order, holes kept.
     pub(crate) fn slots(&self) -> Vec<Option<benilla_ui::script::ChannelSlotInfo>> {
         self.channels.ui_slots()
+    }
+
+    /// The channel pane's state.
+    pub(crate) fn pane(&mut self) -> &mut benilla_ui::script::ChannelPane {
+        &mut self.channels.pane
     }
 
     /// A record's flags byte, as a display list writes it (`0x503a69`).

@@ -300,8 +300,9 @@ pub(crate) struct Model {
     /// `DropItemOnUnit` tokens, gated by the app; a refusal silently keeps the item.
     pub(crate) drop_item_on_unit: Vec<String>,
 
-    /// The channel pane's display list, selection and roster.
-    pub(crate) channel_pane: super::channel_pane::ChannelPane,
+    /// The channel pane's state where no lent game state holds it (a VM outside the app, the
+    /// addon harness); the app's game state holds it otherwise.
+    pub(crate) unlent_channel_pane: super::channel_pane::ChannelPane,
     /// The party or raid roster the app pushes; the default is not in a group.
     pub(crate) party: party::PartyState,
     /// The instance difficulties the app pushes, `GetDungeonDifficulty`'s and `GetRaidDifficulty`'s.
@@ -1503,7 +1504,7 @@ impl Model {
             script_calls: Vec::new(),
             input: Default::default(),
             drop_item_on_unit: Vec::new(),
-            channel_pane: Default::default(),
+            unlent_channel_pane: Default::default(),
             party: party::PartyState::default(),
             difficulty: Default::default(),
             lfg_restricted: false,

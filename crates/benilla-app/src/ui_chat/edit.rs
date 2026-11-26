@@ -110,6 +110,9 @@ pub(crate) struct ChannelState {
     /// explicit leave. A channel whose re-join is refused, or that kicks the player, stays listed
     /// until a `/leave`, where the reference's file drops it (#1518).
     pub custom: Vec<SavedChannel>,
+    /// The channel pane's display list, selection, collapsed headers and roster: the game's, so a
+    /// reload keeps them, as `GetSelectedDisplayChannel` reads a game global (`0x4ffa10`).
+    pub pane: benilla_ui::script::ChannelPane,
 }
 
 /// A channel the chat cache re-joins at login: its header line `<name> <voice> <number>`

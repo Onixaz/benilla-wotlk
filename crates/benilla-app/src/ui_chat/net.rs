@@ -1128,6 +1128,61 @@ mod tests {
         assert!(owner(&mut world), "our row carries the owner bit");
     }
 
+    /// The pane's selection and collapsed headers are game state, which `GetSelectedDisplayChannel`
+    /// reads (`0x4ffa10`): a new VM, as `/reload` builds, answers them unchanged; only the
+    /// session's clear (`0x50f198`-`0x50f202`) empties them.
+    #[test]
+    fn the_pane_outlives_a_reload_and_ends_with_the_session() {
+        use benilla_ui::script::UiScript;
+        const GENERAL: &str = "General - Elwynn Forest";
+        let mut world = World::new();
+        world.init_resource::<ChatLog>();
+        world.init_resource::<crate::ui_script::live::UiEvents>();
+        world.init_resource::<super::super::channels::ZoneChannelWalk>();
+        world.spawn((crate::net::SelfPlayer, crate::net::Guid(0x10)));
+        world.insert_resource(crate::ui_chat::ChannelState {
+            joined: vec![
+                Some(crate::ui_chat::edit::ChannelSlot::zone(GENERAL, 1)),
+                Some(crate::ui_chat::edit::ChannelSlot::joined("MyChan")),
+            ],
+            channels: benilla_formats::ChatChannelsCatalog::from_rows(vec![
+                benilla_formats::ChatChannelRow {
+                    id: 1,
+                    flags: 0x80003,
+                    pattern: "General - %s".into(),
+                    shortcut: "General".into(),
+                },
+            ]),
+            ..Default::default()
+        });
+        world.insert_non_send_resource(UiScript::new().expect("a VM"));
+        let pane = |w: &mut World| {
+            crate::ui_script::safe_world::lend(w, |s| {
+                s.eval::<(Option<i64>, Option<i64>)>(
+                    "GetNumDisplayChannels() local _, _, c = GetChannelDisplayInfo(2) \
+                     return GetSelectedDisplayChannel(), c",
+                )
+                .unwrap()
+            })
+            .unwrap()
+        };
+        crate::ui_script::safe_world::lend(&mut world, |s| {
+            s.run("GetNumDisplayChannels() SetSelectedDisplayChannel(5) CollapseChannelHeader(2)")
+                .unwrap()
+        });
+        assert_eq!(
+            pane(&mut world),
+            (Some(4), Some(1)),
+            "MyChan under the folded world header"
+        );
+        world.insert_non_send_resource(UiScript::new().expect("the reloaded VM"));
+        assert_eq!(pane(&mut world), (Some(4), Some(1)), "a reload keeps both");
+        world
+            .run_system_once(super::super::channels::end_session_channels)
+            .unwrap();
+        assert_eq!(pane(&mut world), (None, None), "the session clears both");
+    }
+
     /// A dropped session leaves the world (`0x528cc9` -> `0x4fb190`): a line the reconnect brings
     /// before its world entry is queued, not added.
     #[test]
