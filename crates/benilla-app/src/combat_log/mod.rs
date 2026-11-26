@@ -421,11 +421,8 @@ fn on_level_up(
 /// A dishonorable kill carries negative honor, passed signed.
 fn on_pvp_credit(In(ev): In<SessionEvent>, mut p: Progress) {
     if let SessionEvent::PvpCredit(credit) = ev {
-        p.chat.push_pvp_credit(
-            credit.honor,
-            credit.victim_guid,
-            u8::try_from(credit.victim_rank).unwrap_or(0),
-        );
+        p.chat
+            .push_pvp_credit(credit.honor, credit.victim_guid, credit.victim_rank);
         p.center.write(CombatTextEvent {
             message_type: "HONOR_GAINED",
             args: vec![benilla_ui::script::ScriptValue::Int(i64::from(

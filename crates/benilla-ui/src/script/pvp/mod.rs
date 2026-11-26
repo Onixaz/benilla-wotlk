@@ -123,12 +123,12 @@ impl super::UiScript {
 
     /// A rank's localized title for the app's `SMSG_PVP_CREDIT` chat line, `None` if missing or
     /// empty. Gendered, unlike the pane's: the credit formatter resolves through the gendered
-    /// lookup. No range check, so rank 19 names "Leader"; `rank` is the internal rank the credit
-    /// carries (`HonorMgr::SendPVPCredit` sends `GetRank().rank`).
+    /// lookup (`0x50b7ab`). No range check, so rank 19 names "Leader"; `rank` is the signed
+    /// internal rank the credit carries (`0x50b78b`).
     ///
     /// The caller owns two facts: the gender is the local player's while the team is the victim's,
-    /// and a victim whose team is -1 gets no line at all, hence `team: u8`.
-    pub fn pvp_rank_title(&self, rank: u8, team: u8, female: bool) -> Option<String> {
+    /// and a negative rank skips this lookup altogether (`0x50b717`).
+    pub fn pvp_rank_title(&self, rank: i32, team: u8, female: bool) -> Option<String> {
         rank_title_gendered(
             self.lua(),
             RankTitle {
@@ -228,9 +228,9 @@ fn rank_title_ungendered(lua: &Lua, rank: i64, team: i64) -> Option<String> {
 /// world-text pass's builder key on the same three.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct RankTitle {
-    /// `PLAYER_BYTES_3` byte 3 (`UnitPVPRank`), the internal rank 0..=18; 19 is the racial
-    /// "Leader" the keys still name.
-    pub rank: u8,
+    /// Internal rank (`PLAYER_BYTES_3` byte 3 for `UnitPVPRank`, or the signed wire rank on
+    /// `SMSG_PVP_CREDIT` at `0x50b78b`); 19 is the racial "Leader" the keys still name.
+    pub rank: i32,
     /// The team digit from the race: 0 Horde, 1 Alliance, -1 no side.
     pub team: i8,
     /// Female takes the `_FEMALE` twin and falls back to the base key.

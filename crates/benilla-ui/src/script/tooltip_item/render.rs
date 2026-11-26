@@ -1231,7 +1231,11 @@ fn requirement_lines(
     if let (Ok(rank @ 1..), Some((team, female))) = (u8::try_from(v.required_honor_rank), player) {
         let title = crate::script::pvp::rank_title(
             &|key: &str| get(key).filter(|s| !s.is_empty()),
-            crate::script::pvp::RankTitle { rank, team, female },
+            crate::script::pvp::RankTitle {
+                rank: i32::from(rank),
+                team,
+                female,
+            },
         );
         if let Some(title) = title {
             let ok = req.honor_rank() >= rank;

@@ -1358,3 +1358,142 @@ fn an_unnamed_roll_queues_at_its_answer_outside_the_world() {
         ["CHAT_MSG_SAY:hi", "CHAT_MSG_SYSTEM:Bob rolls 7 (1-100):"]
     );
 }
+
+/// The honor kill line (`0x50b6d0`): `rank < 0` takes `COMBATLOG_HONORGAIN_NO_RANK`, `rank >= 0`
+/// takes `COMBATLOG_HONORGAIN` with `PVP_RANK_<rank>_<side>` from the victim's faction template
+/// (`+0xc`, bits 4 and 2, `0x50b755`-`0x50b784`) gendered by the local player (`0x50b7ab`, `""` on
+/// a missing global at `0x819d40`), a missing victim prints nothing (`0x50b709`), and victim 0
+/// takes `COMBATLOG_HONORAWARD`.
+#[test]
+fn honor_gain_forks_on_signed_rank_and_resolves_title_from_victim_faction_template() {
+    use benilla_formats::{FactionCatalog, FactionTemplate};
+    use benilla_protocol::field::{FIELD_OBJECT_TYPE, FIELD_UNIT_FACTIONTEMPLATE};
+    use std::collections::HashMap;
+
+    const HORDE_VICTIM: u64 = 0x22;
+    const ALLIANCE_VICTIM: u64 = 0x33;
+    const MISSING_VICTIM: u64 = 0x44;
+
+    let (mut world, _sent) = world();
+    hear(&world, &["CHAT_MSG_COMBAT_HONOR_GAIN"]);
+    world
+        .non_send_resource::<UiScript>()
+        .run(
+            r#"
+            COMBATLOG_HONORAWARD = "You have been awarded %d honor points."
+            COMBATLOG_HONORGAIN = "%s dies, honorable kill Rank: %s (%d Honor Points)"
+            COMBATLOG_HONORGAIN_NO_RANK = "%s dies, honorable kill (%d Honor Points)"
+            PVP_RANK_9_0 = "Senior Sergeant"
+            PVP_RANK_9_1 = "Sergeant Major"
+            PVP_RANK_9_1_FEMALE = "Sergeant Major (f)"
+            "#,
+        )
+        .unwrap();
+
+    let template = |group_mask| FactionTemplate {
+        faction: 1,
+        group_mask,
+        friend_group_mask: 0,
+        enemy_group_mask: 0,
+        enemies: [0; 4],
+        friends: [0; 4],
+    };
+    world.insert_resource(crate::target::ring::Factions::from_catalog(
+        FactionCatalog::from_rows(
+            HashMap::from([(1, template(0x4)), (2, template(0x2))]),
+            HashMap::new(),
+        ),
+    ));
+
+    world.resource_mut::<crate::net::SelfGuid>().0 = Some(ANN);
+    {
+        let mut names = world.resource_mut::<crate::names::NameCache>();
+        // Local player is female (gender 1); titles gender against the local player (`0x50b7ab`).
+        names.insert_player(ANN, "Ann".into(), Some((1, 1, 1)));
+        names.insert_player(HORDE_VICTIM, "Grimtusk".into(), Some((2, 1, 0)));
+        names.insert_player(ALLIANCE_VICTIM, "Aldric".into(), Some((1, 1, 0)));
+    }
+    let spawn_victim = |world: &mut World, guid: u64, faction_template: u32| {
+        let entity = world
+            .spawn(crate::net::ObjectStore(
+                benilla_protocol::ObjectFields::from_pairs(&[
+                    (FIELD_OBJECT_TYPE, 0x19),
+                    (FIELD_UNIT_FACTIONTEMPLATE, faction_template),
+                ])
+                .into_created(benilla_protocol::messages::ObjectType::Player),
+            ))
+            .id();
+        world
+            .resource_mut::<crate::net::GuidIndex>()
+            .0
+            .insert(guid, entity);
+    };
+    spawn_victim(&mut world, HORDE_VICTIM, 1);
+    spawn_victim(&mut world, ALLIANCE_VICTIM, 2);
+    enter_world(&mut world);
+
+    // Negative rank -> COMBATLOG_HONORGAIN_NO_RANK.
+    add(
+        &mut world,
+        ChatLine::HonorGain {
+            victim: HORDE_VICTIM,
+            honor: 12,
+            rank: -1,
+        },
+    );
+    // Non-negative rank -> COMBATLOG_HONORGAIN with Horde side (0) and Alliance female side (1).
+    add(
+        &mut world,
+        ChatLine::HonorGain {
+            victim: HORDE_VICTIM,
+            honor: 137,
+            rank: 9,
+        },
+    );
+    add(
+        &mut world,
+        ChatLine::HonorGain {
+            victim: ALLIANCE_VICTIM,
+            honor: 88,
+            rank: 9,
+        },
+    );
+    // Non-negative rank with missing PVP_RANK_0_* still takes COMBATLOG_HONORGAIN with "".
+    add(
+        &mut world,
+        ChatLine::HonorGain {
+            victim: HORDE_VICTIM,
+            honor: 5,
+            rank: 0,
+        },
+    );
+    // Victim not in view -> nothing (`0x50b709`).
+    add(
+        &mut world,
+        ChatLine::HonorGain {
+            victim: MISSING_VICTIM,
+            honor: 50,
+            rank: 9,
+        },
+    );
+    // Zero victim -> COMBATLOG_HONORAWARD.
+    add(
+        &mut world,
+        ChatLine::HonorGain {
+            victim: 0,
+            honor: 42,
+            rank: 0,
+        },
+    );
+
+    assert_eq!(
+        heard(&world),
+        [
+            "CHAT_MSG_COMBAT_HONOR_GAIN:Grimtusk dies, honorable kill (12 Honor Points)::",
+            "CHAT_MSG_COMBAT_HONOR_GAIN:Grimtusk dies, honorable kill Rank: Senior Sergeant (137 Honor Points)::",
+            "CHAT_MSG_COMBAT_HONOR_GAIN:Aldric dies, honorable kill Rank: Sergeant Major (f) (88 Honor Points)::",
+            "CHAT_MSG_COMBAT_HONOR_GAIN:Grimtusk dies, honorable kill Rank:  (5 Honor Points)::",
+            "CHAT_MSG_COMBAT_HONOR_GAIN:You have been awarded 42 honor points.::",
+        ]
+    );
+}

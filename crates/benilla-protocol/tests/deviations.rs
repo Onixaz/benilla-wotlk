@@ -1,14 +1,14 @@
 //! `docs/DEVIATIONS.md` against the decoder: every incoming 12340 opcode with no parse arm is
-//! listed under "Not decoded" or in [`OPEN_GAPS`], and each listed one still has none.
+//! listed under "Not decoded" or in [`SESSION_HANDLED`], and each listed one still has none.
 
 use std::collections::BTreeSet;
 use std::path::Path;
 
 use benilla_protocol::messages::{self, ServerPacket};
 
-/// Opcodes with no decoder yet that are work, not a deviation, each with its open issue. Give one a
-/// decoder and its entry goes.
-const OPEN_GAPS: &[(u16, &str)] = &[(0x2e6, "#5 Warden")];
+/// Opcodes handled at the session/reader layer before `parse_server` (e.g. stateful stream
+/// encryption that cannot be parsed statelessly).
+const SESSION_HANDLED: &[(u16, &str)] = &[(0x2e6, "Warden (WorldSession / WorldReader)")];
 
 fn repo_file(path: &str) -> String {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -71,10 +71,10 @@ fn the_deviation_page_lists_exactly_the_opcodes_with_no_decoder() {
         }
     }
 
-    for &(opcode, gap) in OPEN_GAPS {
+    for &(opcode, handler) in SESSION_HANDLED {
         assert!(
             undecoded(opcode),
-            "{opcode:#05x} ({gap}) has a decoder: drop it"
+            "{opcode:#05x} ({handler}) has a parse_server decoder: drop it"
         );
     }
 
@@ -82,7 +82,7 @@ fn the_deviation_page_lists_exactly_the_opcodes_with_no_decoder() {
         .iter()
         .filter(|(section, ..)| section == "Not decoded")
         .map(|&(_, opcode, _)| opcode)
-        .chain(OPEN_GAPS.iter().map(|&(opcode, _)| opcode))
+        .chain(SESSION_HANDLED.iter().map(|&(opcode, _)| opcode))
         .collect();
     let missing: Vec<String> = reference
         .iter()
@@ -91,6 +91,6 @@ fn the_deviation_page_lists_exactly_the_opcodes_with_no_decoder() {
         .collect();
     assert!(
         missing.is_empty(),
-        "no decoder, no row in docs/DEVIATIONS.md and no open gap: {missing:?}"
+        "no decoder, no row in docs/DEVIATIONS.md and not session-handled: {missing:?}"
     );
 }
