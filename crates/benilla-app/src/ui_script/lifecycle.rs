@@ -903,10 +903,6 @@ pub(crate) fn run_pending_reload(world: &mut World) {
         return;
     }
     info!("ui_script: ReloadUI — ending the UI session and building a new one");
-    // The combat log's store outlives a reload, as the reference keeps it outside the VM.
-    let combat_log = world
-        .get_non_send_resource_mut::<UiScript>()
-        .map(|mut s| s.take_combat_log());
     // So does the calendar (the calendar's statics, `0xc207e8`-`0xc20f90`).
     let calendar = world
         .get_non_send_resource_mut::<UiScript>()
@@ -924,11 +920,6 @@ pub(crate) fn run_pending_reload(world: &mut World) {
     close_ui_session(world);
     install_boot_vm(world);
     load_ingame_ui_on_world_entry(world);
-    if let (Some(store), Some(mut script)) =
-        (combat_log, world.get_non_send_resource_mut::<UiScript>())
-    {
-        script.restore_combat_log(store);
-    }
     if let (Some(calendar), Some(mut script)) =
         (calendar, world.get_non_send_resource_mut::<UiScript>())
     {

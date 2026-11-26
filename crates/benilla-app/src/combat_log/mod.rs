@@ -19,17 +19,12 @@ pub(crate) mod chat;
 pub(crate) mod entries;
 mod producers;
 mod progress;
+mod store;
 #[cfg(test)]
 mod tests;
 
 pub(crate) use producers::Log;
-
-/// A cast of the player's that failed, with the error the UI showed (`0x808200`).
-#[derive(Message)]
-pub(crate) struct SpellCastFailedLog {
-    pub(crate) spell_id: u32,
-    pub(crate) reason: String,
-}
+pub(crate) use store::{name_landed, record_landed, CombatLog, Landed};
 
 /// The combat log's handler registration. Added ahead of [`crate::creature_anim::CreatureAnimPlugin`]
 /// and [`crate::unit_auras::UnitAurasPlugin`], so the aura handler reads the table before the packet
@@ -39,29 +34,20 @@ pub(crate) struct CombatLogPlugin;
 impl Plugin for CombatLogPlugin {
     fn build(&self, app: &mut App) {
         use SessionEventKind as K;
-        app.init_resource::<entries::PendingEntries>()
+        app.init_resource::<CombatLog>()
             .init_resource::<entries::CombatLogClock>()
             .init_resource::<entries::CombatLogBackdate>()
-            .add_message::<crate::net::EnteredWorldMessage>()
-            .add_message::<entries::CombatLogFired>()
-            .add_message::<SpellCastFailedLog>()
             .add_message::<crate::entities::MissileMiss>()
-            .add_message::<crate::net::FieldChanged>()
+            // The arrivals' misses log right behind the world update that moved the missiles
+            // (`0x702fc0`), in the paint phase.
             .add_systems(
                 Update,
-                (
-                    entries::on_world_entry,
-                    log_deaths,
-                    log_missile_misses,
-                    log_cast_failures,
-                    entries::fire_pending,
-                    feed_combat_log,
-                )
-                    .chain()
-                    .after(crate::spell::track_cost_inputs)
-                    .in_set(crate::ui_script::UiFeed),
+                log_missile_misses
+                    .after(crate::entities::EntityVisualsSet)
+                    .in_set(crate::ui_script::UiPaint),
             );
-        app.net_handler(K::CombatLogBackdate, on_backdate)
+        app.net_handler(K::Connected, on_login)
+            .net_handler(K::CombatLogBackdate, on_backdate)
             .net_handler(K::AttackerState, on_attacker_state)
             .net_handler(K::SpellDamageLog, on_spell_damage_log)
             .net_handler(K::PeriodicAuraLog, on_periodic_aura_log)
@@ -87,6 +73,13 @@ impl Plugin for CombatLogPlugin {
             .net_handler(K::ExplorationXp, on_exploration_xp)
             .net_handler(K::LevelUp, on_level_up)
             .net_handler(K::PvpCredit, on_pvp_credit);
+    }
+}
+
+/// A login clears the log and takes its timestamp base (`0x756bd0` -> `0x7538a0`).
+fn on_login(In(ev): In<SessionEvent>, mut ui: ResMut<crate::ui_script::live::UiEvents>) {
+    if let SessionEvent::Connected { .. } = ev {
+        ui.world(store::reset);
     }
 }
 
@@ -301,56 +294,60 @@ fn on_aura_update(
     }
 }
 
-/// `OnDeath` (`0x729220`): health falling to zero (the health watcher `0x73f330`) or the dead
-/// flag arriving (`0x740570`).
-fn log_deaths(mut edges: MessageReader<crate::net::FieldChanged>, mut log: Log) {
-    use benilla_protocol::field::{FIELD_UNIT_DYNAMIC_FLAGS, FIELD_UNIT_HEALTH};
-    for e in edges.read() {
-        let died = (e.unit_field(FIELD_UNIT_HEALTH) && e.old > 0 && e.new == 0)
-            || (e.unit_field(FIELD_UNIT_DYNAMIC_FLAGS) && e.old & 0x20 == 0 && e.new & 0x20 != 0);
-        if died {
-            log.unit_dead(e.guid);
-        }
+/// A unit's death log (`0x7561ed` -> `0x752ed0`), at its death's step in the update's field watch.
+pub(crate) fn unit_dead(world: &mut World, guid: u64) {
+    run_producer(world, guid, |log, guid| log.unit_dead(guid));
+}
+
+/// The player's spell failure (`0x751ad0`), logged by the refusal display behind its line
+/// (`0x808200`).
+pub(crate) fn spell_fail(world: &mut World, spell: u32, reason: String) {
+    run_producer(world, (spell, reason), |log, (spell, reason)| {
+        log.spell_fail(spell, &reason);
+    });
+}
+
+/// A producer and its input.
+type Producer<I> = (I, fn(&mut Log, I));
+
+/// Run one producer at the caller's step; what it queues runs in the caller's turn.
+fn run_producer<I: Send + Sync + 'static>(world: &mut World, input: I, producer: fn(&mut Log, I)) {
+    let ran = world.run_system_cached_with(
+        |In((input, producer)): In<Producer<I>>, mut log: Log| producer(&mut log, input),
+        (input, producer),
+    );
+    if let Err(e) = ran {
+        warn!("combat_log: a producer did not run: {e}");
     }
 }
 
-/// A travelling spell's miss on arrival (`0x702fc0`): the word, the feedback and the entry.
-fn log_missile_misses(
-    mut arrivals: MessageReader<crate::entities::MissileMiss>,
+/// The frame's missile arrivals that missed, each logged at its arrival (`0x702fc0`): the word,
+/// the feedback and the entry, whose events fire before the next arrival's.
+pub(crate) fn log_missile_misses(world: &mut World) {
+    let misses = world
+        .run_system_cached(
+            |mut arrivals: MessageReader<crate::entities::MissileMiss>| {
+                arrivals.read().copied().collect::<Vec<_>>()
+            },
+        )
+        .unwrap_or_default();
+    for m in misses {
+        if let Err(e) = world.run_system_cached_with(missile_missed, m) {
+            warn!("combat_log: a missile miss was not logged: {e}");
+        }
+        crate::ui_script::live::fire_handler_events(world);
+    }
+}
+
+fn missile_missed(
+    In(m): In<crate::entities::MissileMiss>,
     guids: Query<&crate::net::Guid>,
     mut log: Log,
 ) {
-    for m in arrivals.read() {
-        let (Ok(caster), Ok(target)) = (guids.get(m.caster), guids.get(m.anchor)) else {
-            continue;
-        };
-        log.cast_missed(caster.0, target.0, m.spell_id, m.code);
-    }
-}
-
-fn log_cast_failures(mut fails: MessageReader<SpellCastFailedLog>, mut log: Log) {
-    for f in fails.read() {
-        log.spell_fail(f.spell_id, &f.reason);
-    }
-}
-
-/// Hand each fired entry to the UI's store, which raises `COMBAT_LOG_EVENT`, and while
-/// `LoggingCombat` is on write its packed line to the combat log file (`0x74f910`).
-fn feed_combat_log(
-    mut script: crate::ui_script::InTurn,
-    mut fired: MessageReader<entries::CombatLogFired>,
-    mut file: Option<ResMut<crate::ui_chat::logging::CombatLogFile>>,
-) {
-    let Some(mut script) = script.turn() else {
-        fired.clear();
+    let (Ok(caster), Ok(target)) = (guids.get(m.caster), guids.get(m.anchor)) else {
         return;
     };
-    for entries::CombatLogFired(entry) in fired.read() {
-        let line = script.push_combat_log(entry.clone());
-        if let (Some(line), Some(file)) = (line, file.as_mut()) {
-            file.record(&line);
-        }
-    }
+    log.cast_missed(caster.0, target.0, m.spell_id, m.code);
 }
 
 /// The XP number and line, off their own sinks.

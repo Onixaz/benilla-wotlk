@@ -135,22 +135,20 @@ pub(crate) struct CastFailShow<'w, 's> {
     sub_classes: Option<Res<'w, crate::ui_items::ItemSubClasses>>,
     name_tables: FailNameTables<'w>,
     sounds: Option<ResMut<'w, MessageSounds>>,
-    /// The combat log's line: `0x808200` calls the error display, then the log's spell-failure
-    /// line (`0x751ad0`).
-    log: Option<ResMut<'w, Messages<crate::combat_log::SpellCastFailedLog>>>,
 }
 
 impl CastFailShow<'_, '_> {
-    /// Show `fail`'s line now, then log it; a line naming an item not yet cached waits for the
-    /// answer. Whether the display took its silent exit (`0x8086ff`), which ends the cast quietly.
+    /// Show `fail`'s line now; a line naming an item not yet cached waits for the answer. Whether
+    /// the display took its silent exit (`0x8086ff`), which ends the cast quietly, and the text
+    /// the combat log's spell-failure entry takes after the line (`0x751ad0`).
     pub(crate) fn show(
         &mut self,
         script: Option<&mut UiScript>,
         fail: CastFail,
         records: &mut dyn WaitRecord,
-    ) -> bool {
+    ) -> (bool, Option<String>) {
         let Some(script) = script else {
-            return false;
+            return (false, None);
         };
         let mut wait = None;
         let line = self.resolve(script, fail, &mut wait);
@@ -161,7 +159,7 @@ impl CastFailShow<'_, '_> {
                 entry,
                 crate::items::RecordWait::CastFailure(fail.requeued()),
             );
-            return true;
+            return (true, None);
         }
         let quiet = fail.caster == Caster::Player && !fail.redisplay && self.quiet(script, fail);
         // The reason, its wire word and the resolved buffers, so a declined arm is readable from
@@ -171,7 +169,7 @@ impl CastFailShow<'_, '_> {
             fail.caster, fail.spell_id, fail.reason, fail.arg
         );
         let Some(line) = line else {
-            return quiet;
+            return (quiet, None);
         };
         let logged = (line.logs && fail.caster == Caster::Player && !fail.redisplay)
             .then(|| line.logged().to_string());
@@ -181,14 +179,8 @@ impl CastFailShow<'_, '_> {
             "ui_action",
             Shown::keyed(line.key, line.text),
         );
-        // The log entry from the shown text; nothing for a redisplay, the pet or a custom line.
-        if let (Some(reason), Some(log)) = (logged, self.log.as_mut()) {
-            log.write(crate::combat_log::SpellCastFailedLog {
-                spell_id: fail.spell_id,
-                reason,
-            });
-        }
-        false
+        // The log entry takes the shown text; nothing for a redisplay, the pet or a custom line.
+        (false, logged)
     }
 
     /// The player's arms that end in the silent exit with no line ([`cast_fail::exits_quietly`]).
@@ -385,23 +377,44 @@ pub(crate) fn show_refusal(world: &mut World, fail: CastFail) -> bool {
     if let Some(mut seen) = world.get_resource_mut::<RefusalsSeen>() {
         seen.0.push(fail);
     }
-    match world.run_system_cached_with(show_refusal_now, fail) {
-        Ok(quiet) => quiet,
+    let (quiet, logged) = match world.run_system_cached_with(show_refusal_now, fail) {
+        Ok(shown) => shown,
         Err(e) => {
             warn!("ui_action: a cast refusal was not shown: {e}");
-            false
+            (false, None)
+        }
+    };
+    // `0x808200` shows the line, then logs the spell failure with its text (`0x751ad0`), in turn
+    // behind the line.
+    if let Some(reason) = logged {
+        #[cfg(test)]
+        if let Some(mut seen) = world.get_resource_mut::<FailuresLogged>() {
+            seen.0.push((fail.spell_id, reason.clone()));
+        }
+        let spell = fail.spell_id;
+        match world.get_resource_mut::<crate::ui_script::live::UiEvents>() {
+            Some(mut ui) => {
+                ui.world(move |world| crate::combat_log::spell_fail(world, spell, reason))
+            }
+            None => crate::combat_log::spell_fail(world, spell, reason),
         }
     }
+    quiet
 }
+
+/// The spell failures handed to the combat log, in order, for tests that run without it.
+#[cfg(test)]
+#[derive(Resource, Default)]
+pub(crate) struct FailuresLogged(pub(crate) Vec<(u32, String)>);
 
 fn show_refusal_now(
     In(fail): In<CastFail>,
     mut vm: crate::ui_script::InTurn,
     mut waits: Option<NonSendMut<crate::items::RecordWaits>>,
     show: Option<CastFailShow>,
-) -> bool {
+) -> (bool, Option<String>) {
     let Some(mut show) = show else {
-        return false;
+        return (false, None);
     };
     let mut script = vm.turn();
     match waits.as_deref_mut() {

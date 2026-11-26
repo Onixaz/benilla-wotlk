@@ -492,6 +492,8 @@ pub(crate) enum RecordWait {
     TradeskillLine(u64),
     /// A feed-pet line's, by caster (`0x50bb11` -> `0x4fb950`).
     FeedPetLine(u64),
+    /// A combat-log entry's item name, by its wait (`0x750210` -> `0x74fe90`).
+    CombatLog(u32),
 }
 
 impl RecordWaits {

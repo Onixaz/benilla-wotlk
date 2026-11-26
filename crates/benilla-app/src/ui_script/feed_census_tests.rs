@@ -7,10 +7,6 @@ use super::UiScript;
 /// The feeds left: each non-exclusive system in [`super::UiFeed`] (or a set inside it) that holds
 /// the VM, by its system name. Sorted.
 const FEEDS: &[&str] = &[
-    "benilla_app::combat_log::feed_combat_log",
-    "benilla_app::combat_log::log_cast_failures",
-    "benilla_app::combat_log::log_deaths",
-    "benilla_app::combat_log::log_missile_misses",
     "benilla_app::minimap::blips::drive_blip_tooltip",
     "benilla_app::minimap::feed_game_time",
     "benilla_app::minimap::feed_minimap_compass",

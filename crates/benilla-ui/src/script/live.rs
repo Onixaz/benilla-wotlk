@@ -1131,6 +1131,16 @@ pub trait LiveState {
         None
     }
 
+    /// The client's combat log at the call (`0xadb974`), which a UI reload keeps; `None` where no view lends it.
+    fn combat_log(&self) -> Option<&super::CombatLogStore> {
+        None
+    }
+
+    /// The combat log, for a verb that writes it in its call (the filters, the cursor, the clear).
+    fn combat_log_mut(&mut self) -> Option<&mut super::CombatLogStore> {
+        None
+    }
+
     /// The client's skill list at the call (`0xc22ae8`-`0xc22b18`), which a UI reload keeps; `None` where no view lends it.
     fn skill_list(&self) -> Option<&super::SkillList> {
         None
@@ -1922,6 +1932,8 @@ pub(crate) fn arena_teams(slots: [super::ArenaTeamSlotView; 3]) -> TestView {
 #[cfg(test)]
 #[derive(Default)]
 pub(crate) struct TestView {
+    /// The combat log the verbs read and write.
+    pub combat_log: super::CombatLogStore,
     /// The active player's guid.
     pub player: Option<u64>,
     /// The carried-count check's answer, and the `(item_id, count)` it was asked, in order.
@@ -2205,6 +2217,14 @@ impl LiveState for TestView {
 
     fn achievement_db(&self) -> Option<std::sync::Arc<super::AchievementDb>> {
         self.achievement_db.clone()
+    }
+
+    fn combat_log(&self) -> Option<&super::CombatLogStore> {
+        Some(&self.combat_log)
+    }
+
+    fn combat_log_mut(&mut self) -> Option<&mut super::CombatLogStore> {
+        Some(&mut self.combat_log)
     }
 
     fn achievement_book(&self) -> Option<&super::AchievementBook> {

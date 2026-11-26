@@ -354,6 +354,7 @@ pub(crate) struct DeathCx<'a> {
 /// applied (`0x4d5550`), in field order: health (`0x73f330`), the dynamic dead bit (`0x740570`)
 /// and the ghost bit (`0x6df710`). `edges` are `(index, old, new)`.
 pub(crate) fn own_fields_changed(
+    guid: u64,
     edges: &[(u16, u32, u32)],
     fields: &benilla_protocol::ObjectFields,
     cx: &mut DeathCx,
@@ -367,7 +368,7 @@ pub(crate) fn own_fields_changed(
             FIELD_UNIT_HEALTH => {
                 if (old as i32) > 0 && (new as i32) < 1 {
                     let dead_flag = fields.unit_dynamic_flags() & UNIT_DYNFLAG_DEAD != 0;
-                    on_death(fields, dead_flag, cx);
+                    on_death(guid, fields, dead_flag, cx);
                 } else if (old as i32) < 1 && (new as i32) > 0 {
                     // `0x73d5bc`, for our own unit alone.
                     cx.ui.fire("PLAYER_ALIVE", Vec::new());
@@ -376,7 +377,7 @@ pub(crate) fn own_fields_changed(
             // The dead bit set is a death; cleared, a life that fires nothing (`0x740570`).
             FIELD_UNIT_DYNAMIC_FLAGS if (old ^ new) & UNIT_DYNFLAG_DEAD != 0 => {
                 if new & UNIT_DYNFLAG_DEAD != 0 {
-                    on_death(fields, true, cx);
+                    on_death(guid, fields, true, cx);
                 }
             }
             FIELD_PLAYER_FLAGS if (old ^ new) & PLAYER_FLAGS_GHOST != 0 => {
@@ -393,12 +394,15 @@ const UNIT_DYNFLAG_DEAD: u32 = 0x20;
 const PLAYER_FLAGS_GHOST: u32 = 0x10;
 
 /// Our death (`0x729220`): the player's half derives the release timer and clears the interact target unless the dead bit is set (`0x6dc0f0`), then the death anim refreshes the dead or alive signal (`0x7561e0`).
-fn on_death(fields: &benilla_protocol::ObjectFields, dead_flag: bool, cx: &mut DeathCx) {
+fn on_death(guid: u64, fields: &benilla_protocol::ObjectFields, dead_flag: bool, cx: &mut DeathCx) {
     if !dead_flag {
         cx.globals.update_repop_timer(fields, cx.now);
         // The interact target's clear (`0x6dc17a` -> `0x512e60`): the window holding it closes.
         cx.ui.world(crate::ui_session::clear_held_interact_target);
     }
+    // The death anim's log first (`0x7561ed`), then its refresh (`0x756238`).
+    cx.ui
+        .world(move |world| crate::combat_log::unit_dead(world, guid));
     refresh_active_player(fields.unit_health().unwrap_or(0), cx.ui);
 }
 
@@ -1082,7 +1086,7 @@ mod tests {
                 now: 10.0,
                 arena: self.arena,
             };
-            own_fields_changed(edges, &fields, &mut cx);
+            own_fields_changed(0x10, edges, &fields, &mut cx);
             let names = self.ui.names();
             self.ui = UiEvents::default();
             names
@@ -1145,8 +1149,8 @@ mod tests {
         let dead = [(FIELD_UNIT_MAXHEALTH, 100), (FIELD_UNIT_HEALTH, 0)];
         assert_eq!(
             rig.changed(&dead, &[(FIELD_UNIT_HEALTH, 100, 0)]),
-            ["<world>", "PLAYER_DEAD", "<clear cursor>"],
-            "the interact target's clear (the bank's leg) ahead of the death anim's signal"
+            ["<world>", "<world>", "PLAYER_DEAD", "<clear cursor>"],
+            "the interact target's clear (the bank's leg), then the death anim's log (`0x7561ed`) ahead of its signal (`0x756238`)"
         );
         assert_eq!(
             rig.globals.release_left_ms(10.0),
@@ -1205,7 +1209,8 @@ mod tests {
         ];
         assert_eq!(
             rig.changed(&flagged, &[(FIELD_UNIT_DYNAMIC_FLAGS, 0, 0x20)]),
-            ["PLAYER_DEAD", "<clear cursor>"]
+            ["<world>", "PLAYER_DEAD", "<clear cursor>"],
+            "the death anim's log (`0x7561ed`) ahead of its signal (`0x756238`)"
         );
         assert_eq!(rig.globals.release_left_ms(10.0), Some(0), "never derived");
         assert!(rig
@@ -1214,7 +1219,8 @@ mod tests {
         let feigning = [(FIELD_UNIT_MAXHEALTH, 100), (FIELD_UNIT_HEALTH, 40)];
         assert_eq!(
             rig.changed(&feigning, &[(FIELD_UNIT_DYNAMIC_FLAGS, 0, 0x20)]),
-            ["PLAYER_ALIVE"]
+            ["<world>", "PLAYER_ALIVE"],
+            "a feigned death logs its `UNIT_DIED` too (`0x740570` -> `0x729220` -> `0x7561ed`)"
         );
     }
 

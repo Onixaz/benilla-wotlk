@@ -295,6 +295,8 @@ local VERBS = {
     { "petnames", function() return GetNumPetitionNames() end },
     { "pettitle", function() local _, t = GetPetitionInfo() return t end },
     { "petitems", function() return GetNumPetitionItems() end },
+    { "clnum", function() return CombatLogGetNumEntries(1) end },
+    { "clpass", function() return CombatLogGetNumEntries() end },
     { "taxicost", function()
         for i = 1, NumTaxiNodes() do
             if TaxiNodeName(i) == "Sentinel Hill, Westfall" then return TaxiNodeCost(i) end
@@ -13824,5 +13826,141 @@ fn a_combat_lines_item_callback_runs_in_ask_order() {
     assert!(
         pin(&seen, events, &[]).is_empty(),
         "a missing record shows nothing"
+    );
+}
+
+// ── The combat log (#1285) ───────────────────────────────────────────────────────────────────────
+
+/// A creature no create named, whose record the log asks for.
+const KOBOLD: u64 = 0xF130_0006_0100_0002;
+/// `KOBOLD`'s template entry.
+const KOBOLD_ENTRY: u32 = 0x601;
+
+/// A landed melee swing of ours on `victim`.
+fn swing(victim: u64, damage: u32) -> SessionEvent {
+    SessionEvent::AttackerState(benilla_protocol::messages::AttackerState {
+        attacker: ME,
+        victim,
+        hit_info: benilla_protocol::messages::hit_info::AFFECTS_VICTIM,
+        damage,
+        overkill: 0,
+        victim_state: 1,
+        absorb: 0,
+        resist: 0,
+        blocked: 0,
+        melee_spell_id: 0,
+        school_mask: 1,
+    })
+}
+
+/// The creature record's answer for `entry`, named `name`.
+fn creature_name(entry: u32, name: &str) -> SessionEvent {
+    SessionEvent::CreatureName {
+        entry,
+        name: Some(name.into()),
+        subname: None,
+        cursor_name: None,
+        creature_type: Some(7),
+        pet_family: 0,
+        rank: 0,
+        type_flags: 0,
+        display_id: 0,
+        civilian: false,
+        racial_leader: false,
+        modifiers: (1.0, 1.0),
+        movement_id: 0,
+    }
+}
+
+/// The combat log's events and `events`, a log event as its sub-event, dest name and amount (the
+/// timestamp aside), each with `verbs`' answers.
+fn log_pin(seen: &[Seen], events: &[&str], verbs: &[&str]) -> Vec<String> {
+    seen.iter()
+        .filter(|s| s.event.starts_with("COMBAT_LOG_EVENT") || events.contains(&s.event.as_str()))
+        .map(|s| {
+            if !s.event.starts_with("COMBAT_LOG_EVENT") {
+                return s.line(verbs);
+            }
+            let args: Vec<&str> = s.args.split(' ').collect();
+            let mut seen = s.clone();
+            seen.args = [args.get(1), args.get(6), args.get(8)]
+                .into_iter()
+                .map(|a| a.copied().unwrap_or("?"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            seen.line(verbs)
+        })
+        .collect()
+}
+
+/// Each combat packet's entry fires its log events inside its handler, in wire order with the
+/// other handlers' events: `0x7512b0` queues the swing (`0x74ff20`), which sends at once
+/// (`0x74ff65` -> `0x74f910`), before the next packet's handler runs. The entry is in the store at
+/// its event (`CombatLogGetNumEntries` `0x74fa70`).
+#[test]
+fn a_swing_logs_inside_its_handler_in_wire_order() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.run(2);
+    let seen = rig.packets(vec![swing(ME, 7), control(false), swing(ME, 9)], 2);
+    assert_eq!(
+        log_pin(&seen, &["PLAYER_CONTROL_LOST"], &["clnum", "clpass"]),
+        vec![
+            "COMBAT_LOG_EVENT SWING_DAMAGE Probesix 7 | clnum=1 clpass=1",
+            "COMBAT_LOG_EVENT_UNFILTERED SWING_DAMAGE Probesix 7 | clnum=1 clpass=1",
+            "PLAYER_CONTROL_LOST | clnum=1 clpass=1",
+            "COMBAT_LOG_EVENT SWING_DAMAGE Probesix 9 | clnum=2 clpass=2",
+            "COMBAT_LOG_EVENT_UNFILTERED SWING_DAMAGE Probesix 9 | clnum=2 clpass=2",
+        ]
+    );
+}
+
+/// An entry naming a creature whose record is not cached waits for the answer (`0x74fd40` ->
+/// `0x74f720` sets its mask), holding every later entry behind it (`0x74ff39`): nothing fires and
+/// the count stops at it (`0x74faa9`). The record's answer runs the entry's callback
+/// (`0x74fe90`), which sends it named and the ready one behind it, inside that handler; both are
+/// in the store at the first one's event.
+#[test]
+fn an_unnamed_creature_holds_the_log_until_its_record_answers() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.run(2);
+    let held = rig.packets(vec![swing(KOBOLD, 5), swing(ME, 6)], 2);
+    assert_eq!(log_pin(&held, &[], &["clnum"]), Vec::<String>::new());
+    assert_eq!(rig.live_now().line(&["clnum"]), "NOW | clnum=0");
+    let seen = rig.packets(
+        vec![creature_name(KOBOLD_ENTRY, "Kobold"), control(false)],
+        2,
+    );
+    assert_eq!(
+        log_pin(&seen, &["PLAYER_CONTROL_LOST"], &["clnum"]),
+        vec![
+            "COMBAT_LOG_EVENT SWING_DAMAGE Kobold 5 | clnum=2",
+            "COMBAT_LOG_EVENT_UNFILTERED SWING_DAMAGE Kobold 5 | clnum=2",
+            "COMBAT_LOG_EVENT SWING_DAMAGE Probesix 6 | clnum=2",
+            "COMBAT_LOG_EVENT_UNFILTERED SWING_DAMAGE Probesix 6 | clnum=2",
+            "PLAYER_CONTROL_LOST | clnum=2",
+        ]
+    );
+}
+
+/// Our death logs `UNIT_DIED` in the death anim ahead of its dead-or-alive refresh (`0x7561ed`
+/// before `0x756238`), so the entry fires before `PLAYER_DEAD`, inside the update's handler.
+#[test]
+fn our_death_logs_before_player_dead() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.run(2);
+    let seen = rig.packets(vec![self_values(&[(FIELD_UNIT_HEALTH, 0)])], 2);
+    assert_eq!(
+        log_pin(&seen, &["PLAYER_DEAD"], &["clnum"]),
+        vec![
+            "COMBAT_LOG_EVENT UNIT_DIED Probesix ? | clnum=1",
+            "COMBAT_LOG_EVENT_UNFILTERED UNIT_DIED Probesix ? | clnum=1",
+            "PLAYER_DEAD | clnum=1",
+        ]
     );
 }

@@ -12,7 +12,7 @@ use benilla_ui::script::{CombatLogEntry, CombatLogEvent, MissType, ScriptValue};
 use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::*;
 
-use super::entries::{CombatLogClock, PendingEntries};
+use super::entries::CombatLogClock;
 use super::Log;
 use crate::combat_text::{CombatTextSpawn, DamageTextGates};
 use crate::net::{Guid, GuidIndex, NetCommands, ObjectStore, Reputations, SelfGuid};
@@ -106,7 +106,7 @@ fn rig() -> App {
         .init_resource::<crate::names::NameCache>()
         .insert_resource(NetCommands(tx))
         .insert_resource(spells())
-        .init_resource::<PendingEntries>()
+        .init_resource::<super::CombatLog>()
         .init_resource::<CombatLogClock>()
         .init_resource::<super::entries::CombatLogBackdate>()
         .init_resource::<DamageTextGates>()
@@ -115,7 +115,7 @@ fn rig() -> App {
         .add_message::<CombatTextSpawn>()
         .add_message::<UnitCombatFeedback>()
         .add_message::<CombatTextEvent>();
-    app.insert_non_send_resource(text_unit_vm("player"));
+    name_text_unit(&mut app, ME);
     for (guid, store) in [
         (ME, unit(ObjectType::Player, 100)),
         (MOB, unit(ObjectType::Unit, 100)),
@@ -132,18 +132,12 @@ fn rig() -> App {
     app
 }
 
-/// A VM whose Blizzard_CombatText named `token` the combat-text unit, the player as `ME` and
-/// its vehicle as `MOB`.
-fn text_unit_vm(token: &str) -> benilla_ui::script::UiScript {
-    let mut s = benilla_ui::script::UiScript::new().unwrap();
-    s.set_unit_guids(&benilla_ui::script::UnitGuids {
-        player: ME,
-        vehicle: MOB,
-        ..Default::default()
-    });
-    s.run(&format!("CombatTextSetActiveUnit('{token}')"))
-        .unwrap();
-    s
+/// Blizzard_CombatText's `CombatTextSetActiveUnit` naming `guid` (`0x74d580`).
+fn name_text_unit(app: &mut App, guid: u64) {
+    app.world_mut()
+        .resource_mut::<super::CombatLog>()
+        .store
+        .set_text_unit(guid);
 }
 
 fn run(app: &mut App, f: impl FnOnce(&mut Log) + Send + Sync + 'static) {
@@ -157,16 +151,18 @@ fn run(app: &mut App, f: impl FnOnce(&mut Log) + Send + Sync + 'static) {
         .unwrap();
 }
 
-fn entries(app: &App) -> Vec<CombatLogEntry> {
+/// The entries the producers queued, each queued at its step as the handler's turn runs.
+fn entries(app: &mut App) -> Vec<CombatLogEntry> {
+    crate::ui_script::live::UiEvents::run_steps(app.world_mut());
     app.world()
-        .resource::<PendingEntries>()
+        .resource::<super::CombatLog>()
+        .store
         .entries()
-        .into_iter()
         .cloned()
         .collect()
 }
 
-fn events(app: &App) -> Vec<CombatLogEvent> {
+fn events(app: &mut App) -> Vec<CombatLogEvent> {
     entries(app).iter().map(|e| e.event).collect()
 }
 
@@ -217,7 +213,7 @@ fn a_spell_crit_logs_and_floats_as_a_crit() {
     run(&mut app, |log| {
         log.spell_damage_log(&fireball_hit(0x2, 300))
     });
-    let e = &entries(&app)[0];
+    let e = &entries(&mut app)[0];
     assert_eq!(e.event, CombatLogEvent::SpellDamage);
     assert_eq!((e.source.guid, e.dest.guid), (ME, MOB));
     assert_eq!(e.spell.as_ref().map(|s| s.id), Some(FIREBALL));
@@ -245,7 +241,7 @@ fn split_damage_and_a_full_absorb() {
             ..fireball_hit(0, 0)
         });
     });
-    let all = entries(&app);
+    let all = entries(&mut app);
     assert_eq!(all[0].event, CombatLogEvent::DamageSplit);
     assert_eq!(all[1].event, CombatLogEvent::SpellMissed);
     let miss = all[1].info.miss.expect("a miss");
@@ -274,13 +270,13 @@ fn tick(crit: bool) -> PeriodicAuraLog {
 fn a_periodic_crit_floats_as_a_crit_under_its_cvar() {
     let mut app = rig();
     run(&mut app, |log| log.periodic_aura_log(&tick(true)));
-    assert_eq!(events(&app), [CombatLogEvent::SpellPeriodicDamage]);
-    assert!(entries(&app)[0].info.damage.unwrap().critical);
+    assert_eq!(events(&mut app), [CombatLogEvent::SpellPeriodicDamage]);
+    assert!(entries(&mut app)[0].info.damage.unwrap().critical);
     assert_eq!(floated(&mut app)[0].1, 2);
 
     app.world_mut().resource_mut::<DamageTextGates>().periodic = false;
     run(&mut app, |log| log.periodic_aura_log(&tick(false)));
-    assert_eq!(entries(&app).len(), 2, "the entry still logs");
+    assert_eq!(entries(&mut app).len(), 2, "the entry still logs");
     assert!(floated(&mut app).is_empty(), "the number does not float");
 }
 
@@ -365,7 +361,7 @@ fn a_spell_hidden_in_the_log_floats_no_mechanic() {
     run(&mut app, |log| {
         log.aura_added_or_removed(MOB, ME, STUN, true, true)
     });
-    assert_eq!(events(&app), [CombatLogEvent::SpellAuraApplied]);
+    assert_eq!(events(&mut app), [CombatLogEvent::SpellAuraApplied]);
     assert!(floated(&mut app).is_empty());
 }
 
@@ -376,7 +372,7 @@ fn heals_float_over_others_and_centre_over_you() {
     run(&mut app, |log| {
         log.heal(ME, MOB, HEAL, 120, 30, 0, true, false);
     });
-    let h = entries(&app)[0].info.heal.expect("a heal block");
+    let h = entries(&mut app)[0].info.heal.expect("a heal block");
     assert_eq!((h.amount, h.overheal, h.critical), (120, 30, true));
     assert_eq!(floated(&mut app), [("+120".to_string(), 7, None)]);
 
@@ -402,7 +398,7 @@ fn cast_start_and_success_split_on_the_cast_time() {
         log.spell_go(ME, None, NOVA, 0x1, 0, &[], &[]);
     });
     assert_eq!(
-        events(&app),
+        events(&mut app),
         [
             CombatLogEvent::SpellCastStart,
             CombatLogEvent::SpellCastSuccess
@@ -419,7 +415,7 @@ fn go_misses_and_their_reflect() {
         log.spell_go(ME, None, NOVA, 0, MOB, &[(MOB, 11)], &[(MOB, 3)]);
         log.spell_go(ME, None, SHOT, 0, MOB, &[(MOB, 3)], &[]);
     });
-    let all = entries(&app);
+    let all = entries(&mut app);
     let misses: Vec<(CombatLogEvent, u64, MissType)> = all
         .iter()
         .filter_map(|e| Some((e.event, e.dest.guid, e.info.miss?.kind)))
@@ -450,7 +446,7 @@ fn aura_edges_log_with_their_type() {
         log.aura_added_or_removed(ME, ME, HEAL, false, false);
     });
     assert_eq!(
-        events(&app),
+        events(&mut app),
         [
             CombatLogEvent::SpellAuraApplied,
             CombatLogEvent::SpellAuraApplied,
@@ -459,7 +455,7 @@ fn aura_edges_log_with_their_type() {
         ],
         "a dose needs a stacking spell"
     );
-    assert_eq!(entries(&app)[0].info.harmful, Some(true));
+    assert_eq!(entries(&mut app)[0].info.harmful, Some(true));
     let c: Vec<&str> = centre(&mut app).iter().map(|c| c.0).collect();
     assert_eq!(c, ["SPELL_AURA_START", "SPELL_AURA_END"]);
 
@@ -470,7 +466,11 @@ fn aura_edges_log_with_their_type() {
     run(&mut app, |log| {
         log.aura_added_or_removed(MOB, ME, NOVA, true, false)
     });
-    assert_eq!(entries(&app).len(), 4, "a dead unit's removal does not log");
+    assert_eq!(
+        entries(&mut app).len(),
+        4,
+        "a dead unit's removal does not log"
+    );
 }
 
 /// A player's death logs `UNIT_DIED` with no source; a creature with no template logs nothing.
@@ -481,7 +481,7 @@ fn deaths_log_for_known_units() {
         log.unit_dead(ME);
         log.unit_dead(MOB);
     });
-    let all = entries(&app);
+    let all = entries(&mut app);
     assert_eq!(all.len(), 1);
     assert_eq!(all[0].event, CombatLogEvent::UnitDied);
     assert_eq!((all[0].source.guid, all[0].dest.guid), (0, ME));
@@ -493,14 +493,14 @@ fn deaths_log_for_known_units() {
 fn a_destroy_on_death_logs_only_a_living_unit() {
     let mut app = rig();
     run(&mut app, |log| log.destroyed_on_death(ME));
-    assert_eq!(events(&app), [CombatLogEvent::UnitDied]);
+    assert_eq!(events(&mut app), [CombatLogEvent::UnitDied]);
 
     let me = app.world_mut().resource::<GuidIndex>().0[&ME];
     app.world_mut()
         .entity_mut(me)
         .insert(unit(ObjectType::Player, 0));
     run(&mut app, |log| log.destroyed_on_death(ME));
-    assert_eq!(entries(&app).len(), 1, "a dead unit does not die again");
+    assert_eq!(entries(&mut app).len(), 1, "a dead unit does not die again");
 }
 
 /// The owner's client floats a building's hit in orange (category 8) and its repair as `+%d`
@@ -543,7 +543,7 @@ fn a_building_floats_its_hit_and_repair_for_its_owner() {
         log.building_damage(&hit(BUILDING, MOB, 500));
         log.building_damage(&hit(WALL, ME, 500));
     });
-    assert_eq!(entries(&app).len(), 5, "every one logs");
+    assert_eq!(entries(&mut app).len(), 5, "every one logs");
     assert_eq!(
         floated(&mut app),
         [
@@ -573,7 +573,7 @@ fn dispels_and_breaks() {
         log.spell_remove_log(&removed(SpellRemoveKind::Steal, PURGE));
         log.spell_remove_log(&removed(SpellRemoveKind::Break, 0));
     });
-    let all = entries(&app);
+    let all = entries(&mut app);
     assert_eq!(
         all.iter().map(|e| e.event).collect::<Vec<_>>(),
         [
@@ -603,7 +603,7 @@ fn shield_misses_and_periodic_immunity() {
         log.spell_missed(ME, MOB, NOVA, 0, false, false);
     });
     assert_eq!(
-        events(&app),
+        events(&mut app),
         [
             CombatLogEvent::DamageShieldMissed,
             CombatLogEvent::SpellPeriodicMissed
@@ -616,7 +616,7 @@ fn shield_misses_and_periodic_immunity() {
 fn an_energize_shows_the_displayed_amount() {
     let mut app = rig();
     run(&mut app, |log| log.energize(ME, ME, NOVA, 6, 150, false));
-    assert_eq!(entries(&app)[0].info.energize, Some((15, 6)));
+    assert_eq!(entries(&mut app)[0].info.energize, Some((15, 6)));
     assert_eq!(
         centre(&mut app),
         [(
@@ -644,7 +644,7 @@ fn a_blocked_swing_on_you_centres_its_amounts() {
         school_mask: 1,
     };
     run(&mut app, move |log| log.swing(&swing));
-    assert_eq!(events(&app), [CombatLogEvent::SwingDamage]);
+    assert_eq!(events(&mut app), [CombatLogEvent::SwingDamage]);
     assert_eq!(
         centre(&mut app),
         [("BLOCK", vec![ScriptValue::Int(20), ScriptValue::Int(7)])]
@@ -699,8 +699,10 @@ fn a_batched_entry_logs_backdated_by_its_offset() {
         ],
     });
     dispatch(&mut app, events);
-    let times: Vec<(CombatLogEvent, u64)> =
-        entries(&app).iter().map(|e| (e.event, e.time_ms)).collect();
+    let times: Vec<(CombatLogEvent, u64)> = entries(&mut app)
+        .iter()
+        .map(|e| (e.event, e.time_ms))
+        .collect();
     assert_eq!(
         times,
         [
@@ -712,7 +714,7 @@ fn a_batched_entry_logs_backdated_by_its_offset() {
         &mut app,
         vec![SessionEvent::SpellDamageLog(fireball_hit(0, 5))],
     );
-    assert_eq!(entries(&app).last().map(|e| e.time_ms), Some(10_000));
+    assert_eq!(entries(&mut app).last().map(|e| e.time_ms), Some(10_000));
 }
 
 /// #444: the centre text follows the unit Blizzard_CombatText names: in a vehicle a hit on the
@@ -741,10 +743,7 @@ fn centre_text_follows_the_combat_text_unit() {
         });
         centre(app).len()
     };
-    let name_unit = |app: &mut App, token: &str| {
-        app.insert_non_send_resource(text_unit_vm(token));
-    };
-    name_unit(&mut app, "vehicle");
+    name_text_unit(&mut app, MOB);
     run(&mut app, move |log| log.swing(&swing(MOB)));
     assert_eq!(
         centre(&mut app),
@@ -753,9 +752,9 @@ fn centre_text_follows_the_combat_text_unit() {
     );
     run(&mut app, move |log| log.swing(&swing(ME)));
     assert!(centre(&mut app).is_empty(), "the player's own is silent");
-    name_unit(&mut app, "player");
+    name_text_unit(&mut app, ME);
     assert_eq!(hits(&mut app), 1, "back out, the player's hit alone");
-    app.insert_non_send_resource(benilla_ui::script::UiScript::new().unwrap());
+    name_text_unit(&mut app, 0);
     assert_eq!(hits(&mut app), 0, "no unit named yet");
 }
 
@@ -765,23 +764,76 @@ fn centre_text_follows_the_combat_text_unit() {
 fn a_player_from_another_realm_logs_as_name_dash_realm() {
     let fire = |realm: &str| {
         let mut app = rig();
-        app.add_message::<super::entries::CombatLogFired>()
-            .insert_resource(Time::<bevy::time::Real>::default());
+        app.insert_resource(Time::<bevy::time::Real>::default());
         let mut names = app.world_mut().resource_mut::<crate::names::NameCache>();
         names.insert_player(ME, "Claude".into(), None);
         names.set_player_realm(ME, realm.into());
         run(&mut app, |log| log.unit_dead(ME));
-        app.world_mut()
-            .run_system_once(super::entries::fire_pending)
-            .unwrap();
-        let fired = app
-            .world_mut()
-            .resource_mut::<Messages<super::entries::CombatLogFired>>()
-            .drain()
-            .map(|f| f.0.dest.name)
-            .collect::<Vec<_>>();
-        fired
+        entries(&mut app)
+            .into_iter()
+            .map(|e| e.dest.name)
+            .collect::<Vec<_>>()
     };
     assert_eq!(fire("Outland"), [Some("Claude-Outland".to_string())]);
     assert_eq!(fire(""), [Some("Claude".to_string())]);
+}
+
+/// The death log's world step queues `UNIT_DIED` at its caller's step (`0x7561ed`).
+#[test]
+fn the_death_step_queues_its_entry() {
+    let mut app = rig();
+    super::unit_dead(app.world_mut(), ME);
+    assert_eq!(events(&mut app), [CombatLogEvent::UnitDied]);
+}
+
+/// An entry naming a creature whose record is not cached waits on it (`0x74f720` sets the mask)
+/// and holds the entry behind it; the record's answer runs the callback (`0x74fe90`), which names
+/// the entry and sends both (`0x74f910`), the pending cursor past them.
+#[test]
+fn a_waiting_name_holds_the_log_until_its_record_answers() {
+    let mut app = rig();
+    app.world_mut()
+        .resource_mut::<crate::names::NameCache>()
+        .insert_player(ME, "Claude".into(), None);
+    let kobold = 0xF130_0006_0100_0002;
+    run(&mut app, move |log| {
+        log.swing(&AttackerState {
+            attacker: ME,
+            victim: kobold,
+            hit_info: hit_info::AFFECTS_VICTIM,
+            damage: 5,
+            overkill: 0,
+            victim_state: 1,
+            absorb: 0,
+            resist: 0,
+            blocked: 0,
+            melee_spell_id: 0,
+            school_mask: 1,
+        });
+        log.unit_dead(ME);
+    });
+    let held = entries(&mut app);
+    assert_eq!(held.len(), 2);
+    let store = &app.world().resource::<super::CombatLog>().store;
+    assert_eq!(store.pending(), Some(0), "the head waits");
+    assert_eq!(store.waiting(0), 2, "on its dest's name");
+    app.world_mut()
+        .resource_mut::<crate::names::NameCache>()
+        .insert_creature(
+            0x601,
+            Some(crate::names::CreatureRecord {
+                name: "Kobold Vermin".into(),
+                ..Default::default()
+            }),
+        );
+    super::name_landed(
+        app.world_mut(),
+        super::Landed::Unit(crate::names::NameKey::Creature(0x601)),
+    );
+    let store = &app.world().resource::<super::CombatLog>().store;
+    assert_eq!(store.pending(), None, "both sent");
+    assert_eq!(
+        store.get(0).and_then(|e| e.dest.name.clone()).as_deref(),
+        Some("Kobold Vermin")
+    );
 }

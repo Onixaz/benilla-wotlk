@@ -206,7 +206,7 @@ fn a_pets_refused_cast_writes_no_combat_log_line() {
         .init_resource::<crate::net::GuidIndex>()
         .init_resource::<crate::ui_chat::ChatLog>()
         .init_resource::<crate::sound::MessageSounds>()
-        .add_message::<crate::combat_log::SpellCastFailedLog>()
+        .init_resource::<crate::ui_action::cast_refusal::FailuresLogged>()
         .insert_resource(NetCommands(tx));
     let script = UiScript::new().unwrap();
     // Only what the log entry needs; the red line's text has its own tests.
@@ -214,12 +214,12 @@ fn a_pets_refused_cast_writes_no_combat_log_line() {
     app.insert_non_send_resource(script);
     show_all(&mut app, errors);
 
-    let logged: Vec<(u32, String)> = app
-        .world_mut()
-        .resource_mut::<Messages<crate::combat_log::SpellCastFailedLog>>()
-        .drain()
-        .map(|f| (f.spell_id, f.reason))
-        .collect();
+    let logged = std::mem::take(
+        &mut app
+            .world_mut()
+            .resource_mut::<crate::ui_action::cast_refusal::FailuresLogged>()
+            .0,
+    );
     assert_eq!(
         logged,
         [(GROWL, "A reason".to_string())],
@@ -252,7 +252,7 @@ fn a_custom_refusal_shows_its_row_and_is_not_logged() {
         .init_resource::<crate::net::GuidIndex>()
         .init_resource::<crate::ui_chat::ChatLog>()
         .init_resource::<crate::sound::MessageSounds>()
-        .add_message::<crate::combat_log::SpellCastFailedLog>()
+        .init_resource::<crate::ui_action::cast_refusal::FailuresLogged>()
         .insert_resource(NetCommands(tx));
     let script = UiScript::new().unwrap();
     script
@@ -278,9 +278,10 @@ fn a_custom_refusal_shows_its_row_and_is_not_logged() {
     assert_eq!(shown, "A fire totem line|A reason", "each shows once");
     let logged: Vec<String> = app
         .world_mut()
-        .resource_mut::<Messages<crate::combat_log::SpellCastFailedLog>>()
-        .drain()
-        .map(|f| f.reason)
+        .resource_mut::<crate::ui_action::cast_refusal::FailuresLogged>()
+        .0
+        .drain(..)
+        .map(|(_, r)| r)
         .collect();
     assert_eq!(logged, ["A reason"], "only the plain refusal logs");
 }
@@ -336,7 +337,7 @@ fn need_more_items_and_min_skill_fill_both_argument_words() {
         .init_resource::<crate::net::GuidIndex>()
         .init_resource::<crate::ui_chat::ChatLog>()
         .init_resource::<crate::sound::MessageSounds>()
-        .add_message::<crate::combat_log::SpellCastFailedLog>()
+        .init_resource::<crate::ui_action::cast_refusal::FailuresLogged>()
         .insert_resource(NetCommands(tx));
     let script = UiScript::new().unwrap();
     script
@@ -350,9 +351,10 @@ fn need_more_items_and_min_skill_fill_both_argument_words() {
 
     let logged: Vec<String> = app
         .world_mut()
-        .resource_mut::<Messages<crate::combat_log::SpellCastFailedLog>>()
-        .drain()
-        .map(|f| f.reason)
+        .resource_mut::<crate::ui_action::cast_refusal::FailuresLogged>()
+        .0
+        .drain(..)
+        .map(|(_, r)| r)
         .collect();
     assert_eq!(
         logged,
@@ -393,7 +395,7 @@ fn a_refusal_naming_an_uncached_item_shows_when_the_answer_lands() {
     .init_resource::<crate::net::GuidIndex>()
     .init_resource::<crate::ui_chat::ChatLog>()
     .init_resource::<crate::sound::MessageSounds>()
-    .add_message::<crate::combat_log::SpellCastFailedLog>()
+    .init_resource::<crate::ui_action::cast_refusal::FailuresLogged>()
     .insert_resource(NetCommands(tx));
     let script = UiScript::new().unwrap();
     script
@@ -434,8 +436,9 @@ fn a_refusal_naming_an_uncached_item_shows_when_the_answer_lands() {
     assert_eq!(shown(&app), "Missing reagent: Copper Ore");
     let logged = app
         .world_mut()
-        .resource_mut::<Messages<crate::combat_log::SpellCastFailedLog>>()
-        .drain()
+        .resource_mut::<crate::ui_action::cast_refusal::FailuresLogged>()
+        .0
+        .drain(..)
         .count();
     assert_eq!(logged, 0, "a redisplay is not logged");
 }
@@ -553,7 +556,7 @@ fn the_reagent_limit_and_glyph_arms_name_what_12340_names() {
     .init_resource::<crate::net::GuidIndex>()
     .init_resource::<crate::ui_chat::ChatLog>()
     .init_resource::<crate::sound::MessageSounds>()
-    .add_message::<crate::combat_log::SpellCastFailedLog>()
+    .init_resource::<crate::ui_action::cast_refusal::FailuresLogged>()
     .insert_resource(NetCommands(tx));
     // The glyph's item object: object and item bits, its template entry.
     let glyph = app
@@ -619,9 +622,10 @@ fn the_reagent_limit_and_glyph_arms_name_what_12340_names() {
     );
     let logged: Vec<String> = app
         .world_mut()
-        .resource_mut::<Messages<crate::combat_log::SpellCastFailedLog>>()
-        .drain()
-        .map(|f| f.reason)
+        .resource_mut::<crate::ui_action::cast_refusal::FailuresLogged>()
+        .0
+        .drain(..)
+        .map(|(_, r)| r)
         .collect();
     assert_eq!(
         logged[1..3],
@@ -657,7 +661,7 @@ fn the_equipped_item_arms_name_the_wire_words() {
     .init_resource::<crate::net::GuidIndex>()
     .init_resource::<crate::ui_chat::ChatLog>()
     .init_resource::<crate::sound::MessageSounds>()
-    .add_message::<crate::combat_log::SpellCastFailedLog>()
+    .init_resource::<crate::ui_action::cast_refusal::FailuresLogged>()
     .insert_resource(NetCommands(tx));
     let script = UiScript::new().unwrap();
     script
@@ -727,7 +731,7 @@ fn a_silent_exit_ends_the_cast_quietly() {
     .init_resource::<crate::ui_chat::ChatLog>()
     .init_resource::<crate::sound::MessageSounds>()
     .init_resource::<crate::ui_script::live::UiEvents>()
-    .add_message::<crate::combat_log::SpellCastFailedLog>()
+    .init_resource::<crate::ui_action::cast_refusal::FailuresLogged>()
     .insert_resource(NetCommands(tx));
     let script = UiScript::new().unwrap();
     script

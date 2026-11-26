@@ -10,7 +10,7 @@ use benilla_ui::script::{
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
-use super::entries::{self, CombatLogClock, FlagInputs, NewEntry, PendingEntries};
+use super::entries::{self, FlagInputs, NewEntry};
 use crate::combat_text::{
     damage_color, miss_word, CombatTextSpawn, DamageSource, DamageTextGates, COLOR_PET_MELEE_ORANGE,
 };
@@ -90,6 +90,8 @@ pub(crate) struct LogCtx<'w, 's> {
     reputations: Res<'w, Reputations>,
     selection: Option<Res<'w, crate::target::Selection>>,
     script: Option<NonSend<'w, UiScript>>,
+    /// The client's combat log, whose combat-text unit the centre text reads.
+    log: Option<Res<'w, super::store::CombatLog>>,
     spell_mods: Option<Res<'w, crate::spell::SpellModifiers>>,
     enchants: Option<Res<'w, crate::items::Enchants>>,
     objects: Option<Res<'w, crate::go_templates::GameObjectTemplates>>,
@@ -131,9 +133,9 @@ impl LogCtx<'_, '_> {
     /// The combat-text unit (`0x74d430`): the guid `CombatTextSetActiveUnit` last named, the
     /// player or its vehicle; none before Blizzard_CombatText names one.
     fn is_text_unit(&self, guid: u64) -> bool {
-        self.script
+        self.log
             .as_ref()
-            .is_some_and(|s| s.combat_text_unit() == guid)
+            .is_some_and(|l| l.store.text_unit() == guid)
     }
 
     /// The name by GUID: the name now, or empty while it is asked.
@@ -144,7 +146,7 @@ impl LogCtx<'_, '_> {
             .to_owned()
     }
 
-    fn flag_inputs(&self) -> FlagInputs<'_> {
+    pub(super) fn flag_inputs(&self) -> FlagInputs<'_> {
         FlagInputs {
             me: self.me(),
             group: &self.group,
@@ -210,10 +212,7 @@ impl LogCtx<'_, '_> {
 /// The write side: the entry queue, its clock and every event a producer fires.
 #[derive(SystemParam)]
 pub(crate) struct LogOut<'w> {
-    pending: ResMut<'w, PendingEntries>,
-    clock: Res<'w, CombatLogClock>,
     backdate: Res<'w, super::entries::CombatLogBackdate>,
-    time: Option<Res<'w, Time<bevy::time::Real>>>,
     gates: Res<'w, DamageTextGates>,
     text: MessageWriter<'w, CombatTextSpawn>,
     feedback: MessageWriter<'w, UnitCombatFeedback>,
@@ -222,15 +221,6 @@ pub(crate) struct LogOut<'w> {
 }
 
 impl LogOut<'_> {
-    /// The entry's time: now, less a batched entry's offset.
-    fn now_ms(&self) -> u64 {
-        let now = self
-            .time
-            .as_ref()
-            .map_or(0, |t| t.elapsed().as_millis() as u64);
-        now.saturating_add_signed(-i64::from(self.backdate.0))
-    }
-
     fn center(&mut self, message_type: &'static str, args: Vec<ScriptValue>) {
         self.center.write(CombatTextEvent { message_type, args });
     }
@@ -270,22 +260,20 @@ impl Log<'_, '_> {
             name: rec.map(|d| d.name.clone()),
             school: rec.map_or(0, |d| d.school_mask),
         });
-        let now = (self.out.now_ms(), *self.out.clock);
-        let inputs = self.ctx.flag_inputs();
-        let ctx = &self.ctx;
-        self.out.pending.queue(
-            NewEntry {
-                event,
-                source,
-                dest,
-                spell,
-                hide_source,
-                info,
-            },
-            now,
-            &inputs,
-            |g| ctx.store(g),
-        );
+        // The entry's allocation, naming and queue run at this step, in turn with the events
+        // around it (`0x750400`, `0x74ff20`).
+        let new = NewEntry {
+            event,
+            source,
+            dest,
+            spell,
+            hide_source,
+            info,
+            backdate_ms: self.out.backdate.0,
+        };
+        self.out
+            .chat
+            .world(move |world| super::store::queue(world, new));
     }
 
     /// The spell's record when it logs (`Attributes & 0x180` clear and named).
@@ -1230,6 +1218,7 @@ impl Log<'_, '_> {
     /// and a gas cloud dissipates.
     pub(crate) fn unit_dead(&mut self, guid: u64) {
         let Some(store) = self.ctx.store(guid) else {
+            debug!("combat_log: {guid:#x}'s death has no unit to log");
             return;
         };
         let is_player =
@@ -1239,6 +1228,10 @@ impl Log<'_, '_> {
             .object_entry()
             .and_then(|e| self.ctx.names.creature_record(e));
         if !is_player && record.is_none_or(|r| r.type_flags & 0x400 != 0) {
+            debug!(
+                "combat_log: {guid:#x}'s death is not logged (record {:?})",
+                record.map(|r| r.type_flags)
+            );
             return;
         }
         // 12340 tests the summon slot only when the spell lookup fails (`0x752f3e`), so a summon

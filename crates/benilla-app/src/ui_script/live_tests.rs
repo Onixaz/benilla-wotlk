@@ -344,7 +344,7 @@ const CALLS_NO_LUA: &[(&str, &str, &str)] = &[
     (
         "combat_log/producers.rs",
         "LogCtx",
-        "reads the combat-text unit and the focus off the model",
+        "reads the focus off the model",
     ),
     (
         "minimap/mod.rs",
@@ -368,18 +368,18 @@ const CALLS_NO_LUA: &[(&str, &str, &str)] = &[
     ),
     (
         "combat_log/mod.rs",
-        "log_deaths",
-        "reads the combat-text unit and the focus off the model through `LogCtx`",
+        "missile_missed",
+        "reads the focus off the model through `LogCtx`; its exclusive caller fires what it queued",
     ),
     (
         "combat_log/mod.rs",
-        "log_missile_misses",
-        "reads the combat-text unit and the focus off the model through `LogCtx`",
+        "run_producer",
+        "a producer reads the focus off the model through `LogCtx`; its caller's turn fires what it queued",
     ),
     (
-        "combat_log/mod.rs",
-        "log_cast_failures",
-        "reads the combat-text unit and the focus off the model through `LogCtx`",
+        "combat_log/store.rs",
+        "build",
+        "reads the focus off the model through `LogCtx`",
     ),
     (
         "cursor.rs",
