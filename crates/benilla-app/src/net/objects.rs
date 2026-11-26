@@ -1854,14 +1854,13 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
                 .and_then(|&e| sc.stores.get(e).ok())
                 .map_or(0, |s| s.0.unit_flags2()),
         );
-    if sc.self_guid.0 != Some(guid) && anim {
-        for _ in 0..merged.deaths {
+    let logs = sc.self_guid.0 != Some(guid) && anim;
+    for _ in 0..merged.deaths {
+        if logs {
             sc.ui
                 .world(move |world| crate::combat_log::unit_dead(world, guid));
         }
-    }
-    // The unit death's interact-target clear with its guid (`0x7293bf` -> `0x512e60`): the window on it closes.
-    if merged.deaths > 0 {
+        // Each run then clears the interact target with its guid, ungated (`0x7293bf` -> `0x512e60`): the window on it closes.
         sc.ui
             .world(move |world| crate::ui_session::clear_interact_target(world, guid));
     }

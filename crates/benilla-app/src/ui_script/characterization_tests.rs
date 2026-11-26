@@ -14109,6 +14109,43 @@ fn another_units_death_logs_once_per_watch_inside_its_update() {
     );
 }
 
+/// Each run of the unit death logs `UNIT_DIED` and then clears the interact target (`0x72929d`,
+/// then `0x7293bf`), so a window open on the unit closes between the two watches' logs.
+#[test]
+fn another_units_death_closes_its_window_between_the_two_logs() {
+    use benilla_protocol::messages::GossipMenu;
+    const OTHER: u64 = 0x0000_0000_0000_0042;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.packets(vec![player_create(OTHER), name_answer(OTHER, "Othar")], 3);
+    let menu = SessionEvent::GossipMenu(GossipMenu {
+        npc: OTHER,
+        menu_id: 1,
+        text_id: 1,
+        options: Vec::new(),
+        quests: Vec::new(),
+    });
+    let opened = rig.packets(vec![menu], 3);
+    assert_eq!(fired(&opened, &["GOSSIP_SHOW"]), ["GOSSIP_SHOW"]);
+    let died = SessionEvent::ObjectValues {
+        guid: OTHER,
+        fields: ObjectFields::from_pairs(&[
+            (FIELD_UNIT_HEALTH, 0),
+            (benilla_protocol::field::FIELD_UNIT_DYNAMIC_FLAGS, 0x20),
+        ]),
+    };
+    let seen = rig.packets(vec![died], 2);
+    assert_eq!(
+        log_pin(&seen, &["GOSSIP_CLOSED"], &["clnum"]),
+        vec![
+            "COMBAT_LOG_EVENT_UNFILTERED UNIT_DIED Othar ? | clnum=1",
+            "GOSSIP_CLOSED | clnum=1",
+            "COMBAT_LOG_EVENT_UNFILTERED UNIT_DIED Othar ? | clnum=2",
+        ]
+    );
+}
+
 /// An entry waiting on a record sends from that record's answer (`0x74fe90`), inside its
 /// handler and before the next packet's: `answer` lands the name `log` asked for.
 fn a_record_answer_sends_the_held_entry(
