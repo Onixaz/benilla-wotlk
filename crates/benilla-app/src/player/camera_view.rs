@@ -1,16 +1,19 @@
-//! The five camera views (`SetView`, `SaveView`, `ResetView`, `NextView`, `PrevView`) and
+//! The eight camera views (`SetView`, `SaveView`, `ResetView`, `NextView`, `PrevView`) and
 //! `FlipCameraYaw`: the engine half of [`benilla_ui::script::CameraViewRequest`].
 //!
-//! The reference's rows are `FIRST_PERSON` and `THIRD_PERSON_A`..`D`; Lua `SetView(n)` takes row
-//! `n - 1`. Pitch is in degrees down-positive, the opposite of [`FlyCam::pitch`], converted only by
-//! [`super::camera_saved::pitch_from_file`]. Row 0's distance `0.0` is real first person
-//! ([`CAM_DIST_MIN`] is `0.0`).
+//! 12340 registers eight views (`0x5fdcb3`, names at `0xad1b54`: `""`, `A`..`E`, `Com`,
+//! `Barber Shop`) × three fields (`0xad1b74`: `Distance`, `Pitch`, `Yaw`), each per-account and
+//! hidden from Lua (`0x50`), with defaults at `0xad1ba8`; `cameraView` (`0x5fdc3c`, `0x10`)
+//! defaults to `"2"` (`0xad1b90`, view `B`). Lua `SetView`/`SaveView`/`ResetView` accept `1..=5`
+//! and pass the index straight through (`A`..`E`, where `1`/`A` is first person at `0.0` yd).
+//! Pitch is in degrees down-positive, the opposite of [`FlyCam::pitch`], converted only by
+//! [`super::camera_saved::pitch_from_file`].
 //!
-//! The views persist as the reference's archived CVars. [`CameraViews`] is seeded from them once
-//! and writes every change back, so a live `SetCVar` does not reach the slots; the reference also
-//! loads them only at camera construction. The live view is remembered, not applied at startup:
-//! [`super::camera_saved`]'s pose lands over it, as the reference's saved pose lands over
-//! `cameraView`'s row at UI load.
+//! The views persist in the account's `config-cache.wtf` (slot 0). [`CameraViews`] is seeded from
+//! the CVar registry at startup and reloaded once the account-data CVar slots finish loading
+//! (`0x518c80` → `0x5fe510`). Every save or view switch writes back to the registry. The live view
+//! is remembered, not applied at startup: [`super::camera_saved`]'s pose lands over it, as the
+//! reference's saved pose lands over `cameraView`'s row at UI load.
 //!
 //! Deviation: `ResetView` writes the CVars back to their defaults, because the CVar store is our
 //! persistence; the reference touches no CVar, so its reset reverts at next launch.
@@ -20,7 +23,9 @@
 
 use bevy::prelude::*;
 
-use benilla_ui::script::{CameraViewRequest, CAMERA_VIEW_COUNT};
+use benilla_ui::script::{
+    CameraViewRequest, CAMERA_USER_VIEW_MAX, CAMERA_USER_VIEW_MIN, CAMERA_VIEW_COUNT,
+};
 use benilla_world::view::WorldCamera;
 
 use crate::creature_anim::wrap_pi;
@@ -30,34 +35,50 @@ use super::camera_saved::{pitch_from_file, pitch_to_file};
 use super::camera_zoom::{CAM_DIST_MAX, CAM_DIST_MIN};
 use super::Player;
 
-/// The reference's five views, through the UI crate's constant so the Lua range check agrees.
+/// The reference's eight views (`0xad1b54`), through the UI crate's constant so both sides agree.
 const VIEW_COUNT: usize = CAMERA_VIEW_COUNT as usize;
 
-/// The live view's CVar, holding the internal index as `"%d"`.
+/// The user-selectable views (`A`..`E`) that `NextView` (`0x604ce0`) and `PrevView` (`0x604d10`)
+/// walk across.
+const USER_VIEW_MIN: usize = CAMERA_USER_VIEW_MIN as usize;
+const USER_VIEW_MAX: usize = CAMERA_USER_VIEW_MAX as usize;
+
+/// The live view's CVar (`0x5fdc3c`, flags `0x10`), holding the internal index as `"%d"`.
 pub(crate) const CVAR_ACTIVE_VIEW: &str = "cameraView";
 
-/// The fifteen saved-view CVars, `[view][field]` (distance, pitch, yaw), as the reference composes
-/// them; [`crate::cvars::REGISTERED`] must hold the same names (tested).
+/// The twenty-four saved-view CVars, `[view][field]` (distance, pitch, yaw), as `0x5fdcb3` composes
+/// them from `0xad1b74` and `0xad1b54`; [`crate::cvars::REGISTERED`] must hold the same names
+/// (tested).
 pub(crate) const VIEW_CVARS: [[&str; 3]; VIEW_COUNT] = [
     ["cameraDistance", "cameraPitch", "cameraYaw"],
     ["cameraDistanceA", "cameraPitchA", "cameraYawA"],
     ["cameraDistanceB", "cameraPitchB", "cameraYawB"],
     ["cameraDistanceC", "cameraPitchC", "cameraYawC"],
     ["cameraDistanceD", "cameraPitchD", "cameraYawD"],
+    ["cameraDistanceE", "cameraPitchE", "cameraYawE"],
+    ["cameraDistanceCom", "cameraPitchCom", "cameraYawCom"],
+    [
+        "cameraDistanceBarber Shop",
+        "cameraPitchBarber Shop",
+        "cameraYawBarber Shop",
+    ],
 ];
 
-/// The reference's default strings, kept as text: [`crate::cvars`]'s file is a diff against the
-/// registered default string, so a reset strips the key only by writing this text.
+/// The reference's default strings (`0xad1ba8`), kept as text: [`crate::cvars`]'s file is a diff
+/// against the registered default string, so a reset strips the key only by writing this text.
 pub(crate) const VIEW_DEFAULTS: [[&str; 3]; VIEW_COUNT] = [
+    ["0.0", "0.0", "0.0"],
     ["0.0", "0.0", "0.0"],
     ["5.55", "10.0", "0.0"],
     ["5.55", "20.0", "0.0"],
     ["13.88", "30.0", "0.0"],
     ["13.88", "10.0", "0.0"],
+    ["0.0", "0.0", "0.0"],
+    ["5.0", "10.0", "0.0"],
 ];
 
-/// [`CVAR_ACTIVE_VIEW`]'s default: internal index 1, `THIRD_PERSON_A`.
-pub(crate) const ACTIVE_VIEW_DEFAULT: &str = "1";
+/// [`CVAR_ACTIVE_VIEW`]'s default (`0xad1b90`): internal index 2 (view `B`).
+pub(crate) const ACTIVE_VIEW_DEFAULT: &str = "2";
 
 /// One view's pose: yards, radians with [`FlyCam::pitch`]'s up-positive sign, and `yaw` as an
 /// offset from the subject's facing, which the reference re-adds every frame.
@@ -144,19 +165,20 @@ impl CameraViews {
         self.current == view
     }
 
-    /// `NextView`/`PrevView`, with no wrap at either end.
+    /// `NextView` (`0x604ce0`) and `PrevView` (`0x604d10`): step within `1..=5` (`A`..`E`), with
+    /// no wrap at either end.
     fn step(&self, forward: bool) -> Option<usize> {
         if forward {
-            (self.current + 1 < VIEW_COUNT).then(|| self.current + 1)
+            (self.current < USER_VIEW_MAX).then(|| self.current + 1)
         } else {
-            self.current.checked_sub(1)
+            (self.current > USER_VIEW_MIN).then(|| self.current - 1)
         }
     }
 }
 
-/// Startup: seed the views and the live index from the CVar registry, which exists from `CvarLoad`
-/// on while the VM's mirror does not yet; an absent key is the shipped default.
-fn load_saved_views(cvars: Res<crate::cvars::Cvars>, mut views: ResMut<CameraViews>) {
+/// Seed all eight views and the live index from the CVar registry (`0x5fe510`); an absent or
+/// unparseable key falls back to its shipped default.
+fn apply_cvars(cvars: &crate::cvars::Cvars, views: &mut CameraViews) {
     for (view, slot) in views.views.iter_mut().enumerate() {
         // Each field falls back on its own: a bad value costs that number, not the view.
         let field = |i: usize| {
@@ -175,13 +197,34 @@ fn load_saved_views(cvars: Res<crate::cvars::Cvars>, mut views: ResMut<CameraVie
         };
         *slot = ViewPose::from_reference(raw(0), raw(1), raw(2));
     }
-    if let Some(v) = cvars
+    views.current = cvars
         .get(CVAR_ACTIVE_VIEW)
         .and_then(|s| s.trim().parse::<usize>().ok())
         .filter(|v| *v < VIEW_COUNT)
+        .unwrap_or_else(|| {
+            ACTIVE_VIEW_DEFAULT
+                .parse()
+                .expect("the registrar default is an index")
+        });
+}
+
+/// Startup: seed the views and the live index from the CVar registry before entering the world.
+fn load_saved_views(cvars: Res<crate::cvars::Cvars>, mut views: ResMut<CameraViews>) {
+    apply_cvars(&cvars, &mut views);
+}
+
+/// Reload the views from the CVar registry once the account-data CVar slots have loaded
+/// (`0x518c80` → `0x5fe510`).
+pub(crate) fn load_from_cvars(world: &mut World) {
+    if !world.contains_resource::<crate::cvars::Cvars>()
+        || !world.contains_resource::<CameraViews>()
     {
-        views.current = v;
+        return;
     }
+    world.resource_scope(|world, cvars: Mut<crate::cvars::Cvars>| {
+        let mut views = world.resource_mut::<CameraViews>();
+        apply_cvars(&cvars, &mut views);
+    });
 }
 
 /// The barber chair's view (view 7): level, facing the character from `distance`; the close goes
@@ -309,7 +352,7 @@ fn drain_view_requests(
         }
     }
 
-    // Mirror into the registry so the change reaches `Config.wtf`.
+    // Mirror into the registry so the change reaches the account's `config-cache.wtf`.
     for view in write_slots {
         // A reset writes the default string verbatim, so the diff-shaped file drops the key.
         let reset_to_default = targets.views.pose(view) == ViewPose::shipped(view);
@@ -366,28 +409,28 @@ mod tests {
 
     #[test]
     fn each_shipped_view_lands_its_recorded_pose() {
-        // (Lua arg, distance yd, pitch in degrees down-positive).
+        // (internal index, distance yd, pitch in degrees down-positive) from `0xad1ba8`.
         let table = [
-            (1, 0.0_f32, 0.0_f32),
+            (0, 0.0_f32, 0.0_f32),
+            (1, 0.0, 0.0),
             (2, 5.55, 10.0),
             (3, 5.55, 20.0),
             (4, 13.88, 30.0),
             (5, 13.88, 10.0),
+            (6, 0.0, 0.0),
+            (7, 5.0, 10.0),
         ];
         let views = CameraViews::default();
-        for (lua_arg, distance, pitch_deg) in table {
-            let pose = views.pose(lua_arg - 1);
-            assert_eq!(pose.distance, distance, "SetView({lua_arg}) distance");
+        for (index, distance, pitch_deg) in table {
+            let pose = views.pose(index);
+            assert_eq!(pose.distance, distance, "view {index} distance");
             assert!(
                 (pose.pitch - pitch_from_file(pitch_deg)).abs() < 1e-6,
-                "SetView({lua_arg}) pitch: {} vs {}",
+                "view {index} pitch: {} vs {}",
                 pose.pitch,
                 pitch_from_file(pitch_deg)
             );
-            assert_eq!(
-                pose.yaw, 0.0,
-                "SetView({lua_arg}) yaw is behind the character"
-            );
+            assert_eq!(pose.yaw, 0.0, "view {index} yaw is behind the character");
             assert!(
                 pose.pitch <= 0.0,
                 "a positive saved pitch looks DOWN for us"
@@ -398,13 +441,14 @@ mod tests {
     #[test]
     fn view_one_is_real_first_person_not_a_near_stop() {
         assert_eq!(CAM_DIST_MIN, 0.0);
-        assert_eq!(CameraViews::default().pose(0).distance, 0.0);
+        // Lua `SetView(1)` selects internal index 1 (view `A`), which is first person in 12340.
+        assert_eq!(CameraViews::default().pose(1).distance, 0.0);
     }
 
     #[test]
-    fn the_shipped_view_is_third_person_a() {
-        assert_eq!(CameraViews::default().current, 1);
-        assert_eq!(CameraViews::default().pose(1).distance, 5.55);
+    fn the_shipped_view_is_third_person_b() {
+        assert_eq!(CameraViews::default().current, 2);
+        assert_eq!(CameraViews::default().pose(2).distance, 5.55);
     }
 
     #[test]
@@ -433,13 +477,14 @@ mod tests {
         assert!((reloaded.pitch - saved.pitch).abs() < 1e-4);
         assert!((reloaded.yaw - saved.yaw).abs() < 1e-4);
 
-        assert!(!views.reset(2), "view 2 was not the live one");
+        assert!(views.reset(2), "view 2 is the default live one");
         assert_eq!(views.pose(2), ViewPose::shipped(2));
+        assert!(!views.reset(3), "view 3 was not the live one");
         views.set(3);
         assert!(views.reset(3));
     }
 
-    /// The engine takes `1..=5`; the stock `SAVEVIEW`/`RESETVIEW` bindings start at 2.
+    /// Lua `SaveView(1)` and `ResetView(1)` act on internal view 1 (`A`).
     #[test]
     fn view_one_is_saveable_and_resettable() {
         let mut views = CameraViews::default();
@@ -448,25 +493,25 @@ mod tests {
             pitch: -0.2,
             yaw: 0.0,
         };
-        views.save(0, pose);
-        assert_eq!(views.pose(0), pose);
-        views.reset(0);
-        assert_eq!(views.pose(0), ViewPose::shipped(0));
-        assert_eq!(views.pose(0).distance, 0.0);
+        views.save(1, pose);
+        assert_eq!(views.pose(1), pose);
+        views.reset(1);
+        assert_eq!(views.pose(1), ViewPose::shipped(1));
+        assert_eq!(views.pose(1).distance, 0.0);
     }
 
     #[test]
     fn next_and_prev_stop_at_the_ends() {
         let mut views = CameraViews::default();
-        views.set(0);
-        assert_eq!(views.step(false), None, "PrevView at view 1 is a no-op");
-        for expected in 1..VIEW_COUNT {
+        views.set(USER_VIEW_MIN);
+        assert_eq!(views.step(false), None, "PrevView at view 1 (A) is a no-op");
+        for expected in (USER_VIEW_MIN + 1)..=USER_VIEW_MAX {
             let next = views.step(true).expect("a view above this one");
             assert_eq!(next, expected);
             views.set(next);
         }
-        assert_eq!(views.step(true), None, "NextView at view 5 is a no-op");
-        for expected in (0..VIEW_COUNT - 1).rev() {
+        assert_eq!(views.step(true), None, "NextView at view 5 (E) is a no-op");
+        for expected in (USER_VIEW_MIN..USER_VIEW_MAX).rev() {
             let prev = views.step(false).expect("a view below this one");
             assert_eq!(prev, expected);
             views.set(prev);
@@ -509,23 +554,80 @@ mod tests {
     }
 
     #[test]
-    fn the_view_cvars_are_registered_with_the_references_defaults() {
+    fn the_view_cvars_are_registered_with_the_references_defaults_and_flags() {
         let registered = |name: &str| {
             crate::cvars::REGISTERED
                 .iter()
                 .find(|r| r.name.eq_ignore_ascii_case(name))
-                .map(|r| r.default)
         };
         for view in 0..VIEW_COUNT {
             for field in 0..3 {
                 let name = VIEW_CVARS[view][field];
-                assert_eq!(
-                    registered(name),
-                    Some(VIEW_DEFAULTS[view][field]),
-                    "{name} is not registered with its shipped default"
+                let row = registered(name).unwrap_or_else(|| panic!("{name} is not registered"));
+                assert_eq!(row.default, VIEW_DEFAULTS[view][field], "{name} default");
+                assert_eq!(row.scope, crate::cvars::Scope::Account, "{name} scope");
+                assert!(row.hidden, "{name} must be hidden from Lua (flag 0x40)");
+            }
+        }
+        let active = registered(CVAR_ACTIVE_VIEW).expect("cameraView is registered");
+        assert_eq!(active.default, ACTIVE_VIEW_DEFAULT);
+        assert_eq!(active.scope, crate::cvars::Scope::Account);
+        assert!(!active.hidden, "cameraView is visible to Lua (flag 0x10)");
+
+        // Hidden rows never reach the Lua VM mirror; `cameraView` does.
+        let cvars = crate::cvars::Cvars::default();
+        let seeded = cvars.vm_seed();
+        assert!(
+            seeded
+                .iter()
+                .any(|s| s.name == CVAR_ACTIVE_VIEW && s.default == "2" && s.per_account),
+            "cameraView must be seeded into Lua at default 2"
+        );
+        for row in &VIEW_CVARS {
+            for &name in row {
+                assert!(
+                    !seeded.iter().any(|s| s.name.eq_ignore_ascii_case(name)),
+                    "{name} must not be seeded into Lua"
                 );
             }
         }
-        assert_eq!(registered(CVAR_ACTIVE_VIEW), Some(ACTIVE_VIEW_DEFAULT));
+    }
+
+    #[test]
+    fn reference_config_cache_restores_the_same_views() {
+        let mut cvars = crate::cvars::Cvars::default();
+        cvars.load_scope(
+            crate::cvars::Scope::Account,
+            concat!(
+                "SET cameraView \"4\"\n",
+                "SET cameraDistanceB \"9.250000\"\n",
+                "SET cameraPitchB \"22.500000\"\n",
+                "SET cameraYawB \"45.000000\"\n",
+                "SET cameraDistanceE \"20.000000\"\n",
+            ),
+        );
+        let mut views = CameraViews::default();
+        apply_cvars(&cvars, &mut views);
+
+        assert_eq!(views.current, 4);
+        assert_eq!(views.pose(2).distance, 9.25);
+        assert!((views.pose(2).pitch - pitch_from_file(22.5)).abs() < 1e-6);
+        assert!((views.pose(2).yaw - 45.0_f32.to_radians()).abs() < 1e-6);
+        assert_eq!(views.pose(5).distance, 20.0);
+        // Unmodified views keep their 12340 shipped defaults.
+        assert_eq!(views.pose(1), ViewPose::shipped(1));
+        assert_eq!(views.pose(3), ViewPose::shipped(3));
+
+        // Account config-cache.wtf carries the modified rows back out.
+        let saved = cvars.compose_scope(crate::cvars::Scope::Account);
+        assert!(saved.contains("SET cameraView \"4\"\n"), "{saved}");
+        assert!(
+            saved.contains("SET cameraDistanceB \"9.250000\"\n"),
+            "{saved}"
+        );
+        assert!(
+            saved.contains("SET cameraDistanceE \"20.000000\"\n"),
+            "{saved}"
+        );
     }
 }
