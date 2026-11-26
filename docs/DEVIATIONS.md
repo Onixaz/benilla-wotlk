@@ -359,3 +359,17 @@ means and records the difference here.
   pack while `LoggingCombat` is on (`0x74f9e3`), so 12340 faults. Addons work around it by delaying
   the clear.
 - **benilla:** ends the send loop when no entry is left; the next entry logs as the first.
+
+### Combat log: recycling the waiting entry
+
+- **12340:** When no entry is free, a new combat log entry recycles the oldest one once it is past
+  `combatLogRetentionTime` (`0x750400`, `0x75043f` -> `0x750390`). If that entry is the one still
+  waiting for a name, the recycle moves the send cursor to the next entry (`0x7503a0`–`0x7503b0`)
+  and sends nothing. Only two places send after that: the queue, and only when no entry is waiting
+  (`0x74ff39`–`0x74ff46`), and the waiting entry's own name callback (`0x74fe90`, `0x74ff01`). A
+  next entry that already has its names has no callback and every new entry finds the cursor set,
+  so `COMBAT_LOG_EVENT` and `COMBAT_LOG_EVENT_UNFILTERED` stop until a login or a
+  `CombatLogClearEntries` nulls the cursor (`0x7503a8`). A name that never answers, such as a
+  despawned pet's, is enough. Addons work around it by clearing the log.
+- **benilla:** when the recycle moves the cursor onto an entry that has its names, sends from it at
+  once and walks on to the next waiting entry, as the send loop does (`0x74fa09`–`0x74fa25`).
