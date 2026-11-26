@@ -161,8 +161,8 @@ fn build(
         info,
     };
     // An entry named in full shows its creature guids sanitized before it sends (`0x74ff54`,
-    // `0x74ff5f`); one queued behind a waiting entry is sanitized here too, where 12340 skips it
-    // (`0x74ff40` returns first, `0x74fa25` sends it as is).
+    // `0x74ff5f`). 12340 bug: one queued behind a waiting entry skips it (`0x74ff40` returns
+    // first, `0x74fa25` sends it as is); every entry is meant to show sanitized, so it is here.
     if asks.is_empty() {
         sanitize(&mut entry, &sources);
     }
@@ -217,8 +217,9 @@ pub(crate) fn send(world: &mut World) {
                 script.fire_event("COMBAT_LOG_EVENT_UNFILTERED", args);
             });
         }
-        // The pending entry read again past the listeners (`0x74f9e3`, `0x74fa09`); a listener's
-        // `CombatLogClearEntries` leaves none, where 12340 dereferences the null (`0x74fa0f`).
+        // The pending entry read again past the listeners (`0x74f9e3`, `0x74fa09`). 12340 bug: a
+        // listener's `CombatLogClearEntries` nulls it (`0x7503a8`) and 12340 dereferences the null
+        // (`0x74fa0f`); a cleared log has nothing left to send, so the loop ends here.
         let Some(id) = world
             .get_resource::<CombatLog>()
             .and_then(|log| log.store.pending())
