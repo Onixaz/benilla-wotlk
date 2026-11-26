@@ -209,9 +209,19 @@ fn on_building_damage(In(ev): In<SessionEvent>, mut log: Log) {
     }
 }
 
-fn on_destroyed_on_death(In(ev): In<SessionEvent>, mut log: Log) {
+fn on_destroyed_on_death(
+    In(ev): In<SessionEvent>,
+    mut log: Log,
+    passengers: Query<&crate::vehicle::Passenger>,
+) {
     if let SessionEvent::DestroyedOnDeath(guid) = ev {
-        log.destroyed_on_death(guid);
+        // The passenger record's seated state (`[unit+0xf60]` == 3, read at `0x729277`).
+        let seated = log
+            .ctx
+            .entity(guid)
+            .and_then(|e| passengers.get(e).ok())
+            .is_some_and(|p| p.state == crate::vehicle::SEATED);
+        log.destroyed_on_death(guid, seated);
     }
 }
 

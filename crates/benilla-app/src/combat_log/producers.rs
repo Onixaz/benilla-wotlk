@@ -1202,13 +1202,15 @@ impl Log<'_, '_> {
     }
 
     /// `SMSG_DESTROY_OBJECT`'s death byte (`0x4d7661`-`0x4d7682`): a unit still above 0 health
-    /// dies before it goes, which logs its death.
-    pub(crate) fn destroyed_on_death(&mut self, guid: u64) {
-        let alive = self
-            .ctx
-            .store(guid)
-            .is_some_and(|s| s.is_unit() && s.0.unit_health().unwrap_or(0) > 0);
-        if alive {
+    /// dies before it goes (`0x729220`), which logs its death in the death anim behind its seated
+    /// gate (`0x729277`-`0x729299`).
+    pub(crate) fn destroyed_on_death(&mut self, guid: u64, seated: bool) {
+        let anim = self.ctx.store(guid).is_some_and(|s| {
+            s.is_unit()
+                && s.0.unit_health().unwrap_or(0) > 0
+                && crate::death::runs_death_anim(seated, s.0.unit_flags2())
+        });
+        if anim {
             self.unit_dead(guid);
         }
     }

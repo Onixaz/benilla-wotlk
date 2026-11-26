@@ -492,15 +492,61 @@ fn deaths_log_for_known_units() {
 #[test]
 fn a_destroy_on_death_logs_only_a_living_unit() {
     let mut app = rig();
-    run(&mut app, |log| log.destroyed_on_death(ME));
+    run(&mut app, |log| log.destroyed_on_death(ME, false));
     assert_eq!(events(&mut app), [CombatLogEvent::UnitDied]);
 
     let me = app.world_mut().resource::<GuidIndex>().0[&ME];
     app.world_mut()
         .entity_mut(me)
         .insert(unit(ObjectType::Player, 0));
-    run(&mut app, |log| log.destroyed_on_death(ME));
+    run(&mut app, |log| log.destroyed_on_death(ME, false));
     assert_eq!(entries(&mut app).len(), 1, "a dead unit does not die again");
+}
+
+/// A destroy's death runs the death anim, and with it the log, behind the anim's seated gate
+/// (`0x729277`-`0x729299`): a seated unit logs its death only under `UNIT_FIELD_FLAGS_2 & 0x20000`.
+#[test]
+fn a_destroy_on_death_logs_a_seated_unit_only_under_its_flag() {
+    use benilla_protocol::field::FIELD_UNIT_FLAGS_2;
+    use benilla_protocol::SessionEvent;
+    let mut app = rig();
+    let me = app.world_mut().resource::<GuidIndex>().0[&ME];
+    app.world_mut()
+        .entity_mut(me)
+        .insert(crate::vehicle::Passenger {
+            vehicle: 0xF150_0000_0000_0001,
+            seat: 0,
+            state: crate::vehicle::SEATED,
+        });
+    let destroy = |app: &mut App| {
+        app.world_mut()
+            .run_system_once_with(
+                super::on_destroyed_on_death,
+                SessionEvent::DestroyedOnDeath(ME),
+            )
+            .unwrap();
+    };
+    destroy(&mut app);
+    assert!(
+        entries(&mut app).is_empty(),
+        "seated at flags2 0: no anim, no log"
+    );
+
+    app.world_mut().entity_mut(me).insert(ObjectStore(
+        ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19),
+            (FIELD_UNIT_HEALTH, 100),
+            (FIELD_UNIT_LEVEL, 80),
+            (FIELD_UNIT_FLAGS_2, 0x2_0000),
+        ])
+        .into_created(ObjectType::Player),
+    ));
+    destroy(&mut app);
+    assert_eq!(
+        events(&mut app),
+        [CombatLogEvent::UnitDied],
+        "seated under 0x20000 logs"
+    );
 }
 
 /// The owner's client floats a building's hit in orange (category 8) and its repair as `+%d`
@@ -841,7 +887,7 @@ fn a_waiting_name_holds_the_log_until_its_record_answers() {
 /// A ready entry queued behind a waiting one shows its creature guids sanitized like every other
 /// entry (`0x74d210`). 12340 skips the sanitize for it (`0x74ff40` returns before `0x74ff54` and
 /// `0x74ff5f`, and the send loop sends it as is at `0x74fa25`), so its guid keeps the spawn
-/// counter there; the branch sanitizes it at its build.
+/// counter there; benilla sanitizes it at its build.
 #[test]
 fn an_entry_queued_behind_a_waiting_one_is_sanitized() {
     let mut app = rig();
