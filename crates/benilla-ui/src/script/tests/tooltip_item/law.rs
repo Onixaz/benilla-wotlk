@@ -1362,7 +1362,8 @@ fn merchant_purchase_group_requirement_line_reflects_ownership() {
         .expect("unowned purchase group prints");
     assert_eq!(req.1, red, "unowned is red");
 
-    // Owned in bank (`0x7546f0` with bank flag `8`): normal white colour.
+    // Owned in bank (`0x754a20` -> `0x7546f0` with flag `8`, searching equipped, bags, backpack,
+    // bank, keyring and currency): normal white colour.
     let mut bank_slots = HashMap::new();
     bank_slots.insert(
         1,

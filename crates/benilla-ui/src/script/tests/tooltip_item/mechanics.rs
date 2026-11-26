@@ -1324,6 +1324,51 @@ fn carried_suffix_item_uses_rand_prop_points_while_link_uses_seed() {
             texts.iter().any(|t| t.contains("+100 Stamina")),
             "link path must keep using seed, got {texts:?}"
         );
+
+        // `SetInventoryItem`: `"player"` is an item object (`RandPropPoints` -> +50), while an
+        // inspected unit has no item object (`0x62e050`) and uses the seed (+100).
+        let mut inv: InventorySlots = std::array::from_fn(|_| None);
+        inv[1] = Some(InvSlotView {
+            item_id: 9101,
+            count: 1,
+            quality: 4,
+            name: Some("Item 9101 of the Bear".into()),
+            link: Some("|Hitem:9101:0:0:0:0:0:-39:200:80|h[Item 9101]|h".into()),
+            enchants: vec![EnchantView {
+                id: 2802,
+                slot: 7,
+                name: "+$i Stamina".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+        s.set_inventory_slots(inv.clone());
+        s.set_inspect(Some(InspectView {
+            unit: "target".into(),
+            guid: 0x42,
+            slots: inv,
+            gem_counts: [0; 4],
+        }));
+        s.run(r#"assert(TT:SetInventoryItem("player", 1))"#)
+            .unwrap();
+        let texts: Vec<String> = super::lines_of(&mut s)
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        assert!(
+            texts.iter().any(|t| t.contains("+50 Stamina")),
+            "player worn item must use RandPropPoints, got {texts:?}"
+        );
+        s.run(r#"assert(TT:SetInventoryItem("target", 1))"#)
+            .unwrap();
+        let texts: Vec<String> = super::lines_of(&mut s)
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        assert!(
+            texts.iter().any(|t| t.contains("+100 Stamina")),
+            "inspected unit item must use seed, got {texts:?}"
+        );
     });
 }
 

@@ -18,7 +18,7 @@ const ITEM_PURCHASE_GROUP: &str = "DBFilesClient\\ItemPurchaseGroup.dbc";
 /// The required-item slots a record carries.
 pub const EXTENDED_COST_ITEMS: usize = 5;
 
-/// The item-id slots an `ItemPurchaseGroup.dbc` record carries (`0x62b77a`).
+/// The item-id slots an `ItemPurchaseGroup.dbc` record carries (`0x62b789`).
 pub const PURCHASE_GROUP_ITEMS: usize = 8;
 
 /// One record.

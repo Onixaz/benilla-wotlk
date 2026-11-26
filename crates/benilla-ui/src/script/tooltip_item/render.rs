@@ -1275,8 +1275,9 @@ fn requirement_lines(
         };
         keyed(key, &[Arg::D(rating.into())], req_color(met), false)?;
     }
-    // The merchant's purchase group requirement (`0x62b727`..`0x62b7b5`): normal colour when any
-    // of the group's items is held (including bank), red otherwise.
+    // The merchant's purchase group requirement (`0x62b727`..`0x62b7b5`): calls `0x754a20` with
+    // flag `8` (`0x7546f0` adds `0x247`, searching equipped items, bags, backpack, bank, keyring
+    // and currency); normal colour when any item in the group is held, red otherwise.
     if let Some((name, owned)) = purchase_group {
         keyed(
             "ITEM_REQ_PURCHASE_GROUP",
