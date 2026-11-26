@@ -5918,7 +5918,7 @@ fn cast_bar_events_fire_from_the_spell_handlers_in_wire_order() {
 }
 
 /// A cast's log entries fire inside the cast's handlers behind its unit events: the start's
-/// `UNIT_SPELLCAST_START` (`0x806961` -> `0x805496`) before its `SPELL_CAST_START` (`0x8069e0`),
+/// `UNIT_SPELLCAST_START` (`0x806961` -> `0x8054b8`) before its `SPELL_CAST_START` (`0x8069e0`),
 /// and the go's `UNIT_SPELLCAST_SUCCEEDED` (`0x80e763`) before its `SPELL_CAST_SUCCESS`
 /// (`0x80ec6c`), each before the next packet's events.
 #[test]
