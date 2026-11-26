@@ -714,7 +714,7 @@ fn tick_lent(
 /// `resolve` for what was written since the tick, the walk, and the conversion into [`UiQuads`].
 /// Exclusive: the resolve fires `OnSizeChanged` and the scroll-range handlers, with the `World`
 /// lent.
-pub(super) fn paint_script(world: &mut World) {
+pub(crate) fn paint_script(world: &mut World) {
     let Ok(Some(start)) = world.run_system_cached(paint_measure) else {
         return;
     };

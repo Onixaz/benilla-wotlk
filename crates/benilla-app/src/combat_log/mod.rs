@@ -38,12 +38,17 @@ impl Plugin for CombatLogPlugin {
             .init_resource::<entries::CombatLogClock>()
             .init_resource::<entries::CombatLogBackdate>()
             .add_message::<crate::entities::MissileMiss>()
-            // The arrivals' misses log right behind the world update that moved the missiles
-            // (`0x702fc0`), in the paint phase.
+            // The arrivals' misses log in the world frame's paint (`0x47f163`), behind the idle's
+            // runners (`0x47f15b`): the world update moves the missiles (`0x4fb031` -> `0x703b00`),
+            // ahead of the name text (`0x4fb036`) and the frames' render (`0x4fb090`).
             .add_systems(
                 Update,
                 log_missile_misses
                     .after(crate::entities::EntityVisualsSet)
+                    .after(crate::area::ZoneEventsSet)
+                    .after(crate::ui_dialog_verbs::poll_area_spirit_healer)
+                    .before(crate::vplates::VPlateSet)
+                    .before(crate::ui_script::extract::paint_script)
                     .in_set(crate::ui_script::UiPaint),
             );
         app.net_handler(K::Connected, on_login)
