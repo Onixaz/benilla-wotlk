@@ -14177,7 +14177,7 @@ fn our_death_logs_before_player_dead() {
     );
 }
 
-/// Our spell failure shows its line, then logs it (`0x808aa5`, then `0x808ac3` -> `0x751ad0`):
+/// Our spell failure shows its line, then logs it (`0x808b00`, then `0x808b3c` -> `0x751ad0`):
 /// `UI_ERROR_MESSAGE` reads the log without the entry, which fires behind it inside the
 /// failure's handler, before the next packet's (the filtered event's filter passes it by).
 #[test]
