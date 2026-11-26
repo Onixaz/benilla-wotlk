@@ -99,7 +99,7 @@ pub use level_grant::UnitRequest;
 pub use name_records::NameRecord;
 pub use unit_menu::{DifficultyState, ReferAFriendState};
 mod worldmap_arrow;
-// `camera_view`: the five camera views and `FlipCameraYaw`, as the reference's UI camera has them.
+// `camera_view`: the eight camera views and `FlipCameraYaw`, as the reference's UI camera has them.
 mod button;
 mod calendar;
 mod calls;
@@ -333,7 +333,9 @@ pub use calls::{
     apply_queued, set_answer, set_apply, AnswerHost, ApplyCall, CastAt, GuildBankVerdict,
     HostAnswer, HostAsk, LootVerb, NearestMode, ScriptCall, VerbPress,
 };
-pub use camera_view::{CameraViewRequest, CAMERA_VIEW_COUNT};
+pub use camera_view::{
+    CameraViewRequest, CAMERA_USER_VIEW_MAX, CAMERA_USER_VIEW_MIN, CAMERA_VIEW_COUNT,
+};
 pub use channel::{ChannelCommand, ZoneChannelRow};
 pub use channel_pane::{ChannelPane, ChannelSlotInfo};
 pub use char_stats::{
