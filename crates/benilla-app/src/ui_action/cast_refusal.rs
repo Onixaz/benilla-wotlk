@@ -2,6 +2,7 @@
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
+use std::time::Instant;
 
 use benilla_ui::script::UiScript;
 
@@ -127,14 +128,50 @@ pub(crate) struct RefusalsSeen(pub(crate) Vec<CastFail>);
 /// Our last spell failure's spell, reason and async-clock time (`0xd397c4`, `0xd397c0`,
 /// `0xd397bc`); the spell is zeroed at world entry (`0x8102f9`). The auto-ranged spell's own
 /// repeat test (`0x8083eb`-`0x808405`) waits for that mode (#671).
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub(crate) struct LastFailure {
     spell: u32,
     reason: u8,
     at_ms: u32,
+    clock: AsyncClock,
+}
+
+impl Default for LastFailure {
+    fn default() -> Self {
+        Self {
+            spell: 0,
+            reason: 0,
+            at_ms: 0,
+            clock: AsyncClock::Os(Instant::now()),
+        }
+    }
+}
+
+/// The async clock the repeat test calls (`0x80840b` -> `0x86ae20`): the OS clock read at the
+/// call, or a set time for tests.
+enum AsyncClock {
+    Os(Instant),
+    #[cfg(test)]
+    Set(u32),
 }
 
 impl LastFailure {
+    /// `0x80840b`-`0x808448` at the clock's time now.
+    pub(crate) fn repeats_now(&mut self, spell: u32, reason: u8) -> bool {
+        let now = match self.clock {
+            AsyncClock::Os(epoch) => epoch.elapsed().as_millis() as u32,
+            #[cfg(test)]
+            AsyncClock::Set(ms) => ms,
+        };
+        self.repeats(spell, reason, now)
+    }
+
+    /// Sets the async clock the repeat test reads.
+    #[cfg(test)]
+    pub(crate) fn set_clock_ms(&mut self, ms: u32) {
+        self.clock = AsyncClock::Set(ms);
+    }
+
     /// `0x80840b`-`0x808448`: whether `spell` failing on `reason` at `now_ms` repeats the kept
     /// pair less than 3000 ms after the last failure; a new pair is kept, the time on every call.
     pub(crate) fn repeats(&mut self, spell: u32, reason: u8, now_ms: u32) -> bool {
@@ -155,11 +192,6 @@ impl LastFailure {
     }
 }
 
-/// The async clock the repeat test reads (`0x86ae20`), in ms, wrapping as a `u32` does.
-fn async_ms(time: Option<&Time<Real>>) -> u32 {
-    time.map_or(0, |t| t.elapsed().as_millis() as u32)
-}
-
 /// Everything a refusal's line reads and where it lands.
 #[derive(SystemParam)]
 pub(crate) struct CastFailShow<'w, 's> {
@@ -172,7 +204,6 @@ pub(crate) struct CastFailShow<'w, 's> {
     name_tables: FailNameTables<'w>,
     sounds: Option<ResMut<'w, MessageSounds>>,
     last: Option<ResMut<'w, LastFailure>>,
-    time: Option<Res<'w, Time<Real>>>,
 }
 
 impl CastFailShow<'_, '_> {
@@ -232,10 +263,9 @@ impl CastFailShow<'_, '_> {
         if self.self_q.iter().next().is_none() {
             return false;
         }
-        let now = async_ms(self.time.as_deref());
         self.last
             .as_deref_mut()
-            .is_some_and(|last| last.repeats(fail.spell_id, fail.reason, now))
+            .is_some_and(|last| last.repeats_now(fail.spell_id, fail.reason))
     }
 
     /// The player's arms that end in the silent exit with no line ([`cast_fail::exits_quietly`]).
@@ -442,9 +472,8 @@ pub(crate) fn note_dont_report(world: &mut World, spell_id: u32, reason: u8) {
         .iter(world)
         .next()
         .is_some();
-    let now = async_ms(world.get_resource::<Time<Real>>());
     if let (true, Some(mut last)) = (present, world.get_resource_mut::<LastFailure>()) {
-        last.repeats(spell_id, reason, now);
+        last.repeats_now(spell_id, reason);
     }
 }
 

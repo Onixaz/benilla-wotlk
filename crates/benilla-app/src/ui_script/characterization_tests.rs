@@ -14231,11 +14231,13 @@ fn a_repeated_spell_failure_within_3s_of_the_last_is_silent() {
         return;
     };
     rig.run(2);
-    // Each frame advances the async clock by half a second; each `packets` call runs two.
-    rig.app
-        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
-            std::time::Duration::from_millis(500),
-        ));
+    // The async clock the test reads at the call (`0x80840b` -> `0x86ae20`), set per failure.
+    let at = |rig: &mut Rig, ms: u32| {
+        rig.app
+            .world_mut()
+            .resource_mut::<crate::ui_action::LastFailure>()
+            .set_clock_ms(ms);
+    };
     let fail = |reason: u8| SessionEvent::CastResult {
         cast_count: 0,
         spell_id: 133,
@@ -14264,26 +14266,34 @@ fn a_repeated_spell_failure_within_3s_of_the_last_is_silent() {
     };
     const OUT_OF_RANGE: u8 = 0x59;
     const LINE_OF_SIGHT: u8 = 0x2a;
+    at(&mut rig, 10_000);
     let first = rig.packets(vec![fail(OUT_OF_RANGE)], 2);
     assert_eq!(shown(&first), (1, 1, 1), "the first shows");
     // One second later: the same pair is silent; the end still fires.
+    at(&mut rig, 11_000);
     let second = rig.packets(vec![fail(OUT_OF_RANGE)], 2);
     assert_eq!(shown(&second), (0, 0, 1), "a repeat within 3 s is silent");
     // 3.5 s after the first, 2.5 s after the second, which stamped the time: still silent.
-    rig.run(3);
+    at(&mut rig, 13_500);
     let third = rig.packets(vec![fail(OUT_OF_RANGE)], 2);
     assert_eq!(
         shown(&third),
         (0, 0, 1),
         "the silent repeat stamped the time"
     );
-    // 4 s of quiet: shown again.
-    rig.run(6);
+    // 2999 ms after the last: still silent (`0x808431`, `jns` on `now - last - 3000`).
+    at(&mut rig, 16_499);
+    let edge = rig.packets(vec![fail(OUT_OF_RANGE)], 2);
+    assert_eq!(shown(&edge), (0, 0, 1), "2999 ms is a repeat");
+    // Exactly 3000 ms after the last: shown again.
+    at(&mut rig, 19_499);
     let fourth = rig.packets(vec![fail(OUT_OF_RANGE)], 2);
-    assert_eq!(shown(&fourth), (1, 1, 1), "past 3 s it shows again");
+    assert_eq!(shown(&fourth), (1, 1, 1), "3000 ms shows again");
     // A different reason within the window shows, and becomes the kept pair.
+    at(&mut rig, 19_600);
     let other = rig.packets(vec![fail(LINE_OF_SIGHT)], 2);
     assert_eq!(shown(&other), (1, 1, 1), "a new reason shows");
+    at(&mut rig, 19_700);
     let back = rig.packets(vec![fail(OUT_OF_RANGE)], 2);
     assert_eq!(
         shown(&back),
@@ -14312,6 +14322,7 @@ fn a_repeated_spell_failure_within_3s_of_the_last_is_silent() {
         points: vec![],
     };
     rig.packets(vec![go], 2);
+    at(&mut rig, 19_800);
     let after_go = rig.packets(vec![fail(OUT_OF_RANGE)], 2);
     assert_eq!(shown(&after_go), (1, 1, 1), "a go resets the kept spell");
 }
