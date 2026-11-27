@@ -96,6 +96,8 @@ pub(super) struct LinkFacts {
     /// applies it to add-on records that outlive the world session, so every login on the link
     /// reads it.
     addon_info: Option<Vec<u8>>,
+    /// Full `SMSG_ADDON_INFO` records (keys + URLs) for `.pub` / `.url` persistence (`0x5f79a0`).
+    addon_records: Option<Vec<messages::AddonInfoRecord>>,
 }
 
 /// The server seed of `SMSG_AUTH_CHALLENGE`, whose body is `u32 1`, the seed, then 32 bytes of
@@ -405,10 +407,12 @@ impl WorldSession {
                 .map_err(|e| anyhow!("parsing SMSG_CHAR_ENUM: {e}")),
             // Kept for every login on the link; a body that does not parse is skipped.
             opcode::SMSG_ADDON_INFO => {
-                if let Ok(ServerPacket::AddonInfo { statuses, .. }) =
-                    messages::parse_server(opcode, &body)
+                if let Ok(ServerPacket::AddonInfo {
+                    statuses, records, ..
+                }) = messages::parse_server(opcode, &body)
                 {
                     self.link.addon_info = Some(statuses);
+                    self.link.addon_records = Some(records);
                 }
                 Ok(ServerPacket::Other { opcode })
             }
@@ -437,8 +441,12 @@ impl WorldSession {
         };
         self.keep_glue(&packet);
         // `SMSG_ADDON_INFO` can reach any of the handshake's read loops, so it is caught here.
-        if let ServerPacket::AddonInfo { statuses, .. } = &packet {
+        if let ServerPacket::AddonInfo {
+            statuses, records, ..
+        } = &packet
+        {
             self.link.addon_info = Some(statuses.clone());
+            self.link.addon_records = Some(records.clone());
         }
         Ok(packet)
     }
@@ -459,6 +467,11 @@ impl WorldSession {
     /// real, as vmangos stays silent when it rejects the addon block (`WorldSocket.cpp:447`).
     pub fn addon_info(&self) -> Option<&[u8]> {
         self.link.addon_info.as_deref()
+    }
+
+    /// Full `SMSG_ADDON_INFO` records received on this connection, for `.pub` / `.url` persistence.
+    pub fn addon_records(&self) -> Option<&[messages::AddonInfoRecord]> {
+        self.link.addon_records.as_deref()
     }
 
     /// One `SMSG_WARDEN_DATA` read in place: its scripts kept for the glue, its replies sent now. A

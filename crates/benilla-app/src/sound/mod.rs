@@ -398,12 +398,25 @@ impl Plugin for SoundPlugin {
         let (drivers, settings) = engine::boot_settings();
         let mixer = if let Some(var) = silent {
             info!("${var} set — audio disabled");
+            crate::client_logs::log_sound_init(&format!("Audio disabled (${var})"));
             None
         } else {
             match Mixer::new(probe_dir.as_deref(), drivers.device(settings.driver)) {
-                Ok(m) => Some(m),
+                Ok(m) => {
+                    let rate = m
+                        .sample_rate()
+                        .map_or_else(|| "unknown".to_owned(), |r| format!("{r} Hz"));
+                    crate::client_logs::log_sound_init(&format!(
+                        "Output initialized (driver={}, rate={rate})",
+                        drivers
+                            .name(settings.driver)
+                            .unwrap_or(engine::SYSTEM_DEFAULT)
+                    ));
+                    Some(m)
+                }
                 Err(e) => {
                     warn!("no audio device — running silent: {e:#}");
+                    crate::client_logs::log_sound_init(&format!("Output init failed: {e:#}"));
                     None
                 }
             }

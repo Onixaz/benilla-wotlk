@@ -1,8 +1,9 @@
 //! A panic leaves a crash report. [`install`] chains a hook after Rust's default one, which still
-//! prints to stderr, and writes `benilla-config/Diagnostics/crash-<unix-seconds>.txt` through
-//! [`crate::local_state`]: the build id, time and uptime, thread, location and payload, a
-//! backtrace captured regardless of `RUST_BACKTRACE`, and the last
-//! [`benilla_world::log_ring::CAPACITY`] log lines. The path is the last stderr line.
+//! prints to stderr, and writes `Errors\<YYYY-MM-DD HH.MM.SS> Crash.txt` (and `.dmp` on Windows
+//! when `DbgHelp.dll` is present, `0x7711c0`, `0x772323`) through [`crate::local_state::errors_dir`]:
+//! the build id, time and uptime, thread, location and payload, a backtrace captured regardless of
+//! `RUST_BACKTRACE`, and the last [`benilla_world::log_ring::CAPACITY`] log lines. The path is the
+//! last stderr line.
 //!
 //! A non-unwinding panic (an allocation-failure abort, a panic in `Drop` during unwinding) never
 //! reaches a hook. Saved variables and the CVar diff are not flushed from inside a panic.
@@ -39,9 +40,10 @@ fn report(info: &PanicHookInfo<'_>, build: BuildId, uptime: Duration) {
     if REPORTING.swap(true, Ordering::SeqCst) {
         return;
     }
-    let Some(dir) = crate::local_state::diagnostics_dir() else {
+    let Some(dir) = crate::local_state::errors_dir() else {
         return;
     };
+    let now = crate::ui_chat::logging::local_now();
     let payload = if let Some(s) = info.payload().downcast_ref::<&str>() {
         (*s).to_owned()
     } else if let Some(s) = info.payload().downcast_ref::<String>() {
@@ -67,7 +69,9 @@ fn report(info: &PanicHookInfo<'_>, build: BuildId, uptime: Duration) {
         backtrace: &std::backtrace::Backtrace::force_capture().to_string(),
         log: &benilla_world::log_ring::recent(),
     });
-    if let Some(path) = write(&dir, &text) {
+    if let Some(path) = write(&dir, now, &text) {
+        #[cfg(windows)]
+        write_minidump(&dir, now);
         eprintln!("crash report written to {}", path.display());
     }
 }
@@ -116,17 +120,78 @@ fn render(r: &Report<'_>) -> String {
     out
 }
 
-/// Writes `crash-<unix>.txt` under `dir`, creating the folder only now. Plain `fs::write`, not
-/// `write_atomic`: the process is dying, and a partial report beats none.
-fn write(dir: &Path, text: &str) -> Option<PathBuf> {
-    let unix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let path = dir.join(format!("crash-{unix}.txt"));
+/// 12340's error-log filename stem (`0x77128a`): `YYYY-MM-DD HH.MM.SS Crash.<ext>`.
+fn file_name(now: crate::ui_chat::logging::LocalTime, ext: &str) -> String {
+    format!(
+        "{:04}-{:02}-{:02} {:02}.{:02}.{:02} Crash.{ext}",
+        now.year, now.month, now.day, now.hour, now.min, now.sec
+    )
+}
+
+/// Writes `<YYYY-MM-DD HH.MM.SS> Crash.txt` under `dir` (`0x7711c0`), creating the folder only
+/// now. Plain `fs::write`, not `write_atomic`: the process is dying, and a partial report beats
+/// none.
+fn write(dir: &Path, now: crate::ui_chat::logging::LocalTime, text: &str) -> Option<PathBuf> {
+    let path = dir.join(file_name(now, "txt"));
     std::fs::create_dir_all(dir).ok()?;
-    std::fs::write(&path, text).ok()?;
+    let crlf = text.replace("\r\n", "\n").replace('\n', "\r\n");
+    std::fs::write(&path, crlf).ok()?;
     Some(path)
+}
+
+/// Writes `<YYYY-MM-DD HH.MM.SS> Crash.dmp` via `DbgHelp.dll` `MiniDumpWriteDump` (`0x7723a1`),
+/// best-effort: missing `DbgHelp.dll` or a failed write leaves the `.txt` standing.
+#[cfg(windows)]
+fn write_minidump(dir: &Path, now: crate::ui_chat::logging::LocalTime) {
+    use std::os::windows::io::AsRawHandle as _;
+    use windows_sys::Win32::Foundation::{FreeLibrary, HANDLE};
+    use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryA};
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetCurrentProcessId};
+
+    type MiniDumpWriteDumpFn = unsafe extern "system" fn(
+        HANDLE,
+        u32,
+        HANDLE,
+        u32,
+        *const core::ffi::c_void,
+        *const core::ffi::c_void,
+        *const core::ffi::c_void,
+    ) -> i32;
+
+    let path = dir.join(file_name(now, "dmp"));
+    let Ok(file) = std::fs::File::create(&path) else {
+        return;
+    };
+    // SAFETY: NUL-terminated ASCII library and symbol names; handle is valid for the call and
+    // freed before returning.
+    unsafe {
+        let dll = LoadLibraryA(c"DbgHelp.dll".as_ptr().cast());
+        if dll.is_null() {
+            drop(file);
+            let _ = std::fs::remove_file(&path);
+            return;
+        }
+        let proc = GetProcAddress(dll, c"MiniDumpWriteDump".as_ptr().cast());
+        let ok = if let Some(proc) = proc {
+            let dump_fn: MiniDumpWriteDumpFn = std::mem::transmute(proc);
+            dump_fn(
+                GetCurrentProcess(),
+                GetCurrentProcessId(),
+                file.as_raw_handle() as HANDLE,
+                0, // MiniDumpNormal
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+            ) != 0
+        } else {
+            false
+        };
+        FreeLibrary(dll);
+        drop(file);
+        if !ok {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -181,14 +246,25 @@ mod tests {
 
         let dir = std::env::temp_dir().join(format!("benilla-crash-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let path = write(&dir, &text).expect("report written");
+        let now = crate::ui_chat::logging::LocalTime {
+            year: 2026,
+            month: 11,
+            day: 27,
+            hour: 10,
+            min: 5,
+            sec: 9,
+            milli: 0,
+        };
+        let path = write(&dir, now, &text).expect("report written");
         assert!(path.starts_with(&dir), "{}", path.display());
-        assert!(path
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .starts_with("crash-"));
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+        assert_eq!(
+            path.file_name().unwrap().to_string_lossy(),
+            "2026-11-27 10.05.09 Crash.txt"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            text.replace('\n', "\r\n")
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

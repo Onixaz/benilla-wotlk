@@ -1,6 +1,7 @@
 //! `WOW_CRASH_INJECT=<at_secs>`: one deliberate main-thread panic mid-run, the test affordance
-//! for the crash reporter (`crate::crash`); a run with it set must die with a `crash-<unix>.txt`
-//! whose log tail ends in the `crash-inject` line.
+//! for the crash reporter (`crate::crash`); a run with it set must die with an
+//! `Errors\<YYYY-MM-DD HH.MM.SS> Crash.txt` under the client root whose log tail ends in the
+//! `crash-inject` line.
 //!
 //! It lives in the dev plane, not beside the reporter, which ships to players, and is armed on
 //! every platform: an instrument's cfg is `dev`, never a platform's.

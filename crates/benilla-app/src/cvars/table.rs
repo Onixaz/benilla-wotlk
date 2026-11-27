@@ -1226,4 +1226,7 @@ pub(crate) const REGISTERED: &[Registered] = &[
     // writes a Targa, anything else a JPEG, at quality 1..10 ([`crate::screenshot`]).
     same("screenshotFormat", "jpeg"),
     same("screenshotQuality", "3"),
+    // `taintLog` (`0x52a9a6`, default "0", callback `0x52a930`): values >= 1 log taint events to
+    // `Logs\taint.log` (`0x518920`).
+    same("taintLog", "0"),
 ];

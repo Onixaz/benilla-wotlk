@@ -908,6 +908,7 @@ fn world(
                         if !reply_announced {
                             if let Some(hidden) = hidden_addons(&session) {
                                 reply_announced = true;
+                                persist_addon_info_files(session.addon_records());
                                 bevy::log::info!(
                                     "net: SMSG_ADDON_INFO at the park — {} hidden from the AddOn index space",
                                     hidden.len()
@@ -979,6 +980,9 @@ fn world(
             // answers every login on it.
             let statuses = session.addon_info().map(<[u8]>::to_vec);
             let addon_info = hidden_addons(&session);
+            if !reply_announced {
+                persist_addon_info_files(session.addon_records());
+            }
             match (&statuses, &addon_info) {
                 (Some(statuses), Some(hidden)) => bevy::log::info!(
                     "net: SMSG_ADDON_INFO — {} record(s), {} hidden from the AddOn index space",
@@ -2313,6 +2317,50 @@ fn hidden_addons(session: &benilla_protocol::world::WorldSession) -> Option<Vec<
     })
 }
 
+/// Persist `.pub` (`0x5f4aa0`, `0x5f4f10`) and `.url` (`0x5f4b80`, `0x5f7a9c`) files under
+/// `Interface\AddOns\<n>\` from the server's `SMSG_ADDON_INFO` reply.
+fn persist_addon_info_files(records: Option<&[benilla_protocol::messages::AddonInfoRecord]>) {
+    let (Some(records), Some(root)) = (records, crate::local_state::addons_dir()) else {
+        return;
+    };
+    persist_addon_info_under(
+        &root,
+        records,
+        &benilla_protocol::messages::STOCK_SECURE_ADDONS_WOTLK,
+    );
+}
+
+fn persist_addon_info_under(
+    addons_root: &std::path::Path,
+    records: &[benilla_protocol::messages::AddonInfoRecord],
+    sent: &[benilla_protocol::messages::SecureAddon<'_>],
+) {
+    for (rec, addon) in records.iter().zip(sent) {
+        let dir = addons_root.join(addon.name);
+        if let Some(key) = &rec.public_key {
+            let mut bytes = Vec::with_capacity(257);
+            // `0x5f4f10` writes the info byte, not the key flag that gated this key.
+            bytes.push(rec.info_provided);
+            bytes.extend_from_slice(key);
+            let path = dir.join(format!("{}.pub", addon.name));
+            if let Err(e) = crate::local_state::write_atomic_bytes(&path, &bytes) {
+                bevy::log::warn!("addon info: cannot write {}: {e}", path.display());
+            }
+        }
+        if let Some(url) = &rec.url {
+            let path = dir.join(format!("{}.url", addon.name));
+            if url.is_empty() {
+                let _ = std::fs::remove_file(&path);
+            } else {
+                let body = format!("[InternetShortcut]\r\nURL={url}\r\n");
+                if let Err(e) = crate::local_state::write_atomic(&path, &body) {
+                    bevy::log::warn!("addon info: cannot write {}: {e}", path.display());
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod cycle_tests;
 
@@ -2385,5 +2433,50 @@ mod rtt_tests {
             "the dead socket's echo is dropped"
         );
         assert_eq!(clock.avg_latency_ms(), None);
+    }
+
+    #[test]
+    fn addon_info_writes_pub_and_url_and_deletes_empty_url() {
+        let tmp = std::env::temp_dir().join(format!("benilla-addon-pub-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let sent = &benilla_protocol::messages::STOCK_SECURE_ADDONS_WOTLK[..2];
+        let records = vec![
+            benilla_protocol::messages::AddonInfoRecord {
+                status: 1,
+                info_provided: 1,
+                public_key: Some([0xAB; 256]),
+                revision: Some(0),
+                url: Some("https://example.invalid/addon".to_owned()),
+            },
+            benilla_protocol::messages::AddonInfoRecord {
+                status: 2,
+                info_provided: 0,
+                public_key: None,
+                revision: None,
+                url: Some(String::new()),
+            },
+        ];
+        // Pre-seed a stale .url on the second addon to verify empty URL deletes it (`0x5f4b80`).
+        let second_dir = tmp.join(sent[1].name);
+        std::fs::create_dir_all(&second_dir).unwrap();
+        let second_url = second_dir.join(format!("{}.url", sent[1].name));
+        std::fs::write(&second_url, "[InternetShortcut]\r\nURL=old\r\n").unwrap();
+
+        super::persist_addon_info_under(&tmp, &records, sent);
+
+        let pub_bytes =
+            std::fs::read(tmp.join(sent[0].name).join(format!("{}.pub", sent[0].name))).unwrap();
+        assert_eq!(pub_bytes.len(), 257);
+        assert_eq!(pub_bytes[0], 1);
+        assert_eq!(&pub_bytes[1..], &[0xAB; 256]);
+        let url_text =
+            std::fs::read_to_string(tmp.join(sent[0].name).join(format!("{}.url", sent[0].name)))
+                .unwrap();
+        assert_eq!(
+            url_text,
+            "[InternetShortcut]\r\nURL=https://example.invalid/addon\r\n"
+        );
+        assert!(!second_url.exists(), "empty URL removes existing .url file");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

@@ -155,6 +155,12 @@ pub(crate) fn character_dir(account: &str, realm: &str, character: &str) -> Opti
     )
 }
 
+/// `WTF\Account\<ACCOUNT>\<Character>\`, the realm-less folder of older clients that a rename or
+/// customize also moves (`0x4e2870`, `0x4e29e0`).
+pub(crate) fn character_legacy_dir(account: &str, character: &str) -> Option<PathBuf> {
+    Some(account_dir(account)?.join(wtf_component(character)))
+}
+
 /// The logged-in account, upper-cased as the reference keeps it (the login upper-cases the account
 /// name before the logon; `0xc24418`): the `<ACCOUNT>` of every `WTF\Account` path the UI's files
 /// take.
@@ -237,9 +243,16 @@ pub(crate) fn wdb_dir(locale: &str) -> Option<PathBuf> {
     client_root().map(|r| r.join("Cache").join("WDB").join(file_token(locale)))
 }
 
-/// `Logs\` (`0x9fa4e4`, `0xa02ef8`): `WoWChatLog.txt`, `WoWCombatLog.txt` and `FrameXML.log`.
+/// `Logs\` (`0x9fa4e4`, `0xa02ef8`, `0x9f3d5c`, `0xa2db98`, `0xa4c400`, `0xa4ff70`, `0xa02f54`):
+/// `WoWChatLog.txt`, `WoWCombatLog.txt`, `FrameXML.log`, `GlueXML.log`, `connection.log`, `gx.log`,
+/// `cpu.log`, `SESound.log` and `taint.log`.
 pub(crate) fn logs_dir() -> Option<PathBuf> {
     client_root().map(|r| r.join("Logs"))
+}
+
+/// `Errors\` (`0x771221`): fatal crash logs (`<YYYY-MM-DD HH.MM.SS> Crash.txt` and `.dmp`).
+pub(crate) fn errors_dir() -> Option<PathBuf> {
+    client_root().map(|r| r.join("Errors"))
 }
 
 /// `benilla-config/shots.txt`: the framing instrument's camera poses (`/shot`, dev builds).
@@ -253,9 +266,15 @@ pub(crate) fn screenshots_dir() -> Option<PathBuf> {
     client_root().map(|r| r.join("Screenshots"))
 }
 
-/// `Interface\AddOns\`: where third-party addons are read from, with their art and fonts.
+/// `Interface\` (`0x5f4d90`): where loose `FrameXML`, `GlueXML` and `AddOns` live.
+pub(crate) fn interface_dir() -> Option<PathBuf> {
+    client_root().map(|r| r.join("Interface"))
+}
+
+/// `Interface\AddOns\`: where third-party addons are read from, with their art, fonts, `.pub` and
+/// `.url` files.
 pub(crate) fn addons_dir() -> Option<PathBuf> {
-    client_root().map(|r| r.join("Interface").join("AddOns"))
+    interface_dir().map(|d| d.join("AddOns"))
 }
 
 /// `benilla-config/Diagnostics/`: the stuck-thread sampler's profiles ([`crate::perf::stall`]) and
@@ -491,14 +510,18 @@ mod tests {
         );
         assert_eq!(client_root(), Some(state.clone()));
         assert_eq!(logs_dir(), Some(state.join("Logs")));
+        assert_eq!(errors_dir(), Some(state.join("Errors")));
         assert_eq!(screenshots_dir(), Some(state.join("Screenshots")));
+        assert_eq!(interface_dir(), Some(state.join("Interface")));
         assert_eq!(addons_dir(), Some(state.join("Interface").join("AddOns")));
 
         let _d2 = EnvGuard::set("BENILLA_TEST_DROP_IN", install.to_str().unwrap());
         assert_eq!(drop_in_install(), Some(install.clone()));
         assert_eq!(client_root(), Some(install.clone()));
         assert_eq!(logs_dir(), Some(install.join("Logs")));
+        assert_eq!(errors_dir(), Some(install.join("Errors")));
         assert_eq!(screenshots_dir(), Some(install.join("Screenshots")));
+        assert_eq!(interface_dir(), Some(install.join("Interface")));
         assert_eq!(addons_dir(), Some(install.join("Interface").join("AddOns")));
         assert_eq!(
             home(),
@@ -510,7 +533,9 @@ mod tests {
         assert_eq!(drop_in_install(), None, "a capture writes no install");
         assert_eq!(client_root(), None);
         assert_eq!(logs_dir(), None);
+        assert_eq!(errors_dir(), None);
         assert_eq!(screenshots_dir(), None);
+        assert_eq!(interface_dir(), None);
         assert_eq!(addons_dir(), None);
     }
 

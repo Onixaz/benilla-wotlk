@@ -161,19 +161,90 @@ pub(crate) fn lockdown_allows(lua: &Lua) -> bool {
     allowed
 }
 
+/// One taint event kind (`0x518920`): 1=Global, 2=Execution, 3=Blocked, 4=BlockedInCombat. Only
+/// 3 and 4 are raised: 1 and 2 come from per-value taint, which benilla does not carry (#1228).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TaintLogKind {
+    Global,
+    Execution,
+    Blocked,
+    BlockedInCombat,
+}
+
+/// One taint log entry for `Logs\taint.log` (`0x518920`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TaintLogEvent {
+    pub kind: TaintLogKind,
+    pub target: String,
+    pub taint: String,
+    pub stack: Vec<String>,
+}
+
+/// Capture Lua call stack contexts for `Logs\taint.log` (`0x518920`).
+fn capture_stack(lua: &Lua, head: &str) -> Vec<String> {
+    let mut stack = vec![head.to_owned()];
+    for level in 1..16 {
+        let frame = lua.inspect_stack(level, |d| {
+            let src = d.source();
+            let what = src.short_src.map(|s| s.into_owned()).unwrap_or_default();
+            let line = d.current_line().unwrap_or(0);
+            let name = d.names().name.map(|s| format!("{s}()")).unwrap_or_default();
+            if what.is_empty() && name.is_empty() {
+                String::new()
+            } else if line > 0 && !name.is_empty() {
+                format!("{what}:{line} {name}")
+            } else if line > 0 {
+                format!("{what}:{line}")
+            } else if !name.is_empty() {
+                name
+            } else {
+                what
+            }
+        });
+        match frame {
+            Some(s) if !s.is_empty() => stack.push(s),
+            Some(_) => {}
+            None => break,
+        }
+    }
+    stack
+}
+
 /// The feedback for the running function, `this` its receiver when it is a method: the `_FORBIDDEN`
 /// pair for type 0, the `_BLOCKED` pair otherwise.
 fn feedback(lua: &Lua, this: Option<&Table>, forbidden: bool) {
     let tag = running();
-    let taint = {
+    let (taint, in_combat, log_on) = {
         let mut model = super::model_mut_of(lua);
         if model.blocked_feedback_showing {
             return;
         }
         model.blocked_feedback_showing = true;
-        name_of(&model, tag).unwrap_or_default()
+        (
+            name_of(&model, tag).unwrap_or_default(),
+            !model.protected_actions_allowed,
+            model.taint_log_on,
+        )
     };
     let function = format!("{}()", current_function(lua, this));
+    if log_on {
+        let log_taint = if taint.is_empty() {
+            "UNKNOWN".to_owned()
+        } else {
+            taint.clone()
+        };
+        let stack = capture_stack(lua, &function);
+        super::model_mut_of(lua).taint_log.push(TaintLogEvent {
+            kind: if in_combat && !forbidden {
+                TaintLogKind::BlockedInCombat
+            } else {
+                TaintLogKind::Blocked
+            },
+            target: function.clone(),
+            taint: log_taint,
+            stack,
+        });
+    }
     if taint == MACRO_TAINT {
         let event = match forbidden {
             true => "MACRO_ACTION_FORBIDDEN",
@@ -532,6 +603,29 @@ mod tests {
                 "MACRO_ACTION_BLOCKED|Header:SetFrameLevel()|nil",
                 "ADDON_ACTION_BLOCKED|TaintTest|Header:SetScale()",
             ]
+        );
+    }
+
+    /// With `taintLog` off a refusal queues nothing for the log; on, it queues the in-combat kind
+    /// with the refused function and the addon's name (`0x518920`).
+    #[test]
+    fn a_refusal_is_queued_for_the_taint_log_only_while_it_is_on() {
+        let mut s = script();
+        s.with_addon_owner("TaintTest", || s.run("Header:SetScale(2)"))
+            .unwrap();
+        assert!(s.take_taint_log_events().is_empty());
+
+        s.set_taint_log(true);
+        s.with_addon_owner("TaintTest", || s.run("Header:SetScale(3)"))
+            .unwrap();
+        let events = s.take_taint_log_events();
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!(events[0].kind, super::TaintLogKind::BlockedInCombat);
+        assert_eq!(events[0].taint, "TaintTest");
+        assert_eq!(events[0].target, "Header:SetScale()");
+        assert_eq!(
+            events[0].stack.first().map(String::as_str),
+            Some("Header:SetScale()")
         );
     }
 

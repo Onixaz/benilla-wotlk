@@ -78,6 +78,7 @@ pub(crate) fn strings_vm(world: &mut World) -> Option<UiScript> {
 /// builder then `SET_GLUE_SCREEN`. It holds what the glue state holds and nothing of the boot VM's:
 /// no `GlobalStrings.lua`, no emote tokens.
 fn install_glue_vm(world: &mut World, screen: super::glue::GlueScreen) -> bool {
+    relocate_loose_blizzard_interface();
     let Some(mut script) = new_vm(world, UiScript::new_glue) else {
         return false;
     };
@@ -119,6 +120,76 @@ fn install_glue_vm(world: &mut World, screen: super::glue::GlueScreen) -> bool {
         .unwrap_or(false);
     world.insert_non_send_resource(script);
     charselect
+}
+
+/// At every glue resume (`0x4da5f0` -> `0x5f4d90`, `0x5f4d00`), move any loose
+/// `Interface\GlueXML`, `Interface\FrameXML`, and `Interface\AddOns\Blizzard*` (with a matching
+/// `<name>.toc`) folders to `<path>.old`, replacing any existing `.old` folder. Only a drop-in
+/// does this, in the install 12340 owns; a dev or player build leaves its `benilla-config/` alone.
+fn relocate_loose_blizzard_interface() {
+    let Some(install) = crate::local_state::drop_in_install() else {
+        return;
+    };
+    relocate_loose_blizzard_interface_under(&install.join("Interface"));
+}
+
+fn relocate_loose_blizzard_interface_under(interface: &std::path::Path) {
+    for sub in ["GlueXML", "FrameXML"] {
+        let dir = interface.join(sub);
+        if dir.is_dir() {
+            move_dir_to_old(&dir);
+        }
+    }
+    let addons = interface.join("AddOns");
+    let Ok(entries) = std::fs::read_dir(&addons) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if !name.to_ascii_lowercase().starts_with("blizzard") {
+            continue;
+        }
+        if path.join(format!("{name}.toc")).is_file() {
+            move_dir_to_old(&path);
+        }
+    }
+}
+
+/// Move `dir` to `<dir>.old`. The folder is first renamed aside, so a rename that fails (a file
+/// held open) leaves the earlier `.old` in place rather than deleting it for nothing.
+fn move_dir_to_old(dir: &std::path::Path) {
+    let with_suffix = |suffix: &str| {
+        let mut path = dir.as_os_str().to_owned();
+        path.push(suffix);
+        std::path::PathBuf::from(path)
+    };
+    let old = with_suffix(".old");
+    let aside = with_suffix(".old-new");
+    if aside.exists() {
+        let _ = std::fs::remove_dir_all(&aside);
+    }
+    if let Err(e) = std::fs::rename(dir, &aside) {
+        warn!("ui_script: moving {} aside: {e}", dir.display());
+        return;
+    }
+    if old.exists() {
+        if let Err(e) = std::fs::remove_dir_all(&old) {
+            warn!("ui_script: removing {}: {e}", old.display());
+        }
+    }
+    if let Err(e) = std::fs::rename(&aside, &old) {
+        warn!(
+            "ui_script: moving {} to {}: {e}",
+            aside.display(),
+            old.display()
+        );
+    }
 }
 
 /// Start the server alert's fetch, as the glue manager's init does after the GlueXML load and
@@ -1670,5 +1741,71 @@ mod tests {
              anything but `start > 0`",
             triple.0
         );
+    }
+
+    #[test]
+    fn glue_resume_moves_loose_blizzard_interface_folders_to_dot_old() {
+        let tmp = std::env::temp_dir().join(format!("benilla-old-move-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let iface = tmp.join("Interface");
+        let addons = iface.join("AddOns");
+        std::fs::create_dir_all(iface.join("GlueXML")).unwrap();
+        std::fs::write(iface.join("GlueXML/glue.lua"), "new").unwrap();
+        std::fs::create_dir_all(iface.join("GlueXML.old")).unwrap();
+        std::fs::write(iface.join("GlueXML.old/stale.lua"), "stale").unwrap();
+        std::fs::create_dir_all(iface.join("FrameXML")).unwrap();
+        std::fs::create_dir_all(addons.join("Blizzard_Test")).unwrap();
+        std::fs::write(addons.join("Blizzard_Test/Blizzard_Test.toc"), "").unwrap();
+        std::fs::create_dir_all(addons.join("Blizzard_NoToc")).unwrap();
+        std::fs::create_dir_all(addons.join("ThirdParty")).unwrap();
+        std::fs::write(addons.join("ThirdParty/ThirdParty.toc"), "").unwrap();
+
+        super::relocate_loose_blizzard_interface_under(&iface);
+
+        assert!(!iface.join("GlueXML").exists());
+        assert_eq!(
+            std::fs::read_to_string(iface.join("GlueXML.old/glue.lua")).unwrap(),
+            "new"
+        );
+        assert!(!iface.join("GlueXML.old/stale.lua").exists());
+        assert!(!iface.join("FrameXML").exists());
+        assert!(iface.join("FrameXML.old").is_dir());
+        assert!(!addons.join("Blizzard_Test").exists());
+        assert!(addons.join("Blizzard_Test.old/Blizzard_Test.toc").is_file());
+        assert!(addons.join("Blizzard_NoToc").is_dir());
+        assert!(addons.join("ThirdParty/ThirdParty.toc").is_file());
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Only a drop-in moves the loose folders: a dev or player build's `benilla-config/Interface`
+    /// keeps whatever a developer extracted there.
+    #[test]
+    fn only_a_drop_in_moves_loose_blizzard_interface_folders() {
+        use crate::local_state::test_env::{EnvGuard, ENV_LOCK};
+        let _l = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let tmp = std::env::temp_dir().join(format!("benilla-old-gate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let home = tmp.join("benilla-config");
+        let install = tmp.join("install");
+        std::fs::create_dir_all(home.join("Interface/FrameXML")).unwrap();
+        std::fs::create_dir_all(install.join("Interface/FrameXML")).unwrap();
+        let _c = EnvGuard::unset("WOW_CAPTURE");
+        let _h = EnvGuard::set("BENILLA_HOME", home.to_str().unwrap());
+
+        let _d = EnvGuard::unset("BENILLA_TEST_DROP_IN");
+        super::relocate_loose_blizzard_interface();
+        assert!(home.join("Interface/FrameXML").is_dir());
+        assert!(!home.join("Interface/FrameXML.old").exists());
+
+        let _d = EnvGuard::set("BENILLA_TEST_DROP_IN", install.to_str().unwrap());
+        super::relocate_loose_blizzard_interface();
+        assert!(install.join("Interface/FrameXML.old").is_dir());
+        assert!(!install.join("Interface/FrameXML").exists());
+        assert!(home.join("Interface/FrameXML").is_dir());
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
