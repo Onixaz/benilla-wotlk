@@ -212,9 +212,11 @@ pub fn apply_template(
     }
     loader.report.warnings.extend(notes);
 
-    // The XML `inherits=` expansion; its warnings get the `CreateFrame` call as a prefix.
+    // The XML `inherits=` expansion, cached by `(kind, template)` so repeated `CreateFrame`
+    // instances of one template reuse a single `Arc<Element>`; its warnings get the `CreateFrame`
+    // call as a prefix.
     let first = loader.report.warnings.len();
-    let expanded = loader.expand(&framexml::inherits_node(kind, template));
+    let expanded = loader.expand_inherits_cached(kind, template);
     for w in &mut loader.report.warnings[first..] {
         *w = format!("{dbg}: {w}");
     }
@@ -248,7 +250,7 @@ pub fn apply_region_template(
         "Create{tag}(\"{}\", inherits=\"{template}\")",
         own_name.as_deref().unwrap_or("<unnamed>")
     );
-    let expanded = loader.expand(&framexml::inherits_node(tag, template.trim()));
+    let expanded = loader.expand_inherits_cached(tag, template.trim());
     let anim_base = own_name.unwrap_or_else(|| parent_name.clone());
     loader.load_region(&expanded, region, &anim_base, &parent_name, &dbg);
     TemplateReport::of(loader.report)
@@ -456,10 +458,12 @@ impl Loader<'_> {
                     // Registered raw; `expand` resolves its own `inherits` at instantiation. An
                     // unnamed one was warned at parse time.
                     if let Some(name) = el.name() {
-                        self.model()
+                        let model = self.model();
+                        model
                             .framexml_templates
                             .borrow_mut()
                             .insert(name.to_string(), el.clone());
+                        model.framexml_expanded_cache.borrow_mut().clear();
                     }
                 }
                 TopLevel::Instance(el) => {
@@ -518,37 +522,70 @@ impl Loader<'_> {
         }
     }
 
-    /// Resolve `inherits=` against the persistent template registry (`framexml::expand`).
-    pub(super) fn expand(&mut self, el: &Element) -> Element {
-        let model = self.model();
-        let templates = model.framexml_templates.borrow();
-        let view: HashMap<&str, &Element> =
-            templates.iter().map(|(k, v)| (k.as_str(), v)).collect();
-        // A font object in an inherit chain is skipped, not warned as an unknown template.
-        let fonts = model.framexml_fonts.borrow();
-        let font_names: std::collections::HashSet<&str> =
-            fonts.keys().map(|k| k.as_str()).collect();
+    /// Resolve `inherits=` against the persistent template registry without cloning non-inheriting
+    /// elements or rebuilding temporary registry views.
+    pub(super) fn expand<'b>(&mut self, el: &'b Element) -> std::borrow::Cow<'b, Element> {
+        if el.attr("inherits").is_none() {
+            return std::borrow::Cow::Borrowed(el);
+        }
         let mut warns = Vec::new();
-        let out = framexml::expand_known(el, &view, &font_names, &mut warns);
-        drop(font_names);
-        drop(fonts);
-        drop(view);
-        drop(templates);
-        drop(model);
+        let out = {
+            let model = self.model();
+            let templates = model.framexml_templates.borrow();
+            let fonts = model.framexml_fonts.borrow();
+            framexml::expand_known_owned(el, &templates, &fonts, &mut warns)
+        };
         self.report.warnings.extend(warns);
-        out
+        std::borrow::Cow::Owned(out)
+    }
+
+    /// Cached expansion for a runtime `inherits=` node (`CreateFrame` / `CreateTexture` /
+    /// `CreateFontString`), keyed by `(tag, inherits)`.
+    pub(super) fn expand_inherits_cached(
+        &mut self,
+        tag: &str,
+        inherits: &str,
+    ) -> std::sync::Arc<Element> {
+        let key = (tag.to_string(), inherits.to_string());
+        let hit = {
+            self.model()
+                .framexml_expanded_cache
+                .borrow()
+                .get(&key)
+                .cloned()
+        };
+        if let Some((cached, warns)) = hit {
+            self.report.warnings.extend(warns);
+            return cached;
+        }
+        let node = framexml::inherits_node(tag, inherits);
+        let mut warns = Vec::new();
+        let expanded = {
+            let model = self.model();
+            let templates = model.framexml_templates.borrow();
+            let fonts = model.framexml_fonts.borrow();
+            std::sync::Arc::new(framexml::expand_known_owned(
+                &node, &templates, &fonts, &mut warns,
+            ))
+        };
+        self.report.warnings.extend(warns.iter().cloned());
+        self.model()
+            .framexml_expanded_cache
+            .borrow_mut()
+            .insert(key, (expanded.clone(), warns));
+        expanded
     }
 
     /// [`Loader::expand`] for a region, only when `inherits=` names a registered element template:
     /// a FontString's `inherits=` usually names a font object, which passes through unwarned.
-    pub(super) fn expand_region(&mut self, el: &Element) -> Element {
+    pub(super) fn expand_region<'b>(&mut self, el: &'b Element) -> std::borrow::Cow<'b, Element> {
         if el
             .attr("inherits")
             .is_some_and(|inherits| self.names_template(inherits))
         {
             self.expand(el)
         } else {
-            el.clone()
+            std::borrow::Cow::Borrowed(el)
         }
     }
 
@@ -561,11 +598,9 @@ impl Loader<'_> {
         let merged = {
             let model = self.model();
             let fonts = model.framexml_fonts.borrow();
-            let view: HashMap<&str, &Element> =
-                fonts.iter().map(|(k, v)| (k.as_str(), v)).collect();
+            let empty_fonts = HashMap::new();
             let mut warns = Vec::new();
-            let merged = framexml::expand(el, &view, &mut warns);
-            drop(view);
+            let merged = framexml::expand_known_owned(el, &fonts, &empty_fonts, &mut warns);
             drop(fonts);
             drop(model);
             self.report.warnings.extend(warns);
@@ -582,6 +617,7 @@ impl Loader<'_> {
                 .framexml_fonts
                 .borrow_mut()
                 .insert(name.clone(), merged);
+            model.framexml_expanded_cache.borrow_mut().clear();
         }
         // In 1.12 a named `<Font>` is also a Lua global, the object `SetFontObject` takes.
         if let Err(e) = crate::script::font::publish(self.lua(), &name) {
@@ -885,11 +921,13 @@ impl Loader<'_> {
 
     /// Apply one anchor, deferring it (when `may_defer`) while its named `relativeTo` is unbuilt.
     pub(super) fn apply_anchor(&mut self, d: DeferredAnchor, may_defer: bool) {
-        let rel: Value = match d.args.1.as_deref() {
+        let named_id: Option<u32> = match d.args.1.as_deref() {
             Some(name) => {
-                match crate::script::object::anchor_args::resolve_xml_relative_to(self.lua(), name)
-                {
-                    Some(t) => Value::Table(t),
+                match crate::script::object::anchor_args::resolve_xml_relative_to_id(
+                    self.lua(),
+                    name,
+                ) {
+                    Some(id) => Some(id),
                     // Not built yet: retry once the subtree is complete; a miss then is real.
                     None if may_defer => {
                         self.deferred_anchors.push(d);
@@ -903,29 +941,79 @@ impl Loader<'_> {
                     }
                 }
             }
-            // No `relativeTo=`: the layout parent, or the screen for a parentless frame, which
-            // `nil` means here.
-            None => match d
-                .wrapper
-                .call_method::<Option<Table>>("GetParent", ())
-                .ok()
-                .flatten()
-            {
-                Some(t) => Value::Table(t),
-                None => Value::Nil,
-            },
+            None => None,
         };
         let DeferredAnchor {
             wrapper,
             region,
-            args: (point, _, rel_point, x, y),
+            args: (point_str, _, rel_point_str, x, y),
             dbg,
         } = d;
-        let args = (point, rel, rel_point, x, y);
+        let Some(point) = crate::script::object::point_from_str(&point_str) else {
+            let e = mlua::Error::runtime(format!("{dbg}: SetPoint(): Unknown region point"));
+            self.report_error(format!("{dbg}: SetPoint: {e}"), &e);
+            return;
+        };
+        let Some(rel_point) = crate::script::object::point_from_str(&rel_point_str) else {
+            let e = mlua::Error::runtime(format!("{dbg}: SetPoint(): Unknown region point"));
+            self.report_error(format!("{dbg}: SetPoint: {e}"), &e);
+            return;
+        };
         if region {
-            self.call_region(&wrapper, "SetPoint", args, &dbg);
+            let rh = match crate::script::region::region_handle_of(self.lua(), &wrapper) {
+                Ok(rh) => rh,
+                Err(e) => {
+                    self.report_error(format!("{dbg}: region SetPoint: {e}"), &e);
+                    return;
+                }
+            };
+            let mut model = self.model();
+            let me = model.region_id(rh);
+            let rel_to_id =
+                named_id.unwrap_or_else(|| crate::script::region::region_owner_id(&mut model, rh));
+            if rel_to_id == me {
+                let who = model
+                    .region_name_by_id
+                    .get(&me)
+                    .cloned()
+                    .unwrap_or_else(|| crate::script::object::anchor_args::UNNAMED.to_string());
+                drop(model);
+                let e =
+                    mlua::Error::runtime(format!("{who}:SetPoint(): trying to anchor to itself"));
+                self.report_error(format!("{dbg}: region SetPoint: {e}"), &e);
+                return;
+            }
+            crate::script::region::set_region_point_direct(
+                &mut model, rh, point, rel_to_id, rel_point, x, y,
+            );
         } else {
-            self.call(&wrapper, "SetPoint", args, &dbg);
+            let h = match crate::script::object::frame_handle_of(self.lua(), &wrapper) {
+                Ok(h) => h,
+                Err(e) => {
+                    self.report_error(format!("{dbg}: SetPoint: {e}"), &e);
+                    return;
+                }
+            };
+            let mut model = self.model();
+            let me = model.frame_id(h);
+            let rel_to_id = named_id.unwrap_or_else(|| {
+                crate::script::object::layout_methods::default_parent_id(&mut model, h)
+            });
+            if rel_to_id == me {
+                let who = model
+                    .arena
+                    .frame(h)
+                    .and_then(|f| f.name.clone())
+                    .unwrap_or_else(|| crate::script::object::anchor_args::UNNAMED.to_string());
+                drop(model);
+                let e =
+                    mlua::Error::runtime(format!("{who}:SetPoint(): trying to anchor to itself"));
+                self.report_error(format!("{dbg}: SetPoint: {e}"), &e);
+                return;
+            }
+            crate::script::object::layout_methods::set_frame_point_direct(
+                &mut model, h, point, rel_to_id, rel_point, x, y,
+            );
         }
     }
 
@@ -938,21 +1026,36 @@ impl Loader<'_> {
     }
 
     fn frame_names(&self, wrapper: &Table) -> (Option<String>, String) {
-        let own = wrapper
-            .call_method::<Option<String>>("GetName", ())
-            .ok()
-            .flatten();
-        let mut cur = wrapper.clone();
-        // The frame's own name and its nearest named ancestor's, else `"Top"`, read through
-        // `GetName`/`GetParent`. Bounded, so a malformed chain cannot hang.
+        let Ok(id) = crate::script::object::decode_id(wrapper) else {
+            return (None, framexml::DEFAULT_PARENT_NAME.to_string());
+        };
+        let model = self.model();
+        let (own, mut cur) = if let Some(&h) = model.id_to_frame.get(&id) {
+            (
+                model.arena.frame(h).and_then(|f| f.name.clone()),
+                model.arena.frame(h).and_then(|f| f.parent),
+            )
+        } else if let Some(&rh) = model.id_to_region.get(&id) {
+            (
+                model.region_name_by_id.get(&id).cloned(),
+                model.arena.region(rh).map(|r| r.owner),
+            )
+        } else {
+            return (None, framexml::DEFAULT_PARENT_NAME.to_string());
+        };
+        // The widget's own name and its nearest named ancestor's, else `"Top"`, bounded so a
+        // malformed chain cannot hang.
         for _ in 0..64 {
-            let Ok(Some(parent)) = cur.call_method::<Option<Table>>("GetParent", ()) else {
+            let Some(p) = cur else {
                 break;
             };
-            if let Ok(Some(name)) = parent.call_method::<Option<String>>("GetName", ()) {
+            let Some(f) = model.arena.frame(p) else {
+                break;
+            };
+            if let Some(name) = f.name.clone() {
                 return (own, name);
             }
-            cur = parent;
+            cur = f.parent;
         }
         (own, framexml::DEFAULT_PARENT_NAME.to_string())
     }

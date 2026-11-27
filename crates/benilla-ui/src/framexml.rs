@@ -347,6 +347,76 @@ pub fn expand_known(
     expand_inner(element, templates, fonts, warnings, &mut active)
 }
 
+/// [`expand_known`] directly over owned `String`-keyed registries so callers do not rebuild a
+/// temporary `&str` view over the whole template and font tables on every expansion.
+pub fn expand_known_owned(
+    element: &Element,
+    templates: &HashMap<String, Element>,
+    fonts: &HashMap<String, Element>,
+    warnings: &mut Vec<String>,
+) -> Element {
+    if element.attr("inherits").is_none() {
+        return element.clone();
+    }
+    let mut active = HashSet::new();
+    expand_inner_owned(element, templates, fonts, warnings, &mut active)
+}
+
+fn expand_inner_owned(
+    element: &Element,
+    templates: &HashMap<String, Element>,
+    fonts: &HashMap<String, Element>,
+    warnings: &mut Vec<String>,
+    active: &mut HashSet<String>,
+) -> Element {
+    let Some(inherits) = element.attr("inherits") else {
+        return element.clone();
+    };
+
+    let mut base: Option<Element> = None;
+    for name in inherit_names(inherits) {
+        if !active.insert(name.to_string()) {
+            warnings.push(format!(
+                "inheritance cycle detected at template '{name}'; skipping this reference"
+            ));
+            continue;
+        }
+        let hit = templates.get(name).or_else(|| {
+            templates
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                .map(|(_, v)| v)
+        });
+        let Some(template) = hit else {
+            if !fonts.contains_key(name) {
+                warnings.push(format!(
+                    "unknown template '{name}' referenced by inherits; skipping"
+                ));
+            }
+            active.remove(name);
+            continue;
+        };
+        let expanded_template = expand_inner_owned(template, templates, fonts, warnings, active);
+        active.remove(name);
+        base = Some(match base {
+            None => expanded_template,
+            Some(acc) => merge(&acc, &expanded_template),
+        });
+    }
+
+    match base {
+        Some(mut base) => {
+            base.attrs.retain(|(k, _)| {
+                !["name", "id", "virtual"]
+                    .iter()
+                    .any(|own| k.eq_ignore_ascii_case(own))
+            });
+            merge(&base, element)
+        }
+        None => element.clone(),
+    }
+}
+
 /// The template names an `inherits=` value names, in application order: the value split on
 /// commas and each name trimmed, the empty ones skipped. The shipped FrameXML names lists both
 /// ways, `"ChatFrameTemplate,FloatingBorderedFrame"` and `"SecureActionButtonTemplate,

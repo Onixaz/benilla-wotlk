@@ -295,7 +295,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
 }
 
 /// Stores `func` as the frame's `kind` handler, a canonical name from [`script_kind`].
-fn set_script(
+pub(crate) fn set_script(
     lua: &Lua,
     this: &Table,
     kind: &'static str,
@@ -402,7 +402,11 @@ fn script_kind(lua: &Lua, this: &Table, name: &str) -> mlua::Result<Option<&'sta
 }
 
 /// [`script_kind`], raising the reference's missing-script error on a name the type lacks.
-fn script_kind_or_raise(lua: &Lua, this: &Table, name: &str) -> mlua::Result<&'static str> {
+pub(crate) fn script_kind_or_raise(
+    lua: &Lua,
+    this: &Table,
+    name: &str,
+) -> mlua::Result<&'static str> {
     script_kind(lua, this, name)?.ok_or_else(|| {
         mlua::Error::runtime(format!(
             "{} doesn't have a \"{name}\" script",
@@ -466,27 +470,24 @@ fn strict_string_arg(v: &Value) -> Option<String> {
     }
 }
 
-fn create_region(
+/// Create a region directly on an owner [`FrameHandle`], returning both its Lua wrapper and handle.
+pub(crate) fn create_region_with_handle(
     lua: &Lua,
-    this: &Table,
+    owner: crate::widget::FrameHandle,
     kind: RegionKind,
     name: Option<String>,
-    layer: Option<String>,
-) -> mlua::Result<Table> {
-    let owner = frame_handle_of(lua, this)?;
-    let dl = layer
-        .as_deref()
-        .and_then(draw_layer_from_str)
-        .unwrap_or_default();
+    layer: Option<&str>,
+) -> mlua::Result<(Table, crate::widget::RegionHandle)> {
+    let dl = layer.and_then(draw_layer_from_str).unwrap_or_default();
 
-    let id = {
+    let (rh, id) = {
         let mut model = crate::script::model_mut_of(lua);
         let rh = model
             .arena
             .create_region(owner, kind, dl, 0)
             .ok_or_else(|| mlua::Error::runtime("CreateTexture/FontString: dead owner frame"))?;
         model.region_data.insert(rh, RegionData::default());
-        model.region_id(rh)
+        (rh, model.region_id(rh))
     };
 
     let wrapper = region_wrapper(lua, id)?;
@@ -504,7 +505,18 @@ fn create_region(
         let mut model = crate::script::model_mut_of(lua);
         model.name_region(name, id);
     }
-    Ok(wrapper)
+    Ok((wrapper, rh))
+}
+
+fn create_region(
+    lua: &Lua,
+    this: &Table,
+    kind: RegionKind,
+    name: Option<String>,
+    layer: Option<String>,
+) -> mlua::Result<Table> {
+    let owner = frame_handle_of(lua, this)?;
+    create_region_with_handle(lua, owner, kind, name, layer.as_deref()).map(|(w, _)| w)
 }
 
 #[cfg(test)]

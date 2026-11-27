@@ -142,7 +142,7 @@ pub(crate) mod event;
 mod extract;
 mod follow;
 pub(crate) mod font;
-mod font_block;
+pub(crate) mod font_block;
 mod frame_enum;
 mod get_text;
 mod glue;

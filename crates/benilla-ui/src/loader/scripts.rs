@@ -14,13 +14,19 @@ impl Loader<'_> {
         dbg: &str,
     ) -> Option<Function> {
         let mut onload = None;
+        let mut scripts_iter = children_named(el, "Scripts").peekable();
+        scripts_iter.peek()?;
+        let Ok(h) = crate::script::object::frame_handle_of(self.lua(), wrapper) else {
+            return None;
+        };
         // The owner's name only words the unknown-function warning; the chunk is `*:<Handler>`.
-        for scripts in children_named(el, "Scripts") {
-            let owner = wrapper
-                .call_method::<Option<String>>("GetName", ())
-                .ok()
-                .flatten()
-                .unwrap_or_else(|| "<unnamed>".to_string());
+        let owner = self
+            .model()
+            .arena
+            .frame(h)
+            .and_then(|f| f.name.clone())
+            .unwrap_or_else(|| "<unnamed>".to_string());
+        for scripts in scripts_iter {
             for handler in &scripts.children {
                 let name = handler.tag.clone();
                 // An empty body clears the handler to nil, but a whitespace one is an empty
@@ -38,8 +44,26 @@ impl Loader<'_> {
                         None => continue,
                     }
                 };
-                if let Err(e) = wrapper.call_method::<()>("SetScript", (name.clone(), func.clone()))
-                {
+                let kind = match crate::script::object::events_regions::script_kind_or_raise(
+                    self.lua(),
+                    wrapper,
+                    &name,
+                ) {
+                    Ok(k) => k,
+                    Err(e) => {
+                        self.warn_once(
+                            &format!("script:{name}"),
+                            format!("{dbg}: SetScript(\"{name}\") unsupported in v1: {e}"),
+                        );
+                        continue;
+                    }
+                };
+                if let Err(e) = crate::script::object::events_regions::set_script(
+                    self.lua(),
+                    wrapper,
+                    kind,
+                    func.clone(),
+                ) {
                     self.warn_once(
                         &format!("script:{name}"),
                         format!("{dbg}: SetScript(\"{name}\") unsupported in v1: {e}"),
@@ -57,16 +81,28 @@ impl Loader<'_> {
                     "OnDragStart",
                 ];
                 if MOUSE_KIND.iter().any(|k| name.eq_ignore_ascii_case(k)) {
-                    self.call(wrapper, "EnableMouse", true, dbg);
+                    match crate::script::taint::gate(self.lua(), wrapper) {
+                        Ok(true) => crate::script::event::set_mouse_enabled(self.lua(), h, true),
+                        Ok(false) => {}
+                        Err(e) => self.report_error(format!("{dbg}: EnableMouse: {e}"), &e),
+                    }
                 }
                 if name.eq_ignore_ascii_case("OnMouseWheel") {
-                    self.call(wrapper, "EnableMouseWheel", true, dbg);
+                    match crate::script::taint::gate(self.lua(), wrapper) {
+                        Ok(true) => self.model().arena.set_mouse_wheel_enabled(h, true),
+                        Ok(false) => {}
+                        Err(e) => self.report_error(format!("{dbg}: EnableMouseWheel: {e}"), &e),
+                    }
                 }
                 // The key handlers, the same rule (`OnChar` kind 0, `OnKeyDown`/`OnKeyUp` kind 1);
                 // here any of them sets the one flag both key walks read.
                 const KEY_KIND: [&str; 3] = ["OnChar", "OnKeyDown", "OnKeyUp"];
                 if KEY_KIND.iter().any(|k| name.eq_ignore_ascii_case(k)) {
-                    self.call(wrapper, "EnableKeyboard", true, dbg);
+                    match crate::script::taint::gate(self.lua(), wrapper) {
+                        Ok(true) => self.model().arena.set_keyboard_enabled(h, true),
+                        Ok(false) => {}
+                        Err(e) => self.report_error(format!("{dbg}: EnableKeyboard: {e}"), &e),
+                    }
                 }
                 if name.eq_ignore_ascii_case("OnLoad") {
                     // A cleared `OnLoad` also unsets a template's, or the caller would fire it.

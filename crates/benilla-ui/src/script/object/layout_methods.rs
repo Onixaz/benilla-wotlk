@@ -449,6 +449,96 @@ fn size_read(model: &Model, h: FrameHandle, width: bool) -> f32 {
         .unwrap_or(0.0)
 }
 
+/// Direct `SetWidth` on a frame handle, shared by the Lua binding and the XML loader.
+pub(crate) fn set_frame_width_direct(model: &mut Model, h: FrameHandle, w: f32) {
+    let input = model.layout_inputs.entry(h).or_default();
+    let changed = input.width.to_bits() != w.to_bits();
+    input.width = w;
+    if changed {
+        // A size write moves no edge and no roster membership.
+        model.touch_layout_frame(h);
+    }
+    model.note_authored_size(h);
+}
+
+/// Direct `SetHeight` on a frame handle, shared by the Lua binding and the XML loader.
+pub(crate) fn set_frame_height_direct(model: &mut Model, h: FrameHandle, ht: f32) {
+    let input = model.layout_inputs.entry(h).or_default();
+    let changed = input.height.to_bits() != ht.to_bits();
+    input.height = ht;
+    if changed {
+        model.touch_layout_frame(h);
+    }
+    model.note_authored_size(h);
+}
+
+/// Direct `SetAllPoints` to a resolved target id, shared by the Lua binding and the XML loader.
+pub(crate) fn set_frame_all_points_direct(model: &mut Model, h: FrameHandle, rel_id: u32) {
+    let pair = [
+        Anchor::new(Point::TopLeft, rel_id, Point::TopLeft, 0.0, 0.0),
+        Anchor::new(Point::BottomRight, rel_id, Point::BottomRight, 0.0, 0.0),
+    ];
+    let input = model.layout_inputs.entry(h).or_default();
+    let same = input.anchors.len() == 2
+        && input
+            .anchors
+            .iter()
+            .zip(&pair)
+            .all(|(a, b)| anchor_bits_eq(a, b));
+    if !same {
+        let old: Vec<u32> = input.anchors.iter().map(|a| a.relative_to).collect();
+        input.anchors.clear();
+        input.anchors.extend_from_slice(&pair);
+        model.touch_layout_retarget_frame(h, &old, &[rel_id, rel_id]);
+    }
+}
+
+/// Direct `SetPoint` on a frame handle once the target id is resolved, shared by the Lua binding
+/// and the XML loader. Returns `false` when the anchor was already bit-identical at the tail.
+pub(crate) fn set_frame_point_direct(
+    model: &mut Model,
+    h: FrameHandle,
+    point: Point,
+    rel_to_id: u32,
+    rel_point: Point,
+    x: f32,
+    y: f32,
+) -> bool {
+    let input = model.layout_inputs.entry(h).or_default();
+    let new = Anchor::new(point, rel_to_id, rel_point, x, y);
+    // A no-op only when the identical anchor is already last and no earlier one has this point,
+    // mirroring the retain and push below; bits compared, as the fingerprint tells -0.0 from 0.0.
+    let same_at_tail = input
+        .anchors
+        .last()
+        .is_some_and(|a| anchor_bits_eq(a, &new))
+        && !input.anchors[..input.anchors.len() - 1]
+            .iter()
+            .any(|a| a.point == point);
+    if same_at_tail {
+        return false;
+    }
+    // Target lists are collected only for a retarget: the value-only change is the per-frame
+    // idiom (a dragged window) and must stay allocation-free.
+    let structural = anchor_retarget_is_structural(&input.anchors, &new);
+    let old_targets: Option<Vec<u32>> =
+        structural.then(|| input.anchors.iter().map(|a| a.relative_to).collect());
+    input.anchors.retain(|a| a.point != point);
+    input.anchors.push(new);
+    match old_targets {
+        None => model.touch_layout_frame(h),
+        Some(old) => {
+            let new_targets: Vec<u32> = model.layout_inputs[&h]
+                .anchors
+                .iter()
+                .map(|a| a.relative_to)
+                .collect();
+            model.touch_layout_retarget_frame(h, &old, &new_targets);
+        }
+    }
+    true
+}
+
 /// `SetPoint` for a frame: the argument ladder is [`super::anchor_args`], shared with regions; this
 /// side supplies the default parent and commits the anchor.
 fn set_point(lua: &Lua, this: &Table, args: &MultiValue) -> mlua::Result<()> {
@@ -463,41 +553,9 @@ fn set_point(lua: &Lua, this: &Table, args: &MultiValue) -> mlua::Result<()> {
     let me = model.frame_id(h);
     let parent = default_parent_id(&mut model, h);
     let rel_to_id = resolve_rel_target(&model, &p.target, &who, "SetPoint", me, parent)?;
-    let (point, rel_point, x, y) = (p.point, p.rel_point, p.x, p.y);
-
-    let input = model.layout_inputs.entry(h).or_default();
-    let new = Anchor::new(point, rel_to_id, rel_point, x, y);
-    // A no-op only when the identical anchor is already last and no earlier one has this point,
-    // mirroring the retain and push below; bits compared, as the fingerprint tells -0.0 from 0.0.
-    let same_at_tail = input
-        .anchors
-        .last()
-        .is_some_and(|a| anchor_bits_eq(a, &new))
-        && !input.anchors[..input.anchors.len() - 1]
-            .iter()
-            .any(|a| a.point == point);
-    if same_at_tail {
+    if !set_frame_point_direct(&mut model, h, p.point, rel_to_id, p.rel_point, p.x, p.y) {
         // The per-frame caller setting what is there: the mutation count stands too.
         model.set_epoch(quiet);
-    } else {
-        // Target lists are collected only for a retarget: the value-only change is the per-frame
-        // idiom (a dragged window) and must stay allocation-free.
-        let structural = anchor_retarget_is_structural(&input.anchors, &new);
-        let old_targets: Option<Vec<u32>> =
-            structural.then(|| input.anchors.iter().map(|a| a.relative_to).collect());
-        input.anchors.retain(|a| a.point != point);
-        input.anchors.push(new);
-        match old_targets {
-            None => model.touch_layout_frame(h),
-            Some(old) => {
-                let new_targets: Vec<u32> = model.layout_inputs[&h]
-                    .anchors
-                    .iter()
-                    .map(|a| a.relative_to)
-                    .collect();
-                model.touch_layout_retarget_frame(h, &old, &new_targets);
-            }
-        }
     }
     Ok(())
 }
@@ -522,7 +580,7 @@ pub(crate) fn anchor_bits_eq(a: &Anchor, b: &Anchor) -> bool {
 }
 
 /// The default `relativeTo`: the parent, or [`SCREEN`] for a top-level frame.
-fn default_parent_id(model: &mut Model, h: FrameHandle) -> u32 {
+pub(crate) fn default_parent_id(model: &mut Model, h: FrameHandle) -> u32 {
     match model.arena.frame(h).and_then(|f| f.parent) {
         Some(p) => model.frame_id(p),
         None => SCREEN,

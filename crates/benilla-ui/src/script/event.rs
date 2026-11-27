@@ -132,7 +132,7 @@ pub(super) fn fire_size_changes(lua: &Lua) {
 /// `Show`/`Hide` (`0x48f660`/`0x48f620`): set the frame's own flag, then run the visibility
 /// cascade live from it ([`show_this`], [`hide_this`]), whose step is a virtual call, so a kind's
 /// override runs even when the flag already held.
-pub(super) fn set_shown(lua: &Lua, h: FrameHandle, shown: bool) {
+pub(crate) fn set_shown(lua: &Lua, h: FrameHandle, shown: bool) {
     {
         let mut model = crate::script::model_mut_of(lua);
         let quiet = model.epoch();
@@ -295,7 +295,7 @@ fn hide_step(lua: &Lua, h: FrameHandle, kind_override: bool) {
 /// `EnableMouse` (`0x48f6a0`, `0x48f6f0`): a change on a visible frame joins or leaves the mouse
 /// index at once. Leaving drops the capture and the press and, for the hovered frame, the hover
 /// and drag arm with `OnLeave(false)`; unlike a hide, a held Button keeps its PUSHED art.
-pub(super) fn set_mouse_enabled(lua: &Lua, h: FrameHandle, enable: bool) {
+pub(crate) fn set_mouse_enabled(lua: &Lua, h: FrameHandle, enable: bool) {
     let left = {
         let mut model = crate::script::model_mut_of(lua);
         if model.arena.is_mouse_enabled(h) == enable {

@@ -54,6 +54,29 @@ pub(super) fn set_font_args(
     Ok((path, height))
 }
 
+/// Direct `SetFontObject(name)` on a region handle, shared by the Lua binding and the XML loader.
+/// Returns `Ok(true)` if the font object link changed.
+pub(crate) fn set_font_object_name_direct(
+    model: &mut super::Model,
+    rh: RegionHandle,
+    name: &str,
+) -> mlua::Result<bool> {
+    let Some(fo) = model.font_object(name).cloned() else {
+        return Err(mlua::Error::runtime(format!(
+            "SetFontObject: no font object named '{name}' is registered"
+        )));
+    };
+    let d = model.region_data.entry(rh).or_default();
+    let relinked = d
+        .font_object
+        .as_deref()
+        .is_none_or(|old| !old.eq_ignore_ascii_case(name));
+    d.font_object = Some(name.to_string());
+    super::font::repaint(d, &fo);
+    model.touch_measure(rh);
+    Ok(relinked)
+}
+
 /// Install the ten font-block methods onto `m`, reading `this` through `resolve`; only for a
 /// widget whose reference method table carries all ten.
 pub(super) fn install(

@@ -20,7 +20,7 @@ use crate::widget::{FrameHandle, FrameKind, KindState};
 // The frame method clusters, split out for size.
 pub(crate) mod anchor_args;
 pub(crate) mod attributes;
-mod events_regions;
+pub(crate) mod events_regions;
 mod frame_state;
 pub(crate) mod layout_methods;
 pub(crate) mod mouse_over;

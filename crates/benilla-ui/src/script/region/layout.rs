@@ -13,6 +13,53 @@ use super::{
     size_bits_eq,
 };
 
+/// Direct `Region:SetWidth` on a region handle, shared by the Lua binding and the XML loader.
+pub(crate) fn set_region_width_direct(model: &mut Model, rh: crate::widget::RegionHandle, w: f32) {
+    let d = model.region_data.entry(rh).or_default();
+    let new = Some((w, d.size.map_or(0.0, |s| s.1)));
+    let changed = !size_bits_eq(d.size, new);
+    d.size = new;
+    if changed {
+        // No edge or roster change; the width, as wrap width, keys a FontString's measure.
+        model.touch_layout_region(rh);
+        model.touch_measure(rh);
+    }
+}
+
+/// Direct `Region:SetHeight` on a region handle, shared by the Lua binding and the XML loader.
+pub(crate) fn set_region_height_direct(model: &mut Model, rh: crate::widget::RegionHandle, h: f32) {
+    let d = model.region_data.entry(rh).or_default();
+    let new = Some((d.size.map_or(0.0, |s| s.0), h));
+    let changed = !size_bits_eq(d.size, new);
+    d.size = new;
+    if changed {
+        // No edge or roster change; the width, as wrap width, keys a FontString's measure.
+        model.touch_layout_region(rh);
+        model.touch_measure(rh);
+    }
+}
+
+/// Direct `Region:SetAllPoints` to the region's owner, shared by the XML loader.
+pub(crate) fn set_region_all_points_to_owner(model: &mut Model, rh: crate::widget::RegionHandle) {
+    let rel_id = region_owner_id(model, rh);
+    let pair = [
+        Anchor::new(Point::TopLeft, rel_id, Point::TopLeft, 0.0, 0.0),
+        Anchor::new(Point::BottomRight, rel_id, Point::BottomRight, 0.0, 0.0),
+    ];
+    let d = model.region_data.entry(rh).or_default();
+    let same = d.anchors.len() == 2
+        && d.anchors
+            .iter()
+            .zip(&pair)
+            .all(|(a, b)| anchor_bits_eq(a, b));
+    if !same {
+        let old: Vec<u32> = d.anchors.iter().map(|a| a.relative_to).collect();
+        d.anchors.clear();
+        d.anchors.extend_from_slice(&pair);
+        model.touch_layout_retarget_region(rh, &old, &[rel_id, rel_id]);
+    }
+}
+
 /// Install the layout methods into `m`.
 pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     crate::script::object::protection::install(lua, m, Side::Region)?;

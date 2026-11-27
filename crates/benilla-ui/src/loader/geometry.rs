@@ -8,20 +8,29 @@ impl Loader<'_> {
     /// A frame element's XML attributes and simple children, as the frame's XML load reads them,
     /// and a model pane's own.
     pub(super) fn apply_attrs(&mut self, el: &Element, wrapper: &Table, dbg: &str) {
+        let Ok(h) = crate::script::object::frame_handle_of(self.lua(), wrapper) else {
+            return;
+        };
         // SecureFrameTemplate marks its frame explicitly protected before OnLoad (12340).
         if el.attr_bool("protected") {
-            if let Ok(h) = crate::script::object::frame_handle_of(self.lua(), wrapper) {
-                self.model().protected_frames.insert(h);
-            }
+            self.model().protected_frames.insert(h);
         }
         if el.attr_bool("hidden") {
-            self.call(wrapper, "Hide", (), dbg);
+            match crate::script::taint::gate(self.lua(), wrapper) {
+                Ok(true) => crate::script::event::set_shown(self.lua(), h, false),
+                Ok(false) => {}
+                Err(e) => self.report_error(format!("{dbg}: Hide: {e}"), &e),
+            }
         }
         // An unknown `frameStrata=` is logged and skipped, not raised as the Lua binding would:
         // `SetFrameStrata` runs only on a hit, so the frame keeps the strata it had.
         if let Some(strata) = el.attr("frameStrata") {
-            if crate::script::object::strata_from_str(strata).is_some() {
-                self.call(wrapper, "SetFrameStrata", strata.to_string(), dbg);
+            if let Some(s) = crate::script::object::strata_from_str(strata) {
+                match crate::script::taint::gate(self.lua(), wrapper) {
+                    Ok(true) => self.model().arena.set_frame_strata(h, s),
+                    Ok(false) => {}
+                    Err(e) => self.report_error(format!("{dbg}: SetFrameStrata: {e}"), &e),
+                }
             } else {
                 self.report
                     .warnings
@@ -30,12 +39,22 @@ impl Loader<'_> {
         }
         if let Some(level) = el.attr("frameLevel") {
             if let Ok(n) = level.parse::<i64>() {
-                self.call(wrapper, "SetFrameLevel", n, dbg);
+                match crate::script::taint::gate(self.lua(), wrapper) {
+                    Ok(true) => {
+                        let lvl = n.clamp(0, i64::from(u16::MAX)) as u16;
+                        self.model().arena.set_frame_level(h, lvl, true);
+                    }
+                    Ok(false) => {}
+                    Err(e) => self.report_error(format!("{dbg}: SetFrameLevel: {e}"), &e),
+                }
             }
         }
         if let Some(alpha) = el.attr("alpha") {
             if let Ok(a) = alpha.parse::<f32>() {
-                self.call(wrapper, "SetAlpha", a, dbg);
+                let a = a.clamp(0.0, 1.0);
+                let mut model = self.model();
+                let targets = model.arena.subtree_targets(h);
+                model.paint_mut(&targets).arena.set_alpha(h, a);
             }
         }
 
@@ -85,15 +104,33 @@ impl Loader<'_> {
         }
         if let Some(id) = el.attr("id") {
             if let Ok(n) = id.parse::<i64>() {
-                self.call(wrapper, "SetID", n, dbg);
+                match crate::script::taint::gate(self.lua(), wrapper) {
+                    Ok(true) => {
+                        if let Some(f) = self.model().arena.frame_mut(h) {
+                            f.wow_id = n;
+                        }
+                    }
+                    Ok(false) => {}
+                    Err(e) => self.report_error(format!("{dbg}: SetID: {e}"), &e),
+                }
             }
         }
         // `clampedToScreen`: the layout's screen clamp, geometry flag bit 4.
         if el.attr_bool("clampedToScreen") {
-            self.call(wrapper, "SetClampedToScreen", true, dbg);
+            let mut model = self.model();
+            let changed = !model.arena.is_clamped_to_screen(h);
+            model.arena.set_clamped_to_screen(h, true);
+            if changed {
+                model.sync_layout_input(h);
+                model.touch_layout_frame(h);
+            }
         }
         if el.attr_bool("enableMouse") {
-            self.call(wrapper, "EnableMouse", true, dbg);
+            match crate::script::taint::gate(self.lua(), wrapper) {
+                Ok(true) => crate::script::event::set_mouse_enabled(self.lua(), h, true),
+                Ok(false) => {}
+                Err(e) => self.report_error(format!("{dbg}: EnableMouse: {e}"), &e),
+            }
         }
         // `<HitRectInsets>`: the mouse rect, inset from the frame's; a side it omits is 0.
         if let Some(ins) = children_named(el, "HitRectInsets").next() {
@@ -103,12 +140,14 @@ impl Loader<'_> {
                     .and_then(|v| v.trim().parse::<f32>().ok())
                     .unwrap_or(0.0)
             };
-            self.call(
-                wrapper,
-                "SetHitRectInsets",
-                (side("left"), side("right"), side("top"), side("bottom")),
-                dbg,
-            );
+            match crate::script::taint::gate(self.lua(), wrapper) {
+                Ok(true) => self.model().arena.set_hit_rect_insets(
+                    h,
+                    [side("left"), side("right"), side("top"), side("bottom")],
+                ),
+                Ok(false) => {}
+                Err(e) => self.report_error(format!("{dbg}: SetHitRectInsets: {e}"), &e),
+            }
         }
         // `<ResizeBounds>`: both pairs are always written, an absent one as 0, so a lone
         // `<minResize>` resets the max to unbounded. A `<Size>` outside them is not clamped.
@@ -131,11 +170,17 @@ impl Loader<'_> {
         }
         // `dontSavePosition`: bit 0x80000, the flag `SetDontSavePosition` writes.
         if el.attr_bool("dontSavePosition") {
-            self.call(wrapper, "SetDontSavePosition", true, dbg);
+            if let Some(f) = self.model().arena.frame_mut(h) {
+                f.dont_save_position = true;
+            }
         }
         // `enableKeyboard` enables both key kinds.
         if el.attr_bool("enableKeyboard") {
-            self.call(wrapper, "EnableKeyboard", true, dbg);
+            match crate::script::taint::gate(self.lua(), wrapper) {
+                Ok(true) => self.model().arena.set_keyboard_enabled(h, true),
+                Ok(false) => {}
+                Err(e) => self.report_error(format!("{dbg}: EnableKeyboard: {e}"), &e),
+            }
         }
     }
 
@@ -166,13 +211,25 @@ impl Loader<'_> {
     /// `<Size>`. Every one applies in document order, and expansion puts an instance's children
     /// after its template's, so the instance's own `<Size>` wins.
     pub(super) fn apply_size(&mut self, el: &Element, wrapper: &Table, dbg: &str) {
-        for size in children_named(el, "Size") {
+        let mut sizes = children_named(el, "Size").peekable();
+        if sizes.peek().is_none() {
+            return;
+        }
+        let h = match crate::script::object::frame_handle_of(self.lua(), wrapper) {
+            Ok(h) => h,
+            Err(e) => {
+                self.report_error(format!("{dbg}: SetSize: {e}"), &e);
+                return;
+            }
+        };
+        let mut model = self.model();
+        for size in sizes {
             let (x, y) = abs_dim(size);
             if let Some(w) = x {
-                self.call(wrapper, "SetWidth", w, dbg);
+                crate::script::object::layout_methods::set_frame_width_direct(&mut model, h, w);
             }
-            if let Some(h) = y {
-                self.call(wrapper, "SetHeight", h, dbg);
+            if let Some(ht) = y {
+                crate::script::object::layout_methods::set_frame_height_direct(&mut model, h, ht);
             }
         }
     }
@@ -187,7 +244,17 @@ impl Loader<'_> {
         dbg: &str,
     ) {
         if el.attr_bool("setAllPoints") {
-            self.call(wrapper, "SetAllPoints", (), dbg);
+            match crate::script::object::frame_handle_of(self.lua(), wrapper) {
+                Ok(h) => {
+                    let mut model = self.model();
+                    let rel_id =
+                        crate::script::object::layout_methods::default_parent_id(&mut model, h);
+                    crate::script::object::layout_methods::set_frame_all_points_direct(
+                        &mut model, h, rel_id,
+                    );
+                }
+                Err(e) => self.report_error(format!("{dbg}: SetAllPoints: {e}"), &e),
+            }
         }
         for anchors in children_named(el, "Anchors") {
             for anchor in children_named(anchors, "Anchor") {
