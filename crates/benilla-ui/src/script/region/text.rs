@@ -437,3 +437,85 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     // one implementation each, shared with EditBox.
     super::super::font_block::install(lua, m, region_handle_of, "FontString", None)
 }
+
+/// Direct `FontString:SetSpacing` on a region handle, shared by the XML loader.
+pub(crate) fn set_spacing_direct(
+    model: &mut crate::script::Model,
+    rh: crate::widget::RegionHandle,
+    sp: f32,
+) {
+    let d = model.region_data.entry(rh).or_default();
+    d.font_spacing = sp.max(0.0);
+    d.font_explicit.spacing = true;
+    model.touch_layout_region(rh);
+}
+
+/// Direct `FontString:SetJustifyH` on a region handle, shared by the XML loader.
+pub(crate) fn set_justify_h_direct(
+    model: &mut crate::script::Model,
+    rh: crate::widget::RegionHandle,
+    j: &str,
+) -> mlua::Result<()> {
+    let parsed = justify::parse_h(j);
+    if parsed == justify::Set::NoMatch {
+        return Err(justify::usage_h("FontString"));
+    }
+    let d = model.region_data.entry(rh).or_default();
+    match parsed {
+        justify::Set::To(jh) => d.justify.set_h(jh),
+        justify::Set::Clears => d.justify.clear_h(),
+        justify::Set::NoMatch => unreachable!("returned above"),
+    }
+    d.font_explicit.justify_h = true;
+    Ok(())
+}
+
+/// Direct `FontString:SetJustifyV` on a region handle, shared by the XML loader.
+pub(crate) fn set_justify_v_direct(
+    model: &mut crate::script::Model,
+    rh: crate::widget::RegionHandle,
+    j: &str,
+) -> mlua::Result<()> {
+    let parsed = justify::parse_v(j);
+    if parsed == justify::Set::NoMatch {
+        return Err(justify::usage_v("FontString"));
+    }
+    let d = model.region_data.entry(rh).or_default();
+    match parsed {
+        justify::Set::To(jv) => d.justify.set_v(jv),
+        justify::Set::Clears => d.justify.clear_v(),
+        justify::Set::NoMatch => unreachable!("returned above"),
+    }
+    d.font_explicit.justify_v = true;
+    Ok(())
+}
+
+/// Direct `FontString:SetNonSpaceWrap` on a region handle.
+pub(crate) fn set_non_space_wrap_direct(
+    model: &mut crate::script::Model,
+    rh: crate::widget::RegionHandle,
+    on: bool,
+) {
+    model.region_data.entry(rh).or_default().non_space_wrap = Some(on);
+    model.touch_measure(rh);
+}
+
+/// Direct `FontString:SetWordWrap` on a region handle.
+pub(crate) fn set_word_wrap_direct(
+    model: &mut crate::script::Model,
+    rh: crate::widget::RegionHandle,
+    on: bool,
+) {
+    model.region_data.entry(rh).or_default().no_word_wrap = !on;
+    model.touch_measure(rh);
+}
+
+/// Direct `FontString:GetIndentedWordWrap` (the 3.3.5a setter) on a region handle.
+pub(crate) fn set_indented_word_wrap_direct(
+    model: &mut crate::script::Model,
+    rh: crate::widget::RegionHandle,
+    on: bool,
+) {
+    model.region_data.entry(rh).or_default().indented_word_wrap = Some(on);
+    model.touch_measure(rh);
+}

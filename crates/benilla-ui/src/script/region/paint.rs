@@ -41,6 +41,195 @@ pub(crate) fn set_texture_wrap(lua: &Lua, this: &Table, wrap: (bool, bool)) -> m
     Ok(())
 }
 
+/// Direct `Region:SetAlpha` on a region handle, shared by the XML loader.
+pub(crate) fn set_region_alpha_direct(
+    model: &mut crate::script::ModelGuard<'_>,
+    rh: crate::widget::RegionHandle,
+    alpha: f32,
+) {
+    let alpha = Some(alpha.clamp(0.0, 1.0));
+    if model.region_data.get(&rh).is_some_and(|d| d.alpha == alpha) {
+        return;
+    }
+    let target = crate::order::ZTarget::Region(rh);
+    model
+        .paint_mut(&[target])
+        .region_data
+        .entry(rh)
+        .or_default()
+        .alpha = alpha;
+}
+
+/// Direct `Region:SetVertexColor` on a region handle, shared by the XML loader.
+pub(crate) fn set_region_vertex_color_direct(
+    model: &mut crate::script::ModelGuard<'_>,
+    rh: crate::widget::RegionHandle,
+    r: f32,
+    g: f32,
+    b: f32,
+    a: f32,
+) {
+    let color = Some([r, g, b, a]);
+    if model
+        .region_data
+        .get(&rh)
+        .is_some_and(|d| d.vertex_color == color && d.font_explicit.color)
+    {
+        return;
+    }
+    let target = crate::order::ZTarget::Region(rh);
+    let d = model
+        .paint_mut(&[target])
+        .region_data
+        .entry(rh)
+        .or_default();
+    d.vertex_color = color;
+    d.font_explicit.color = true;
+}
+
+/// Direct `Texture:SetGradient` / `SetGradientAlpha` on a region handle, shared by the XML loader.
+pub(crate) fn set_region_gradient_direct(
+    model: &mut crate::script::Model,
+    rh: crate::widget::RegionHandle,
+    vertical: bool,
+    start: [f32; 4],
+    end: [f32; 4],
+) {
+    let d = model.region_data.entry(rh).or_default();
+    d.gradient = Some(crate::script::Gradient {
+        vertical,
+        start,
+        end,
+    });
+}
+
+/// Direct `Texture:SetTexture(path)` + XML wrap on a region handle.
+pub(crate) fn set_texture_file_direct(
+    lua: &Lua,
+    rh: crate::widget::RegionHandle,
+    path: &str,
+    xml_wrap: (bool, bool),
+) {
+    let derived = {
+        let mut model = crate::script::model_mut_of(lua);
+        let data = model.region_data.entry(rh).or_default();
+        data.circular = false;
+        data.portrait_unit = None;
+        let same_path = data.texture.as_deref() == Some(path);
+        if !same_path {
+            data.desaturated = false;
+        }
+        let derived =
+            !data.anchors.is_empty() && data.size.is_none_or(|(w, h)| w == 0.0 || h == 0.0);
+        if path.is_empty() {
+            data.texture = None;
+            data.fill = None;
+        } else {
+            let before = data.texture.clone();
+            drop(model);
+            let resolvable = {
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model");
+                model.texture_probe.as_ref().is_none_or(|probe| probe(path))
+            };
+            let mut model = crate::script::model_mut_of(lua);
+            if resolvable {
+                let data = model.region_data.entry(rh).or_default();
+                let created = before.as_deref() != Some(path);
+                if created {
+                    data.wrap = xml_wrap;
+                }
+                data.texture = Some(path.to_string());
+                data.fill = None;
+            }
+        }
+        derived
+    };
+    if derived {
+        crate::script::model_mut_of(lua).touch_layout_region(rh);
+    }
+}
+
+/// Direct `Texture:SetTexture(r, g, b, a)` solid fill on a region handle.
+pub(crate) fn set_texture_color_direct(
+    model: &mut crate::script::Model,
+    rh: crate::widget::RegionHandle,
+    rgba: [f32; 4],
+) {
+    let data = model.region_data.entry(rh).or_default();
+    data.circular = false;
+    data.portrait_unit = None;
+    let derived = !data.anchors.is_empty() && data.size.is_none_or(|(w, h)| w == 0.0 || h == 0.0);
+    data.fill = Some(rgba);
+    data.texture = None;
+    if derived {
+        model.touch_layout_region(rh);
+    }
+}
+
+/// Direct `SetNonBlocking` / `SetHorizTile` / `SetVertTile` on a region handle.
+pub(crate) fn set_texture_non_blocking_direct(
+    model: &mut crate::script::ModelGuard<'_>,
+    rh: crate::widget::RegionHandle,
+    on: bool,
+) {
+    model
+        .paint_mut(&[crate::order::ZTarget::Region(rh)])
+        .region_data
+        .entry(rh)
+        .or_default()
+        .non_blocking = on;
+}
+
+pub(crate) fn set_texture_horiz_tile_direct(
+    model: &mut crate::script::ModelGuard<'_>,
+    rh: crate::widget::RegionHandle,
+    on: bool,
+) {
+    model
+        .paint_mut(&[crate::order::ZTarget::Region(rh)])
+        .region_data
+        .entry(rh)
+        .or_default()
+        .tile
+        .0 = on;
+}
+
+pub(crate) fn set_texture_vert_tile_direct(
+    model: &mut crate::script::ModelGuard<'_>,
+    rh: crate::widget::RegionHandle,
+    on: bool,
+) {
+    model
+        .paint_mut(&[crate::order::ZTarget::Region(rh)])
+        .region_data
+        .entry(rh)
+        .or_default()
+        .tile
+        .1 = on;
+}
+
+/// Direct `SetBlendMode` on a region handle.
+pub(crate) fn set_blend_mode_direct(
+    model: &mut crate::script::Model,
+    rh: crate::widget::RegionHandle,
+    mode: &str,
+) {
+    if let Some(blend) = BlendMode::parse(mode) {
+        model.region_data.entry(rh).or_default().blend = blend;
+    }
+}
+
+/// Direct `SetTexCoord(left, right, top, bottom)` on a region handle.
+pub(crate) fn set_tex_coords_rect_direct(
+    model: &mut crate::script::Model,
+    rh: crate::widget::RegionHandle,
+    rect: [f32; 4],
+) {
+    model.region_data.entry(rh).or_default().tex_coords = Some(TexCoords::Rect(rect));
+}
+
 /// Install the paint methods into `m`.
 pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     // SetAlpha/GetAlpha: the region's own alpha, not the owner frame's; stock

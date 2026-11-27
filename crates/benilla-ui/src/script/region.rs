@@ -16,7 +16,7 @@ use crate::layout::Anchor;
 use crate::widget::{RegionHandle, RegionKind};
 
 /// Resolve `self` (a region wrapper) to its live [`RegionHandle`].
-pub(super) fn region_handle_of(lua: &Lua, this: &Table) -> mlua::Result<RegionHandle> {
+pub(crate) fn region_handle_of(lua: &Lua, this: &Table) -> mlua::Result<RegionHandle> {
     let id = decode_id(this)?;
     let model = lua
         .app_data_ref::<crate::script::ModelCell>()
@@ -65,7 +65,7 @@ pub(super) fn clear_texture(model: &mut Model, rh: RegionHandle) {
 
 /// A region's `Show`/`Hide`; a real change counts as a visibility change, since a shown region in
 /// a scroll child widens its range (`0x48fea0`).
-fn set_region_hidden(lua: &Lua, rh: RegionHandle, hidden: bool) {
+pub(crate) fn set_region_hidden(lua: &Lua, rh: RegionHandle, hidden: bool) {
     let mut model = crate::script::model_mut_of(lua);
     let quiet = model.epoch();
     let data = model.region_data.entry(rh).or_default();
@@ -207,11 +207,11 @@ pub(super) fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-mod layout;
-mod paint;
+pub(crate) mod layout;
+pub(crate) mod paint;
 pub use paint::rotation_corners;
 pub(crate) use paint::{set_texture_wrap, texture_path_of};
-mod text;
+pub(crate) mod text;
 
 pub(crate) use text::store_text;
 
@@ -548,7 +548,7 @@ pub(crate) fn unregister_region_name(lua: &mlua::Lua, rh: RegionHandle) {
     }
 }
 
-pub(super) fn region_owner_id(model: &mut Model, rh: RegionHandle) -> u32 {
+pub(crate) fn region_owner_id(model: &mut Model, rh: RegionHandle) -> u32 {
     match model.arena.region(rh).map(|r| r.owner) {
         Some(owner) => model.frame_id(owner),
         None => SCREEN,
@@ -661,6 +661,48 @@ pub(super) fn size_bits_eq(a: Option<(f32, f32)>, b: Option<(f32, f32)>) -> bool
     }
 }
 
+/// Direct `Region:SetPoint` once the target id is resolved, shared by the Lua binding and the XML
+/// loader. Returns `false` when the anchor was already bit-identical at the tail.
+pub(crate) fn set_region_point_direct(
+    model: &mut Model,
+    rh: RegionHandle,
+    point: crate::layout::Point,
+    rel_to_id: u32,
+    rel_point: crate::layout::Point,
+    x: f32,
+    y: f32,
+) -> bool {
+    let data = model.region_data.entry(rh).or_default();
+    let new = Anchor::new(point, rel_to_id, rel_point, x, y);
+    // A no-op only when the bit-identical anchor is already the tail and no earlier entry has
+    // this point, as for frames.
+    let same_at_tail = data.anchors.last().is_some_and(|a| anchor_bits_eq(a, &new))
+        && !data.anchors[..data.anchors.len() - 1]
+            .iter()
+            .any(|a| a.point == point);
+    if same_at_tail {
+        return false;
+    }
+    // The same targets are a value change on this node; a moved target set is a retarget.
+    let structural = anchor_retarget_is_structural(&data.anchors, &new);
+    let old_targets: Option<Vec<u32>> =
+        structural.then(|| data.anchors.iter().map(|a| a.relative_to).collect());
+    data.anchors.retain(|a| a.point != point);
+    data.anchors.push(new);
+    match old_targets {
+        None => model.touch_layout_region(rh),
+        Some(old) => {
+            let new_targets: Vec<u32> = model.region_data[&rh]
+                .anchors
+                .iter()
+                .map(|a| a.relative_to)
+                .collect();
+            model.touch_layout_retarget_region(rh, &old, &new_targets);
+        }
+    }
+    true
+}
+
 /// `Region:SetPoint`, the same binding as the frame's (on the script region base): the shared
 /// argument ladder ([`super::object::anchor_args`]), with the owner as layout parent.
 pub(super) fn region_set_point(lua: &Lua, this: &Table, args: &MultiValue) -> mlua::Result<()> {
@@ -674,37 +716,9 @@ pub(super) fn region_set_point(lua: &Lua, this: &Table, args: &MultiValue) -> ml
     let me = model.region_id(rh);
     let owner = region_owner_id(&mut model, rh);
     let rel_to_id = resolve_rel_target(&model, &p.target, &who, "SetPoint", me, owner)?;
-    let (point, rel_point, x, y) = (p.point, p.rel_point, p.x, p.y);
-
-    let data = model.region_data.entry(rh).or_default();
-    let new = Anchor::new(point, rel_to_id, rel_point, x, y);
-    // A no-op only when the bit-identical anchor is already the tail and no earlier entry has
-    // this point, as for frames.
-    let same_at_tail = data.anchors.last().is_some_and(|a| anchor_bits_eq(a, &new))
-        && !data.anchors[..data.anchors.len() - 1]
-            .iter()
-            .any(|a| a.point == point);
-    if same_at_tail {
+    if !set_region_point_direct(&mut model, rh, p.point, rel_to_id, p.rel_point, p.x, p.y) {
         // The per-frame caller setting what is there: the mutation count stands too.
         model.set_epoch(quiet);
-    } else {
-        // The same targets are a value change on this node; a moved target set is a retarget.
-        let structural = anchor_retarget_is_structural(&data.anchors, &new);
-        let old_targets: Option<Vec<u32>> =
-            structural.then(|| data.anchors.iter().map(|a| a.relative_to).collect());
-        data.anchors.retain(|a| a.point != point);
-        data.anchors.push(new);
-        match old_targets {
-            None => model.touch_layout_region(rh),
-            Some(old) => {
-                let new_targets: Vec<u32> = model.region_data[&rh]
-                    .anchors
-                    .iter()
-                    .map(|a| a.relative_to)
-                    .collect();
-                model.touch_layout_retarget_region(rh, &old, &new_targets);
-            }
-        }
     }
     Ok(())
 }

@@ -24,6 +24,9 @@ pub type TextureSizeProbe = Box<dyn Fn(&str) -> Option<(u32, u32)>>;
 /// The host's answer to whether a font path loads.
 pub type FontProbe = Box<dyn Fn(&str) -> bool>;
 
+/// A cached expanded FrameXML template tree plus any warnings emitted while expanding it.
+pub(crate) type ExpandedTemplateEntry = (std::sync::Arc<crate::framexml::Element>, Vec<String>);
+
 /// The host's builder for the macro icon chooser's list, run by the first `GetNumMacroIcons`.
 pub type MacroIconSource = Box<dyn Fn() -> Vec<String>>;
 
@@ -102,6 +105,10 @@ pub(crate) struct Model {
     /// bare `&Lua`, which lets `LoadAddOn` load inside a binding.
     pub(crate) framexml_templates:
         std::cell::RefCell<std::collections::HashMap<String, crate::framexml::Element>>,
+    /// Cached expanded template trees keyed by `(tag, inherits)`, cleared whenever a template or
+    /// font is registered so repeated `CreateFrame(..., inherits)` calls reuse one `Arc<Element>`.
+    pub(crate) framexml_expanded_cache:
+        std::cell::RefCell<std::collections::HashMap<(String, String), ExpandedTemplateEntry>>,
     /// `FrameXML_Debug`'s flag (boots 0); the loader's trace lines print while it is greater than
     /// 0, so it is signed.
     pub(crate) framexml_debug: std::cell::Cell<i32>,
@@ -1424,6 +1431,7 @@ impl Model {
             addons_saved_account: None,
             addons_saved_character: None,
             framexml_templates: Default::default(),
+            framexml_expanded_cache: Default::default(),
             framexml_debug: Default::default(),
             load_log: Default::default(),
             framexml_fonts: Default::default(),

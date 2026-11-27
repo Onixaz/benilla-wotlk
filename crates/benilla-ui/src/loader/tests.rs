@@ -3074,4 +3074,124 @@ mod script_args_tests {
             .eval::<bool>("return NamedProbe:GetScript('OnShow') == nil")
             .unwrap());
     }
+
+    #[test]
+    fn redefining_a_template_invalidates_the_expanded_template_cache() {
+        let mut s = UiScript::new().unwrap();
+        s.set_screen_size(800.0, 600.0);
+        let doc1 = framexml::parse(
+            r#"<Ui>
+                <Frame name="CacheBase" virtual="true">
+                    <Size><AbsDimension x="100" y="40"/></Size>
+                </Frame>
+                <Frame name="CacheChild" inherits="CacheBase" virtual="true"/>
+            </Ui>"#,
+        )
+        .unwrap();
+        let r1 = load(&s, &doc1, &no_files);
+        assert!(r1.errors.is_empty(), "{:?}", r1.errors);
+        s.run(r#"A = CreateFrame("Frame", "CacheA", nil, "CacheChild")"#)
+            .unwrap();
+        assert_eq!(s.eval::<f64>("return CacheA:GetWidth()").unwrap(), 100.0);
+
+        // Redefine the base template: the cached expansion for CacheChild must be invalidated.
+        let doc2 = framexml::parse(
+            r#"<Ui>
+                <Frame name="CacheBase" virtual="true">
+                    <Size><AbsDimension x="220" y="40"/></Size>
+                </Frame>
+            </Ui>"#,
+        )
+        .unwrap();
+        let r2 = load(&s, &doc2, &no_files);
+        assert!(r2.errors.is_empty(), "{:?}", r2.errors);
+        s.run(r#"B = CreateFrame("Frame", "CacheB", nil, "CacheChild")"#)
+            .unwrap();
+        assert_eq!(s.eval::<f64>("return CacheB:GetWidth()").unwrap(), 220.0);
+    }
+
+    #[test]
+    fn direct_template_instantiation_preserves_frame_region_and_script_parity() {
+        let mut s = UiScript::new().unwrap();
+        s.set_screen_size(800.0, 600.0);
+        let doc = framexml::parse(
+            r#"<Ui>
+                <Font name="ParityFont" font="Fonts\FRIZQT__.TTF" virtual="true">
+                    <FontHeight><AbsValue val="14"/></FontHeight>
+                </Font>
+                <Frame name="DirectParityTemplate" virtual="true" hidden="true" alpha="0.5"
+                       frameStrata="DIALOG" frameLevel="7" id="42" clampedToScreen="true"
+                       dontSavePosition="true">
+                    <Size><AbsDimension x="160" y="64"/></Size>
+                    <HitRectInsets><AbsInset left="2" right="3" top="4" bottom="5"/></HitRectInsets>
+                    <Layers>
+                        <Layer level="ARTWORK">
+                            <Texture name="$parentBg" parentKey="bg" file="Interface\Buttons\WHITE8X8"
+                                     horizTile="true" vertTile="false" alphaMode="ADD">
+                                <Size><AbsDimension x="80" y="32"/></Size>
+                                <Anchors>
+                                    <Anchor point="TOPLEFT" x="6" y="-4"/>
+                                </Anchors>
+                                <TexCoords left="0.1" right="0.9" top="0.2" bottom="0.8"/>
+                            </Texture>
+                            <FontString name="$parentLabel" parentKey="label" inherits="ParityFont"
+                                        justifyH="LEFT" justifyV="TOP" spacing="3"
+                                        nonspacewrap="true" wordwrap="false" indented="true">
+                                <Anchors>
+                                    <Anchor point="LEFT" relativeTo="$parentBg" relativePoint="RIGHT" x="4" y="0"/>
+                                </Anchors>
+                                <Color r="0.25" g="0.5" b="0.75" a="1.0"/>
+                            </FontString>
+                        </Layer>
+                    </Layers>
+                    <Scripts>
+                        <OnEnter>self.entered = true</OnEnter>
+                        <OnMouseWheel>self.wheeled = true</OnMouseWheel>
+                        <OnKeyDown>self.keyed = true</OnKeyDown>
+                    </Scripts>
+                </Frame>
+            </Ui>"#,
+        )
+        .unwrap();
+        let report = load(&s, &doc, &no_files);
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+
+        s.run(r#"P = CreateFrame("Frame", "ParityInst", nil, "DirectParityTemplate")"#)
+            .unwrap();
+        s.run(
+            r#"
+            local l, r, t, b = P:GetHitRectInsets()
+            local ulx, uly, llx, lly, urx, ury, lrx, lry = P.bg:GetTexCoord()
+            local cr, cg, cb, ca = P.label:GetTextColor()
+            local pt, rel, rpt, ox, oy = P.label:GetPoint(1)
+            assert(not P:IsShown(), "hidden")
+            assert(math.abs(P:GetAlpha() - 0.5) < 1e-4, "alpha")
+            assert(P:GetFrameStrata() == "DIALOG", "strata")
+            assert(P:GetFrameLevel() == 7, "level")
+            assert(P:GetID() == 0, "template id is not inherited")
+            assert(P:IsClampedToScreen() == 1, "clampedToScreen")
+            assert(P:GetDontSavePosition() == 1, "dontSavePosition")
+            assert(P:GetWidth() == 160 and P:GetHeight() == 64, "size")
+            assert(l == 2 and r == 3 and t == 4 and b == 5, "hitRectInsets")
+            assert(P:IsMouseEnabled() == 1, "mouse")
+            assert(P:IsMouseWheelEnabled() == 1, "wheel")
+            assert(P:IsKeyboardEnabled() == 1, "keyboard")
+            assert(P.bg:GetWidth() == 80 and P.bg:GetHeight() == 32, "bg size")
+            assert(P.bg:GetBlendMode() == "ADD", "blend")
+            assert(P.bg:GetHorizTile() == 1 and P.bg:GetVertTile() == nil, "tile")
+            assert(math.abs(ulx - 0.1) < 1e-4 and math.abs(ury - 0.2) < 1e-4, "tc ul/ur")
+            assert(math.abs(lrx - 0.9) < 1e-4 and math.abs(lry - 0.8) < 1e-4, "tc lr")
+            assert(P.label:GetJustifyH() == "LEFT" and P.label:GetJustifyV() == "TOP", "justify")
+            assert(P.label:GetSpacing() == 3, "spacing")
+            assert(P.label:CanNonSpaceWrap() == 1, "nonspacewrap")
+            assert(P.label:CanWordWrap() == nil, "wordwrap")
+            assert(P.label:SetIndentedWordWrap() == 1, "indented")
+            assert(math.abs(cr - 0.25) < 1e-4 and math.abs(cg - 0.5) < 1e-4
+                and math.abs(cb - 0.75) < 1e-4 and math.abs(ca - 1.0) < 1e-4, "color")
+            assert(pt == "LEFT" and rel == P.bg and rpt == "RIGHT"
+                and ox == 4 and oy == 0, "anchor")
+            "#,
+        )
+        .unwrap();
+    }
 }
