@@ -295,6 +295,8 @@ local VERBS = {
     { "petnames", function() return GetNumPetitionNames() end },
     { "pettitle", function() local _, t = GetPetitionInfo() return t end },
     { "petitems", function() return GetNumPetitionItems() end },
+    { "clnum", function() return CombatLogGetNumEntries(1) end },
+    { "clpass", function() return CombatLogGetNumEntries() end },
     { "taxicost", function()
         for i = 1, NumTaxiNodes() do
             if TaxiNodeName(i) == "Sentinel Hill, Westfall" then return TaxiNodeCost(i) end
@@ -3611,13 +3613,19 @@ pub(super) const GOSSIP_NPC: u32 = crate::target::cursor_mode::npc_flags::GOSSIP
 
 /// A creature as a stream create sends it, with `npc_flags`.
 pub(super) fn npc_create(guid: u64, npc_flags: u32) -> SessionEvent {
-    let pairs = vec![
+    npc_create_with(guid, npc_flags, &[])
+}
+
+/// [`npc_create`] with `extra` fields.
+fn npc_create_with(guid: u64, npc_flags: u32, extra: &[(u16, u32)]) -> SessionEvent {
+    let mut pairs = vec![
         (2, 0x9),
         (FIELD_UNIT_HEALTH, 500),
         (FIELD_UNIT_MAXHEALTH, 500),
         (FIELD_UNIT_LEVEL, 30),
         (benilla_protocol::field::FIELD_UNIT_NPC_FLAGS, npc_flags),
     ];
+    pairs.extend_from_slice(extra);
     SessionEvent::ObjectCreate {
         guid,
         kind: EntityKind::Unit,
@@ -5905,6 +5913,111 @@ fn cast_bar_events_fire_from_the_spell_handlers_in_wire_order() {
             "UNIT_FLAGS player | casting=Fireball castid=4",
             "UNIT_SPELLCAST_SUCCEEDED player Fireball Rank 1 4 | casting=Fireball castid=4",
             "UNIT_SPELLCAST_STOP player Fireball Rank 1 4 | casting=nil castid=nil",
+        ]
+    );
+}
+
+/// A cast's log entries fire inside the cast's handlers behind its unit events: the start's
+/// `UNIT_SPELLCAST_START` (`0x806961` -> `0x8054b8`) before its `SPELL_CAST_START` (`0x8069e0`),
+/// and the go's `UNIT_SPELLCAST_SUCCEEDED` (`0x80e763`) before its `SPELL_CAST_SUCCESS`
+/// (`0x80ec6c`), each before the next packet's events.
+#[test]
+fn a_casts_log_entries_fire_behind_its_unit_events() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.run(2);
+    const FIREBALL: u32 = 133;
+    const RENEW: u32 = 139;
+    let start = SessionEvent::SpellStart {
+        caster: ME,
+        cast_count: 4,
+        spell_id: FIREBALL,
+        cast_flags: 0,
+        cast_time_ms: 1500,
+        target: None,
+        ammo_display_id: None,
+        immunities: None,
+    };
+    let go = SessionEvent::SpellGo {
+        caster: ME,
+        cast_count: 5,
+        spell_id: RENEW,
+        cast_flags: 0,
+        server_time: 0,
+        hits: vec![ME],
+        misses: vec![],
+        reflects: vec![],
+        target: Some(ME),
+        go_target: None,
+        target_mask: 0x2,
+        src: None,
+        dest: None,
+        ammo: None,
+        item_caster: None,
+        trajectory: None,
+        dest_counter: 0,
+        points: vec![],
+    };
+    let seen = rig.packets(vec![start, control(false), go, control(true)], 2);
+    let events = &[
+        "UNIT_SPELLCAST_START",
+        "UNIT_SPELLCAST_SUCCEEDED",
+        "PLAYER_CONTROL_LOST",
+        "PLAYER_CONTROL_GAINED",
+    ];
+    assert_eq!(
+        log_pin(&seen, events, &["clnum"]),
+        vec![
+            "UNIT_SPELLCAST_START player Fireball Rank 1 4 | clnum=0",
+            "COMBAT_LOG_EVENT_UNFILTERED SPELL_CAST_START nil 133 | clnum=1",
+            "PLAYER_CONTROL_LOST | clnum=1",
+            "UNIT_SPELLCAST_SUCCEEDED player Renew Rank 1 5 | clnum=1",
+            "COMBAT_LOG_EVENT_UNFILTERED SPELL_CAST_SUCCESS Probesix 139 | clnum=2",
+            "PLAYER_CONTROL_GAINED | clnum=2",
+        ]
+    );
+}
+
+/// A go whose dest lies on a transport not here ends at the pending cast's release (`0x80e647` ->
+/// `0x80e66e`): it jumps past the end and the log block, so nothing logs.
+#[test]
+fn a_go_on_a_transport_not_here_logs_nothing() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.run(2);
+    const RENEW: u32 = 139;
+    let go = |dest| SessionEvent::SpellGo {
+        caster: ME,
+        cast_count: 0,
+        spell_id: RENEW,
+        cast_flags: 0,
+        server_time: 0,
+        hits: vec![ME],
+        misses: vec![],
+        reflects: vec![],
+        target: Some(ME),
+        go_target: None,
+        target_mask: 0x40,
+        src: None,
+        dest,
+        ammo: None,
+        item_caster: None,
+        trajectory: None,
+        dest_counter: 0,
+        points: vec![],
+    };
+    const NO_TRANSPORT: u64 = 0x1FC0_0000_0000_0099;
+    let seen = rig.packets(
+        vec![go(Some(([0.0; 3], NO_TRANSPORT))), go(Some(([0.0; 3], 0)))],
+        2,
+    );
+    assert_eq!(
+        log_pin(&seen, &["UNIT_SPELLCAST_SUCCEEDED"], &["clnum"]),
+        vec![
+            "UNIT_SPELLCAST_SUCCEEDED player Renew Rank 1 0 | clnum=0",
+            "COMBAT_LOG_EVENT_UNFILTERED SPELL_CAST_SUCCESS Probesix 139 | clnum=1",
         ]
     );
 }
@@ -13824,5 +13937,651 @@ fn a_combat_lines_item_callback_runs_in_ask_order() {
     assert!(
         pin(&seen, events, &[]).is_empty(),
         "a missing record shows nothing"
+    );
+}
+
+// ── The combat log (#1285) ───────────────────────────────────────────────────────────────────────
+
+/// A creature no create named, whose record the log asks for.
+const KOBOLD: u64 = 0xF130_0006_0100_0002;
+/// `KOBOLD`'s template entry.
+const KOBOLD_ENTRY: u32 = 0x601;
+
+/// A landed melee swing of ours on `victim`.
+fn swing(victim: u64, damage: u32) -> SessionEvent {
+    SessionEvent::AttackerState(benilla_protocol::messages::AttackerState {
+        attacker: ME,
+        victim,
+        hit_info: benilla_protocol::messages::hit_info::AFFECTS_VICTIM,
+        damage,
+        overkill: 0,
+        victim_state: 1,
+        absorb: 0,
+        resist: 0,
+        blocked: 0,
+        melee_spell_id: 0,
+        school_mask: 1,
+    })
+}
+
+/// The creature record's answer for `entry`, named `name`.
+fn creature_name(entry: u32, name: &str) -> SessionEvent {
+    SessionEvent::CreatureName {
+        entry,
+        name: Some(name.into()),
+        subname: None,
+        cursor_name: None,
+        creature_type: Some(7),
+        pet_family: 0,
+        rank: 0,
+        type_flags: 0,
+        display_id: 0,
+        civilian: false,
+        racial_leader: false,
+        modifiers: (1.0, 1.0),
+        movement_id: 0,
+    }
+}
+
+/// The combat log's events and `events`, a log event as its sub-event, dest name and amount (the
+/// timestamp aside), each with `verbs`' answers.
+fn log_pin(seen: &[Seen], events: &[&str], verbs: &[&str]) -> Vec<String> {
+    seen.iter()
+        .filter(|s| s.event.starts_with("COMBAT_LOG_EVENT") || events.contains(&s.event.as_str()))
+        .map(|s| {
+            if !s.event.starts_with("COMBAT_LOG_EVENT") {
+                return s.line(verbs);
+            }
+            let args: Vec<&str> = s.args.split(' ').collect();
+            let mut seen = s.clone();
+            seen.args = [args.get(1), args.get(6), args.get(8)]
+                .into_iter()
+                .map(|a| a.copied().unwrap_or("?"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            seen.line(verbs)
+        })
+        .collect()
+}
+
+/// Each combat packet's entry fires its log events inside its handler, in wire order with the
+/// other handlers' events: `0x7512b0` links the swing inline (`0x751402`) and sends it at once
+/// (`0x751432` -> `0x74f910`), before the next packet's handler runs. The entry is in the store at
+/// its event (`CombatLogGetNumEntries` `0x74fa70`).
+#[test]
+fn a_swing_logs_inside_its_handler_in_wire_order() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.run(2);
+    let seen = rig.packets(vec![swing(ME, 7), control(false), swing(ME, 9)], 2);
+    assert_eq!(
+        log_pin(&seen, &["PLAYER_CONTROL_LOST"], &["clnum", "clpass"]),
+        vec![
+            "COMBAT_LOG_EVENT SWING_DAMAGE Probesix 7 | clnum=1 clpass=1",
+            "COMBAT_LOG_EVENT_UNFILTERED SWING_DAMAGE Probesix 7 | clnum=1 clpass=1",
+            "PLAYER_CONTROL_LOST | clnum=1 clpass=1",
+            "COMBAT_LOG_EVENT SWING_DAMAGE Probesix 9 | clnum=2 clpass=2",
+            "COMBAT_LOG_EVENT_UNFILTERED SWING_DAMAGE Probesix 9 | clnum=2 clpass=2",
+        ]
+    );
+}
+
+/// An entry naming a creature whose record is not cached waits for the answer (`0x74fd40` ->
+/// `0x74f720` sets its mask), holding every later entry behind it (`0x74ff39`): nothing fires and
+/// the count stops at it (`0x74faa9`). The record's answer runs the entry's callback
+/// (`0x74fe90`), which sends it named and the ready one behind it, inside that handler; both are
+/// in the store at the first one's event.
+#[test]
+fn an_unnamed_creature_holds_the_log_until_its_record_answers() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.run(2);
+    let held = rig.packets(vec![swing(KOBOLD, 5), swing(ME, 6)], 2);
+    assert_eq!(log_pin(&held, &[], &["clnum"]), Vec::<String>::new());
+    assert_eq!(rig.live_now().line(&["clnum"]), "NOW | clnum=0");
+    let seen = rig.packets(
+        vec![creature_name(KOBOLD_ENTRY, "Kobold"), control(false)],
+        2,
+    );
+    assert_eq!(
+        log_pin(&seen, &["PLAYER_CONTROL_LOST"], &["clnum"]),
+        vec![
+            "COMBAT_LOG_EVENT SWING_DAMAGE Kobold 5 | clnum=2",
+            "COMBAT_LOG_EVENT_UNFILTERED SWING_DAMAGE Kobold 5 | clnum=2",
+            "COMBAT_LOG_EVENT SWING_DAMAGE Probesix 6 | clnum=2",
+            "COMBAT_LOG_EVENT_UNFILTERED SWING_DAMAGE Probesix 6 | clnum=2",
+            "PLAYER_CONTROL_LOST | clnum=2",
+        ]
+    );
+}
+
+/// A `COMBAT_LOG_EVENT` listener that calls `CombatLogClearEntries` recycles the sending entry
+/// (`0x751120` -> `0x750390`, the send cursor nulled at `0x7503a8`); `COMBAT_LOG_EVENT_UNFILTERED`
+/// still fires off the values pushed before it (`0x74f9ba`). 12340 then reads the null cursor at
+/// `0x74fa09` and dereferences it at `0x74fa0f` (and at `0x74f9e3` while logging), an access
+/// violation; benilla ends the send loop there and the next entry logs as the first.
+#[test]
+fn a_listener_clearing_the_log_ends_the_send_loop() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.run(2);
+    lua(
+        &mut rig,
+        r#"
+local f = CreateFrame("Frame")
+f:RegisterEvent("COMBAT_LOG_EVENT")
+f:SetScript("OnEvent", function(self)
+    self:UnregisterAllEvents()
+    CombatLogClearEntries()
+end)
+"#,
+    );
+    let seen = rig.packets(vec![swing(ME, 7), control(false), swing(ME, 9)], 2);
+    assert_eq!(
+        log_pin(&seen, &["PLAYER_CONTROL_LOST"], &["clnum"]),
+        vec![
+            "COMBAT_LOG_EVENT SWING_DAMAGE Probesix 7 | clnum=0",
+            "COMBAT_LOG_EVENT_UNFILTERED SWING_DAMAGE Probesix 7 | clnum=0",
+            "PLAYER_CONTROL_LOST | clnum=0",
+            "COMBAT_LOG_EVENT SWING_DAMAGE Probesix 9 | clnum=1",
+            "COMBAT_LOG_EVENT_UNFILTERED SWING_DAMAGE Probesix 9 | clnum=1",
+        ]
+    );
+}
+
+/// An allocation past the retention time recycles the oldest entry (`0x75043f` -> `0x750390`);
+/// when that is the pending one, still waiting on a name that never answers, the cursor moves to
+/// the next (`0x7503b0`). 12340 sends nothing there and the ready entries behind it never fire
+/// again; benilla sends them in order from the new pending entry, then the new one.
+#[test]
+fn recycling_a_waiting_entry_sends_the_ready_ones_behind_it() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.run(2);
+    let held = rig.packets(vec![swing(KOBOLD, 5), swing(ME, 6), swing(ME, 7)], 2);
+    assert_eq!(log_pin(&held, &[], &["clnum"]), Vec::<String>::new());
+    lua(&mut rig, "SetCVar('combatLogRetentionTime', '0')");
+    let seen = rig.packets(vec![swing(ME, 8), control(false)], 2);
+    assert_eq!(
+        log_pin(&seen, &["PLAYER_CONTROL_LOST"], &["clnum"]),
+        vec![
+            "COMBAT_LOG_EVENT SWING_DAMAGE Probesix 6 | clnum=2",
+            "COMBAT_LOG_EVENT_UNFILTERED SWING_DAMAGE Probesix 6 | clnum=2",
+            "COMBAT_LOG_EVENT SWING_DAMAGE Probesix 7 | clnum=2",
+            "COMBAT_LOG_EVENT_UNFILTERED SWING_DAMAGE Probesix 7 | clnum=2",
+            "COMBAT_LOG_EVENT SWING_DAMAGE Probesix 8 | clnum=3",
+            "COMBAT_LOG_EVENT_UNFILTERED SWING_DAMAGE Probesix 8 | clnum=3",
+            "PLAYER_CONTROL_LOST | clnum=3",
+        ]
+    );
+    assert_eq!(
+        rig.app
+            .world()
+            .resource::<crate::combat_log::CombatLog>()
+            .waits_held(),
+        0,
+        "the recycled entry's name callback is cancelled (`0x7503e9` -> `0x750270`)"
+    );
+}
+
+/// `CombatLogClearEntries` recycles every entry (`0x751120` -> `0x750390`), and each recycle
+/// cancels the entry's name callbacks (`0x7503d0`, `0x7503e9` -> `0x750270`): the name's later
+/// answer finds nothing to send.
+#[test]
+fn clearing_the_log_cancels_its_name_waits() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.run(2);
+    let held = rig.packets(vec![swing(KOBOLD, 5), swing(ME, 6)], 2);
+    assert_eq!(log_pin(&held, &[], &["clnum"]), Vec::<String>::new());
+    let waits = |rig: &Rig| {
+        rig.app
+            .world()
+            .resource::<crate::combat_log::CombatLog>()
+            .waits_held()
+    };
+    assert_eq!(waits(&rig), 1, "the kobold's entry waits on its name");
+    lua(&mut rig, "CombatLogClearEntries()");
+    assert_eq!(waits(&rig), 0);
+    let seen = rig.packets(
+        vec![creature_name(KOBOLD_ENTRY, "Kobold"), control(false)],
+        2,
+    );
+    assert_eq!(
+        log_pin(&seen, &["PLAYER_CONTROL_LOST"], &["clnum"]),
+        vec!["PLAYER_CONTROL_LOST | clnum=0"]
+    );
+}
+
+/// Our death logs `UNIT_DIED` in the death anim ahead of its dead-or-alive refresh (`0x7561ed`
+/// before `0x756238`), so the entry fires before `PLAYER_DEAD`, inside the update's handler.
+#[test]
+fn our_death_logs_before_player_dead() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.run(2);
+    let seen = rig.packets(vec![self_values(&[(FIELD_UNIT_HEALTH, 0)])], 2);
+    assert_eq!(
+        log_pin(&seen, &["PLAYER_DEAD"], &["clnum"]),
+        vec![
+            "COMBAT_LOG_EVENT UNIT_DIED Probesix ? | clnum=1",
+            "COMBAT_LOG_EVENT_UNFILTERED UNIT_DIED Probesix ? | clnum=1",
+            "PLAYER_DEAD | clnum=1",
+        ]
+    );
+}
+
+/// Our spell failure shows its line, then logs it (`0x808b00`, then `0x808b3c` -> `0x751ad0`):
+/// `UI_ERROR_MESSAGE` reads the log without the entry, which fires behind it inside the
+/// failure's handler, before the next packet's (the filtered event's filter passes it by).
+#[test]
+fn a_spell_failure_logs_behind_its_line_inside_its_handler() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.run(2);
+    let failed = SessionEvent::CastResult {
+        cast_count: 0,
+        spell_id: 133,
+        success: false,
+        reason: Some(0x28),
+        arg: None,
+        arg2: None,
+        wire_reason: Some(0x28),
+    };
+    let seen = rig.packets(vec![failed, control(false)], 2);
+    let pinned = log_pin(
+        &seen,
+        &["UI_ERROR_MESSAGE", "PLAYER_CONTROL_LOST"],
+        &["clnum"],
+    );
+    assert_eq!(
+        pinned
+            .iter()
+            .map(|l| l.split(' ').next().unwrap_or("").to_string()
+                + " "
+                + l.rsplit(' ').next().unwrap_or(""))
+            .collect::<Vec<_>>(),
+        vec![
+            "UI_ERROR_MESSAGE clnum=0",
+            "COMBAT_LOG_EVENT_UNFILTERED clnum=1",
+            "PLAYER_CONTROL_LOST clnum=1",
+        ],
+        "{pinned:?}"
+    );
+    assert!(
+        pinned[1].contains("SPELL_CAST_FAILED nil 133"),
+        "{pinned:?}"
+    );
+}
+
+/// A failure that repeats our last one's spell and reason less than 3000 ms after the last shows no
+/// line and logs nothing (`0x808413`-`0x808433`, `0x808af2`); the time is stamped on every call
+/// (`0x808448`), a new pair is kept (`0x80843c`), and a go of ours zeroes the kept spell
+/// (`0x80e759`). The cast's end still runs (`0x808b75`).
+#[test]
+fn a_repeated_spell_failure_within_3s_of_the_last_is_silent() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.run(2);
+    // The async clock the test reads at the call (`0x80840b` -> `0x86ae20`), set per failure.
+    let at = |rig: &mut Rig, ms: u32| {
+        rig.app
+            .world_mut()
+            .resource_mut::<crate::ui_action::LastFailure>()
+            .set_clock_ms(ms);
+    };
+    let fail = |reason: u8| SessionEvent::CastResult {
+        cast_count: 0,
+        spell_id: 133,
+        success: false,
+        reason: Some(reason),
+        arg: None,
+        arg2: None,
+        wire_reason: Some(reason),
+    };
+    let shown = |seen: &[Seen]| {
+        let line = seen
+            .iter()
+            .filter(|s| s.event == "UI_ERROR_MESSAGE")
+            .count();
+        let log = seen
+            .iter()
+            .filter(|s| {
+                s.event == "COMBAT_LOG_EVENT_UNFILTERED" && s.args.contains("SPELL_CAST_FAILED")
+            })
+            .count();
+        let end = seen
+            .iter()
+            .filter(|s| s.event == "UNIT_SPELLCAST_FAILED")
+            .count();
+        (line, log, end)
+    };
+    const OUT_OF_RANGE: u8 = 0x59;
+    const LINE_OF_SIGHT: u8 = 0x2a;
+    at(&mut rig, 10_000);
+    let first = rig.packets(vec![fail(OUT_OF_RANGE)], 2);
+    assert_eq!(shown(&first), (1, 1, 1), "the first shows");
+    // One second later: the same pair is silent; the end still fires.
+    at(&mut rig, 11_000);
+    let second = rig.packets(vec![fail(OUT_OF_RANGE)], 2);
+    assert_eq!(shown(&second), (0, 0, 1), "a repeat within 3 s is silent");
+    // 3.5 s after the first, 2.5 s after the second, which stamped the time: still silent.
+    at(&mut rig, 13_500);
+    let third = rig.packets(vec![fail(OUT_OF_RANGE)], 2);
+    assert_eq!(
+        shown(&third),
+        (0, 0, 1),
+        "the silent repeat stamped the time"
+    );
+    // 2999 ms after the last: still silent (`0x808431`, `jns` on `now - last - 3000`).
+    at(&mut rig, 16_499);
+    let edge = rig.packets(vec![fail(OUT_OF_RANGE)], 2);
+    assert_eq!(shown(&edge), (0, 0, 1), "2999 ms is a repeat");
+    // Exactly 3000 ms after the last: shown again.
+    at(&mut rig, 19_499);
+    let fourth = rig.packets(vec![fail(OUT_OF_RANGE)], 2);
+    assert_eq!(shown(&fourth), (1, 1, 1), "3000 ms shows again");
+    // A different reason within the window shows, and becomes the kept pair.
+    at(&mut rig, 19_600);
+    let other = rig.packets(vec![fail(LINE_OF_SIGHT)], 2);
+    assert_eq!(shown(&other), (1, 1, 1), "a new reason shows");
+    at(&mut rig, 19_700);
+    let back = rig.packets(vec![fail(OUT_OF_RANGE)], 2);
+    assert_eq!(
+        shown(&back),
+        (1, 1, 1),
+        "the pair moved on, so the old one shows"
+    );
+    // A go of ours between two same failures zeroes the kept spell, so the second shows.
+    let go = SessionEvent::SpellGo {
+        caster: ME,
+        cast_count: 0,
+        spell_id: 133,
+        cast_flags: 0,
+        server_time: 0,
+        hits: vec![],
+        misses: vec![],
+        reflects: vec![],
+        target: None,
+        go_target: None,
+        target_mask: 0,
+        src: None,
+        dest: None,
+        ammo: None,
+        item_caster: None,
+        trajectory: None,
+        dest_counter: 0,
+        points: vec![],
+    };
+    rig.packets(vec![go], 2);
+    at(&mut rig, 19_800);
+    let after_go = rig.packets(vec![fail(OUT_OF_RANGE)], 2);
+    assert_eq!(shown(&after_go), (1, 1, 1), "a go resets the kept spell");
+}
+
+/// Each missile arrival that missed logs its miss inside its own arrival (`0x702fc0` ->
+/// `0x703080` -> `0x751b80` -> `0x750500`), whose entry sends at once (`0x750624`): the first
+/// arrival's events fire with only its entry in the store, before the second arrival logs.
+#[test]
+fn each_missile_miss_fires_at_its_arrival() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.run(2);
+    rig.take();
+    let me = rig.app.world().resource::<crate::net::GuidIndex>().0[&ME];
+    {
+        let mut misses = rig
+            .app
+            .world_mut()
+            .resource_mut::<bevy::ecs::message::Messages<crate::entities::MissileMiss>>();
+        for code in [1, 2] {
+            misses.write(crate::entities::MissileMiss {
+                caster: me,
+                anchor: me,
+                spell_id: 133,
+                code,
+            });
+        }
+    }
+    rig.run(1);
+    let seen = rig.take();
+    assert_eq!(
+        log_pin(&seen, &[], &["clnum"]),
+        vec![
+            "COMBAT_LOG_EVENT SPELL_MISSED Probesix 133 | clnum=1",
+            "COMBAT_LOG_EVENT_UNFILTERED SPELL_MISSED Probesix 133 | clnum=1",
+            "COMBAT_LOG_EVENT SPELL_MISSED Probesix 133 | clnum=2",
+            "COMBAT_LOG_EVENT_UNFILTERED SPELL_MISSED Probesix 133 | clnum=2",
+        ]
+    );
+}
+
+/// Another unit's death logs `UNIT_DIED` in its death anim inside the update's handler, once per
+/// watch that ran it (health `0x73f3fa`, the dead bit `0x740623`), before the next packet's.
+#[test]
+fn another_units_death_logs_once_per_watch_inside_its_update() {
+    const OTHER: u64 = 0x0000_0000_0000_0042;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.packets(vec![player_create(OTHER), name_answer(OTHER, "Othar")], 3);
+    let died = SessionEvent::ObjectValues {
+        guid: OTHER,
+        fields: ObjectFields::from_pairs(&[
+            (FIELD_UNIT_HEALTH, 0),
+            (benilla_protocol::field::FIELD_UNIT_DYNAMIC_FLAGS, 0x20),
+        ]),
+    };
+    let seen = rig.packets(vec![died, control(false)], 2);
+    assert_eq!(
+        log_pin(&seen, &["PLAYER_CONTROL_LOST"], &["clnum"]),
+        vec![
+            "COMBAT_LOG_EVENT_UNFILTERED UNIT_DIED Othar ? | clnum=1",
+            "COMBAT_LOG_EVENT_UNFILTERED UNIT_DIED Othar ? | clnum=2",
+            "PLAYER_CONTROL_LOST | clnum=2",
+        ]
+    );
+}
+
+/// Each run of the unit death logs `UNIT_DIED` and then clears the interact target (`0x72929d`,
+/// then `0x7293bf`), so a gossip window open on the creature closes between the two watches' logs.
+#[test]
+fn another_units_death_closes_its_window_between_the_two_logs() {
+    use benilla_protocol::messages::{GossipMenu, NpcTextBlock};
+    const OTHER: u64 = 0xF130_0000_0400_0001;
+    const ENTRY: u32 = 0x400;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.packets(
+        vec![
+            npc_create_with(OTHER, GOSSIP_NPC, &[(3, ENTRY)]),
+            creature_answer(ENTRY, "Othar"),
+        ],
+        3,
+    );
+    // The menu takes the interact target (`0x58a5b4`) and its text's draw fires `GOSSIP_SHOW` (`0x58aef6`).
+    let menu = SessionEvent::GossipMenu(GossipMenu {
+        npc: OTHER,
+        menu_id: 1,
+        text_id: 1,
+        options: Vec::new(),
+        quests: Vec::new(),
+    });
+    let greeting = SessionEvent::NpcGreeting {
+        text_id: 1,
+        blocks: vec![NpcTextBlock {
+            probability: 1.0,
+            male: "Well met.".into(),
+            ..Default::default()
+        }],
+    };
+    let opened = rig.packets(vec![menu, greeting], 3);
+    assert_eq!(fired(&opened, &["GOSSIP_SHOW"]), ["GOSSIP_SHOW"]);
+    let died = SessionEvent::ObjectValues {
+        guid: OTHER,
+        fields: ObjectFields::from_pairs(&[
+            (FIELD_UNIT_HEALTH, 0),
+            (benilla_protocol::field::FIELD_UNIT_DYNAMIC_FLAGS, 0x20),
+        ]),
+    };
+    let seen = rig.packets(vec![died], 2);
+    assert_eq!(
+        log_pin(&seen, &["GOSSIP_CLOSED"], &["clnum"]),
+        vec![
+            "COMBAT_LOG_EVENT_UNFILTERED UNIT_DIED Othar ? | clnum=1",
+            "GOSSIP_CLOSED | clnum=1",
+            "COMBAT_LOG_EVENT_UNFILTERED UNIT_DIED Othar ? | clnum=2",
+        ]
+    );
+}
+
+/// An entry waiting on a record sends from that record's answer (`0x74fe90`), inside its
+/// handler and before the next packet's: `answer` lands the name `log` asked for.
+fn a_record_answer_sends_the_held_entry(
+    log: SessionEvent,
+    answer: SessionEvent,
+    expected: &[&str],
+    named: &str,
+) {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.run(2);
+    let held = rig.packets(vec![log], 2);
+    assert_eq!(log_pin(&held, &[], &["clnum"]), Vec::<String>::new());
+    assert_eq!(rig.live_now().line(&["clnum"]), "NOW | clnum=0");
+    let seen = rig.packets(vec![answer, control(false)], 2);
+    assert_eq!(
+        log_pin(&seen, &["PLAYER_CONTROL_LOST"], &["clnum"]),
+        expected
+    );
+    assert!(
+        seen.iter()
+            .any(|s| s.event.starts_with("COMBAT_LOG_EVENT") && s.args.contains(named)),
+        "the entry carries the answer's name"
+    );
+}
+
+/// The pet-name answer runs the log's callback on the pet's record (`0x74f720`, `0x74fe90`).
+#[test]
+fn a_pet_name_answer_sends_the_held_entry() {
+    a_record_answer_sends_the_held_entry(
+        swing(PET, 4),
+        SessionEvent::PetName {
+            pet_number: 1,
+            name: "Rex".into(),
+            declensions: None,
+        },
+        &[
+            "COMBAT_LOG_EVENT SWING_DAMAGE Rex 4 | clnum=1",
+            "COMBAT_LOG_EVENT_UNFILTERED SWING_DAMAGE Rex 4 | clnum=1",
+            "PLAYER_CONTROL_LOST | clnum=1",
+        ],
+        "Rex",
+    );
+}
+
+/// The game-object template answer runs the log's callback on it (`0x74fd40`, `0x74fe90`).
+#[test]
+fn a_game_object_answer_sends_the_held_entry() {
+    const CRATE: u64 = 0xF110_0007_0200_0003;
+    a_record_answer_sends_the_held_entry(
+        swing(CRATE, 3),
+        SessionEvent::GameObjectInfo {
+            entry: 0x702,
+            type_id: 5,
+            display_id: 0,
+            name: "Crate".into(),
+            data: [0; 24],
+        },
+        &[
+            "COMBAT_LOG_EVENT SWING_DAMAGE Crate 3 | clnum=1",
+            "COMBAT_LOG_EVENT_UNFILTERED SWING_DAMAGE Crate 3 | clnum=1",
+            "PLAYER_CONTROL_LOST | clnum=1",
+        ],
+        "Crate",
+    );
+}
+
+/// The item record's answer runs the log's callback on its item (`0x750210`, mask 4, `0x74fe90`).
+#[test]
+fn an_item_record_answer_sends_the_held_entry() {
+    const ITEM: u32 = 591_201;
+    a_record_answer_sends_the_held_entry(
+        SessionEvent::EnchantmentLog(benilla_protocol::messages::EnchantmentLog {
+            target: ME,
+            caster: ME,
+            item_entry: ITEM,
+            enchant_id: 1900,
+        }),
+        SessionEvent::ItemTemplate {
+            entry: ITEM,
+            info: Some(Box::new(crate::items::test_template("Charz Blade"))),
+        },
+        &[
+            "COMBAT_LOG_EVENT ENCHANT_APPLIED Probesix Crusader | clnum=1",
+            "COMBAT_LOG_EVENT_UNFILTERED ENCHANT_APPLIED Probesix Crusader | clnum=1",
+            "PLAYER_CONTROL_LOST | clnum=1",
+        ],
+        "Charz Blade",
+    );
+}
+
+/// A unit seated in a vehicle runs its death anim, and so logs `UNIT_DIED`, only under
+/// `UNIT_FIELD_FLAGS_2 & 0x20000` (`0x729277`-`0x729299`, else `0x7292a2`).
+#[test]
+fn a_seated_units_death_logs_only_under_the_death_anim_flag() {
+    const OTHER: u64 = 0x0000_0000_0000_0043;
+    const CART: u64 = 0xF150_0000_0000_0001;
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.packets(vec![player_create(OTHER), name_answer(OTHER, "Othar")], 3);
+    let other = rig.app.world().resource::<crate::net::GuidIndex>().0[&OTHER];
+    let death = |rig: &mut Rig, flags2: u32, allow_move: bool| {
+        rig.app
+            .world_mut()
+            .entity_mut(other)
+            .insert(crate::vehicle::Passenger {
+                vehicle: CART,
+                seat: 0,
+                state: crate::vehicle::SEATED,
+            });
+        let died = SessionEvent::ObjectValues {
+            guid: OTHER,
+            fields: ObjectFields::from_pairs(&[
+                (benilla_protocol::field::FIELD_UNIT_FLAGS_2, flags2),
+                (FIELD_UNIT_HEALTH, 0),
+            ]),
+        };
+        let alive = SessionEvent::ObjectValues {
+            guid: OTHER,
+            fields: ObjectFields::from_pairs(&[(FIELD_UNIT_HEALTH, 500)]),
+        };
+        let seen = rig.packets(vec![died, control(allow_move)], 1);
+        rig.packets(vec![alive], 1);
+        log_pin(
+            &seen,
+            &["PLAYER_CONTROL_LOST", "PLAYER_CONTROL_GAINED"],
+            &[],
+        )
+    };
+    assert_eq!(death(&mut rig, 0, false), vec!["PLAYER_CONTROL_LOST"]);
+    assert_eq!(
+        death(&mut rig, 0x2_0000, true),
+        vec![
+            "COMBAT_LOG_EVENT_UNFILTERED UNIT_DIED Othar ?",
+            "PLAYER_CONTROL_GAINED",
+        ]
     );
 }

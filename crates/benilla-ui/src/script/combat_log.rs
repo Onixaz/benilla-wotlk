@@ -578,56 +578,196 @@ impl Filter {
     }
 }
 
-/// The entries oldest first, the Lua cursor and the filters; each VM starts empty (`0x7538a0`).
+/// The client's combat log (`0xadb974`): the entries oldest first, each with the names it still
+/// waits on, the Lua cursor, the send cursor and the filters. The app holds it for the session and
+/// the verbs reach it through the live view at the call; a login clears it (`0x7538a0`).
 #[derive(Debug, Default)]
 pub struct CombatLogStore {
     entries: VecDeque<CombatLogEntry>,
+    /// Each entry's names still asked (`[entry+0x10]`): `1` the source, `2` the dest, `4` the item.
+    waiting: VecDeque<u8>,
     /// The id of `entries[0]`; ids grow by one per entry and never repeat.
     first_id: u64,
     /// The entry `CombatLogGetCurrentEntry` reads (`[0xca1390]`).
     current: Option<u64>,
+    /// The oldest entry not yet sent (`[0xca1394]`), which every later one waits behind.
+    pending: Option<u64>,
+    /// Entries a clear put on the free list (`0x751120` -> `0x750390`), taken before a recycle
+    /// (`0x750400`).
+    free: usize,
     filters: Vec<Filter>,
     /// The unit `COMBAT_TEXT_UPDATE` reports on (`[0xca1380]`), 0 until `CombatTextSetActiveUnit`
-    /// names one, as `0x753963` clears it; `None` while this VM has not called it.
-    text_unit: Option<u64>,
+    /// names one; only a login clears it (`0x753963`), so it outlives a reload.
+    text_unit: u64,
 }
 
 impl CombatLogStore {
     /// The reference's entry match (`0x74f6c0`): no filter passes everything.
-    fn passes(&self, e: &CombatLogEntry) -> bool {
+    pub fn passes(&self, e: &CombatLogEntry) -> bool {
         self.filters.is_empty() || self.filters.iter().any(|f| f.matches(e))
     }
 
-    fn get(&self, id: u64) -> Option<&CombatLogEntry> {
-        let at = usize::try_from(id.checked_sub(self.first_id)?).ok()?;
-        self.entries.get(at)
+    fn at(&self, id: u64) -> Option<usize> {
+        usize::try_from(id.checked_sub(self.first_id)?).ok()
     }
 
-    fn last_id(&self) -> Option<u64> {
-        (!self.entries.is_empty()).then(|| self.first_id + self.entries.len() as u64 - 1)
+    /// The entry `id`, while it is held.
+    pub fn get(&self, id: u64) -> Option<&CombatLogEntry> {
+        self.entries.get(self.at(id)?)
     }
 
-    /// `0x750390` on the oldest entry: a cursor on it moves to the next one.
-    fn pop_oldest(&mut self) {
-        if self.entries.pop_front().is_none() {
-            return;
-        }
+    /// The entry `id`, for a name landing in it.
+    pub fn get_mut(&mut self, id: u64) -> Option<&mut CombatLogEntry> {
+        let at = self.at(id)?;
+        self.entries.get_mut(at)
+    }
+
+    /// The names `id` still waits on (`[entry+0x10]`), 0 for none or an entry gone.
+    pub fn waiting(&self, id: u64) -> u8 {
+        self.at(id)
+            .and_then(|at| self.waiting.get(at))
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Clear `mask` from what `id` waits on (`0x74fee6`); whether the entry is held and now waits
+    /// on nothing.
+    pub fn name_landed(&mut self, id: u64, mask: u8) -> bool {
+        let Some(w) = self.at(id).and_then(|at| self.waiting.get_mut(at)) else {
+            return false;
+        };
+        *w &= !mask;
+        *w == 0
+    }
+
+    /// The oldest entry not yet sent (`[0xca1394]`).
+    pub fn pending(&self) -> Option<u64> {
+        self.pending
+    }
+
+    /// The entry after `id`, if held.
+    fn next(&self, id: u64) -> Option<u64> {
+        let next = id + 1;
+        self.get(next).map(|_| next)
+    }
+
+    /// The send loop's step past the entry just sent (`0x74fa09`-`0x74fa40`): the next entry
+    /// becomes the pending one; whether it waits on nothing, so the loop sends it too.
+    pub fn advance_pending(&mut self) -> bool {
+        let next = self.pending.and_then(|id| self.next(id));
+        self.pending = next;
+        next.is_some_and(|id| self.waiting(id) == 0)
+    }
+
+    /// `0x750390` on the oldest entry: the send and Lua cursors on it move to the next one, and
+    /// its id comes back so its name callbacks are cancelled (`0x750270`).
+    fn recycle_oldest(&mut self) -> Option<u64> {
+        self.entries.pop_front()?;
+        self.waiting.pop_front();
         let gone = self.first_id;
         self.first_id += 1;
-        if self.current == Some(gone) {
-            self.current = (!self.entries.is_empty()).then_some(self.first_id);
+        let next = (!self.entries.is_empty()).then_some(self.first_id);
+        if self.pending == Some(gone) {
+            self.pending = next;
         }
+        if self.current == Some(gone) {
+            self.current = next;
+        }
+        Some(gone)
+    }
+
+    /// The allocation (`0x750400`): a free entry first; else the oldest is recycled once
+    /// `retention_ms` has passed since its time at `now_ms`. The recycled id, if any.
+    pub fn allocate(&mut self, now_ms: u64, retention_ms: i64) -> Option<u64> {
+        if self.free > 0 {
+            self.free -= 1;
+            return None;
+        }
+        let expired = self.entries.front().is_some_and(|oldest| {
+            (now_ms as i64)
+                .saturating_sub(retention_ms)
+                .saturating_sub(oldest.time_ms as i64)
+                >= 0
+        });
+        if expired {
+            self.recycle_oldest()
+        } else {
+            None
+        }
+    }
+
+    /// `0x74ff20`'s link at the tail, waiting on the names in `waiting`: its id, and whether it is
+    /// now the pending entry, none being before it (`0x74ff39`-`0x74ff46`).
+    pub fn link(&mut self, entry: CombatLogEntry, waiting: u8) -> (u64, bool) {
+        let id = self.first_id + self.entries.len() as u64;
+        self.entries.push_back(entry);
+        self.waiting.push_back(waiting);
+        let head = self.pending.is_none();
+        if head {
+            self.pending = Some(id);
+        }
+        (id, head)
+    }
+
+    /// `CombatLogClearEntries` (`0x751120`): every entry recycled oldest first onto the free list;
+    /// the recycled ids, for their callbacks' cancel.
+    pub fn clear_entries(&mut self) -> Vec<u64> {
+        let mut gone = Vec::new();
+        while let Some(id) = self.recycle_oldest() {
+            gone.push(id);
+            self.free += 1;
+        }
+        gone
+    }
+
+    /// The guid `CombatTextSetActiveUnit` last named (`[0xca1380]`), whose hits raise
+    /// `COMBAT_TEXT_UPDATE` (`0x74d430`).
+    pub fn text_unit(&self) -> u64 {
+        self.text_unit
+    }
+
+    /// `CombatTextSetActiveUnit`'s write (`0x74d580`).
+    pub fn set_text_unit(&mut self, guid: u64) {
+        self.text_unit = guid;
+    }
+
+    /// Every entry held, oldest first.
+    pub fn entries(&self) -> impl Iterator<Item = &CombatLogEntry> {
+        self.entries.iter()
     }
 
     fn counted(&self, id: u64, all: bool) -> bool {
         all || self.get(id).is_some_and(|e| self.passes(e))
     }
 
-    /// `CombatLogSetCurrentEntry` (`0x74fae0`): 1 the oldest passing entry, 0 the newest.
+    /// The newest entry a walk reads: the one before the pending entry, else the newest held
+    /// (`0x74fb50`, `0x74fb83`).
+    fn last_sent(&self) -> Option<u64> {
+        match self.pending {
+            Some(p) => p.checked_sub(1).filter(|&id| id >= self.first_id),
+            None => {
+                (!self.entries.is_empty()).then(|| self.first_id + self.entries.len() as u64 - 1)
+            }
+        }
+    }
+
+    /// `CombatLogGetNumEntries` (`0x74fa70`): the entries up to the first that waits on a name (`0x74faa9`).
+    fn count(&self, all: bool) -> i64 {
+        self.entries
+            .iter()
+            .zip(&self.waiting)
+            .take_while(|(_, &w)| w == 0)
+            .filter(|(e, _)| all || self.passes(e))
+            .count() as i64
+    }
+
+    /// `CombatLogSetCurrentEntry` (`0x74fae0`): 1 the oldest passing entry, 0 the newest, each
+    /// walk short of the pending entry.
     fn seek(&self, index: i64, all: bool) -> Option<u64> {
+        let last = self.last_sent()?;
         if index >= 1 {
             let mut left = index;
-            (self.first_id..=self.last_id()?)
+            (self.first_id..=last)
                 .filter(|&id| self.counted(id, all))
                 .find(|_| {
                     left -= 1;
@@ -635,7 +775,7 @@ impl CombatLogStore {
                 })
         } else {
             let mut left = index;
-            (self.first_id..=self.last_id()?)
+            (self.first_id..=last)
                 .rev()
                 .filter(|&id| self.counted(id, all))
                 .find(|_| {
@@ -646,12 +786,13 @@ impl CombatLogStore {
         }
     }
 
-    /// `CombatLogAdvanceEntry` (`0x74fc20`): the current entry spends one step when it passes.
+    /// `CombatLogAdvanceEntry` (`0x74fc20`): the current entry spends one step when it passes;
+    /// forward stops at the pending entry (`0x74fc82`), back at the oldest.
     fn advance(&self, count: i64, all: bool) -> Option<u64> {
         let from = self.current?;
-        let last = self.last_id()?;
         let mut left = count;
         if count > 0 {
+            let last = self.last_sent()?;
             (from..=last).filter(|&id| self.counted(id, all)).find(|_| {
                 let hit = left == 0;
                 left -= 1;
@@ -835,51 +976,23 @@ fn retention_secs(model: &Model) -> i64 {
         .map_or(0, |slot| i64::from(super::cvars::sstr_to_int(&slot.value)))
 }
 
+impl CombatLogEntry {
+    /// The values `0x74e290` pushes for the entry, as `COMBAT_LOG_EVENT` carries them and
+    /// `CombatLogGetCurrentEntry` returns them; `unknown` is the `UNKNOWNOBJECT` text.
+    pub fn event_args(&self, unknown: &str) -> Vec<ScriptValue> {
+        args(self, unknown)
+    }
+}
+
 impl super::UiScript {
-    /// Take the store out of this VM, for a `ReloadUI`, which the reference's store outlives.
-    pub fn take_combat_log(&mut self) -> CombatLogStore {
-        std::mem::take(&mut self.model_mut().combat_log)
+    /// The `UNKNOWNOBJECT` text an unresolved name reads as (`0x74f720`).
+    pub fn unknown_object_text(&self) -> String {
+        unknown_text(self.lua())
     }
 
-    /// Put a store taken from the previous VM back; a combat-text unit the new UI's load already
-    /// named stands, as the reference's global takes the last call.
-    pub fn restore_combat_log(&mut self, mut store: CombatLogStore) {
-        let mut model = self.model_mut();
-        store.text_unit = model.combat_log.text_unit.or(store.text_unit);
-        model.combat_log = store;
-    }
-
-    /// The guid `CombatTextSetActiveUnit` last named, whose hits raise `COMBAT_TEXT_UPDATE`
-    /// (`0x74d430`).
-    pub fn combat_text_unit(&self) -> u64 {
-        self.model_mut().combat_log.text_unit.unwrap_or(0)
-    }
-
-    /// Store and fire an entry (`0x750400`, `0x74f910`), first dropping one expired oldest entry;
-    /// while `LoggingCombat` is on, also the entry's combat-log file line.
-    pub fn push_combat_log(&mut self, entry: CombatLogEntry) -> Option<Vec<u8>> {
-        let unknown = unknown_text(self.lua());
-        let (args, passes, line) = {
-            let mut model = self.model_mut();
-            let retention_ms = retention_secs(&model) * 1000;
-            let log = &mut model.combat_log;
-            let expired = log.entries.front().is_some_and(|oldest| {
-                entry.time_ms as i64 - retention_ms - oldest.time_ms as i64 >= 0
-            });
-            if expired {
-                log.pop_oldest();
-            }
-            let line = model.logging_combat.then(|| entry.pack(&unknown));
-            let log = &mut model.combat_log;
-            let out = (args(&entry, &unknown), log.passes(&entry), line);
-            log.entries.push_back(entry);
-            out
-        };
-        if passes {
-            self.fire_event("COMBAT_LOG_EVENT", args.clone());
-        }
-        self.fire_event("COMBAT_LOG_EVENT_UNFILTERED", args);
-        line
+    /// `combatLogRetentionTime` in seconds, which the allocation's recycle reads (`0x750400`).
+    pub fn combat_log_retention_secs(&self) -> i64 {
+        retention_secs(&self.model_mut())
     }
 }
 
@@ -923,6 +1036,16 @@ fn count_arg(lua: &Lua, args: &MultiValue, usage: &'static str) -> mlua::Result<
         .ok_or_else(|| mlua::Error::RuntimeError(usage.into()))
 }
 
+/// `f` over the client's combat log lent to the call, `None` where no view lends one.
+fn read_log<R>(f: impl FnOnce(&CombatLogStore) -> R) -> Option<R> {
+    super::live::read_live(|l| l.combat_log().map(f)).flatten()
+}
+
+/// `f` over the client's combat log lent to the call, for a verb that writes it.
+fn write_log<R>(f: impl FnOnce(&mut CombatLogStore) -> R) -> Option<R> {
+    super::live::write_live(|l| l.combat_log_mut().map(f)).flatten()
+}
+
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
@@ -932,13 +1055,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "CombatTextSetActiveUnit",
         lua.create_function(|lua, unit: Value| {
             let token = super::binding_abi::optional_string(lua, &unit);
-            let mut model = super::model_mut_of(lua);
-            let guid = token.map_or(0, |t| model.token_guid(&t).unwrap_or(0));
-            model.combat_log.text_unit = Some(guid);
+            let guid = {
+                let model = super::model_mut_of(lua);
+                token.map_or(0, |t| model.token_guid(&t).unwrap_or(0))
+            };
+            write_log(|log| log.set_text_unit(guid));
             Ok(())
         })?,
     )?;
 
+    // `CombatLogAddFilter` (`0x74ff70`).
     g.set(
         "CombatLogAddFilter",
         lua.create_function(|lua, args: MultiValue| {
@@ -964,34 +1090,35 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .filter_map(|t| EVENTS.iter().position(|e| e.eq_ignore_ascii_case(t)))
                     .fold(0, |bits, i| bits | 1 << i),
             };
-            super::model_mut_of(lua).combat_log.filters.push(Filter {
-                events,
-                src_guid,
-                src_mask,
-                dst_guid,
-                dst_mask,
-                spell_id,
-                spell_name,
+            write_log(|log| {
+                log.filters.push(Filter {
+                    events,
+                    src_guid,
+                    src_mask,
+                    dst_guid,
+                    dst_mask,
+                    spell_id,
+                    spell_name,
+                })
             });
             Ok(())
         })?,
     )?;
 
+    // `CombatLogResetFilter` (`0x74fa60`).
     g.set(
         "CombatLogResetFilter",
-        lua.create_function(|lua, ()| {
-            super::model_mut_of(lua).combat_log.filters.clear();
+        lua.create_function(|_, ()| {
+            write_log(|log| log.filters.clear());
             Ok(())
         })?,
     )?;
 
     g.set(
         "CombatLogGetNumEntries",
-        lua.create_function(|lua, all: Option<Value>| {
+        lua.create_function(|_, all: Option<Value>| {
             let all = bool_or_default(all.as_ref(), false);
-            let model = super::model_mut_of(lua);
-            let log = &model.combat_log;
-            Ok(log.entries.iter().filter(|e| all || log.passes(e)).count() as i64)
+            Ok(read_log(|log| log.count(all)).unwrap_or(0))
         })?,
     )?;
 
@@ -1004,10 +1131,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 "Usage: CombatLogSetCurrentEntry(index [,ignoreFilter])",
             )?;
             let all = bool_or_default(args.get(1), false);
-            let mut model = super::model_mut_of(lua);
-            let log = &mut model.combat_log;
-            log.current = log.seek(index, all);
-            Ok(one_or_nil(log.current.is_some()))
+            let set = write_log(|log| {
+                log.current = log.seek(index, all);
+                log.current.is_some()
+            });
+            Ok(one_or_nil(set == Some(true)))
         })?,
     )?;
 
@@ -1020,27 +1148,28 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 "Usage: CombatLogAdvanceEntry(count [,ignoreFilter])",
             )?;
             let all = bool_or_default(args.get(1), false);
-            let mut model = super::model_mut_of(lua);
-            let log = &mut model.combat_log;
-            if count != 0 {
-                log.current = log.advance(count, all);
-            }
-            Ok(one_or_nil(log.current.is_some()))
+            let set = write_log(|log| {
+                if count != 0 {
+                    log.current = log.advance(count, all);
+                }
+                log.current.is_some()
+            });
+            Ok(one_or_nil(set == Some(true)))
         })?,
     )?;
 
+    // `CombatLogGetCurrentEntry` (`0x74f2b0`): nothing with no current entry, else its values.
     g.set(
         "CombatLogGetCurrentEntry",
         lua.create_function(|lua, ()| {
             let unknown = unknown_text(lua);
-            let args = {
-                let model = super::model_mut_of(lua);
-                let log = &model.combat_log;
+            let args = read_log(|log| {
                 log.current
                     .and_then(|id| log.get(id))
                     .map(|e| args(e, &unknown))
-                    .unwrap_or_default()
-            };
+            })
+            .flatten()
+            .unwrap_or_default();
             args.into_iter()
                 .map(|v| v.into_lua(lua))
                 .collect::<mlua::Result<MultiValue>>()
@@ -1049,12 +1178,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     g.set(
         "CombatLogClearEntries",
-        lua.create_function(|lua, ()| {
-            let mut model = super::model_mut_of(lua);
-            let log = &mut model.combat_log;
-            while !log.entries.is_empty() {
-                log.pop_oldest();
-            }
+        lua.create_function(|_, ()| {
+            // `0x751120`: each entry recycled (`0x750390`), its callbacks cancelled (`0x750270`).
+            super::live::write_live(|l| {
+                let gone = l.combat_log_mut()?.clear_entries();
+                l.cancel_combat_log_waits(&gone);
+                Some(())
+            });
             Ok(())
         })?,
     )?;
@@ -1209,7 +1339,7 @@ mod tests {
     }
 
     /// Every value an entry pushes, as `tostring` prints it.
-    fn pushed(s: &mut UiScript, entry: CombatLogEntry) -> String {
+    fn pushed(s: &mut Rig, entry: CombatLogEntry) -> String {
         s.push_combat_log(entry);
         s.eval(
             "CombatLogSetCurrentEntry(0)
@@ -1221,10 +1351,55 @@ mod tests {
         .unwrap()
     }
 
-    fn script() -> UiScript {
+    /// A VM with a combat log lent to every call, as the app lends the client's.
+    struct Rig {
+        s: UiScript,
+        view: crate::script::live::TestView,
+    }
+
+    impl Rig {
+        fn run(&mut self, chunk: &str) -> mlua::Result<()> {
+            self.s.with_live(&mut self.view, |s| s.run(chunk))
+        }
+
+        fn eval<T: mlua::FromLuaMulti>(&mut self, chunk: &str) -> mlua::Result<T> {
+            self.s.with_live(&mut self.view, |s| s.eval(chunk))
+        }
+
+        /// The app's allocation, queue and send for an entry with its names in (`0x750400`,
+        /// `0x74ff20`, `0x74f910`); the file line while `LoggingCombat` is on.
+        fn push_combat_log(&mut self, entry: CombatLogEntry) -> Option<Vec<u8>> {
+            let retention_ms = self.s.combat_log_retention_secs() * 1000;
+            let log = &mut self.view.combat_log;
+            log.allocate(entry.time_ms, retention_ms);
+            let (id, head) = log.link(entry, 0);
+            assert!(head, "nothing waits ahead of a named entry here");
+            let unknown = self.s.unknown_object_text();
+            let e = log.get(id).unwrap();
+            let (args, passes) = (e.event_args(&unknown), log.passes(e));
+            let line = self.s.logging_flags().1.then(|| e.pack(&unknown));
+            self.s.with_live(&mut self.view, |s| {
+                if passes {
+                    s.fire_event("COMBAT_LOG_EVENT", args.clone());
+                }
+                s.fire_event("COMBAT_LOG_EVENT_UNFILTERED", args);
+            });
+            self.view.combat_log.advance_pending();
+            line
+        }
+
+        fn combat_text_unit(&self) -> u64 {
+            self.view.combat_log.text_unit()
+        }
+    }
+
+    fn script() -> Rig {
         let s = UiScript::new().unwrap();
         s.register_cvars([(RETENTION_CVAR, "300")]);
-        s
+        Rig {
+            s,
+            view: crate::script::live::TestView::default(),
+        }
     }
 
     /// The values `0x74e290` pushes for a landed swing, nil where a count is zero.
@@ -1510,7 +1685,7 @@ mod tests {
 
     #[test]
     fn an_incomplete_mask_raises() {
-        let s = script();
+        let mut s = script();
         let err = s.run("CombatLogAddFilter(nil, 0x11, nil)").unwrap_err();
         assert!(err.to_string().contains("incomplete filter for srcMask"));
         let err = s.run("CombatLogAddFilter(nil, nil, 0x700)").unwrap_err();
@@ -1521,8 +1696,8 @@ mod tests {
 
     #[test]
     fn object_is_a_tests_every_group_or_a_special_bit() {
-        let s = script();
-        let is_a = |flags: u32, mask: u32| {
+        let mut s = script();
+        let mut is_a = |flags: u32, mask: u32| {
             s.eval::<Option<f64>>(&format!("return CombatLog_Object_IsA({flags}, {mask})"))
                 .unwrap()
         };
@@ -1578,7 +1753,7 @@ mod tests {
         let mut s = script();
         s.run("CombatLogSetRetentionTime(10)").unwrap();
         assert_eq!(
-            s.take_cvar_changes(),
+            s.s.take_cvar_changes(),
             [(RETENTION_CVAR.to_string(), "10".to_string())]
         );
         assert_eq!(
@@ -1604,7 +1779,8 @@ mod tests {
         );
     }
 
-    /// A `ReloadUI` carries the entries, cursor and filters into the new VM.
+    /// The store is the client's, outside the VM: a new VM over it, as a `ReloadUI` builds, reads
+    /// the same entries, cursor and filters.
     #[test]
     fn the_store_survives_a_reload() {
         let mut s = script();
@@ -1612,7 +1788,6 @@ mod tests {
         s.push_combat_log(dodge(6_100));
         s.run("CombatLogAddFilter('SWING_DAMAGE', nil, nil) CombatLogSetCurrentEntry(0)")
             .unwrap();
-        let carried = s.take_combat_log();
         let mut fresh = script();
         assert_eq!(
             fresh
@@ -1620,7 +1795,7 @@ mod tests {
                 .unwrap(),
             0
         );
-        fresh.restore_combat_log(carried);
+        fresh.view.combat_log = std::mem::take(&mut s.view.combat_log);
         let (n, all, amount): (i64, i64, i64) = fresh
             .eval("return CombatLogGetNumEntries(), CombatLogGetNumEntries(1), select(9, CombatLogGetCurrentEntry())")
             .unwrap();
@@ -1897,34 +2072,80 @@ mod tests {
     }
 
     /// `CombatTextSetActiveUnit` stores the token's guid now, 0 before any call and for a token
-    /// naming nobody; a reload carries it with the store.
+    /// naming nobody; the store outlives the VM, and a new load's call overwrites it.
     #[test]
     fn the_combat_text_unit_is_the_named_tokens_guid() {
         let mut s = script();
         assert_eq!(s.combat_text_unit(), 0, "0 until the addon names one");
-        s.set_unit_guids(&crate::script::UnitGuids {
+        let guids = crate::script::UnitGuids {
             player: ME_GUID,
             vehicle: MOB_GUID,
             ..Default::default()
-        });
+        };
+        s.s.set_unit_guids(&guids);
         s.run("CombatTextSetActiveUnit('player')").unwrap();
         assert_eq!(s.combat_text_unit(), ME_GUID);
         s.run("CombatTextSetActiveUnit('vehicle')").unwrap();
         assert_eq!(s.combat_text_unit(), MOB_GUID);
-        let carried = s.take_combat_log();
-        let mut fresh = script();
-        fresh.restore_combat_log(carried);
-        assert_eq!(fresh.combat_text_unit(), MOB_GUID);
-        let carried = fresh.take_combat_log();
         let mut reloaded = script();
+        reloaded.view.combat_log = std::mem::take(&mut s.view.combat_log);
+        assert_eq!(reloaded.combat_text_unit(), MOB_GUID, "a reload keeps it");
+        reloaded.s.set_unit_guids(&guids);
         reloaded.run("CombatTextSetActiveUnit('player')").unwrap();
-        reloaded.restore_combat_log(carried);
-        assert_eq!(reloaded.combat_text_unit(), 0, "the new load's call stands");
-        s.run("CombatTextSetActiveUnit('party1')").unwrap();
-        assert_eq!(s.combat_text_unit(), 0);
-        s.run("CombatTextSetActiveUnit('player') CombatTextSetActiveUnit()")
+        assert_eq!(
+            reloaded.combat_text_unit(),
+            ME_GUID,
+            "the new load's call stands"
+        );
+        reloaded.run("CombatTextSetActiveUnit('party1')").unwrap();
+        assert_eq!(reloaded.combat_text_unit(), 0);
+        reloaded
+            .run("CombatTextSetActiveUnit('player') CombatTextSetActiveUnit()")
             .unwrap();
-        assert_eq!(s.combat_text_unit(), 0);
+        assert_eq!(reloaded.combat_text_unit(), 0);
+    }
+
+    /// An entry waiting on a name holds the walks: the count stops at it (`0x74faa9`), the seeks
+    /// stop short of the pending entry (`0x74fb50`, `0x74fb83`, `0x74fc82`); a clear's entries go
+    /// to the free list, which the next allocations take before any recycle (`0x751120`,
+    /// `0x750400`).
+    #[test]
+    fn a_waiting_entry_holds_the_walks_and_a_clear_frees_its_entries() {
+        let mut s = script();
+        s.push_combat_log(hit(6_000, 10));
+        let log = &mut s.view.combat_log;
+        let (held, head) = log.link(hit(6_100, 11), 2);
+        assert!(head, "nothing pending ahead");
+        log.link(hit(6_200, 12), 0);
+        let amount = "return select(9, CombatLogGetCurrentEntry())";
+        assert_eq!(
+            s.eval::<i64>("return CombatLogGetNumEntries(1)").unwrap(),
+            1
+        );
+        s.run("CombatLogSetCurrentEntry(0, 1)").unwrap();
+        assert_eq!(s.eval::<i64>(amount).unwrap(), 10, "the newest sent");
+        assert_eq!(
+            s.eval::<Option<f64>>("return CombatLogAdvanceEntry(1, 1)")
+                .unwrap(),
+            None,
+            "forward stops at the pending entry"
+        );
+        let log = &mut s.view.combat_log;
+        assert!(log.name_landed(held, 2));
+        assert!(log.advance_pending(), "the next one is ready");
+        assert!(!log.advance_pending(), "past the last");
+        assert_eq!(
+            s.eval::<i64>("return CombatLogGetNumEntries(1)").unwrap(),
+            3
+        );
+        s.run("CombatLogClearEntries()").unwrap();
+        let log = &mut s.view.combat_log;
+        for t in [100_000, 100_100, 100_200] {
+            assert_eq!(log.allocate(t, 0), None, "a free entry, no recycle");
+            log.link(hit(t, 1), 0);
+            log.advance_pending();
+        }
+        assert!(log.allocate(100_300, 0).is_some(), "then the oldest");
     }
 
     #[test]

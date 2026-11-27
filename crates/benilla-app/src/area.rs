@@ -215,6 +215,10 @@ fn territory_visible(realm_pvp: bool, zone_flags: u32) -> bool {
     realm_pvp || zone_flags & 0x10 != 0
 }
 
+/// The zone events' runner, in the idle pass (`0x47f15b`).
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct ZoneEventsSet;
+
 /// Resolves the texts and PvP info, pushes the zone caches, then fires the elected zone event.
 fn feed_zone_events(
     mut vm: crate::ui_script::InTurn,
@@ -463,7 +467,8 @@ impl Plugin for AreaPlugin {
                         .after(crate::ui_script::UiInput)
                         .after(benilla_world::terrain_stream::AreaAuthoritySet),
                 )
-                .in_set(crate::ui_script::UiPaint),
+                .in_set(crate::ui_script::UiPaint)
+                .in_set(ZoneEventsSet),
             )
             .add_systems(
                 Update,

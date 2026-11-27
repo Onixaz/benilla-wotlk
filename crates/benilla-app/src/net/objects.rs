@@ -608,6 +608,9 @@ fn record_callback(sc: &mut Scene, entry: u32, landed: bool, wait: crate::items:
         RecordWait::ItemPush => sc
             .ui
             .world(move |world| crate::ui_loot::push_callback(world, entry, landed)),
+        RecordWait::CombatLog(wait) => sc
+            .ui
+            .world(move |world| crate::combat_log::record_landed(world, wait)),
         // A found record queues `MAIL_INBOX_UPDATE` with the frame's unique signals (`0x56d4be`);
         // an auction notice's subject reads its name at the call.
         RecordWait::MailInbox => {
@@ -976,6 +979,10 @@ fn on_gameobject_info(In(ev): In<SessionEvent>, mut sc: Scene) {
         );
         sc.ui
             .world(move |world| crate::ui_item_text::go_template_landed(world, entry));
+        // The combat log's callbacks on the template (`0x74fe90`), after the item text's by module (#1487).
+        sc.ui.world(move |world| {
+            crate::combat_log::name_landed(world, crate::combat_log::Landed::GameObject(entry));
+        });
     }
 }
 
@@ -1837,8 +1844,23 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
         sc.ui
             .world(move |world| crate::ui_items::watch::bag_slot_changed(world, guid, j, old));
     }
-    // The unit death's interact-target clear with its guid (`0x7293bf` -> `0x512e60`): the window on it closes.
-    if merged.died {
+    // Another unit's death logs its `UNIT_DIED` in its death anim (`0x72929d` -> `0x7561ed`), once per watch that ran it, behind the anim's seated gate (`0x729277`-`0x729299`); our own logs in the player's death (`crate::death`).
+    let anim = merged.deaths > 0
+        && crate::death::runs_death_anim(
+            unit_seated(sc, guid),
+            sc.index
+                .0
+                .get(&guid)
+                .and_then(|&e| sc.stores.get(e).ok())
+                .map_or(0, |s| s.0.unit_flags2()),
+        );
+    let logs = sc.self_guid.0 != Some(guid) && anim;
+    for _ in 0..merged.deaths {
+        if logs {
+            sc.ui
+                .world(move |world| crate::combat_log::unit_dead(world, guid));
+        }
+        // Each run then clears the interact target with its guid, ungated (`0x7293bf` -> `0x512e60`): the window on it closes.
         sc.ui
             .world(move |world| crate::ui_session::clear_interact_target(world, guid));
     }
@@ -2623,6 +2645,15 @@ fn look_watch(sc: &mut Scene, old: u32, new: u32, byte: u32, dial: usize) {
     sc.signals.unique_signal("BARBER_SHOP_APPEARANCE_APPLIED");
 }
 
+/// The unit's passenger record is seated (`[unit+0xf60]`, state 3: `0x72927d`-`0x729285`).
+fn unit_seated(sc: &Scene, guid: u64) -> bool {
+    sc.index
+        .0
+        .get(&guid)
+        .and_then(|&e| sc.seated.get(e).ok())
+        .is_some_and(|p| p.state == crate::vehicle::SEATED)
+}
+
 /// Our own death fields' edges, in field order, through [`crate::death::own_fields_changed`].
 fn own_death_fields(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
     if edges.is_empty() {
@@ -2638,6 +2669,7 @@ fn own_death_fields(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
         return;
     };
     let arena = sc.arena.active();
+    let seated = unit_seated(sc, guid);
     let mut cx = crate::death::DeathCx {
         globals: &mut sc.death_globals,
         death_net: &mut sc.death_net,
@@ -2645,8 +2677,9 @@ fn own_death_fields(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
         net: &sc.net,
         now: sc.real.elapsed_secs_f64(),
         arena,
+        seated,
     };
-    crate::death::own_fields_changed(edges, &fields, &mut cx);
+    crate::death::own_fields_changed(guid, edges, &fields, &mut cx);
 }
 
 /// Merges a descriptor delta into an object's store and reports its [`FieldChanged`] edges, and
@@ -2717,9 +2750,10 @@ fn merge_fields(
                 merged.death.push((e.index, e.old, e.new));
             }
             // A unit's death: health crossing zero (`0x73f3fa`) or the dead bit set (`0x740623`).
-            merged.died |=
+            merged.deaths += u8::from(
                 (e.unit_field(FIELD_UNIT_HEALTH) && (e.old as i32) > 0 && (e.new as i32) < 1)
-                    || (e.unit_field(FIELD_UNIT_DYNAMIC_FLAGS) && !e.old & e.new & 0x20 != 0);
+                    || (e.unit_field(FIELD_UNIT_DYNAMIC_FLAGS) && !e.old & e.new & 0x20 != 0),
+            );
             // Our form byte's watch (`0x6da130`, byte `0x1d3`).
             if own
                 && e.unit_field(benilla_protocol::field::FIELD_UNIT_BYTES_2)
@@ -2902,8 +2936,9 @@ struct Merged {
     pvp_flags: Option<(u32, u32)>,
     /// Our own bank, honor and arena-team watches' `(index, old, new)`, in field order.
     watched: Vec<(u16, u32, u32)>,
-    /// The unit died (`0x729220`).
-    died: bool,
+    /// How many deaths the update ran (`0x729220`): one per watch that saw it, health and the dead
+    /// bit each.
+    deaths: u8,
     /// Our own shapeshift form byte, when it moved.
     form: Option<u8>,
     /// Another player's `PLAYER_GUILDID` moved (`0x6e1bb0`).

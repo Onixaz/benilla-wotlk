@@ -93,6 +93,84 @@ fn combat_log_ui() -> UiScript {
     s
 }
 
+/// The client's combat log, lent to every call as the app lends its own.
+#[derive(Default)]
+struct LogView(benilla_ui::script::CombatLogStore);
+
+impl benilla_ui::script::LiveState for LogView {
+    fn unit_flags(&self, _: u64) -> Option<u32> {
+        None
+    }
+
+    fn unit_health(&self, _: u64) -> Option<u32> {
+        None
+    }
+
+    fn active_player(&self) -> Option<u64> {
+        Some(ME)
+    }
+
+    fn has_control(&self) -> bool {
+        true
+    }
+
+    fn far_sight(&self) -> bool {
+        false
+    }
+
+    fn combat_log(&self) -> Option<&benilla_ui::script::CombatLogStore> {
+        Some(&self.0)
+    }
+
+    fn combat_log_mut(&mut self) -> Option<&mut benilla_ui::script::CombatLogStore> {
+        Some(&mut self.0)
+    }
+}
+
+/// The stock combat log UI with the log lent to each call.
+struct LoggedUi {
+    s: UiScript,
+    view: LogView,
+}
+
+impl LoggedUi {
+    fn run(&mut self, chunk: &str) -> mlua::Result<()> {
+        self.s.with_live(&mut self.view, |s| s.run(chunk))
+    }
+
+    fn eval<T: mlua::FromLuaMulti>(&mut self, chunk: &str) -> mlua::Result<T> {
+        self.s.with_live(&mut self.view, |s| s.eval(chunk))
+    }
+
+    fn resolve(&mut self) {
+        self.s.with_live(&mut self.view, |s| s.resolve());
+    }
+
+    /// An entry named in full, queued and sent as the app sends it (`0x74ff20`, `0x74f910`).
+    fn push_combat_log(&mut self, entry: CombatLogEntry) {
+        let log = &mut self.view.0;
+        log.allocate(entry.time_ms, 300_000);
+        let (id, _) = log.link(entry, 0);
+        let unknown = self.s.unknown_object_text();
+        let e = log.get(id).unwrap();
+        let (args, passes) = (e.event_args(&unknown), log.passes(e));
+        self.s.with_live(&mut self.view, |s| {
+            if passes {
+                s.fire_event("COMBAT_LOG_EVENT", args.clone());
+            }
+            s.fire_event("COMBAT_LOG_EVENT_UNFILTERED", args);
+        });
+        self.view.0.advance_pending();
+    }
+}
+
+fn logged_ui() -> LoggedUi {
+    LoggedUi {
+        s: combat_log_ui(),
+        view: LogView::default(),
+    }
+}
+
 /// Swings reach the stock tab as one line each, and the stock refilter reads them back.
 #[test]
 fn a_swing_reaches_the_stock_combat_log_tab() {
@@ -100,7 +178,7 @@ fn a_swing_reaches_the_stock_combat_log_tab() {
     let _l = ENV_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut s = combat_log_ui();
+    let mut s = logged_ui();
     s.push_combat_log(entry(
         6_000,
         CombatLogEvent::SwingDamage,
@@ -131,7 +209,7 @@ fn a_swing_reaches_the_stock_combat_log_tab() {
         },
     ));
     s.resolve();
-    let errors = combat_log_errors(&mut s);
+    let errors = combat_log_errors(&mut s.s);
     assert!(errors.is_empty(), "event errors: {errors:#?}");
     let lines: Vec<String> = s.eval("return LINES").unwrap();
     assert_eq!(lines.len(), 2, "one line per swing: {lines:#?}");
@@ -157,7 +235,7 @@ fn a_swing_reaches_the_stock_combat_log_tab() {
     )
     .unwrap();
     s.resolve();
-    let errors = combat_log_errors(&mut s);
+    let errors = combat_log_errors(&mut s.s);
     assert!(errors.is_empty(), "refilter errors: {errors:#?}");
     let refiltered: Vec<String> = s.eval("return LINES").unwrap();
     assert_eq!(
@@ -176,10 +254,10 @@ fn every_entry_shape_renders_in_the_stock_tab() {
     let _l = ENV_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut s = combat_log_ui();
+    let mut s = logged_ui();
     s.run("Blizzard_CombatLog_QuickButton_OnClick(2)").unwrap();
     s.resolve();
-    s.take_errors();
+    s.s.take_errors();
     s.run("LINES = {}").unwrap();
 
     let fireball = || spell(133, "Fireball", 4);
@@ -434,7 +512,7 @@ fn every_entry_shape_renders_in_the_stock_tab() {
     for (i, (event, source, dest, spell, info)) in shapes.into_iter().enumerate() {
         s.push_combat_log(entry(6_000 + i as u64, event, source, dest, spell, info));
         s.resolve();
-        let errors = combat_log_errors(&mut s);
+        let errors = combat_log_errors(&mut s.s);
         assert!(errors.is_empty(), "{}: {errors:#?}", event.name());
     }
     let lines: Vec<String> = s.eval("return LINES").unwrap();

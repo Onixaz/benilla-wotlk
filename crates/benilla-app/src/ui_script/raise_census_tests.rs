@@ -12,7 +12,6 @@ const ON_THE_QUEUE: &[(&str, &str)] = &[
     ("capture/fixtures.rs", "seed_ui_fixture"),
     ("cinematic.rs", "feed_ui"),
     ("cinematic.rs", "send_opening_cinematic"),
-    ("combat_log/mod.rs", "feed_combat_log"),
     ("cvars/mod.rs", "sync_cvars"),
     ("death/mod.rs", "update_corpse_distance"),
     ("hover_log.rs", "record"),

@@ -348,12 +348,21 @@ pub(crate) struct DeathCx<'a> {
     pub(crate) now: f64,
     /// The active battlefield is an arena (`[0xbea570] == 4`).
     pub(crate) arena: bool,
+    /// Our passenger record is seated (`[unit+0xf60]`, state 3), the death anim's gate.
+    pub(crate) seated: bool,
+}
+
+/// The death anim's gate (`0x729277`-`0x729299`): a unit seated in a vehicle runs it, and with it
+/// the `UNIT_DIED` log and our dead-or-alive refresh, only under `UNIT_FIELD_FLAGS_2 & 0x20000`.
+pub(crate) fn runs_death_anim(seated: bool, flags2: u32) -> bool {
+    !seated || flags2 & 0x2_0000 != 0
 }
 
 /// Our own descriptor's death fields, as their mirror handlers take them once the whole update has
 /// applied (`0x4d5550`), in field order: health (`0x73f330`), the dynamic dead bit (`0x740570`)
 /// and the ghost bit (`0x6df710`). `edges` are `(index, old, new)`.
 pub(crate) fn own_fields_changed(
+    guid: u64,
     edges: &[(u16, u32, u32)],
     fields: &benilla_protocol::ObjectFields,
     cx: &mut DeathCx,
@@ -367,7 +376,7 @@ pub(crate) fn own_fields_changed(
             FIELD_UNIT_HEALTH => {
                 if (old as i32) > 0 && (new as i32) < 1 {
                     let dead_flag = fields.unit_dynamic_flags() & UNIT_DYNFLAG_DEAD != 0;
-                    on_death(fields, dead_flag, cx);
+                    on_death(guid, fields, dead_flag, cx);
                 } else if (old as i32) < 1 && (new as i32) > 0 {
                     // `0x73d5bc`, for our own unit alone.
                     cx.ui.fire("PLAYER_ALIVE", Vec::new());
@@ -376,7 +385,7 @@ pub(crate) fn own_fields_changed(
             // The dead bit set is a death; cleared, a life that fires nothing (`0x740570`).
             FIELD_UNIT_DYNAMIC_FLAGS if (old ^ new) & UNIT_DYNFLAG_DEAD != 0 => {
                 if new & UNIT_DYNFLAG_DEAD != 0 {
-                    on_death(fields, true, cx);
+                    on_death(guid, fields, true, cx);
                 }
             }
             FIELD_PLAYER_FLAGS if (old ^ new) & PLAYER_FLAGS_GHOST != 0 => {
@@ -393,12 +402,19 @@ const UNIT_DYNFLAG_DEAD: u32 = 0x20;
 const PLAYER_FLAGS_GHOST: u32 = 0x10;
 
 /// Our death (`0x729220`): the player's half derives the release timer and clears the interact target unless the dead bit is set (`0x6dc0f0`), then the death anim refreshes the dead or alive signal (`0x7561e0`).
-fn on_death(fields: &benilla_protocol::ObjectFields, dead_flag: bool, cx: &mut DeathCx) {
+fn on_death(guid: u64, fields: &benilla_protocol::ObjectFields, dead_flag: bool, cx: &mut DeathCx) {
     if !dead_flag {
         cx.globals.update_repop_timer(fields, cx.now);
         // The interact target's clear (`0x6dc17a` -> `0x512e60`): the window holding it closes.
         cx.ui.world(crate::ui_session::clear_held_interact_target);
     }
+    // The death anim (`0x72929d`), skipped seated without its flag (`0x729299` -> `0x7292a2`).
+    if !runs_death_anim(cx.seated, fields.unit_flags2()) {
+        return;
+    }
+    // The death anim's log first (`0x7561ed`), then its refresh (`0x756238`).
+    cx.ui
+        .world(move |world| crate::combat_log::unit_dead(world, guid));
     refresh_active_player(fields.unit_health().unwrap_or(0), cx.ui);
 }
 
@@ -459,6 +475,7 @@ pub(crate) fn enter_world_cascade(
         net: &net,
         now: time.elapsed_secs_f64(),
         arena: arena.active(),
+        seated: false,
     };
     update_corpse_location(store.0.player_is_ghost(), &mut cx);
     cx.death_net.release = None;
@@ -1056,6 +1073,7 @@ mod tests {
         net: NetCommands,
         rx: crossbeam_channel::Receiver<ClientCommand>,
         arena: bool,
+        seated: bool,
     }
 
     impl Rig {
@@ -1068,6 +1086,7 @@ mod tests {
                 net: NetCommands(tx),
                 rx,
                 arena: false,
+                seated: false,
             }
         }
 
@@ -1081,8 +1100,9 @@ mod tests {
                 net: &self.net,
                 now: 10.0,
                 arena: self.arena,
+                seated: self.seated,
             };
-            own_fields_changed(edges, &fields, &mut cx);
+            own_fields_changed(0x10, edges, &fields, &mut cx);
             let names = self.ui.names();
             self.ui = UiEvents::default();
             names
@@ -1145,8 +1165,8 @@ mod tests {
         let dead = [(FIELD_UNIT_MAXHEALTH, 100), (FIELD_UNIT_HEALTH, 0)];
         assert_eq!(
             rig.changed(&dead, &[(FIELD_UNIT_HEALTH, 100, 0)]),
-            ["<world>", "PLAYER_DEAD", "<clear cursor>"],
-            "the interact target's clear (the bank's leg) ahead of the death anim's signal"
+            ["<world>", "<world>", "PLAYER_DEAD", "<clear cursor>"],
+            "the interact target's clear (the bank's leg), then the death anim's log (`0x7561ed`) ahead of its signal (`0x756238`)"
         );
         assert_eq!(
             rig.globals.release_left_ms(10.0),
@@ -1205,7 +1225,8 @@ mod tests {
         ];
         assert_eq!(
             rig.changed(&flagged, &[(FIELD_UNIT_DYNAMIC_FLAGS, 0, 0x20)]),
-            ["PLAYER_DEAD", "<clear cursor>"]
+            ["<world>", "PLAYER_DEAD", "<clear cursor>"],
+            "the death anim's log (`0x7561ed`) ahead of its signal (`0x756238`)"
         );
         assert_eq!(rig.globals.release_left_ms(10.0), Some(0), "never derived");
         assert!(rig
@@ -1214,8 +1235,35 @@ mod tests {
         let feigning = [(FIELD_UNIT_MAXHEALTH, 100), (FIELD_UNIT_HEALTH, 40)];
         assert_eq!(
             rig.changed(&feigning, &[(FIELD_UNIT_DYNAMIC_FLAGS, 0, 0x20)]),
-            ["PLAYER_ALIVE"]
+            ["<world>", "PLAYER_ALIVE"],
+            "a feigned death logs its `UNIT_DIED` too (`0x740570` -> `0x729220` -> `0x7561ed`)"
         );
+    }
+
+    /// Seated in a vehicle, the death anim, its `UNIT_DIED` log and its `PLAYER_DEAD` run only
+    /// under `UNIT_FIELD_FLAGS_2 & 0x20000` (`0x729277`-`0x729299`); the player half still runs.
+    #[test]
+    fn a_seated_death_runs_its_anim_only_under_the_flag() {
+        let mut rig = Rig::new();
+        rig.seated = true;
+        let dead = [(FIELD_UNIT_MAXHEALTH, 100), (FIELD_UNIT_HEALTH, 0)];
+        assert_eq!(
+            rig.changed(&dead, &[(FIELD_UNIT_HEALTH, 100, 0)]),
+            ["<world>"],
+            "only the player half's interact clear (`0x6dc17a`); the anim is skipped (`0x7292a2`)"
+        );
+        let flagged = [
+            (FIELD_UNIT_MAXHEALTH, 100),
+            (FIELD_UNIT_HEALTH, 0),
+            (benilla_protocol::field::FIELD_UNIT_FLAGS_2, 0x2_0000),
+        ];
+        assert_eq!(
+            rig.changed(&flagged, &[(FIELD_UNIT_HEALTH, 100, 0)]),
+            ["<world>", "<world>", "PLAYER_DEAD", "<clear cursor>"],
+            "the flag runs the anim: its log (`0x7561ed`), then its signal (`0x756238`)"
+        );
+        assert!(!runs_death_anim(true, 0x1_0000));
+        assert!(runs_death_anim(false, 0));
     }
 
     /// `0x524a30`: the range latch's drop fires `CORPSE_OUT_OF_RANGE` and the ghost asks, both

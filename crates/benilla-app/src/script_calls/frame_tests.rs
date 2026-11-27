@@ -2684,7 +2684,7 @@ fn a_cast_failure_chains_before_it_releases_then_updates_the_selection() {
     );
 }
 
-/// `SMSG_CAST_FAILED` for our sent cast: the line's listener reads the cast still pending; the finish releases it after the line and the end (`0x808aa5`, `0x808b75`, then `0x808b7f` -> `0x8054f0`, `0x8055a2`).
+/// `SMSG_CAST_FAILED` for our sent cast: the line's listener reads the cast still pending; the finish releases it after the line and the end (`0x808b00`, `0x808b75`, then `0x808b7f` -> `0x8054f0`, `0x8055a2`).
 #[test]
 fn a_cast_failures_line_listener_reads_the_cast_still_pending() {
     let mut rig = rig_or_skip!(&[Step::Tick]);

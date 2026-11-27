@@ -137,6 +137,8 @@ pub(crate) struct LiveView<'w, 's> {
     skill_lines: Option<Res<'w, crate::ui_spellbook::SkillLines>>,
     /// The client's skill list (`0xc22ae8`-`0xc22b18`), which the skill verbs read and write in their call.
     skills: Option<ResMut<'w, crate::ui_char::SkillInfo>>,
+    /// The client's combat log (`0xadb974`), which the combat log verbs read and write in their call.
+    combat_log: Option<ResMut<'w, crate::combat_log::CombatLog>>,
     /// The totem table and the tool search's inputs.
     totems: crate::ui_totem::TotemLive<'w, 's>,
     /// The targeting cursor's unit and range checks, `SpellCanTargetUnit`'s (`0x804190`).
@@ -2310,6 +2312,20 @@ impl LiveState for LiveView<'_, '_> {
 
     fn skill_list(&self) -> Option<&benilla_ui::script::SkillList> {
         self.skills.as_deref().map(|l| &l.0)
+    }
+
+    fn combat_log(&self) -> Option<&benilla_ui::script::CombatLogStore> {
+        self.combat_log.as_deref().map(|l| &l.store)
+    }
+
+    fn combat_log_mut(&mut self) -> Option<&mut benilla_ui::script::CombatLogStore> {
+        self.combat_log.as_deref_mut().map(|l| &mut l.store)
+    }
+
+    fn cancel_combat_log_waits(&mut self, gone: &[u64]) {
+        if let Some(log) = self.combat_log.as_deref_mut() {
+            crate::combat_log::cancel_waits(log, self.record_waits.as_deref_mut(), gone);
+        }
     }
 
     fn skill_list_mut(&mut self) -> Option<&mut benilla_ui::script::SkillList> {

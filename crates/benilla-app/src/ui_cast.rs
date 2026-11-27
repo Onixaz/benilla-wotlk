@@ -988,6 +988,7 @@ fn edge_system(
     shield: ShieldInputs,
     clock: Res<crate::ui_script::UiClock>,
     mut ui: ResMut<UiEvents>,
+    last_failure: Option<ResMut<crate::ui_action::LastFailure>>,
 ) {
     if *crate::net::CAST_TRACE {
         info!("cast-trace: UNIT_SPELLCAST edge {edge:?}");
@@ -1072,6 +1073,10 @@ fn edge_system(
         } => {
             if cast_flags & 1 != 0 {
                 return;
+            }
+            // The failure repeat's kept spell is zeroed before the end (`0x80e759`).
+            if let Some(mut last) = last_failure {
+                last.clear_spell();
             }
             end_cast(
                 &mut ui,

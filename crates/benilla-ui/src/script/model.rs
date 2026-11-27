@@ -7,7 +7,7 @@ use crate::widget::{FrameHandle, RegionHandle, WidgetArena};
 
 use super::{
     auction, backdrop, bind_confirm, calendar, camera_view, char_stats, chat_window, colorselect,
-    combat_log, container, cursor, death, duel, follow, guild, inspect, lfg, macros, mirror_timer,
+    container, cursor, death, duel, follow, guild, inspect, lfg, macros, mirror_timer,
     parse_unit_token, party, petition, pvp, quest, quest_log, session, simplehtml, skills, slider,
     social, stable, trade, unit_menu, weapon_enchant, FontObject, MusicRequest, RegionData,
     ScriptValue, SoundRequest, UnitState, UnitTokenParse,
@@ -797,8 +797,6 @@ pub(crate) struct Model {
     /// The open group-loot rolls, read where no view is lent.
     #[cfg(any(test, feature = "fixtures"))]
     pub(crate) loot_rolls: super::loot_roll::LootRollsState,
-    /// The combat log's entries, cursor and filters.
-    pub(crate) combat_log: combat_log::CombatLogStore,
     /// `AcceptLevelGrant` (true) and `DeclineLevelGrant` (false) calls.
     pub(crate) level_grant_answers: Vec<bool>,
     /// The grant, summon and PvP AFK verbs' sends and refusals, in call order.
@@ -1741,7 +1739,6 @@ impl Model {
             bind_on_use_confirms: 0,
             #[cfg(any(test, feature = "fixtures"))]
             loot_rolls: super::loot_roll::LootRollsState::default(),
-            combat_log: combat_log::CombatLogStore::default(),
             level_grant_answers: Vec::new(),
             unit_requests: Vec::new(),
             name_records: Default::default(),

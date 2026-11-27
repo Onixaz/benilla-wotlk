@@ -340,3 +340,36 @@ means and records the difference here.
   instance type through the null record (`0x572f7c`), so 12340 faults. In the world the current
   map is always a `Map.dbc` row, so the fault is not reached.
 - **benilla:** treats a map with no record as neither.
+
+### Combat log: an entry queued behind a waiting one
+
+- **12340:** A new combat log entry hides the spawn counter of a creature whose template has type
+  flag `0x4000` (`0x74d210`, called at `0x74ff54` and `0x74ff5f`). When another entry is already
+  waiting for a name, the queue returns before that step (`0x74ff39`–`0x74ff40`) and the send loop
+  later sends the new entry as it is (`0x74fa1b`–`0x74fa25`), so that one `COMBAT_LOG_EVENT` shows
+  the counter every other entry hides.
+- **benilla:** hides it on every entry once its names are in.
+
+### Combat log: a listener's `CombatLogClearEntries`
+
+- **12340:** The send loop raises `COMBAT_LOG_EVENT_UNFILTERED` and `COMBAT_LOG_EVENT` for the
+  entry at its cursor. A listener that calls `CombatLogClearEntries` recycles every entry
+  (`0x751120`, `0x75113b` -> `0x750390`); each recycle moves the cursor on and the last sets it to
+  null (`0x7503a8`). The loop then reads the cursor back and dereferences it (`0x74fa09` ->
+  `0x74fa0f`), and passes it to the log file's pack while `LoggingCombat` is on (`0x74f9e3`), so
+  12340 faults. Addons work around it by delaying the clear.
+- **benilla:** ends the send loop when no entry is left; the next entry logs as the first.
+
+### Combat log: recycling the waiting entry
+
+- **12340:** When no entry is free, a new combat log entry recycles the oldest one once it is past
+  `combatLogRetentionTime` (`0x750400`, `0x75043f` -> `0x750390`). If that entry is the one still
+  waiting for a name, the recycle moves the send cursor to the next entry (`0x7503a0`–`0x7503b0`)
+  and sends nothing. Only two places send after that: the queue, and only when no entry is waiting
+  (`0x74ff39`–`0x74ff46`), and the waiting entry's own name callback (`0x74fe90`, `0x74ff01`). A
+  next entry that already has its names has no callback and every new entry finds the cursor set,
+  so `COMBAT_LOG_EVENT` and `COMBAT_LOG_EVENT_UNFILTERED` stop until a login or a
+  `CombatLogClearEntries` nulls the cursor (`0x7503a8`). A name that never answers, such as a
+  despawned pet's, is enough. Addons work around it by clearing the log.
+- **benilla:** when the recycle moves the cursor onto an entry that has its names, sends from it at
+  once and walks on to the next waiting entry, as the send loop does (`0x74fa09`–`0x74fa25`).

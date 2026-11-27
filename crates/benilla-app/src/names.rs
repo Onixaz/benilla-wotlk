@@ -546,6 +546,13 @@ pub(crate) mod net {
             ui.world(move |world| crate::ui_achievement::name_landed(world, guid, true));
             // The chat module's callbacks on the record (`0x503c80`, `0x503fb0`, `0x6cb990`, `0x4ffe30`).
             ui.world(move |world| crate::ui_chat::name_landed(world, super::NameKey::Player(guid)));
+            // The combat log's callbacks on the record (`0x74fe90`), last by module, not in the record's registration order (#1487).
+            ui.world(move |world| {
+                crate::combat_log::name_landed(
+                    world,
+                    crate::combat_log::Landed::Unit(super::NameKey::Player(guid)),
+                );
+            });
         }
     }
 
@@ -565,6 +572,13 @@ pub(crate) mod net {
                 ui.world(move |world| crate::ui_achievement::name_landed(world, guid, false));
                 ui.world(move |world| {
                     crate::ui_chat::name_landed(world, super::NameKey::Player(guid));
+                });
+                // The combat log's callbacks (`0x74fe90`), last by module (#1487).
+                ui.world(move |world| {
+                    crate::combat_log::name_landed(
+                        world,
+                        crate::combat_log::Landed::Unit(super::NameKey::Player(guid)),
+                    );
                 });
             }
         }
@@ -592,10 +606,21 @@ pub(crate) mod net {
             ui.world(move |world| {
                 crate::ui_chat::name_landed(world, super::NameKey::Pet(pet_number));
             });
+            // The combat log's callbacks after the chat's, by module, not in the record's registration order (#1487).
+            ui.world(move |world| {
+                crate::combat_log::name_landed(
+                    world,
+                    crate::combat_log::Landed::Unit(super::NameKey::Pet(pet_number)),
+                );
+            });
         }
     }
 
-    fn on_creature_name(In(ev): In<SessionEvent>, mut names: ResMut<NameCache>) {
+    fn on_creature_name(
+        In(ev): In<SessionEvent>,
+        mut names: ResMut<NameCache>,
+        mut ui: ResMut<crate::ui_script::live::UiEvents>,
+    ) {
         if let SessionEvent::CreatureName {
             entry,
             name,
@@ -626,6 +651,13 @@ pub(crate) mod net {
                 (display_id, modifiers, movement_id),
                 &mut names,
             );
+            // The combat log's callbacks on the record (`0x74fe90`).
+            ui.world(move |world| {
+                crate::combat_log::name_landed(
+                    world,
+                    crate::combat_log::Landed::Unit(super::NameKey::Creature(entry)),
+                );
+            });
         }
     }
 

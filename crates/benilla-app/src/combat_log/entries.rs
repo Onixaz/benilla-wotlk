@@ -1,14 +1,9 @@
 //! The 3.3.5a combat-log entries, built per producer and fired once named.
 
-use std::collections::VecDeque;
-
 use benilla_protocol::messages::{
     hit_info, AttackerState, GROUP_MEMBER_MAIN_ASSIST, GROUP_MEMBER_MAIN_TANK,
 };
-use benilla_ui::script::{
-    CombatLogEntry, CombatLogEvent, CombatLogInfo, CombatLogSpell, CombatLogUnit, Damage, Miss,
-    MissType,
-};
+use benilla_ui::script::{CombatLogEvent, CombatLogInfo, CombatLogSpell, Damage, Miss, MissType};
 use bevy::prelude::*;
 
 use crate::names::{NameCache, NameKey};
@@ -24,7 +19,15 @@ pub(crate) struct CombatLogClock {
 }
 
 impl CombatLogClock {
-    fn timestamp(self, now_ms: u64) -> f64 {
+    /// `time()` now and the client clock `at_ms`, taken at a login (`0x7538ec`-`0x753906`).
+    pub(super) fn starting(at_ms: u64) -> Self {
+        let epoch_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        Self { epoch_secs, at_ms }
+    }
+
+    pub(super) fn timestamp(self, now_ms: u64) -> f64 {
         self.epoch_secs as f64 + now_ms.saturating_sub(self.at_ms) as f64 * 0.001
     }
 }
@@ -34,27 +37,14 @@ impl CombatLogClock {
 #[derive(Resource, Default, Clone, Copy)]
 pub(crate) struct CombatLogBackdate(pub(crate) i32);
 
-/// How an endpoint's name is looked up (`0x74fd40`): a unit's cache, or a game object's.
+/// How a name is looked up (`0x74fd40`, `0x750210`): a unit's cache, a game object's, or the
+/// item cache's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum NameRef {
+pub(super) enum NameRef {
     Unit(NameKey),
     GameObject,
+    Item(u32),
 }
-
-/// One entry waiting on its names; each key empties as its name lands.
-struct Pending {
-    entry: CombatLogEntry,
-    keys: [Option<NameRef>; 2],
-    /// The entry's item, named off the item cache (`0x750210`).
-    item: Option<u32>,
-}
-
-/// Entries not yet fired, oldest first; the head holds the rest (`0x74f910`).
-#[derive(Resource, Default)]
-pub(crate) struct PendingEntries(VecDeque<Pending>);
-
-/// Deviates: 12340 waits on a name unbounded (`0x74f720`); an unanswered pet name would stall all.
-const NAME_WAIT_MS: u64 = 2_000;
 
 /// What an endpoint's flags read (`0x74dcb0`).
 pub(crate) struct FlagInputs<'a> {
@@ -73,11 +63,11 @@ fn is_player_guid(guid: u64) -> bool {
 }
 
 /// The guid family the reference tests with `hi & 0xf0f00000`.
-fn family(guid: u64) -> u32 {
+pub(super) fn family(guid: u64) -> u32 {
     (guid >> 32) as u32 & 0xf0f0_0000
 }
 
-const GAME_OBJECT: u32 = 0xf010_0000;
+pub(super) const GAME_OBJECT: u32 = 0xf010_0000;
 const CREATURE: u32 = 0xf030_0000;
 const PET: u32 = 0xf040_0000;
 const VEHICLE: u32 = 0xf050_0000;
@@ -286,59 +276,8 @@ pub(crate) struct NewEntry {
     /// `AttributesExD & 0x2000`: the spell hides its caster (`0x750400`).
     pub hide_source: bool,
     pub info: CombatLogInfo,
-}
-
-impl PendingEntries {
-    /// Queue an entry (`0x750400`, `0x74ff20`), its flags and name keys taken now; `now_ms` is the
-    /// event's own client time.
-    pub(crate) fn queue<'s>(
-        &mut self,
-        new: NewEntry,
-        (now_ms, clock): (u64, CombatLogClock),
-        inputs: &FlagInputs,
-        store_of: impl Fn(u64) -> Option<&'s ObjectStore> + Copy,
-    ) {
-        let end = |guid: u64| {
-            if guid == 0 {
-                return (CombatLogUnit::none(), None);
-            }
-            let unit = CombatLogUnit {
-                guid,
-                name: None,
-                flags: unit_flags(guid, inputs, store_of),
-            };
-            let key = if family(guid) == GAME_OBJECT {
-                Some(NameRef::GameObject)
-            } else {
-                NameKey::of(guid, store_of(guid)).map(NameRef::Unit)
-            };
-            (unit, key)
-        };
-        let (source, source_key) = end(if new.hide_source { 0 } else { new.source });
-        let (dest, dest_key) = end(new.dest);
-        let item = new.info.item.as_ref().map(|i| i.id);
-        self.0.push_back(Pending {
-            entry: CombatLogEntry {
-                time_ms: now_ms,
-                timestamp: clock.timestamp(now_ms),
-                event: new.event,
-                source,
-                dest,
-                spell: new.spell,
-                info: new.info,
-            },
-            keys: [source_key, dest_key],
-            item,
-        });
-    }
-}
-
-#[cfg(test)]
-impl PendingEntries {
-    /// The queued entries, oldest first.
-    pub(crate) fn entries(&self) -> Vec<&CombatLogEntry> {
-        self.0.iter().map(|p| &p.entry).collect()
-    }
+    /// How many ms before now the entry happened, a batched entry's offset (`0x74ff28`).
+    pub backdate_ms: i32,
 }
 
 /// `0x74d210`: a creature with template type flag `0x4000` shows no spawn counter, as in
@@ -358,10 +297,6 @@ pub(crate) fn shown_guid(guid: u64, names: &NameCache) -> u64 {
     }
 }
 
-/// An entry fired with its names in, for the feed to hand to the UI.
-#[derive(Message)]
-pub(crate) struct CombatLogFired(pub(crate) CombatLogEntry);
-
 /// The caches an entry's names come from.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct NameSources<'w> {
@@ -373,7 +308,7 @@ pub(crate) struct NameSources<'w> {
 
 impl NameSources<'_> {
     /// The answer for one endpoint: `None` in flight, `Some(None)` answered empty.
-    fn answer(&self, key: NameRef, guid: u64) -> Option<Option<String>> {
+    pub(super) fn answer(&self, key: NameRef, guid: u64) -> Option<Option<String>> {
         match key {
             NameRef::Unit(k) => self.names.answer(k, guid, &self.net).map(|n| {
                 n.map(|n| match (k, self.names.player_realm(guid)) {
@@ -392,7 +327,13 @@ impl NameSources<'_> {
                     }
                 }
             }
+            NameRef::Item(entry) => self.item(entry),
         }
+    }
+
+    /// `guid` as an entry shows it (`0x74d210`).
+    pub(super) fn shown_guid(&self, guid: u64) -> u64 {
+        shown_guid(guid, &self.names)
     }
 
     /// The item's name: `None` in flight, `Some(None)` answered unknown.
@@ -404,72 +345,6 @@ impl NameSources<'_> {
             None => None,
         }
     }
-}
-
-/// Fire the queued entries whose names are in, oldest first (`0x74f910`).
-pub(crate) fn fire_pending(
-    mut fired: MessageWriter<CombatLogFired>,
-    mut pending: ResMut<PendingEntries>,
-    sources: NameSources,
-    time: Option<Res<Time<bevy::time::Real>>>,
-) {
-    let Some(time) = time else {
-        return;
-    };
-    let now_ms = time.elapsed().as_millis() as u64;
-    while let Some(head) = pending.0.front_mut() {
-        let mut ready = true;
-        let Pending { entry, keys, item } = head;
-        let [source_key, dest_key] = keys;
-        for (unit, key) in [(&mut entry.source, source_key), (&mut entry.dest, dest_key)] {
-            let Some(k) = *key else { continue };
-            match sources.answer(k, unit.guid) {
-                Some(name) => {
-                    unit.name = name;
-                    *key = None;
-                }
-                None => ready = false,
-            }
-        }
-        if let Some(id) = *item {
-            match sources.item(id) {
-                Some(name) => {
-                    if let Some(i) = entry.info.item.as_mut() {
-                        i.name = name;
-                    }
-                    *item = None;
-                }
-                None => ready = false,
-            }
-        }
-        if !ready && now_ms.saturating_sub(entry.time_ms) < NAME_WAIT_MS {
-            break;
-        }
-        let Some(Pending { mut entry, .. }) = pending.0.pop_front() else {
-            break;
-        };
-        entry.source.guid = shown_guid(entry.source.guid, &sources.names);
-        entry.dest.guid = shown_guid(entry.dest.guid, &sources.names);
-        fired.write(CombatLogFired(entry));
-    }
-}
-
-/// `0x7538a0` at world entry: the timestamp base taken now, nothing carried from the last world.
-pub(crate) fn on_world_entry(
-    mut entered: MessageReader<crate::net::EnteredWorldMessage>,
-    mut clock: ResMut<CombatLogClock>,
-    mut pending: ResMut<PendingEntries>,
-    time: Option<Res<Time<bevy::time::Real>>>,
-) {
-    if entered.read().count() == 0 {
-        return;
-    }
-    let at_ms = time.map_or(0, |t| t.elapsed().as_millis() as u64);
-    let epoch_secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64);
-    *clock = CombatLogClock { epoch_secs, at_ms };
-    pending.0.clear();
 }
 
 #[cfg(test)]
