@@ -190,14 +190,7 @@ pub(super) fn pcall_outcome((ok, err): (bool, Value)) -> mlua::Result<()> {
 /// (`0x819730`), so `debugstack` and `debuglocals` inside it see the failing frame.
 fn error_with_traceback(lua: &Lua, e: Value) -> mlua::Result<Value> {
     let frames = traceback_frames(lua, 1, 12, 10);
-    let plumbing = &PCALL_CHUNK[1..];
-    let mut frames: Vec<&str> = frames
-        .lines()
-        .take_while(|l| !l.starts_with(plumbing))
-        .collect();
-    if frames.last().is_some_and(|l| l.ends_with("`xpcall'")) {
-        frames.pop();
-    }
+    let frames: Vec<&str> = frames.lines().collect();
     let traceback = format!("stack traceback:\n\t{}", frames.join("\n\t"));
     let bare = match &e {
         Value::Error(cause) => lua_message(cause),
@@ -269,6 +262,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         .set_name("=[benilla wow stdlib]")
         .set_mode(mlua::ChunkMode::Text)
         .exec()?;
+    install_format(lua)?;
     Ok(())
 }
 
@@ -607,91 +601,161 @@ function setglobal(name, value) _G[name] = value end
 
 -- ── NOT here: wipe / strsplit / strjoin / strconcat / strtrim ─────────────────────────────────
 -- The client's own bindings, which `lua51.rs` installs after this layer.
-
--- ── Blizzard's positional string.format (%N$) ──────────────────────────────────────────────────
-do
-    -- `_find`/`_sub` are captured for the same reason `_format` is: this wrapper runs on every
-    -- `format` call in the UI and must not follow an addon's later replacement of `string.*`.
-    -- They are CALLS and not method syntax so the wrapper never resolves through a string
-    -- metatable an addon may have replaced.
-    local _format, _find, _sub, _len, _type, _error = string.format, string.find, string.sub, string.len, type, error
-    local CONV = "diouxXeEfgGqscp"  -- Lua 5.1 conversion letters
-
-    -- No reference to 5.0's implicit `arg` anywhere in this function: one would make 5.1 build
-    -- that table on every call, the fast path's included.
-    local function reformat(fmt, ...)
-        -- `0x853c50` checks arg #1 as a string (numbers coerce); raise at level 2 so the caller
-        -- is blamed as `'format'`, not this wrapper as `'_format'`.
-        local t = _type(fmt)
-        if t ~= "string" then
-            if t == "number" then
-                return _format(fmt, ...)
-            end
-            _error("bad argument #1 to 'format' (string expected, got " .. t .. ")", 2)
-        end
-        -- fast path: no "%<digits>$" ⇒ no positional spec. A width or a zero
-        -- pad (`%02d`) is a digit after `%` too, and must not send the call down the rebuild.
-        if not _find(fmt, "%%%d+%$") then
-            return _format(fmt, ...)
-        end
-
-        local args = { ... }
-        local pieces = {}      -- rebuilt (sequential) format fragments
-        local order = {}       -- for each real conversion: the source arg index, or false=sequential
-        local seen_pos, seen_seq = false, false
-        local npieces, norder = 0, 0
-        local i, len = 1, _len(fmt)
-
-        while i <= len do
-            local c = _sub(fmt, i, i)
-            if c ~= "%" then
-                npieces = npieces + 1; pieces[npieces] = c
-                i = i + 1
-            elseif _sub(fmt, i + 1, i + 1) == "%" then
-                npieces = npieces + 1; pieces[npieces] = "%%"
-                i = i + 2
-            else
-                local j = i + 1
-                local ds, de = _find(fmt, "^%d+%$", j)  -- optional N$
-                if ds then
-                    seen_pos = true
-                    norder = norder + 1; order[norder] = tonumber(_sub(fmt, ds, de - 1))
-                    j = de + 1
-                else
-                    seen_seq = true
-                    norder = norder + 1; order[norder] = false
-                end
-                -- copy flags/width/precision + the conversion letter
-                local ce = _find(fmt, "[" .. CONV .. "]", j)
-                if not ce then
-                    error("invalid conversion in format string", 2)
-                end
-                npieces = npieces + 1; pieces[npieces] = "%" .. _sub(fmt, j, ce)
-                i = ce + 1
-            end
-        end
-
-        if seen_pos and seen_seq then
-            error("cannot mix positional and sequential arguments in format string", 2)
-        end
-
-        local out, seq = {}, 0
-        for k = 1, norder do
-            local idx = order[k]
-            if idx == false then
-                seq = seq + 1
-                out[k] = args[seq]
-            else
-                out[k] = args[idx]
-            end
-        end
-        return _format(table.concat(pieces, "", 1, npieces), unpack(out, 1, norder))
-    end
-
-    string.format = reformat
-    format = reformat
-end
 "#;
+
+/// `string.format` / `format` (`0x853c50`) with Blizzard's `%N$` positional specifiers, installed
+/// as a C function so errors blame the caller as `'format'` with a single `[C]: in function
+/// 'format'` frame on the stack rather than an extra Lua wrapper + `error()` frame.
+fn install_format(lua: &Lua) -> mlua::Result<()> {
+    let g = lua.globals();
+    let string_tbl: mlua::Table = g.get("string")?;
+    let raw_format: mlua::Function = string_tbl.get("format")?;
+    let format_fn = lua.create_function(move |lua, args: Variadic<Value>| {
+        let where_prefix = || {
+            lua.inspect_stack(1, |debug| {
+                if let Some(line) = debug.current_line() {
+                    let src = debug.source();
+                    let short = src.short_src.as_deref().unwrap_or("");
+                    format!("{short}:{line}: ")
+                } else {
+                    String::new()
+                }
+            })
+            .unwrap_or_default()
+        };
+        let fmt_bytes = match args.first() {
+            None => {
+                return Err(mlua::Error::runtime(format!(
+                    "{}bad argument #1 to 'format' (string expected, got no value)",
+                    where_prefix()
+                )));
+            }
+            Some(Value::String(s)) => s.as_bytes().to_vec(),
+            Some(v @ (Value::Integer(_) | Value::Number(_))) => lua
+                .coerce_string(v.clone())?
+                .map(|s| s.as_bytes().to_vec())
+                .unwrap_or_default(),
+            Some(other) => {
+                return Err(mlua::Error::runtime(format!(
+                    "{}bad argument #1 to 'format' (string expected, got {})",
+                    where_prefix(),
+                    other.type_name()
+                )));
+            }
+        };
+        let call_raw = |call_args: mlua::MultiValue| -> mlua::Result<mlua::String> {
+            raw_format.call::<mlua::String>(call_args).map_err(|e| {
+                let msg = lua_message(&e).replace(" to '?'", " to 'format'");
+                let prefix = where_prefix();
+                if !prefix.is_empty() && !msg.starts_with(&prefix) {
+                    mlua::Error::runtime(format!("{prefix}{msg}"))
+                } else {
+                    mlua::Error::runtime(msg)
+                }
+            })
+        };
+        if !has_positional_spec(&fmt_bytes) {
+            return call_raw(args.into_iter().collect());
+        }
+        let (rebuilt, order) = rewrite_positional_format(&fmt_bytes)
+            .map_err(|msg| mlua::Error::runtime(format!("{}{msg}", where_prefix())))?;
+        let mut out = Vec::with_capacity(1 + order.len());
+        out.push(Value::String(lua.create_string(&rebuilt)?));
+        let mut seq = 0usize;
+        for slot in order {
+            let idx = match slot {
+                Some(n) => n,
+                None => {
+                    seq += 1;
+                    seq
+                }
+            };
+            // `args[0]` is the format string, so argument #1 is `args[1]`.
+            out.push(args.get(idx).cloned().unwrap_or(Value::Nil));
+        }
+        call_raw(mlua::MultiValue::from_vec(out))
+    })?;
+    string_tbl.set("format", format_fn.clone())?;
+    g.set("format", format_fn)?;
+    Ok(())
+}
+
+/// Fast scan for `%<digits>$` in a format string (skipping `%%`).
+fn has_positional_spec(fmt: &[u8]) -> bool {
+    let mut i = 0;
+    while i < fmt.len() {
+        if fmt[i] != b'%' {
+            i += 1;
+            continue;
+        }
+        i += 1;
+        if i >= fmt.len() {
+            break;
+        }
+        if fmt[i] == b'%' {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < fmt.len() && fmt[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i > start && i < fmt.len() && fmt[i] == b'$' {
+            return true;
+        }
+    }
+    false
+}
+
+/// Rewrite `%N$` positional specifiers into sequential `%...` specifiers plus the 1-based source
+/// argument index for each conversion (`None` = sequential).
+fn rewrite_positional_format(fmt: &[u8]) -> Result<(Vec<u8>, Vec<Option<usize>>), &'static str> {
+    const CONV: &[u8] = b"diouxXeEfgGqscp";
+    let mut out = Vec::with_capacity(fmt.len());
+    let mut order = Vec::new();
+    let mut seen_pos = false;
+    let mut seen_seq = false;
+    let mut i = 0;
+    while i < fmt.len() {
+        if fmt[i] != b'%' {
+            out.push(fmt[i]);
+            i += 1;
+        } else if i + 1 < fmt.len() && fmt[i + 1] == b'%' {
+            out.extend_from_slice(b"%%");
+            i += 2;
+        } else {
+            let mut j = i + 1;
+            let digit_start = j;
+            while j < fmt.len() && fmt[j].is_ascii_digit() {
+                j += 1;
+            }
+            if j > digit_start && j < fmt.len() && fmt[j] == b'$' {
+                seen_pos = true;
+                let n = std::str::from_utf8(&fmt[digit_start..j])
+                    .ok()
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(0);
+                order.push(Some(n));
+                j += 1;
+            } else {
+                seen_seq = true;
+                order.push(None);
+                j = i + 1;
+            }
+            let Some(rel) = fmt[j..].iter().position(|b| CONV.contains(b)) else {
+                return Err("invalid conversion in format string");
+            };
+            let ce = j + rel;
+            out.push(b'%');
+            out.extend_from_slice(&fmt[j..=ce]);
+            i = ce + 1;
+        }
+    }
+    if seen_pos && seen_seq {
+        return Err("cannot mix positional and sequential arguments in format string");
+    }
+    Ok((out, order))
+}
 
 /// The rest of 12340's base-library extras table (`0xa443a8`) that FrameXML and addons call:
 /// `strlenutf8` (`0x817c70`, stock `AutoComplete.lua` measures the typed text with it),
@@ -994,7 +1058,8 @@ fn traceback_frame(d: &mlua::Debug) -> String {
 /// an ordinary frame, else `"...\n"` and the last `count2` follow. So `count1 = 1` gives two frames
 /// on a two-deep stack, not one.
 fn traceback_frames(lua: &Lua, start: usize, count1: usize, count2: usize) -> String {
-    let mut out = String::new();
+    let plumbing = &PCALL_CHUNK[1..];
+    let mut lines: Vec<String> = Vec::new();
     let mut level = start;
     let mut first_part = true;
     while lua.inspect_stack(level, |_| ()).is_some() {
@@ -1004,7 +1069,7 @@ fn traceback_frames(lua: &Lua, start: usize, count1: usize, count2: usize) -> St
             if lua.inspect_stack(level + count2, |_| ()).is_none() {
                 level -= 1; // nothing to elide: print this level after all
             } else {
-                out.push_str("...\n");
+                lines.push("...".to_string());
                 while lua.inspect_stack(level + count2, |_| ()).is_some() {
                     level += 1;
                 }
@@ -1012,11 +1077,27 @@ fn traceback_frames(lua: &Lua, start: usize, count1: usize, count2: usize) -> St
             continue;
         }
         if let Some(f) = lua.inspect_stack(level - 1, traceback_frame) {
-            out.push_str(&f);
-            out.push('\n');
+            // Stop before `protected_call`'s internal Lua `xpcall` wrapper so neither host
+            // tracebacks nor `debugstack` expose `handler_pcall` / `xpcall` / its thunk tail call.
+            if f.starts_with(plumbing) {
+                if lines.last().is_some_and(|l| l.ends_with("`xpcall'")) {
+                    lines.pop();
+                    if lines.last().is_some_and(|l| l == "(tail call): ?") {
+                        lines.pop();
+                    }
+                }
+                break;
+            }
+            lines.push(f);
         }
     }
-    out
+    if lines.is_empty() {
+        String::new()
+    } else {
+        let mut out = lines.join("\n");
+        out.push('\n');
+        out
+    }
 }
 
 #[cfg(test)]
