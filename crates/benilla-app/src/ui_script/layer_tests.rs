@@ -427,9 +427,10 @@ fn the_dev_commands_are_host_rows_in_a_dev_build_alone() {
 
 /// The `/errors` log collects off the Lua error handler, ahead of the stock `_ERRORMESSAGE`
 /// (`BasicControls.xml`), which still files each error in `Blizzard_DebugTools`' frame, hidden at
-/// the default `scriptErrors` 0: an addon's runtime error, an error in one of the layer's own
-/// handlers, and one raised in the stock load before the layer loaded (the engine hands caught
-/// errors to the handler after the load).
+/// the default `scriptErrors` 0: an addon's runtime error and an error in one of the layer's own
+/// handlers. An error raised before any error handler is installed (`0x819730` with no handler
+/// slot) stays on the host channel alone and is not replayed once `BasicControls.xml` and the
+/// layer load.
 #[test]
 fn the_error_log_collects_off_the_error_handler() {
     benilla_formats::wow_data_or_skip!();
@@ -471,18 +472,29 @@ fn the_error_log_collects_off_the_error_handler() {
              return out",
         )
         .unwrap();
-    for want in ["before the layer", "an addon boom", "a layer boom"] {
+    for want in ["an addon boom", "a layer boom"] {
         assert!(
             rows.iter().any(|r| r.contains(want)),
             "{want:?} is in the log: {rows:#?}"
         );
     }
+    assert!(
+        rows.iter().all(|r| !r.contains("before the layer")),
+        "an error raised before any error handler is installed stays on the host channel alone: {rows:#?}"
+    );
     let filed: Vec<String> = s.eval("return ScriptErrorsFrame.messages").unwrap();
     assert!(
-        filed
-            .first()
-            .is_some_and(|m| m.contains("before the layer")),
-        "the stock handler still runs after the log, first error first: {filed:#?}"
+        filed.first().is_some_and(|m| m.contains("an addon boom")),
+        "the stock handler still runs after the log, first post-load error first: {filed:#?}"
+    );
+    // Synchronous dispatch (`0x819730`) preserves the real call stack inside `ScriptErrorsFrame`.
+    let text: String = s
+        .eval("return ScriptErrorsFrameScrollFrameText:GetText()")
+        .unwrap();
+    let stack = text.split_once("Stack:").map(|(_, s)| s).unwrap_or("");
+    assert!(
+        stack.contains("err.lua:2:"),
+        "ScriptErrorsFrame captured the live stack of the raising addon handler: {text:?}"
     );
     assert!(
         !s.eval::<bool>("return ScriptErrorsFrame:IsShown()")

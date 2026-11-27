@@ -660,7 +660,7 @@ fn load_bindings(lua: &Lua, name: &str, read: &Reader) {
         // Reported, not swallowed: otherwise a broken binding file leaves keys dead silently.
         Err(e) => {
             let host = format!("{name}/Bindings.xml: {e}");
-            log_error(lua, &host, &host);
+            log_error(lua, &host, Some(&host));
         }
     }
 }
@@ -694,7 +694,7 @@ fn load_saved_variables(lua: &Lua, i: usize) {
             Err(e) => {
                 // Present but unreadable is held, like a file that will not run.
                 let host = format!("{}: {e}", path.display());
-                log_error(lua, &host, &host);
+                log_error(lua, &host, Some(&host));
                 let mut model = crate::script::model_mut_of(lua);
                 if !model.held_saved_files.contains(&path) {
                     model.held_saved_files.push(path);
@@ -712,7 +712,7 @@ fn load_saved_variables(lua: &Lua, i: usize) {
             log_error(
                 lua,
                 &format!("{}: {e}", path.display()),
-                &super::stdlib::lua_message(&e),
+                Some(&super::stdlib::lua_message(&e)),
             );
             let mut model = crate::script::model_mut_of(lua);
             if !model.held_saved_files.contains(&path) {
@@ -762,7 +762,7 @@ fn run_files(lua: &Lua, name: &str, read: &Reader, files: &[String], toc: &mut S
                 log_error(
                     lua,
                     &format!("{name}/{file}: {e}"),
-                    &super::stdlib::lua_message(&e),
+                    Some(&super::stdlib::lua_message(&e)),
                 );
             }
             continue;
@@ -785,7 +785,7 @@ fn run_files(lua: &Lua, name: &str, read: &Reader, files: &[String], toc: &mut S
             crate::script::diagnostics::record_warning(lua, &format!("{name}/{file}: {w}"));
         }
         for (e, bare) in report.errors.into_iter().zip(report.bare_errors) {
-            log_error(lua, &format!("{name}/{file}: {e}"), &bare);
+            log_error(lua, &format!("{name}/{file}: {e}"), bare.as_deref());
         }
     }
 }
@@ -817,12 +817,15 @@ fn run_chunk(lua: &Lua, bytes: &[u8], name: &str) -> mlua::Result<()> {
 }
 
 /// Record a demand-load error as the startup walk does ([`super::UiScript::report_script_error`]):
-/// a `Load` row and the host drain carry `host`, the player's error handler `bare`.
-fn log_error(lua: &Lua, host: &str, bare: &str) {
+/// a `Load` row and the host drain carry `host`, the player's error handler `bare` when not already
+/// dispatched synchronously.
+fn log_error(lua: &Lua, host: &str, bare: Option<&str>) {
     let host = format!("LoadAddOn: {host}");
     super::diagnostics::record_load_failure(lua, &host);
     let mut model = crate::script::model_mut_of(lua);
-    model.pending_error_dispatch.push(bare.to_string());
+    if let Some(bare) = bare {
+        model.pending_error_dispatch.push(bare.to_string());
+    }
     model.errors.push(host);
 }
 

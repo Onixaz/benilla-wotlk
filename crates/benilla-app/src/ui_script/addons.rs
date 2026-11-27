@@ -222,10 +222,14 @@ impl Addon {
             }
             for (e, bare) in report.errors.iter().zip(&report.bare_errors) {
                 error!("ui_script({}/{file}): {e}", self.name);
+                let host = format!("{}/{file}: {e}", self.name);
                 // A script error, as in the Lua arm; `_ERRORMESSAGE`'s IsVisible guard shows only
                 // a burst's first, as in the reference.
-                script.report_script_error(&format!("{}/{file}: {e}", self.name), bare);
-                failures.push(format!("{}/{file}: {e}", self.name));
+                match bare {
+                    Some(bare) => script.report_script_error(&host, bare),
+                    None => script.report_load_failure(&host),
+                }
+                failures.push(host);
             }
             info!(
                 "ui_script: {}/{file} loaded ({} frames materialized)",

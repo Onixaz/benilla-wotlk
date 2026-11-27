@@ -34,6 +34,25 @@ fn positional_format_reorders_and_mix_is_an_error() {
         .eval(r#"return pcall(format, "%1$s %s", "a", "b")"#)
         .unwrap();
     assert!(!mixed_ok, "mixed positional+sequential must error");
+    // non-string format arg blames the caller as `'format'`, not `[benilla wow stdlib]` as `'_format'` (`0x853c50`)
+    let err = s
+        .run_chunk_named(
+            b"local function boom() local r = format(nil, 1) return r end\nboom()",
+            "@Caller.lua",
+        )
+        .unwrap_err();
+    let bare = crate::script::lua_message(&err);
+    assert!(
+        bare.contains("Caller.lua:1:")
+            && bare.contains("bad argument #1 to 'format' (string expected, got nil)"),
+        "expected caller attribution for format(nil), got: {bare}"
+    );
+    assert!(
+        !bare.contains("benilla wow stdlib") && !bare.contains("'_format'"),
+        "{bare}"
+    );
+    // numbers still coerce to string as `luaL_checklstring` does
+    assert_eq!(s.eval::<String>("return format(42)").unwrap(), "42");
 }
 
 // ── getglobal and the alias layer ──

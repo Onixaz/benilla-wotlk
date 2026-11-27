@@ -1192,15 +1192,23 @@ impl Model {
         }
     }
 
-    /// Records a caught Lua error: the decorated text for the host and the retained log, the bare
-    /// message for the Lua error handler ([`Self::record_script_error`]).
+    /// Records a caught Lua error from `protected_call` / `update_fire`, whose `xpcall` handler
+    /// (`0x819730`) already invoked the Lua error handler synchronously: keeps the decorated text
+    /// for the host and the retained log without queuing a second dispatch.
     pub(crate) fn record_lua_error(&mut self, e: &mlua::Error) {
-        self.record_script_error(e.to_string(), super::stdlib::lua_message(e));
+        self.record_host_error(e.to_string());
     }
 
-    /// Records a caught script error: `host` for the host and the retained log, `bare` for the Lua
-    /// error handler, which never sees a decoration; an error raised by the handler itself goes
-    /// back to the handler alone, never through here.
+    /// Records a decorated error for the host and retained log alone, without queuing a deferred
+    /// Lua error-handler dispatch.
+    pub(crate) fn record_host_error(&mut self, host: String) {
+        self.diagnostics
+            .record(super::diagnostics::DiagnosticKind::Error, &host);
+        self.errors.push(host);
+    }
+
+    /// Records a caught script error that did not pass through `protected_call`: `host` for the
+    /// host and the retained log, `bare` queued for the Lua error handler.
     pub(crate) fn record_script_error(&mut self, host: String, bare: String) {
         self.diagnostics
             .record(super::diagnostics::DiagnosticKind::Error, &host);

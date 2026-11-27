@@ -32,8 +32,9 @@ pub struct LoadReport {
     /// Failures the reference raises on: a handler that fails to compile, a method call that
     /// errors, a malformed included document.
     pub errors: Vec<String>,
-    /// Each of [`Self::errors`]'s bare Lua message, what the Lua error handler gets.
-    pub bare_errors: Vec<String>,
+    /// Each of [`Self::errors`]'s bare Lua message when not already dispatched synchronously by
+    /// `protected_call` (`None` when already dispatched).
+    pub bare_errors: Vec<Option<String>>,
     /// `<Include file=>` and `<Script file=>` paths the provider lacks. The reference logs
     /// `"Couldn't open %s"` or `"Error loading %s"` and goes on; kept apart from `warnings` so a
     /// load that resolved nothing is not clean.
@@ -110,8 +111,8 @@ pub fn load_into_under(
 pub struct TemplateReport {
     /// The loader's warnings.
     pub warnings: Vec<String>,
-    /// `(decorated, bare)`: a raising `OnLoad`, reported through the error handler like any other.
-    pub errors: Vec<(String, String)>,
+    /// `(decorated, bare)`: `None` when `protected_call` already dispatched to the error handler.
+    pub errors: Vec<(String, Option<String>)>,
 }
 
 impl TemplateReport {
@@ -123,7 +124,7 @@ impl TemplateReport {
     }
 
     /// Hand the report to the VM's retained channels: warnings to the host, errors through the
-    /// host drain and the Lua error handler.
+    /// host drain and (for undispatched ones) the Lua error handler.
     pub(crate) fn publish(self, lua: &mlua::Lua) {
         if self.warnings.is_empty() && self.errors.is_empty() {
             return;
@@ -133,7 +134,10 @@ impl TemplateReport {
             model.record_warning(w);
         }
         for (host, bare) in self.errors {
-            model.record_script_error(host, bare);
+            match bare {
+                Some(bare) => model.record_script_error(host, bare),
+                None => model.record_host_error(host),
+            }
         }
     }
 }
@@ -343,7 +347,15 @@ impl Loader<'_> {
     /// Record a Lua failure: `text` the decorated line, the error's own bare message beside it.
     pub(super) fn report_error(&mut self, text: String, e: &mlua::Error) {
         self.report.errors.push(text);
-        self.report.bare_errors.push(crate::script::lua_message(e));
+        self.report
+            .bare_errors
+            .push(Some(crate::script::lua_message(e)));
+    }
+
+    /// Record a Lua failure whose `protected_call` already invoked the error handler synchronously.
+    pub(super) fn report_dispatched_error(&mut self, text: String) {
+        self.report.errors.push(text);
+        self.report.bare_errors.push(None);
     }
 
     pub(super) fn lua(&self) -> &mlua::Lua {
