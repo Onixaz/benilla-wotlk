@@ -43,12 +43,14 @@ pub(super) fn spin_angle(base: f32, spin: f32, age: f32, random_sign: bool, phas
 }
 
 /// The camera basis one frame of expansion billboards against.
+#[derive(Clone, Copy)]
 pub(super) struct CamBasis {
     pub(crate) right: Vec3,
     pub(crate) up: Vec3,
 }
 
 /// How a cloud's stored coordinates reach the world (the two modes on [`super::Particle`]).
+#[derive(Clone, Copy)]
 pub(super) struct DrawFrame {
     pub(crate) anchored: bool,
     /// World mode's ride frame `A`, the reference's `[ebp+8]`, folded on the world-mode leg; the
@@ -261,8 +263,9 @@ pub(crate) fn twinkle_table() -> &'static [f32; 128] {
     &TWINKLE_LUT
 }
 
-/// One particle for the GPU expansion; its pool row is set at commit.
-pub(super) fn gpu_particle(p: &Particle) -> GpuParticle {
+/// One particle for the GPU expansion, stamped with its pool row.
+#[inline]
+pub(super) fn gpu_particle(p: &Particle, pool: u32) -> GpuParticle {
     GpuParticle {
         pos: p.pos.to_array(),
         age: p.age,
@@ -273,7 +276,7 @@ pub(super) fn gpu_particle(p: &Particle) -> GpuParticle {
         spin: p.spin,
         phase: p.phase,
         cell: u32::from(p.cell),
-        pool: 0,
+        pool,
         _pad: 0,
     }
 }
@@ -398,8 +401,6 @@ pub(super) fn pool_record(
     pool.mat = rows;
     pool.base_r = v4(base_r);
     pool.base_u = v4(base_u);
-    pool.cam_r = v4(cam.right);
-    pool.cam_u = v4(cam.up);
     pool.params[0] = frame.alpha;
     pool.params[1] = scale;
     pool.light = light;
@@ -446,8 +447,6 @@ mod tests {
             cell: 0,
             phase: 0,
             fresh: false,
-            quat: Quat::IDENTITY,
-            angvel: Vec3::ZERO,
         }
     }
 
