@@ -14,9 +14,16 @@ impl super::UiScript {
         };
         // The rest of the line after the alias and one space, spaces intact: the reference's
         // `strsub(text, strlen(cmdString) + 2)`.
-        if let Err(e) = handler.call::<()>(args.to_string()) {
-            self.model_mut()
-                .record_script_error(format!("/{cmd}: {e}"), super::stdlib::lua_message(&e));
+        let arg = match self.lua.create_string(args) {
+            Ok(s) => mlua::MultiValue::from_vec(vec![Value::String(s)]),
+            Err(e) => {
+                self.model_mut()
+                    .record_script_error(format!("/{cmd}: {e}"), super::stdlib::lua_message(&e));
+                return true;
+            }
+        };
+        if let Err(e) = super::stdlib::protected_call(&self.lua, &handler, arg) {
+            self.model_mut().record_host_error(format!("/{cmd}: {e}"));
         }
         true
     }

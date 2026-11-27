@@ -1642,14 +1642,24 @@ impl UiScript {
     pub fn execute_secure(&self, chunk: &str) {
         world_loan::assert_not_quiet(&self.lua);
         let lua = &self.lua;
-        let run = taint::run_as(0, || {
+        let compiled = taint::run_as(0, || {
             lua.load(chunk)
                 .set_name("?")
                 .set_mode(mlua::ChunkMode::Text)
-                .exec()
+                .into_function()
         });
-        if let Err(e) = run {
-            model_mut_of(lua).record_lua_error(&e);
+        match compiled {
+            Ok(f) => {
+                let run = taint::run_as(0, || {
+                    stdlib::protected_call(lua, &f, mlua::MultiValue::new())
+                });
+                if let Err(e) = run {
+                    model_mut_of(lua).record_lua_error(&e);
+                }
+            }
+            Err(e) => {
+                model_mut_of(lua).record_script_error(e.to_string(), stdlib::lua_message(&e));
+            }
         }
     }
 
@@ -2138,51 +2148,16 @@ impl UiScript {
             .push(bare.to_string());
     }
 
-    /// Hand each queued script error to the Lua error handler, as the reference's catch closure
-    /// calls the one `seterrorhandler` holds, read from its slot and not through the
-    /// `geterrorhandler` global; FrameXML installs `_ERRORMESSAGE`, the ScriptErrors dialog
-    /// (`BasicControls.xml:16`). With none installed the error stays on the host channel,
-    /// [`UiScript::errors`], alone. A handler that raises is handed its own error, as the
-    /// reference's trampoline (`0x819730`) still sits in the pcall's error slot when it raises and
-    /// Lua 5.1 calls that slot again (`0x850830`); a chain that never settles ends at
-    /// [`ERROR_HANDLER_NESTING`] and is dropped unreported, as the reference's pcall pops its
-    /// `LUA_ERRERR`. Each caught error starts its own chain, so the next one still reaches the
-    /// handler. The call is [`stdlib::protected_call`]'s, so a raising handler costs no `_G`
-    /// search. `debuglocals` answers only inside it, as the in-handler flag (`0x819730`) gates it.
+    /// Hand each queued script error (from compile failures or other non-`protected_call` paths)
+    /// to the Lua error handler (`0x819730`); handler-call errors already ran synchronously inside
+    /// `xpcall` while their stack was live.
     pub fn dispatch_script_errors_to_handler(&mut self) {
         if self.model_ref().pending_error_dispatch.is_empty() {
             return;
         }
         let pending = drain_field!(self, pending_error_dispatch);
-        if pending.is_empty() {
-            return;
-        }
-        let Some(handler) = stdlib::error_handler(&self.lua) else {
-            return;
-        };
         for msg in pending {
-            let arg = match self.lua.create_string(&msg) {
-                Ok(s) => mlua::MultiValue::from_vec(vec![mlua::Value::String(s)]),
-                Err(e) => {
-                    self.push_error(e);
-                    break;
-                }
-            };
-            let in_handler = |on: bool| {
-                self.lua
-                    .set_named_registry_value(stdlib::REG_IN_ERROR_HANDLER, on)
-            };
-            let mut arg = arg;
-            for _ in 0..ERROR_HANDLER_NESTING {
-                let called = in_handler(true)
-                    .and_then(|()| stdlib::protected_call(&self.lua, &handler, arg));
-                let _ = in_handler(false);
-                let Err(e) = called else { break };
-                arg = match self.lua.create_string(stdlib::lua_message(&e)) {
-                    Ok(s) => mlua::MultiValue::from_vec(vec![mlua::Value::String(s)]),
-                    Err(_) => break,
-                };
-            }
+            stdlib::invoke_error_handler(&self.lua, &msg);
         }
     }
 

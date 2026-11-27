@@ -464,3 +464,74 @@ fn debuglocals_answers_inside_the_handler_dispatch_alone() {
         "the gate closes after the dispatch"
     );
 }
+
+/// The `xpcall` error handler (`0x819730`) invokes `seterrorhandler`'s callback synchronously
+/// while the raising call stack is still live, so `debugstack` and `debuglocals` inside it see the
+/// failing Lua frame and its locals rather than a deferred dispatch wrapper.
+#[test]
+fn error_handler_runs_synchronously_with_live_stack_and_locals() {
+    let mut s = crate::script::UiScript::new().unwrap();
+    s.set_screen_size(1024.0, 768.0);
+    s.run_chunk_named(
+        br#"
+        CAPTURED_MSG, CAPTURED_STACK, CAPTURED_LOCALS = nil, nil, nil
+        seterrorhandler(function(msg)
+            CAPTURED_MSG = msg
+            CAPTURED_STACK = debugstack(2)
+            -- Walk up past the error handler and C frames to find the raising Lua frame's locals.
+            for lvl = 2, 8 do
+                local loc = debuglocals(lvl)
+                if loc and string.find(loc, "secret_val", 1, true) then
+                    CAPTURED_LOCALS = loc
+                    break
+                end
+            end
+        end)
+        local function failing_callee()
+            local secret_val = 1337
+            local out = format(nil, secret_val)
+            return out
+        end
+        local f = CreateFrame("Frame")
+        f:RegisterEvent("SYNC_ERR_PROBE")
+        f:SetScript("OnEvent", function() failing_callee() end)
+        "#,
+        "@SyncProbe.lua",
+    )
+    .unwrap();
+    s.fire_event("SYNC_ERR_PROBE", vec![]);
+    // Already dispatched synchronously inside `fire_event`, before `dispatch_script_errors_to_handler`.
+    let (msg, stack, locals): (String, String, String) = s
+        .eval("return CAPTURED_MSG, CAPTURED_STACK, CAPTURED_LOCALS")
+        .unwrap();
+    assert!(
+        msg.contains("SyncProbe.lua:") && msg.contains("bad argument #1 to 'format'"),
+        "msg: {msg:?}"
+    );
+    assert!(
+        stack.contains("SyncProbe.lua:") && stack.contains("failing_callee"),
+        "stack must include the failing frame: {stack:?}"
+    );
+    assert!(
+        locals.contains("secret_val = 1337"),
+        "locals must include the failing frame's locals: {locals:?}"
+    );
+    // Deferred drain does not double-dispatch.
+    s.run("CAPTURED_MSG = nil").unwrap();
+    s.dispatch_script_errors_to_handler();
+    assert_eq!(
+        s.eval::<mlua::Value>("return CAPTURED_MSG").unwrap(),
+        mlua::Value::Nil
+    );
+    // `RunScript` (`0x819210`) runs under the same synchronous `xpcall` handler, and `0x819730`
+    // coerces numeric errors while substituting `"UNKNOWN ERROR"` for non-string values.
+    s.run(r#"CAPTURED_MSG = nil; RunScript("error(42, 0)")"#)
+        .unwrap();
+    assert_eq!(s.eval::<String>("return CAPTURED_MSG").unwrap(), "42");
+    s.run(r#"CAPTURED_MSG = nil; RunScript("error({})")"#)
+        .unwrap();
+    assert_eq!(
+        s.eval::<String>("return CAPTURED_MSG").unwrap(),
+        "UNKNOWN ERROR"
+    );
+}

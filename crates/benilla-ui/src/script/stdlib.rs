@@ -185,7 +185,9 @@ pub(super) fn pcall_outcome((ok, err): (bool, Value)) -> mlua::Result<()> {
 }
 
 /// The `xpcall` message handler: the stack as stock 5.1's traceback walks it, from the frame that
-/// raised (level 1, the handler being level 0), call-site names only, down to the handler.
+/// raised (level 1, the handler being level 0), call-site names only, down to the handler. Calls
+/// the registered `seterrorhandler` callback synchronously while the raising stack is still live
+/// (`0x819730`), so `debugstack` and `debuglocals` inside it see the failing frame.
 fn error_with_traceback(lua: &Lua, e: Value) -> mlua::Result<Value> {
     let frames = traceback_frames(lua, 1, 12, 10);
     let plumbing = &PCALL_CHUNK[1..];
@@ -197,6 +199,20 @@ fn error_with_traceback(lua: &Lua, e: Value) -> mlua::Result<Value> {
         frames.pop();
     }
     let traceback = format!("stack traceback:\n\t{}", frames.join("\n\t"));
+    let bare = match &e {
+        Value::Error(cause) => lua_message(cause),
+        Value::String(s) => s.to_string_lossy(),
+        // `0x819730` checks `lua_isstring` (true for strings and numbers) before substituting
+        // `"UNKNOWN ERROR"`.
+        Value::Integer(_) | Value::Number(_) => lua
+            .coerce_string(e.clone())
+            .ok()
+            .flatten()
+            .map(|s| s.to_string_lossy())
+            .unwrap_or_else(|| "UNKNOWN ERROR".into()),
+        _ => "UNKNOWN ERROR".into(),
+    };
+    invoke_error_handler(lua, &bare);
     Ok(match e {
         Value::Error(cause) => {
             // mlua's own field type: `CallbackError::cause` is an `Arc<Error>`.
@@ -209,6 +225,37 @@ fn error_with_traceback(lua: &Lua, e: Value) -> mlua::Result<Value> {
         }
         other => other,
     })
+}
+
+/// Invoke the `seterrorhandler` callback (`0x819730`) with `bare`, gating `debuglocals`
+/// (`0x819a60`) around the call. A raising handler is handed its own bare error up to
+/// [`super::ERROR_HANDLER_NESTING`] total nested calls (`0x850830`), without recording the
+/// handler's own faults on the host channel.
+pub(super) fn invoke_error_handler(lua: &Lua, bare: &str) {
+    let Some(handler) = error_handler(lua) else {
+        return;
+    };
+    let mut depth = lua
+        .named_registry_value::<usize>(REG_ERROR_HANDLER_DEPTH)
+        .unwrap_or(0);
+    if depth >= super::ERROR_HANDLER_NESTING {
+        return;
+    }
+    let initial_depth = depth;
+    let Ok(mut arg) = lua.create_string(bare) else {
+        return;
+    };
+    while depth < super::ERROR_HANDLER_NESTING {
+        depth += 1;
+        let _ = lua.set_named_registry_value(REG_ERROR_HANDLER_DEPTH, depth);
+        let called = handler.call::<Value>(arg);
+        let Err(e) = called else { break };
+        arg = match lua.create_string(lua_message(&e)) {
+            Ok(s) => s,
+            Err(_) => break,
+        };
+    }
+    let _ = lua.set_named_registry_value(REG_ERROR_HANDLER_DEPTH, initial_depth);
 }
 
 /// Install the stdlib layer: the bare globals, `time`/`date` and the positional `format`.
@@ -282,22 +329,23 @@ fn install_error_handler(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// The registry flag the script error dispatch (`0x819730`) holds around its call of the handler
-/// (`[0xd3f79c]`), here around [`super::UiScript::dispatch_script_errors_to_handler`].
-pub(super) const REG_IN_ERROR_HANDLER: &str = "benilla.in_error_handler";
+/// The registry depth counter the script error dispatch (`0x819730`) holds around its call of the
+/// handler (`[0xd3f79c]`): non-zero while inside the handler, gating `debuglocals` (`0x819a60`)
+/// and bounding re-entry at [`super::ERROR_HANDLER_NESTING`].
+const REG_ERROR_HANDLER_DEPTH: &str = "benilla.error_handler_depth";
 
 /// `debuglocals([level])` (`0x819a60`): nothing outside the handler dispatch. Inside it, one string
 /// of the frame `level` up's locals, then its function's upvalues, packed by
 /// [`pack_variable`] into at most 4 KiB; `""` when there is no such frame. A level below 1 is 1,
-/// the caller. The dispatch is deferred here, so the frames are the dispatch's own, not the
-/// raising one's.
+/// the caller.
 fn install_debuglocals(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "debuglocals",
         lua.create_function(|lua, level: Value| {
-            if !lua
-                .named_registry_value::<bool>(REG_IN_ERROR_HANDLER)
-                .unwrap_or(false)
+            if lua
+                .named_registry_value::<usize>(REG_ERROR_HANDLER_DEPTH)
+                .unwrap_or(0)
+                == 0
             {
                 return Ok(mlua::MultiValue::new());
             }
@@ -566,15 +614,24 @@ do
     -- `format` call in the UI and must not follow an addon's later replacement of `string.*`.
     -- They are CALLS and not method syntax so the wrapper never resolves through a string
     -- metatable an addon may have replaced.
-    local _format, _find, _sub, _len = string.format, string.find, string.sub, string.len
+    local _format, _find, _sub, _len, _type, _error = string.format, string.find, string.sub, string.len, type, error
     local CONV = "diouxXeEfgGqscp"  -- Lua 5.1 conversion letters
 
     -- No reference to 5.0's implicit `arg` anywhere in this function: one would make 5.1 build
     -- that table on every call, the fast path's included.
     local function reformat(fmt, ...)
-        -- fast path: not a string, or no "%<digits>$" ⇒ no positional spec. A width or a zero
+        -- `0x853c50` checks arg #1 as a string (numbers coerce); raise at level 2 so the caller
+        -- is blamed as `'format'`, not this wrapper as `'_format'`.
+        local t = _type(fmt)
+        if t ~= "string" then
+            if t == "number" then
+                return _format(fmt, ...)
+            end
+            _error("bad argument #1 to 'format' (string expected, got " .. t .. ")", 2)
+        end
+        -- fast path: no "%<digits>$" ⇒ no positional spec. A width or a zero
         -- pad (`%02d`) is a digit after `%` too, and must not send the call down the rebuild.
-        if type(fmt) ~= "string" or not _find(fmt, "%%%d+%$") then
+        if not _find(fmt, "%%%d+%$") then
             return _format(fmt, ...)
         end
 

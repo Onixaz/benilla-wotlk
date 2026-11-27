@@ -197,16 +197,29 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             // The chunk name is the source bytes as given (1).
             let name = String::from_utf8_lossy(&raw).into_owned();
             // The chunk runs under the macro taint (`[0xac804c]`), the caller's put back after.
-            let run = super::taint::as_macro(lua, || {
+            let compiled = super::taint::as_macro(lua, || {
                 lua.load(&*raw)
                     .set_name(name)
                     .set_mode(mlua::ChunkMode::Text)
-                    .exec()
+                    .into_function()
             });
-            if let Err(e) = run {
-                // Both channels bare: this message names its chunk by its own source.
-                let bare = super::stdlib::lua_message(&e);
-                crate::script::model_mut_of(lua).record_script_error(bare.clone(), bare);
+            match compiled {
+                Ok(f) => {
+                    let run = super::taint::as_macro(lua, || {
+                        super::stdlib::protected_call(lua, &f, mlua::MultiValue::new())
+                    });
+                    if let Err(e) = run {
+                        // `protected_call` already dispatched the error handler synchronously; keep
+                        // the bare message on the host channel (this chunk is named by its source).
+                        let bare = super::stdlib::lua_message(&e);
+                        crate::script::model_mut_of(lua).record_host_error(bare);
+                    }
+                }
+                Err(e) => {
+                    // Both channels bare: this message names its chunk by its own source.
+                    let bare = super::stdlib::lua_message(&e);
+                    crate::script::model_mut_of(lua).record_script_error(bare.clone(), bare);
+                }
             }
             Ok(())
         })?,

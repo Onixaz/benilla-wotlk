@@ -2456,9 +2456,10 @@ fn a_self_pressing_macro_ends_in_the_lua_stack_error() {
         eprintln!("skipped: this build carries no system names");
         return;
     };
-    // Lua 5.1 counts C calls in `nCcalls`; the next line's compile is the first past its limit.
+    // Lua 5.1 counts C calls in `nCcalls` (`0x856760`); hitting `LUAI_MAXCCALLS` raises either
+    // `"C stack overflow"` on a call or `"chunk has too many syntax levels"` inside the parser.
     assert!(
-        err.ends_with("chunk has too many syntax levels"),
+        err.ends_with("C stack overflow") || err.ends_with("chunk has too many syntax levels"),
         "Lua's C-call limit: {err:?}"
     );
     assert!(depth > 8, "past the old cap: {depth}");

@@ -676,13 +676,13 @@ fn login_fires_the_load_events_in_order() {
         ),
         vec![
             "ADDON_LOADED CharzObserver | control=1 dead=nil",
+            "ADDON_LOADED Blizzard_DebugTools | control=1 dead=nil",
             "VARIABLES_LOADED | control=1 dead=nil",
             "ADDON_LOADED Blizzard_CombatLog | control=1 dead=nil",
             "PLAYER_LOGIN | control=1 dead=nil",
             "ADDON_LOADED Blizzard_TimeManager | control=1 dead=nil",
             "ADDON_LOADED Blizzard_CombatText | control=1 dead=nil",
             "PLAYER_ENTERING_WORLD | control=1 dead=nil",
-            "ADDON_LOADED Blizzard_DebugTools | control=1 dead=nil",
         ]
     );
 }
@@ -713,13 +713,13 @@ fn reload_fires_the_load_events_again() {
         ),
         vec![
             "ADDON_LOADED CharzObserver | control=1 dead=nil",
+            "ADDON_LOADED Blizzard_DebugTools | control=1 dead=nil",
             "VARIABLES_LOADED | control=1 dead=nil",
             "ADDON_LOADED Blizzard_CombatLog | control=1 dead=nil",
             "PLAYER_LOGIN | control=1 dead=nil",
             "ADDON_LOADED Blizzard_TimeManager | control=1 dead=nil",
             "ADDON_LOADED Blizzard_CombatText | control=1 dead=nil",
             "PLAYER_ENTERING_WORLD | control=1 dead=nil",
-            "ADDON_LOADED Blizzard_DebugTools | control=1 dead=nil",
         ]
     );
 }
