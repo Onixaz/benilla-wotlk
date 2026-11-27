@@ -153,6 +153,8 @@ pub fn spawn_model_entities(
         hostable.is_some_and(|(m, _)| crate::doodad_anim::wants_host(m)),
     );
     let rig_root = host.as_ref().map(|h| h.root);
+    // The root whose player arms the loader-idle chain, which the sequence-keyed consumers read.
+    let arm = host.as_ref().and_then(|h| h.seq.map(|_| h.root));
     if let Some(h) = &host {
         out.push(h.root);
     }
@@ -748,13 +750,14 @@ pub fn spawn_model_entities(
                 .insert(crate::doodad_anim::AnimMatPart);
         }
         if let Some(anim) = &sub.alpha_anim {
-            commands
-                .entity(entity)
-                .insert(crate::doodad_anim::MatAnim::new(
+            commands.entity(entity).insert(
+                crate::doodad_anim::MatAnim::new(
                     anim.clone(),
                     m2.map(|(_, now)| now).unwrap_or_default(),
                     mat_frozen,
-                ));
+                )
+                .on_doodad_host(arm),
+            );
         }
         // `DoodadFade` lets the fade system drive the tag; a steady interior prop never fades.
         if !steady_interior_prop {
@@ -786,7 +789,6 @@ pub fn spawn_model_entities(
         }
     }
     // Animation runs while a submesh is drawn or, for a meshless host, while its gate admits it.
-    let arm = host.as_ref().and_then(|h| h.seq.map(|_| h.root));
     let placement_host = host.map(|mut h| {
         let now = m2.map(|(_, now)| now).unwrap_or_default();
         // Mint the emitter and ribbon bones' anchors while the pose buffer is in hand.

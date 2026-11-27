@@ -54,9 +54,10 @@ impl AlphaSeq {
 /// A batch's animated alpha for the whole model, one [`AlphaSeq`] per file sequence slot (the slot
 /// [`benilla_m2::M2Track::ranges`] and [`crate::ModelAnimation::seq_index`] use), since the
 /// reference reads the playing sequence's window every frame: hidden in Stand, drawn in Death. A
-/// consumer that passes no sequence reads slot 0; the placed-doodad lane does, on its spawn clock.
-/// The reference reads bone 0's armed sequence, which for a placed doodad is animation id 0, its
-/// variation re-rolled every play window.
+/// consumer that passes no sequence reads slot 0. The reference reads bone 0's armed sequence,
+/// which for a placed doodad is animation id 0, its variation re-rolled every play window; the
+/// placed-doodad lane reads it off its anim host, and slot 0 on its spawn clock only for a model
+/// with no host.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AlphaAnim {
     per_seq: Vec<AlphaSeq>,

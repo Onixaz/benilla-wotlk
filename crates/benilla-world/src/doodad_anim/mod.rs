@@ -64,6 +64,39 @@ pub(crate) fn arms_for_sound(anims: &ModelAnimations) -> bool {
         })
 }
 
+/// Whether a batch reads the armed sequence's clock: a colour-alpha or transparency loop, or a UV
+/// (either stage) or tint loop whose sequence slots disagree (`Apothecary_FX.m2`'s lightning, whose
+/// five Stand variations move no bone).
+pub(crate) fn arms_for_material(m: &M2Model) -> bool {
+    m.submeshes.iter().any(|s| {
+        s.alpha_anim.is_some()
+            || s.uv_seq.is_some()
+            || s.rgb_seq.is_some()
+            || UvLoops::stage1_of(&s.geometry).is_some_and(|s1| s1.seqs.is_some())
+    })
+}
+
+/// Whether a bind-posed model still needs the idle chain armed for its sequence clock: a batch reads
+/// the sequence, or an emitter or ribbon does and there is more than one Stand variation to roll
+/// (`Borean_Geyser_02.M2` erupts only in its 7 % variation). With one Stand, the spawn clock
+/// already loops the loader-idle slot an emitter reads.
+pub(crate) fn arms_for_clock(m: &M2Model) -> bool {
+    let Some(idle) = m
+        .animations
+        .as_ref()
+        .and_then(|a| a.idle_clip().map(|c| (a, c)))
+    else {
+        return false;
+    };
+    let (anims, idle) = idle;
+    let variations = anims
+        .clips
+        .iter()
+        .filter(|c| c.anim_id == idle.anim_id)
+        .count();
+    arms_for_material(m) || (variations > 1 && (!m.emitters.is_empty() || !m.ribbons.is_empty()))
+}
+
 /// Classify a placed model; a boneless one is `Static`, with no joints for a skin to index.
 pub fn classify<'a>(
     skeleton: &ModelSkeleton,
@@ -131,11 +164,12 @@ pub fn wants_rig(m: &M2Model) -> bool {
         )
 }
 
-/// Whether [`spawn_anim_host`] would host this model: [`wants_rig`] or a bind-posed sound arm.
+/// Whether [`spawn_anim_host`] would host this model: [`wants_rig`], a bind-posed sound arm, or a
+/// bind-posed model whose batches or emitters read the sequence ([`arms_for_clock`]).
 pub(crate) fn wants_host(m: &M2Model) -> bool {
     wants_rig(m)
         || (!crate::dev_state::deterministic_run()
-            && m.animations.as_ref().is_some_and(arms_for_sound))
+            && (m.animations.as_ref().is_some_and(arms_for_sound) || arms_for_clock(m)))
 }
 
 /// Spawn the animation host for one placed M2 that animates: a root at the placement transform with
@@ -158,7 +192,7 @@ pub fn spawn_anim_host(
     let anims = m
         .animations
         .as_ref()
-        .expect("animated tier or sound arm ⇒ animations");
+        .expect("animated tier, sound arm or clock arm ⇒ animations");
     let root = commands
         .spawn((transform, Visibility::default()))
         .vis_chain_only()
@@ -169,7 +203,14 @@ pub fn spawn_anim_host(
     let mut clip_info = None;
     let mut armed_seq = None;
     let mut arm_id = None;
-    if let DoodadAnimTier::FirstSeq(head) = tier {
+    // A bind-posed model still arms when a batch or emitter reads the sequence: the animate samples
+    // colours, transparency and emitters on bone 0's armed sequence (`0x82f0f0`), bones or not.
+    let armed = match tier {
+        DoodadAnimTier::FirstSeq(head) => Some(head),
+        _ if arms_for_clock(m) => anims.idle_clip(),
+        _ => None,
+    };
+    if let Some(head) = armed {
         // The loader's var-0 seed only. The effective arm is the holder's `variationIdx = -1` op4,
         // here `reroll_doodad_variation`'s first pass, the same frame, since the host is born with
         // an expired window.
@@ -775,6 +816,89 @@ mod tests {
             app.world().entity(part).get::<MatAnim>().unwrap().current,
             0.0
         );
+    }
+
+    /// A placed doodad on an armed host reads the variation the re-roll plays, not slot 0, and
+    /// stays the visibility authority's to compose.
+    #[test]
+    fn a_placed_doodad_mat_anim_follows_its_armed_variation() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_systems(Update, sample_mat_anim);
+        let anims = anims(vec![seq_clip(0, 0, 1), seq_clip(0, 1, 2)], Some(0), false);
+        let mut player = AnimationPlayer::default();
+        player.play(AnimationNodeIndex::new(2)).repeat();
+        let host = app.world_mut().spawn((player, anims)).id();
+        let part = app
+            .world_mut()
+            .spawn(MatAnim::new(two_seq_alpha(), 0.0, false).on_doodad_host(Some(host)))
+            .id();
+        app.update();
+        let m = app.world().entity(part).get::<MatAnim>().unwrap();
+        assert_eq!(m.current, 1.0, "variation slot 1 draws, where slot 0 hides");
+        assert!(!m.composes_unit_tag(), "a doodad is never the unit lane's");
+        let pinned = MatAnim::new(two_seq_alpha(), 0.0, false).on_doodad_host(None);
+        assert_eq!(pinned.current, 0.0, "no armed host: slot 0, as before");
+        assert!(!pinned.composes_unit_tag());
+    }
+
+    /// The New Agamand loop: an armed variation hides every batch, the host parks and stops its
+    /// player, and a sampler reading the stopped player fell back to slot 0, where the bolt draws,
+    /// which un-parked the host for a strike. The doodad lane reads the arm, parked or not.
+    #[test]
+    fn a_parked_doodad_mat_anim_keeps_its_armed_hidden_variation() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_systems(Update, sample_mat_anim);
+        let hidden = benilla_formats::ScalarAnim {
+            period: 0.0,
+            step: true,
+            wrap: true,
+            gseq: false,
+            keys: vec![(0.0, 0.0)],
+        };
+        // Slot 0 draws (the strike), slot 1 hides (a quiet variation).
+        let alpha = std::sync::Arc::new(
+            benilla_formats::AlphaAnim::new(vec![
+                benilla_formats::AlphaSeq::default(),
+                benilla_formats::AlphaSeq {
+                    color: Some(hidden),
+                    weight: None,
+                },
+            ])
+            .unwrap(),
+        );
+        let host = app
+            .world_mut()
+            .spawn((
+                DoodadAnimHost {
+                    meshes: Vec::new(),
+                    fade: crate::particles::EmitterFade::sphere(1.0, Vec3::ZERO),
+                    clip: Some((AnimationNodeIndex::new(2), 1.0)),
+                    armed_at: 0.0,
+                    window_hi: f32::INFINITY,
+                    anim_id: Some(0),
+                    active: false,
+                    parked_at: 0.0,
+                    fade_out: None,
+                },
+                anims(vec![seq_clip(0, 0, 1), seq_clip(0, 1, 2)], Some(0), false),
+                // Parked: the gate stopped it, so nothing plays.
+                AnimationPlayer::default(),
+            ))
+            .id();
+        let part = app
+            .world_mut()
+            .spawn(MatAnim::new(alpha, 0.0, false).on_doodad_host(Some(host)))
+            .id();
+        for _ in 0..3 {
+            app.update();
+            assert_eq!(
+                app.world().entity(part).get::<MatAnim>().unwrap().current,
+                0.0,
+                "the armed quiet variation holds while parked, not slot 0's strike"
+            );
+        }
     }
 
     #[test]

@@ -15,9 +15,8 @@ pub struct MatAnim {
     anim: std::sync::Arc<benilla_formats::AlphaAnim>,
     /// The entity whose `AnimationPlayer` names the sequence to read, re-resolved every frame (the
     /// unit lane: a voidwalker's upper armour is weight 0 in Stand, 1 in Death). `None` pins the
-    /// instance to [`Self::seq`] on its spawn clock: a spell effect, or a placed doodad, which
-    /// reads slot 0 where the reference reads the sequence each arm picks (called from the load
-    /// build and again on every re-roll).
+    /// instance to [`Self::seq`] on its spawn clock: a spell effect, or a placed doodad whose model
+    /// arms no player.
     host: Option<Entity>,
     /// The file sequence slot to read: fixed when pinned, the last one resolved from
     /// [`Self::host`] otherwise; `None` reads slot 0.
@@ -34,6 +33,9 @@ pub struct MatAnim {
     /// Composed by the unit lane without a [`Self::host`]: an attach model (a held weapon, a helm),
     /// pinned like a doodad but ordered against the wearer's appear-fade. See [`Self::resting`].
     unit_lane: bool,
+    /// A placed doodad reading its anim host's armed variation: the visibility authority composes
+    /// it, as for a pinned doodad, never the unit lane. See [`Self::on_doodad_host`].
+    doodad_lane: bool,
     /// The gseq attach anchor (secs, shared clock), stamped by the first [`sample_mat_anim`] pass:
     /// the reference snapshots the scene clock once per instance at attach (model `+0x68`).
     gseq_attach: Option<f64>,
@@ -57,6 +59,7 @@ impl MatAnim {
             frozen,
             drives_tag: false,
             unit_lane: false,
+            doodad_lane: false,
             gseq_attach: None,
             current,
         }
@@ -102,10 +105,19 @@ impl MatAnim {
         }
     }
 
+    /// The placed-doodad lane on an armed host: sequence and clock come from `host`'s player, the
+    /// variation each re-roll picks, as colours and transparency sample bone 0's armed sequence
+    /// (`0x82f0f0`). `None` leaves it pinned to slot 0 on its spawn clock.
+    pub(crate) fn on_doodad_host(mut self, host: Option<Entity>) -> Self {
+        self.host = host;
+        self.doodad_lane = true;
+        self
+    }
+
     /// Whether the unit lane composes this instance's tag: a hosted or attach-model batch, never an
-    /// effect part that drives its own.
+    /// effect part that drives its own or a placed doodad.
     pub fn composes_unit_tag(&self) -> bool {
-        (self.host.is_some() || self.unit_lane) && !self.drives_tag
+        (self.host.is_some() || self.unit_lane) && !self.drives_tag && !self.doodad_lane
     }
 }
 
@@ -130,11 +142,7 @@ pub fn playing_seq(player: &AnimationPlayer, anims: &ModelAnimations) -> Option<
 /// spawn clock; frozen ones keep their t = 0 sample. Hidden instances sample too, as the reference
 /// evaluates the tracks every frame regardless of the cull, or a batch born at weight 0 would stay
 /// hidden. Runs before the visibility authority.
-pub fn sample_mat_anim(
-    time: Res<Time>,
-    hosts: Query<(&AnimationPlayer, &ModelAnimations)>,
-    mut q: Query<&mut MatAnim>,
-) {
+pub fn sample_mat_anim(time: Res<Time>, hosts: HostClocks, mut q: Query<&mut MatAnim>) {
     let now = time.elapsed_secs();
     // The scene clock in f64: a long-uptime f32 drifts whole milliseconds.
     let shared = time.elapsed_secs_f64();
@@ -149,20 +157,43 @@ pub fn sample_mat_anim(
     });
 }
 
+/// What a hosted instance reads its sequence from: the host's player, its models, and for a placed
+/// doodad its arm.
+type HostClocks<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Option<&'static AnimationPlayer>,
+        &'static ModelAnimations,
+        Option<&'static super::DoodadAnimHost>,
+    ),
+>;
+
 /// Rows per [`sample_mat_anim`] task: a sample is well under a microsecond.
 const SAMPLE_CHUNK: usize = 512;
 
 /// One unfrozen instance's sample, written only where it moved.
-fn sample_one(
-    m: &mut Mut<MatAnim>,
-    hosts: &Query<(&AnimationPlayer, &ModelAnimations)>,
-    now: f32,
-    shared: f64,
-) {
-    // A host with no player yet keeps its last slot at t = 0, a bind-posed model's pose.
+fn sample_one(m: &mut Mut<MatAnim>, hosts: &HostClocks, now: f32, shared: f64) {
+    // A placed doodad reads its arm, a function of the clock that the re-roll keeps for a parked
+    // host too, as bone 0's armed sequence is (`0x82f0f0`): a stopped player would read slot 0, and
+    // an all-culled placement would park, show slot 0's batches and un-park. A host with no player
+    // yet keeps its last slot at t = 0, a bind-posed model's pose.
+    let doodad_lane = m.doodad_lane;
     let played = m
         .host
-        .and_then(|h| hosts.get(h).ok().and_then(|(p, a)| playing_seq(p, a)));
+        .and_then(|h| hosts.get(h).ok())
+        .and_then(|(p, a, arm)| {
+            let armed = arm
+                .filter(|_| doodad_lane)
+                .and_then(|arm| arm.arm_clock(now))
+                .and_then(|(node, t)| {
+                    a.clips
+                        .iter()
+                        .find(|c| c.node == node)
+                        .map(|c| (c.seq_index, t))
+                });
+            armed.or_else(|| p.and_then(|p| playing_seq(p, a)))
+        });
     let (seq, elapsed) = match played {
         Some((seq, t)) => (Some(seq), t),
         None if m.host.is_some() => (m.seq, 0.0),
