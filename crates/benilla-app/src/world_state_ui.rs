@@ -17,6 +17,7 @@ use benilla_ui::script::WorldStateUiView;
 
 use benilla_assets::{AssetSet, LockRecover, WorldAssets};
 
+use crate::ui_notices::UiClock;
 use crate::world_state::WorldStates;
 
 /// The shared `WorldStateUI.dbc` catalog; absent, the readout is empty.
@@ -38,11 +39,11 @@ fn load_world_state_ui(mut commands: Commands, assets: Option<Res<WorldAssets>>)
     }
 }
 
-/// Expands a `WorldStateUI` label, a different expander from [`crate::npc_text`]'s, sharing only
-/// the world-state getter. The grammar is `%<digits>W|w` alone, printed `%d`; any other `%` emits a
-/// literal `%`, consumes its digits and leaves the next character as text. Output is truncated at
-/// the reference's 256-byte limit.
-fn expand(text: &str, states: &WorldStates) -> String {
+/// Expands a `WorldStateUI` label (`0x5770d0`), a different expander from [`crate::npc_text`]'s,
+/// sharing only the world-state getter. `%<digits>W|w` prints the state `%d`, `%<digits>K|k` the
+/// countdown to it ([`countdown`]); any other `%` emits a literal `%`, consumes its digits and leaves
+/// the next character as text. Output is truncated at the reference's 256-byte limit.
+fn expand(text: &str, states: &WorldStates, ui_time: i32) -> String {
     /// The `strncat` bound: the reference expander's caller passes `0x100`.
     const LIMIT: usize = 0x100 - 1;
 
@@ -71,10 +72,16 @@ fn expand(text: &str, states: &WorldStates) -> String {
             j += 1;
         }
         match bytes.get(j) {
-            Some(b'w' | b'W') => {
+            Some(&kind @ (b'w' | b'W' | b'k' | b'K')) => {
                 // `atoi`: an empty run is key 0.
                 let id: u32 = text[digits_at..j].parse().unwrap_or(0);
-                push(&states.get(id).to_string(), &mut out);
+                let value = states.get(id);
+                let shown = if matches!(kind, b'k' | b'K') {
+                    countdown(value, ui_time)
+                } else {
+                    value.to_string()
+                };
+                push(&shown, &mut out);
                 i = j + 1;
             }
             _ => {
@@ -86,9 +93,25 @@ fn expand(text: &str, states: &WorldStates) -> String {
     out
 }
 
+/// The time left until `end`, a Unix time on the server's UI clock (`0x576e50`): clamped at 0,
+/// `mm:ss` under an hour, else `h:mm:ss`.
+fn countdown(end: i32, ui_time: i32) -> String {
+    let left = end.wrapping_sub(ui_time).max(0);
+    let (hours, minutes, seconds) = (left / 3600, left % 3600 / 60, left % 60);
+    if hours <= 0 {
+        format!("{minutes:02}:{seconds:02}")
+    } else {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    }
+}
+
 /// The admitted rows for the current scope, resolved as `GetWorldStateUIInfo` answers them.
 #[cfg(test)]
-fn build(catalog: &WorldStateUiCatalog, states: &WorldStates) -> Vec<WorldStateUiView> {
+fn build(
+    catalog: &WorldStateUiCatalog,
+    states: &WorldStates,
+    ui_time: i32,
+) -> Vec<WorldStateUiView> {
     let Some(scope) = states.scope() else {
         // Before an init the reference never rebuilds.
         return Vec::new();
@@ -96,7 +119,7 @@ fn build(catalog: &WorldStateUiCatalog, states: &WorldStates) -> Vec<WorldStateU
     catalog
         .rows()
         .filter(|(_, row)| admits(row, scope, states.phase_mask()))
-        .map(|(_, row)| resolve(row, states))
+        .map(|(_, row)| resolve(row, states, ui_time))
         .collect()
 }
 
@@ -109,7 +132,7 @@ fn admits(row: &WorldStateUiRow, (map, zone, area): (u32, u32, u32), phase_mask:
 
 /// `GetWorldStateUIInfo` for one row (`0x548d40`): only the text is expanded, and the extended
 /// ids answer their states' values.
-fn resolve(row: &WorldStateUiRow, states: &WorldStates) -> WorldStateUiView {
+fn resolve(row: &WorldStateUiRow, states: &WorldStates, ui_time: i32) -> WorldStateUiView {
     WorldStateUiView {
         ui_type: row.ui_type,
         // No `StateVariable` answers 1.
@@ -117,7 +140,7 @@ fn resolve(row: &WorldStateUiRow, states: &WorldStates) -> WorldStateUiView {
             0 => 1,
             id => states.get(id),
         },
-        text: expand(&row.text, states),
+        text: expand(&row.text, states, ui_time),
         icon: row.icon.clone(),
         dynamic_icon: row.dynamic_icon.clone(),
         tooltip: row.tooltip.clone(),
@@ -127,11 +150,24 @@ fn resolve(row: &WorldStateUiRow, states: &WorldStates) -> WorldStateUiView {
     }
 }
 
+/// Whether any admitted row is a timer (type 3), which drives `WORLD_STATE_UI_TIMER_UPDATE`
+/// (`0x5488f0`); none before the first init.
+pub(crate) fn has_timer_row(catalog: &WorldStateUiRes, states: &WorldStates) -> bool {
+    let Some(scope) = states.scope() else {
+        return false;
+    };
+    catalog
+        .0
+        .rows()
+        .any(|(_, row)| row.ui_type == 3 && admits(row, scope, states.phase_mask()))
+}
+
 /// The readout as the verbs read it at the call: `GetNumWorldStateUI` counts the rows the builder admits (`0x548720`) and `GetWorldStateUIInfo` resolves one (`0x548d40`). The builder's inputs, the scope and the phase mask, move only where it reruns (`0x548970`, `0x513973`), so the rows admitted at the call are the ones it would hold.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct WorldStateUiLive<'w> {
     catalog: Option<Res<'w, WorldStateUiRes>>,
     states: Option<Res<'w, WorldStates>>,
+    clock: Option<Res<'w, UiClock>>,
 }
 
 impl WorldStateUiLive<'_> {
@@ -162,8 +198,15 @@ impl WorldStateUiLive<'_> {
                 .rows()
                 .filter(|(_, row)| admits(row, scope, states.phase_mask()))
                 .nth(index)
-                .map(|(_, row)| resolve(row, states)),
+                .map(|(_, row)| resolve(row, states, self.ui_time())),
         )
+    }
+
+    /// The UI clock the countdowns read (`0x548700`); before the server answers, the local clock.
+    fn ui_time(&self) -> i32 {
+        self.clock
+            .as_deref()
+            .map_or_else(|| UiClock::default().now(), UiClock::now)
     }
 
     /// One world state's value now (`0x549440`'s table), `None` without the states.
@@ -206,38 +249,38 @@ mod tests {
         let mut states = WorldStates::default();
         states.write(&[(2327, 3), (2328, 1)]);
         assert_eq!(
-            expand("Towers Controlled: %2327w", &states),
+            expand("Towers Controlled: %2327w", &states, 0),
             "Towers Controlled: 3"
         );
-        assert_eq!(expand("%2327W/%2328w", &states), "3/1");
+        assert_eq!(expand("%2327W/%2328w", &states, 0), "3/1");
         assert_eq!(
-            expand("Bases: %1779w  Resources: %1776w/%1780w", &states),
+            expand("Bases: %1779w  Resources: %1776w/%1780w", &states, 0),
             "Bases: 0  Resources: 0/0",
             "an un-received state reads 0, never blank"
         );
         assert_eq!(
-            expand("Graveyards Assaulted", &states),
+            expand("Graveyards Assaulted", &states, 0),
             "Graveyards Assaulted"
         );
-        assert_eq!(expand("", &states), "");
+        assert_eq!(expand("", &states, 0), "");
     }
 
     #[test]
     fn a_top_bit_value_prints_negative() {
         let mut states = WorldStates::default();
         states.write(&[(2327, 0xFFFF_FFFF)]);
-        assert_eq!(expand("%2327w", &states), "-1");
+        assert_eq!(expand("%2327w", &states, 0), "-1");
     }
 
     /// Unreachable on shipped data.
     #[test]
     fn a_malformed_macro_emits_a_literal_percent() {
         let states = WorldStates::default();
-        assert_eq!(expand("100% done", &states), "100% done");
-        assert_eq!(expand("%d", &states), "%d");
-        assert_eq!(expand("%", &states), "%");
+        assert_eq!(expand("100% done", &states, 0), "100% done");
+        assert_eq!(expand("%d", &states, 0), "%d");
+        assert_eq!(expand("%", &states, 0), "%");
         assert_eq!(
-            expand("%123x", &states),
+            expand("%123x", &states, 0),
             "%x",
             "the digits scanned ahead of the bad letter are consumed either way"
         );
@@ -247,7 +290,44 @@ mod tests {
     fn the_output_is_capped_at_the_reference_buffer() {
         let states = WorldStates::default();
         let long = "a".repeat(600);
-        assert_eq!(expand(&long, &states).len(), 0xFF);
+        assert_eq!(expand(&long, &states, 0).len(), 0xFF);
+    }
+
+    /// `0x576e50`: the time left to the state's Unix time on the UI clock, never negative.
+    #[test]
+    fn a_countdown_prints_minutes_under_an_hour_and_hours_past_it() {
+        assert_eq!(countdown(1000, 1000), "00:00");
+        assert_eq!(countdown(1000, 1200), "00:00", "a passed end clamps at 0");
+        assert_eq!(countdown(1125, 1000), "02:05");
+        assert_eq!(countdown(1000 + 3599, 1000), "59:59");
+        assert_eq!(countdown(1000 + 3600, 1000), "1:00:00");
+        assert_eq!(countdown(1000 + 36_061, 1000), "10:01:01");
+        assert_eq!(
+            countdown(0, 1_800_000_000),
+            "00:00",
+            "an un-received end (0) reads no time left"
+        );
+    }
+
+    /// `0x5770d0`'s `k`/`K` arm: Wintergrasp's two labels (rows 208, 212).
+    #[test]
+    fn the_macro_expands_a_countdown() {
+        let mut states = WorldStates::default();
+        states.write(&[(4354, 1_800_000_600), (3781, 1_800_000_065)]);
+        let now = 1_800_000_000;
+        assert_eq!(
+            expand("Next Battle: %4354k", &states, now),
+            "Next Battle: 10:00"
+        );
+        assert_eq!(
+            expand("Time Remaining: %3781K", &states, now),
+            "Time Remaining: 01:05"
+        );
+        assert_eq!(
+            expand("%4354w", &states, now),
+            "1800000600",
+            "w stays the raw value"
+        );
     }
 
     #[test]
@@ -289,24 +369,24 @@ mod tests {
     fn nothing_shows_before_the_first_init() {
         let catalog = WorldStateUiCatalog::from_rows(vec![(136, row(0, 139, 0))]);
         let states = WorldStates::default();
-        assert!(build(&catalog, &states).is_empty());
+        assert!(build(&catalog, &states, 0).is_empty());
     }
 
     #[test]
     fn a_row_without_a_state_variable_reads_one() {
         let states = WorldStates::default();
-        assert_eq!(resolve(&row(0, 0, 0), &states).ui_state, 1);
+        assert_eq!(resolve(&row(0, 0, 0), &states, 0).ui_state, 1);
 
         let mut with_state = row(0, 0, 0);
         with_state.state_variable = 2339;
         assert_eq!(
-            resolve(&with_state, &states).ui_state,
+            resolve(&with_state, &states, 0).ui_state,
             0,
             "a state that HAS an id and reads 0 is 0"
         );
         let mut states = WorldStates::default();
         states.write(&[(2339, 1)]);
-        assert_eq!(resolve(&with_state, &states).ui_state, 1);
+        assert_eq!(resolve(&with_state, &states, 0).ui_state, 1);
     }
 
     #[test]
@@ -316,7 +396,7 @@ mod tests {
         let mut r = row(0, 139, 1);
         r.extended_ui = "CAPTUREPOINT".into();
         r.extended_ui_state = [2427, 2428, 0];
-        assert_eq!(resolve(&r, &states).extended_ui_state, [42, 7, 0]);
+        assert_eq!(resolve(&r, &states, 0).extended_ui_state, [42, 7, 0]);
     }
 
     /// Against the install's table: Warsong Gulch's always-up flag-score rows.
@@ -329,7 +409,7 @@ mod tests {
         let mut wsg = WorldStates::default();
         wsg.init_scope(489, 3277, 3277);
         wsg.write(&[(1581, 2), (1582, 1), (1601, 3)]);
-        let rows = build(&catalog, &wsg);
+        let rows = build(&catalog, &wsg, 0);
         let texts: Vec<&str> = rows.iter().map(|r| r.text.as_str()).collect();
         assert!(
             texts.contains(&"2/3") && texts.contains(&"1/3"),
@@ -338,7 +418,48 @@ mod tests {
 
         let mut elsewhere = WorldStates::default();
         elsewhere.init_scope(0, 12, 12); // Elwynn Forest
-        assert!(build(&catalog, &elsewhere).is_empty());
+        assert!(build(&catalog, &elsewhere, 0).is_empty());
+    }
+
+    /// Against the install's table: Wintergrasp between battles, with the states AzerothCore's
+    /// Wintergrasp sends at zone entry: the Alliance holds the keep
+    /// (defender 3802 = 0, attacker 3803 = 1), no battle (3801 = 1, 3710 = 0), the next in ten
+    /// minutes (4354).
+    #[test]
+    fn the_real_table_builds_the_wintergrasp_readout_between_battles() {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("chain");
+        let catalog =
+            benilla_formats::load_world_state_ui_catalog(&mut chain).expect("WorldStateUI");
+        let now = 1_800_000_000;
+        let mut wg = WorldStates::default();
+        wg.init_scope(571, 4197, 4197);
+        wg.write(&[
+            (3801, 1),
+            (3710, 0),
+            (3802, 0),
+            (3803, 1),
+            (4354, (now + 600) as u32),
+            (3781, (now + 600) as u32),
+        ]);
+        let shown: Vec<(u32, String)> = build(&catalog, &wg, now)
+            .into_iter()
+            .filter(|r| r.ui_state > 0)
+            .map(|r| (r.ui_type, r.text))
+            .collect();
+        assert!(
+            shown.contains(&(0, "Alliance Controlled".into())),
+            "{shown:?}"
+        );
+        assert!(
+            shown.contains(&(3, "Next Battle: 10:00".into())),
+            "{shown:?}"
+        );
+        assert_eq!(
+            shown.len(),
+            2,
+            "no vehicles or battle timer outside a battle: {shown:?}"
+        );
     }
 
     /// An init keeps the table and moves only the filter.

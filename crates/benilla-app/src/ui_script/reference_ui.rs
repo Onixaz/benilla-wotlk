@@ -2004,7 +2004,6 @@ mod tests {
             ("PLAYER_ENTERING_BATTLEGROUND", R_1),
             ("PLAYER_ROLES_ASSIGNED", R_1),
             ("UPDATE_STEALTH", R_1),
-            ("WORLD_STATE_UI_TIMER_UPDATE", R_1),
             ("WOW_MOUSE_NOT_FOUND", R_1),
             ("BN_BLOCK_LIST_UPDATED", R_2),
             ("BN_CHAT_CHANNEL_CLOSED", R_2),
