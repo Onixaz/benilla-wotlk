@@ -29,6 +29,9 @@ use crate::ui_script::{UiDrain, UiFeed};
 /// How often the UI clock is asked for in world (`0x5488f0`: `now + 20000`).
 const UI_TIME_REQUEST_EVERY: Duration = Duration::from_secs(20);
 
+/// How often a timer row redraws (`0x5488f0`: `now + 1000`).
+const UI_TIMER_EVENT_EVERY: Duration = Duration::from_secs(1);
+
 /// Frames an inebriation line waits for its name or item before it is dropped.
 const LINE_MAX_TRIES: u16 = 120;
 
@@ -38,6 +41,9 @@ const LINE_MAX_TRIES: u16 = 120;
 pub(crate) struct UiClock {
     offset: i32,
     next_request: Option<Instant>,
+    /// When `WORLD_STATE_UI_TIMER_UPDATE` may fire next; none fires at the next check, as the
+    /// world init arms it to now (`0x548570`).
+    next_timer_event: Option<Instant>,
 }
 
 impl UiClock {
@@ -107,7 +113,7 @@ impl Plugin for NoticesPlugin {
                 Update,
                 (
                     // A send of the world update, ahead of the UI phases that read the clock.
-                    request_ui_time
+                    world_state_ui_timers
                         .after(benilla_world::schedule::WorldStage::Net)
                         .before(crate::ui_script::UiPress),
                     feed_notices
@@ -472,12 +478,17 @@ fn on_session_end(
     firsts.0.clear();
 }
 
-/// `CMSG_WORLD_STATE_UI_TIMER_UPDATE` every 20 s in world, the first at once (`0x5488f0`).
-fn request_ui_time(
+/// The world-state UI's two timers in world (`0x5488f0`): `CMSG_WORLD_STATE_UI_TIMER_UPDATE` every
+/// 20 s, the first at once; then at most once a second `WORLD_STATE_UI_TIMER_UPDATE`, while any
+/// admitted row is a timer (type 3). The second-long wait restarts whether or not one fired.
+fn world_state_ui_timers(
     mut clock: ResMut<UiClock>,
     status: Res<NetStatus>,
     self_guid: Res<SelfGuid>,
     net: Res<NetCommands>,
+    catalog: Option<Res<crate::world_state_ui::WorldStateUiRes>>,
+    states: Option<Res<crate::world_state::WorldStates>>,
+    mut ecs: Commands,
 ) {
     if !status.connected || self_guid.0.is_none() {
         return;
@@ -486,6 +497,18 @@ fn request_ui_time(
     if clock.next_request.is_none_or(|at| now >= at) {
         clock.next_request = Some(now + UI_TIME_REQUEST_EVERY);
         let _ = net.0.send(ClientCommand::UiTimeRequest);
+    }
+    if clock.next_timer_event.is_some_and(|at| now < at) {
+        return;
+    }
+    clock.next_timer_event = Some(now + UI_TIMER_EVENT_EVERY);
+    let timer_row = catalog
+        .zip(states)
+        .is_some_and(|(catalog, states)| crate::world_state_ui::has_timer_row(&catalog, &states));
+    if timer_row {
+        let mut ui = UiEvents::default();
+        ui.fire("WORLD_STATE_UI_TIMER_UPDATE", Vec::new());
+        crate::ui_script::live::fire_after(&mut ecs, ui);
     }
 }
 
@@ -954,6 +977,65 @@ mod tests {
         assert_eq!(
             inebriation_line(&get, 0, false, "Bob", Some("[Ale]")).as_deref(),
             Some("Bob is looking sober from the [Ale].")
+        );
+    }
+
+    /// `0x5488f0`: in world, `WORLD_STATE_UI_TIMER_UPDATE` fires at the first check while a timer
+    /// row is admitted, then waits a second; with no timer row it never fires.
+    #[test]
+    fn the_timer_event_fires_once_a_second_only_for_a_timer_row() {
+        use benilla_formats::{WorldStateUiCatalog, WorldStateUiRow};
+        use bevy::ecs::system::RunSystemOnce;
+        let row = |area_id, ui_type| WorldStateUiRow {
+            map_id: 571,
+            area_id,
+            phase_shift: 0,
+            icon: String::new(),
+            text: "Next Battle: %4354k".into(),
+            tooltip: String::new(),
+            state_variable: 3801,
+            ui_type,
+            dynamic_icon: String::new(),
+            dynamic_tooltip: String::new(),
+            extended_ui: String::new(),
+            extended_ui_state: [0; 3],
+        };
+        let mut app = notice_client(&["WORLD_STATE_UI_TIMER_UPDATE"]);
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let mut states = crate::world_state::WorldStates::default();
+        states.init_scope(571, 4197, 4197);
+        let w = app.world_mut();
+        w.insert_resource(NetStatus {
+            connected: true,
+            last_reason: None,
+        });
+        w.insert_resource(SelfGuid(Some(1)));
+        w.insert_resource(NetCommands(tx));
+        w.init_resource::<UiClock>();
+        w.init_resource::<UiEvents>();
+        w.insert_resource(states);
+        // Wintergrasp's timer row beside its plain "Alliance Controlled" row.
+        w.insert_resource(crate::world_state_ui::WorldStateUiRes(
+            WorldStateUiCatalog::from_rows(vec![(212, row(4197, 3)), (210, row(4197, 0))]),
+        ));
+        w.run_system_once(world_state_ui_timers).unwrap();
+        w.run_system_once(world_state_ui_timers).unwrap();
+        assert_eq!(
+            seen(&app),
+            "WORLD_STATE_UI_TIMER_UPDATE nil",
+            "once, then the wait"
+        );
+
+        let w = app.world_mut();
+        w.resource_mut::<UiClock>().next_timer_event = None;
+        w.insert_resource(crate::world_state_ui::WorldStateUiRes(
+            WorldStateUiCatalog::from_rows(vec![(210, row(4197, 0))]),
+        ));
+        w.run_system_once(world_state_ui_timers).unwrap();
+        assert_eq!(
+            seen(&app),
+            "WORLD_STATE_UI_TIMER_UPDATE nil",
+            "no timer row, no event"
         );
     }
 
