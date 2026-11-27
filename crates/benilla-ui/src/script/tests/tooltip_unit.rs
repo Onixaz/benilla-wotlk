@@ -707,7 +707,7 @@ fn minimap_blip_tooltip_follows_the_cursor_and_hides_on_loss() {
     s.run(r#"CreateFrame("GameTooltip", "GameTooltip")"#)
         .unwrap();
     assert!(
-        !s.minimap_tooltip("Stormwind", false),
+        !s.minimap_tooltip("Stormwind"),
         "no UIParent yet: the show refuses"
     );
     s.run(
@@ -718,7 +718,7 @@ fn minimap_blip_tooltip_follows_the_cursor_and_hides_on_loss() {
     )
     .unwrap();
     s.mouse_move(795.0, 500.0);
-    assert!(s.minimap_tooltip("Stormwind", false));
+    assert!(s.minimap_tooltip("Stormwind"));
     s.run(
         r#"
         assert(GameTooltipTextLeft1:GetText() == "Stormwind")

@@ -306,7 +306,7 @@ fn a_scaled_world_tooltip_stays_on_the_cursor() {
     s.set_ui_scale(0.5);
     let anchor = "select(4, GameTooltip:GetPoint()), select(5, GameTooltip:GetPoint())";
     s.mouse_move(400.0, 300.0);
-    assert!(s.minimap_tooltip("Stormwind", false));
+    assert!(s.minimap_tooltip("Stormwind"));
     s.resolve();
     let got = s.eval::<(f64, f64)>(&format!("return {anchor}")).unwrap();
     assert_eq!(got, (800.0, 600.0), "own units, doubled back at layout");

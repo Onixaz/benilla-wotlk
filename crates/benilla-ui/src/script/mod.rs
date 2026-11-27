@@ -172,6 +172,7 @@ pub use glue_realm::{
 pub use glue_select::{GlueCharacter, GlueScenePane, GlueSelectCells};
 pub use glue_system::{GlueBilling, GlueFileReader, ScanDll};
 pub use movieframe::{MovieHost, MovieTick};
+pub use region::rotation_corners;
 mod gm_ticket;
 mod gossip;
 mod guild;
