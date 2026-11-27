@@ -817,6 +817,65 @@ mod tests {
         assert!(!pinned.composes_unit_tag());
     }
 
+    /// The New Agamand loop: an armed variation hides every batch, the host parks and stops its
+    /// player, and a sampler reading the stopped player fell back to slot 0, where the bolt draws,
+    /// which un-parked the host for a strike. The doodad lane reads the arm, parked or not.
+    #[test]
+    fn a_parked_doodad_mat_anim_keeps_its_armed_hidden_variation() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_systems(Update, sample_mat_anim);
+        let hidden = benilla_formats::ScalarAnim {
+            period: 0.0,
+            step: true,
+            wrap: true,
+            gseq: false,
+            keys: vec![(0.0, 0.0)],
+        };
+        // Slot 0 draws (the strike), slot 1 hides (a quiet variation).
+        let alpha = std::sync::Arc::new(
+            benilla_formats::AlphaAnim::new(vec![
+                benilla_formats::AlphaSeq::default(),
+                benilla_formats::AlphaSeq {
+                    color: Some(hidden),
+                    weight: None,
+                },
+            ])
+            .unwrap(),
+        );
+        let host = app
+            .world_mut()
+            .spawn((
+                DoodadAnimHost {
+                    meshes: Vec::new(),
+                    fade: crate::particles::EmitterFade::sphere(1.0, Vec3::ZERO),
+                    clip: Some((AnimationNodeIndex::new(2), 1.0)),
+                    armed_at: 0.0,
+                    window_hi: f32::INFINITY,
+                    anim_id: Some(0),
+                    active: false,
+                    parked_at: 0.0,
+                    fade_out: None,
+                },
+                anims(vec![seq_clip(0, 0, 1), seq_clip(0, 1, 2)], Some(0), false),
+                // Parked: the gate stopped it, so nothing plays.
+                AnimationPlayer::default(),
+            ))
+            .id();
+        let part = app
+            .world_mut()
+            .spawn(MatAnim::new(alpha, 0.0, false).on_doodad_host(Some(host)))
+            .id();
+        for _ in 0..3 {
+            app.update();
+            assert_eq!(
+                app.world().entity(part).get::<MatAnim>().unwrap().current,
+                0.0,
+                "the armed quiet variation holds while parked, not slot 0's strike"
+            );
+        }
+    }
+
     #[test]
     fn pinned_mat_anim_reads_its_own_slot() {
         let a = two_seq_alpha();

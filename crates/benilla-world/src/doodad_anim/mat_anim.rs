@@ -142,11 +142,7 @@ pub fn playing_seq(player: &AnimationPlayer, anims: &ModelAnimations) -> Option<
 /// spawn clock; frozen ones keep their t = 0 sample. Hidden instances sample too, as the reference
 /// evaluates the tracks every frame regardless of the cull, or a batch born at weight 0 would stay
 /// hidden. Runs before the visibility authority.
-pub fn sample_mat_anim(
-    time: Res<Time>,
-    hosts: Query<(&AnimationPlayer, &ModelAnimations)>,
-    mut q: Query<&mut MatAnim>,
-) {
+pub fn sample_mat_anim(time: Res<Time>, hosts: HostClocks, mut q: Query<&mut MatAnim>) {
     let now = time.elapsed_secs();
     // The scene clock in f64: a long-uptime f32 drifts whole milliseconds.
     let shared = time.elapsed_secs_f64();
@@ -161,20 +157,43 @@ pub fn sample_mat_anim(
     });
 }
 
+/// What a hosted instance reads its sequence from: the host's player, its models, and for a placed
+/// doodad its arm.
+type HostClocks<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Option<&'static AnimationPlayer>,
+        &'static ModelAnimations,
+        Option<&'static super::DoodadAnimHost>,
+    ),
+>;
+
 /// Rows per [`sample_mat_anim`] task: a sample is well under a microsecond.
 const SAMPLE_CHUNK: usize = 512;
 
 /// One unfrozen instance's sample, written only where it moved.
-fn sample_one(
-    m: &mut Mut<MatAnim>,
-    hosts: &Query<(&AnimationPlayer, &ModelAnimations)>,
-    now: f32,
-    shared: f64,
-) {
-    // A host with no player yet keeps its last slot at t = 0, a bind-posed model's pose.
+fn sample_one(m: &mut Mut<MatAnim>, hosts: &HostClocks, now: f32, shared: f64) {
+    // A placed doodad reads its arm, a function of the clock that the re-roll keeps for a parked
+    // host too, as bone 0's armed sequence is (`0x82f0f0`): a stopped player would read slot 0, and
+    // an all-culled placement would park, show slot 0's batches and un-park. A host with no player
+    // yet keeps its last slot at t = 0, a bind-posed model's pose.
+    let doodad_lane = m.doodad_lane;
     let played = m
         .host
-        .and_then(|h| hosts.get(h).ok().and_then(|(p, a)| playing_seq(p, a)));
+        .and_then(|h| hosts.get(h).ok())
+        .and_then(|(p, a, arm)| {
+            let armed = arm
+                .filter(|_| doodad_lane)
+                .and_then(|arm| arm.arm_clock(now))
+                .and_then(|(node, t)| {
+                    a.clips
+                        .iter()
+                        .find(|c| c.node == node)
+                        .map(|c| (c.seq_index, t))
+                });
+            armed.or_else(|| p.and_then(|p| playing_seq(p, a)))
+        });
     let (seq, elapsed) = match played {
         Some((seq, t)) => (Some(seq), t),
         None if m.host.is_some() => (m.seq, 0.0),
