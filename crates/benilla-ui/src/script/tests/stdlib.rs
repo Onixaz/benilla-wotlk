@@ -53,6 +53,23 @@ fn positional_format_reorders_and_mix_is_an_error() {
     );
     // numbers still coerce to string as `luaL_checklstring` does
     assert_eq!(s.eval::<String>("return format(42)").unwrap(), "42");
+    // missing arg #1 and bad conversion arg #2 both blame `'format'`
+    let no_arg = s.run_chunk_named(b"format()", "@Caller.lua").unwrap_err();
+    assert!(
+        crate::script::lua_message(&no_arg)
+            .contains("bad argument #1 to 'format' (string expected, got no value)"),
+        "{}",
+        crate::script::lua_message(&no_arg)
+    );
+    let bad_arg2 = s
+        .run_chunk_named(b"format('%d', 'notnum')", "@Caller.lua")
+        .unwrap_err();
+    assert!(
+        crate::script::lua_message(&bad_arg2)
+            .contains("bad argument #2 to 'format' (number expected, got string)"),
+        "{}",
+        crate::script::lua_message(&bad_arg2)
+    );
 }
 
 // ── getglobal and the alias layer ──

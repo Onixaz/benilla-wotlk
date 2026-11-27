@@ -513,6 +513,13 @@ fn error_handler_runs_synchronously_with_live_stack_and_locals() {
         "stack must include the failing frame: {stack:?}"
     );
     assert!(
+        !stack.contains("handler_pcall")
+            && !stack.contains("`xpcall'")
+            && !stack.contains("`_error'")
+            && !stack.contains("benilla wow stdlib"),
+        "stack must not leak internal wrapper frames: {stack:?}"
+    );
+    assert!(
         locals.contains("secret_val = 1337"),
         "locals must include the failing frame's locals: {locals:?}"
     );
