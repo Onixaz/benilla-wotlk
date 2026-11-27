@@ -44,9 +44,15 @@ pub(crate) struct WalkLent<'a> {
     pub(crate) place: Option<&'a crate::area::PlayerPlace>,
 }
 
+impl crate::spell::usable::UnitStoreLookup for PetUnit<'_, '_> {
+    fn store(&self, guid: u64) -> Option<&crate::net::ObjectStore> {
+        PetUnit::store(self, guid)
+    }
+}
+
 impl PetSlotWalk<'_, '_> {
     /// The usable walk with the pet as caster: no bags, its own cooldowns, the pet's own target,
-    /// else the locked one (`0x80b5d0` from its caller at `0x5d4ec0`'s walk).
+    /// else the locked one (`0x80b5d0` from its caller at `0x5d3fd0`).
     #[allow(clippy::too_many_arguments)] // the walk's inputs, each read at the call
     fn usable(
         &self,
@@ -85,6 +91,7 @@ impl PetSlotWalk<'_, '_> {
                 auras: me.and_then(|g| pet_unit.auras(g)),
             },
             names: self.names.as_deref(),
+            unit_store: Some(pet_unit),
             factions: self.factions.as_deref(),
             reputations,
             party: crate::target::party_of(self.group.as_deref()),

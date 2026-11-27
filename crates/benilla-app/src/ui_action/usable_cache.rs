@@ -420,6 +420,14 @@ impl UsableInputs<'_, '_> {
     }
 }
 
+impl usable::UnitStoreLookup for Reads<'_, '_, '_> {
+    fn store(&self, guid: u64) -> Option<&ObjectStore> {
+        self.objects
+            .entity(guid)
+            .and_then(|e| self.stores.get(e).ok())
+    }
+}
+
 impl Reads<'_, '_, '_> {
     /// The active player and its auras, the target leg's `autoSelfCast` unit.
     fn active_player(&self) -> usable::ActivePlayer<'_> {
@@ -441,6 +449,7 @@ impl Reads<'_, '_, '_> {
             auto_self_cast: self.auto_self_cast,
             active_player: self.active_player(),
             names: self.names,
+            unit_store: Some(self),
             factions: self.factions,
             reputations: self.reputations,
             party: crate::target::party_of(self.group),
@@ -644,6 +653,7 @@ impl Reads<'_, '_, '_> {
             auto_self_cast: self.auto_self_cast,
             active_player: self.active_player(),
             names: self.names,
+            unit_store: Some(self),
             self_auras: self.auras.get(pet_entity).ok(),
             target_auras: target.and_then(|(e, _)| self.auras.get(e).ok()),
             store: pet,

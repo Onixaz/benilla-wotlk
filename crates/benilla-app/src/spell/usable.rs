@@ -111,14 +111,19 @@ impl UsablePlaceFeed<'_> {
 /// `autoSelfCast`.
 const IMPLICIT_TARGET_ENEMY: u32 = 6;
 const IMPLICIT_TARGET_FRIEND: u32 = 21;
-const IMPLICIT_TARGET_PARTY_OR_RAID: u32 = 35;
+const IMPLICIT_TARGET_PARTY_ONLY: u32 = 35;
 const IMPLICIT_TARGET_PARTY: u32 = 57;
 const IMPLICIT_TARGET_PARTY_CLASS: u32 = 61;
 
-/// `UNIT_FLAG` bit 3, which both sides of the party test need (`0x718d70`).
+/// `UNIT_FLAG` bit 3, which both sides of the party tests need (`0x718ca0`, `0x718d70`).
 const UNIT_FLAG_PVP_ATTACKABLE: u32 = 0x8;
-/// The creature type flag the party test passes outright (`0x718d70`).
+/// The creature type flag the party-or-raid test passes outright (`0x718d70`).
 const CREATURE_TYPE_FLAG_PARTY_UNIT: u32 = 0x0400_0000;
+
+/// Resolves a unit's descriptor store by guid for the controller walk (`0x718b70`).
+pub(crate) trait UnitStoreLookup {
+    fn store(&self, guid: u64) -> Option<&ObjectStore>;
+}
 
 /// The active player as leg 10 reads it: `autoSelfCast`'s fallback unit, whoever casts.
 #[derive(Clone, Copy, Default)]
@@ -161,6 +166,8 @@ pub(crate) struct UsableCtx<'a> {
     pub(crate) active_player: ActivePlayer<'a>,
     /// The creature cache, for the template flags the assist check and the party test read.
     pub(crate) names: Option<&'a crate::names::NameCache>,
+    /// Unit store lookup by guid, for the controller walk (`0x718b70`).
+    pub(crate) unit_store: Option<&'a dyn UnitStoreLookup>,
 }
 
 /// Leg 10 of `0x80b5d0`, entered when the spell names any of `TargetAuraState`,
@@ -191,7 +198,7 @@ fn target_legs_met(d: &SpellDisplay, spells: &Spells, ctx: &UsableCtx) -> bool {
     let friendly_implicit = matches!(
         d.implicit_target_a1,
         IMPLICIT_TARGET_FRIEND
-            | IMPLICIT_TARGET_PARTY_OR_RAID
+            | IMPLICIT_TARGET_PARTY_ONLY
             | IMPLICIT_TARGET_PARTY
             | IMPLICIT_TARGET_PARTY_CLASS
     );
@@ -225,54 +232,82 @@ fn target_legs_met(d: &SpellDisplay, spells: &Spells, ctx: &UsableCtx) -> bool {
             Some(ctx.store),
         ),
         IMPLICIT_TARGET_FRIEND => assists(unit),
-        // 35's own party-or-raid test (`0x718ca0`) is not ported: no 12340 row with a target aura
-        // field names 35, so it takes 57's test.
-        IMPLICIT_TARGET_PARTY_OR_RAID | IMPLICIT_TARGET_PARTY | IMPLICIT_TARGET_PARTY_CLASS => {
-            in_my_party(ctx, unit) && assists(unit)
+        IMPLICIT_TARGET_PARTY_ONLY => in_group(ctx, unit, false) && assists(unit),
+        IMPLICIT_TARGET_PARTY | IMPLICIT_TARGET_PARTY_CLASS => {
+            in_group(ctx, unit, true) && assists(unit)
         }
         _ => true,
     }
 }
 
-/// The party test (`0x718d70`) from the caster toward `unit`: the same unit, or a creature with
-/// the party-unit type flag, else both carry `UNIT_FLAG` `0x8` and one side's controlling player
-/// (`0x718b70`) is the active player with the other's in the group, party or raid (`0x512a00`).
-fn in_my_party(ctx: &UsableCtx, unit: &ObjectStore) -> bool {
+/// The party-only test (`0x718ca0`, `raid == false`) and party-or-raid test (`0x718d70`,
+/// `raid == true`) from the caster toward `unit`: the same unit, or (for `0x718d70`) a creature
+/// with the party-unit type flag, else both carry `UNIT_FLAG` `0x8` and one side's controlling
+/// player (`0x718b70`) is the active player with the other's in the party (`0x5129f0`) or group
+/// (`0x512a00`).
+fn in_group(ctx: &UsableCtx, unit: &ObjectStore, raid: bool) -> bool {
     let (me, them) = (ctx.store.0.object_guid(), unit.0.object_guid());
     if me.is_some() && me == them {
         return true;
     }
-    let type_flags = unit
-        .0
-        .object_entry()
-        .filter(|_| unit.0.object_type() != Some(benilla_protocol::messages::ObjectType::Player))
-        .and_then(|e| ctx.names?.creature_record(e))
-        .map_or(0, |r| r.type_flags);
-    if type_flags & CREATURE_TYPE_FLAG_PARTY_UNIT != 0 {
-        return true;
+    if raid {
+        let type_flags = unit
+            .0
+            .object_entry()
+            .filter(|_| {
+                unit.0.object_type() != Some(benilla_protocol::messages::ObjectType::Player)
+            })
+            .and_then(|e| ctx.names?.creature_record(e))
+            .map_or(0, |r| r.type_flags);
+        if type_flags & CREATURE_TYPE_FLAG_PARTY_UNIT != 0 {
+            return true;
+        }
     }
     if ctx.store.0.unit_flags() & UNIT_FLAG_PVP_ATTACKABLE == 0
         || unit.0.unit_flags() & UNIT_FLAG_PVP_ATTACKABLE == 0
     {
         return false;
     }
-    let (Some(mine), Some(theirs)) = (controller(ctx.store), controller(unit)) else {
+    let (Some(mine), Some(theirs)) = (
+        controller(ctx.store, ctx.unit_store),
+        controller(unit, ctx.unit_store),
+    ) else {
         return false;
     };
     let active = ctx.active_player.store.and_then(|p| p.0.object_guid());
-    (Some(mine) == active && ctx.party.is_member(theirs))
-        || (Some(theirs) == active && ctx.party.is_member(mine))
+    // `0x52c680` counts the active player as a member, so our own pet passes even outside a group.
+    let member = |guid: u64| {
+        Some(guid) == active
+            || if raid {
+                ctx.party.is_member(guid)
+            } else {
+                ctx.party.is_party_slot(guid)
+            }
+    };
+    (Some(mine) == active && member(theirs)) || (Some(theirs) == active && member(mine))
 }
 
-/// The controlling player's guid (`0x718b70`): the charmer or creator, else the unit itself. The
-/// reference then requires a player and takes a non-player's own charmer or creator; benilla holds
-/// no store for the controller, so it is taken as the player.
-fn controller(unit: &ObjectStore) -> Option<u64> {
-    let f = &unit.0;
-    f.unit_charmed_by()
-        .filter(|&g| g != 0)
-        .or_else(|| f.unit_created_by().filter(|&g| g != 0))
-        .or_else(|| f.object_guid().filter(|&g| g != 0))
+/// The controlling player's guid (`0x718b70`): resolves charmer or creator up to two hops and
+/// requires a player (`ObjectType::Player`).
+fn controller(unit: &ObjectStore, lookup: Option<&dyn UnitStoreLookup>) -> Option<u64> {
+    let owner = |s: &ObjectStore| {
+        s.0.unit_charmed_by()
+            .filter(|&g| g != 0)
+            .or_else(|| s.0.unit_created_by().filter(|&g| g != 0))
+    };
+    let is_player =
+        |s: &ObjectStore| s.0.object_type() == Some(benilla_protocol::messages::ObjectType::Player);
+    let mut cur = match owner(unit) {
+        Some(g) => lookup?.store(g)?,
+        None => unit,
+    };
+    if !is_player(cur) {
+        cur = lookup?.store(owner(cur)?)?;
+        if !is_player(cur) {
+            return None;
+        }
+    }
+    cur.0.object_guid().filter(|&g| g != 0)
 }
 
 /// Whether an aura table holds `id` (`0x7282a0`'s walk).
@@ -1242,6 +1277,7 @@ mod tests {
                 auras: None,
             },
             names: None,
+            unit_store: None,
         }
     }
 
@@ -2183,6 +2219,7 @@ mod tests {
                     auras: None,
                 },
                 names: None,
+                unit_store: None,
             };
             assert_eq!(
                 spell_usable(5308, &execute, &spells, &ctx, &objects, &items, &commands),
@@ -2210,12 +2247,31 @@ mod tests {
         ]))
     }
 
-    /// A group of one other guid.
-    struct GroupOf(u64);
+    /// A group of one other guid, in party or raid-only.
+    struct GroupOf {
+        guid: u64,
+        in_party: bool,
+    }
 
     impl crate::target::GroupMembers for GroupOf {
         fn is_member(&self, guid: u64) -> bool {
-            guid == self.0
+            guid == self.guid
+        }
+
+        fn is_party_slot(&self, guid: u64) -> bool {
+            self.in_party && guid == self.guid
+        }
+    }
+
+    /// A slice of unit stores indexed by guid, for `0x718b70` in tests.
+    struct Stores<'a>(&'a [&'a ObjectStore]);
+
+    impl UnitStoreLookup for Stores<'_> {
+        fn store(&self, guid: u64) -> Option<&ObjectStore> {
+            self.0
+                .iter()
+                .copied()
+                .find(|s| s.0.object_guid() == Some(guid))
         }
     }
 
@@ -2294,21 +2350,82 @@ mod tests {
         // No target and autoSelfCast off: no unit, and an excluded aura alone passes.
         assert!(walk(&shield, &with!(None, false)));
 
-        // Implicit 57 adds the party test: an ally outside the group greys, one inside is lit, and
-        // ourselves always pass.
+        // Implicit 57 adds the party-or-raid test (`0x718d70`), implicit 35 the party-only test
+        // (`0x718ca0`), both resolving controllers through `0x718b70`.
         let hand = SpellDisplay {
             exclude_target_aura_spell: 61988,
             implicit_target_a1: IMPLICIT_TARGET_PARTY,
             ..Default::default()
         };
+        let party_only = SpellDisplay {
+            exclude_target_aura_spell: 61988,
+            implicit_target_a1: IMPLICIT_TARGET_PARTY_ONLY,
+            ..Default::default()
+        };
         assert!(!walk(&hand, &with!(Some(&ally), true)));
-        let grouped = GroupOf(0x20);
+        let in_party = GroupOf {
+            guid: 0x20,
+            in_party: true,
+        };
+        let in_raid_only = GroupOf {
+            guid: 0x20,
+            in_party: false,
+        };
         let c = UsableCtx {
-            party: &grouped,
+            party: &in_party,
             ..with!(Some(&ally), true)
         };
         assert!(walk(&hand, &c));
+        assert!(walk(&party_only, &c));
+        let c_raid = UsableCtx {
+            party: &in_raid_only,
+            ..with!(Some(&ally), true)
+        };
+        assert!(walk(&hand, &c_raid));
+        assert!(
+            !walk(&party_only, &c_raid),
+            "implicit 35 rejects a raid-only member"
+        );
         assert!(walk(&hand, &with!(Some(&me), true)));
+        // Our own pet (1 hop) and its minion (2 hops) share our controller (`0x718b70`), so
+        // `0x52c680` passes them even outside a group.
+        let own_pet = ObjectStore(ObjectFields::from_pairs(&[
+            (0, 0x40),
+            (1, 0),
+            (2, 0x9),
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+            (benilla_protocol::field::FIELD_UNIT_CREATEDBY, 0x10),
+            (benilla_protocol::field::FIELD_UNIT_CREATEDBY + 1, 0),
+            (benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE, 1),
+            (
+                benilla_protocol::field::FIELD_UNIT_FLAGS,
+                UNIT_FLAG_PVP_ATTACKABLE,
+            ),
+        ]));
+        let pet_minion = ObjectStore(ObjectFields::from_pairs(&[
+            (0, 0x41),
+            (1, 0),
+            (2, 0x9),
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+            (benilla_protocol::field::FIELD_UNIT_CREATEDBY, 0x40),
+            (benilla_protocol::field::FIELD_UNIT_CREATEDBY + 1, 0),
+            (benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE, 1),
+            (
+                benilla_protocol::field::FIELD_UNIT_FLAGS,
+                UNIT_FLAG_PVP_ATTACKABLE,
+            ),
+        ]));
+        let stores = Stores(&[&me, &own_pet, &pet_minion]);
+        for target in [&own_pet, &pet_minion] {
+            let c = UsableCtx {
+                unit_store: Some(&stores),
+                ..with!(Some(target), true)
+            };
+            assert!(
+                walk(&hand, &c),
+                "controller resolve passes own pet / 2-hop minion outside a group"
+            );
+        }
         assert!(
             walk(&hand, &with!(Some(&enemy), true)),
             "the enemy sends it to us"
