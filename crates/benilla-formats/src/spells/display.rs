@@ -194,6 +194,8 @@ pub struct SpellDisplay {
     pub difficulty_id: u32,
     /// `TargetAuraState` (column 21): the current target's required aura state.
     pub target_aura_state: u32,
+    /// `ExcludeTargetAuraState` (column 23): an aura state the target must not hold.
+    pub exclude_target_aura_state: u32,
     /// `Totem[2]` (columns 50-51): tools that must be carried, not consumed, such as a hammer.
     pub totems: [u32; 2],
     /// `Reagent[8]` and `ReagentCount[8]` (columns 52-59, 60-67): consumed items and counts.
@@ -353,6 +355,7 @@ impl Default for SpellDisplay {
             exclude_target_aura_spell: 0,
             difficulty_id: 0,
             target_aura_state: 0,
+            exclude_target_aura_state: 0,
             totems: [0; 2],
             reagents: [(0, 0); 8],
             equipped_item_class: -1,

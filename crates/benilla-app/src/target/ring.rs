@@ -593,11 +593,21 @@ fn duel_reaction(
 /// than the active player's sits in our party slots or raid roster.
 pub(crate) trait GroupMembers {
     fn is_member(&self, guid: u64) -> bool;
+
+    /// Whether `guid` (other than the active player) sits in `party1..party4` (`0x5129f0` /
+    /// `0x52c680`). Defaults to [`Self::is_member`].
+    fn is_party_slot(&self, guid: u64) -> bool {
+        self.is_member(guid)
+    }
 }
 
 impl GroupMembers for GroupState {
     fn is_member(&self, guid: u64) -> bool {
         GroupState::is_member(self, guid)
+    }
+
+    fn is_party_slot(&self, guid: u64) -> bool {
+        !self.slots_emptied && self.party_slots().any(|m| m.guid == guid)
     }
 }
 
@@ -606,6 +616,10 @@ pub(crate) struct NoGroup;
 
 impl GroupMembers for NoGroup {
     fn is_member(&self, _guid: u64) -> bool {
+        false
+    }
+
+    fn is_party_slot(&self, _guid: u64) -> bool {
         false
     }
 }

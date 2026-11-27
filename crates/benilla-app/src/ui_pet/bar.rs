@@ -30,6 +30,10 @@ pub(crate) struct PetSlotWalk<'w, 's> {
     spell_mods: Option<Res<'w, crate::spell::SpellModifiers>>,
     /// The map, for the walk's place legs.
     map: Option<Res<'w, benilla_world::world_map::CurrentMap>>,
+    /// The active player, the target leg's `autoSelfCast` unit.
+    me: Option<Res<'w, crate::net::SelfGuid>>,
+    self_cast: Option<Res<'w, crate::spell::AutoSelfCast>>,
+    names: Option<Res<'w, crate::names::NameCache>>,
 }
 
 /// The walk's inputs a VM holder writes, read through the lent view at the call.
@@ -40,8 +44,15 @@ pub(crate) struct WalkLent<'a> {
     pub(crate) place: Option<&'a crate::area::PlayerPlace>,
 }
 
+impl crate::spell::usable::UnitStoreLookup for PetUnit<'_, '_> {
+    fn store(&self, guid: u64) -> Option<&crate::net::ObjectStore> {
+        PetUnit::store(self, guid)
+    }
+}
+
 impl PetSlotWalk<'_, '_> {
-    /// The usable walk with the pet as caster: no bags, its own cooldowns, the current target.
+    /// The usable walk with the pet as caster: no bags, its own cooldowns, the pet's own target,
+    /// else the locked one (`0x80b5d0` from its caller at `0x5d3fd0`).
     #[allow(clippy::too_many_arguments)] // the walk's inputs, each read at the call
     fn usable(
         &self,
@@ -62,13 +73,25 @@ impl PetSlotWalk<'_, '_> {
         ) else {
             return true;
         };
-        let target = lent.selection.and_then(|s| s.guid);
+        let target = pet
+            .0
+            .unit_target()
+            .filter(|&g| g != 0)
+            .or_else(|| lent.selection.and_then(|s| s.guid));
         let target_store = target.and_then(|guid| pet_unit.store(guid));
+        let me = self.me.as_deref().and_then(|g| g.0);
         let ctx = crate::spell::usable::UsableCtx {
-            self_auras: None,
-            target_auras: None,
+            self_auras: pet.0.object_guid().and_then(|g| pet_unit.auras(g)),
+            target_auras: target.and_then(|g| pet_unit.auras(g)),
             store: pet,
             target_store,
+            auto_self_cast: self.self_cast.as_deref().is_none_or(|a| a.0),
+            active_player: crate::spell::usable::ActivePlayer {
+                store: me.and_then(|g| pet_unit.store(g)),
+                auras: me.and_then(|g| pet_unit.auras(g)),
+            },
+            names: self.names.as_deref(),
+            unit_store: Some(pet_unit),
             factions: self.factions.as_deref(),
             reputations,
             party: crate::target::party_of(self.group.as_deref()),

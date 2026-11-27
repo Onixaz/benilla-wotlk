@@ -215,6 +215,8 @@ pub(crate) struct UsableWorld<'w> {
     auto: crate::spell::AutoChecks<'w>,
     /// The client-control flag a slot with no spell reads (`0x5aa063`).
     control: Option<Res<'w, crate::net::ControlFlag>>,
+    /// The creature cache the target leg's assist check and party test read.
+    names: Option<Res<'w, crate::names::NameCache>>,
 }
 
 /// The tables beside them, one parameter.
@@ -286,6 +288,9 @@ pub(crate) struct Reads<'a, 'w, 's> {
     pending: Option<&'a crate::pending_item_ops::PendingItemOps>,
     /// Whether we hold the client's control (`0xbcfb8c`), which a slot with no spell needs.
     control: bool,
+    /// `autoSelfCast`, for the target leg's fallback to the player.
+    auto_self_cast: bool,
+    names: Option<&'a crate::names::NameCache>,
 }
 
 impl UsableWorld<'_> {
@@ -370,6 +375,8 @@ impl<'a, 'w, 's> Sources<'a, 'w, 's> {
             combo,
             pending: self.pending,
             control: self.world.control.as_deref().is_none_or(|c| c.0),
+            auto_self_cast: self.world.auto.self_cast(),
+            names: self.world.names.as_deref(),
         })
     }
 }
@@ -413,15 +420,36 @@ impl UsableInputs<'_, '_> {
     }
 }
 
+impl usable::UnitStoreLookup for Reads<'_, '_, '_> {
+    fn store(&self, guid: u64) -> Option<&ObjectStore> {
+        self.objects
+            .entity(guid)
+            .and_then(|e| self.stores.get(e).ok())
+    }
+}
+
 impl Reads<'_, '_, '_> {
-    /// The player's walk context, against the current target or, with `no_target`, none.
-    fn ctx<'b>(&'b self, store: &'b ObjectStore, no_target: bool) -> usable::UsableCtx<'b> {
-        let target = self.target.filter(|_| !no_target);
+    /// The active player and its auras, the target leg's `autoSelfCast` unit.
+    fn active_player(&self) -> usable::ActivePlayer<'_> {
+        usable::ActivePlayer {
+            store: self.me.map(|(_, s)| s),
+            auras: self.me.and_then(|(e, _)| self.auras.get(e).ok()),
+        }
+    }
+
+    /// The player's walk context against the locked target: every caller of `0x80b5d0` passes
+    /// target 0 (a macro's own target aside), which it reads as the locked target.
+    fn ctx<'b>(&'b self, store: &'b ObjectStore) -> usable::UsableCtx<'b> {
+        let target = self.target;
         usable::UsableCtx {
             self_auras: self.me.and_then(|(e, _)| self.auras.get(e).ok()),
             target_auras: target.and_then(|(e, _)| self.auras.get(e).ok()),
             store,
             target_store: target.map(|(_, s)| s),
+            auto_self_cast: self.auto_self_cast,
+            active_player: self.active_player(),
+            names: self.names,
+            unit_store: Some(self),
             factions: self.factions,
             reputations: self.reputations,
             party: crate::target::party_of(self.group),
@@ -435,23 +463,23 @@ impl Reads<'_, '_, '_> {
         }
     }
 
-    /// `IsUsableSpell`'s walk (`0x541680`): the player's or, with `pet`, the pet's, with no target.
+    /// `IsUsableSpell`'s walk (`0x541680`): the player's or, with `pet`, the pet's, with target 0.
     pub(crate) fn spell_usable(&self, spell: u32, pet: bool) -> Usable {
         if !pet {
             return self.spell(spell);
         }
         match self.spells.catalog.get(spell) {
-            Some(d) => self.pet_spell(spell, d, true),
+            Some(d) => self.pet_spell(spell, d),
             None => Usable::default(),
         }
     }
 
-    /// A player spell's walk (`0x80b5d0`) with no target, as the book's lists test it.
+    /// A player spell's walk (`0x80b5d0`) with target 0, as the book's lists test it.
     fn spell(&self, spell: u32) -> Usable {
         let (Some((_, store)), Some(d)) = (self.me, self.spells.catalog.get(spell)) else {
             return Usable::default();
         };
-        let ctx = self.ctx(store, true);
+        let ctx = self.ctx(store);
         Usable::of_walk(usable::spell_usable(
             spell,
             d,
@@ -548,7 +576,7 @@ impl Reads<'_, '_, '_> {
                 Some(d) if d.attributes_ex2 & ATTR_EX2_CAST_BY_PLAYER != 0 => {
                     (ACTION_KIND_SPELL, entry.action())
                 }
-                Some(d) => return self.pet_spell(entry.action(), d, false),
+                Some(d) => return self.pet_spell(entry.action(), d),
                 None => return Usable::default(),
             }
         } else {
@@ -562,7 +590,7 @@ impl Reads<'_, '_, '_> {
                 let Some(d) = self.spells.catalog.get(id) else {
                     return Usable::default();
                 };
-                let ctx = self.ctx(store, false);
+                let ctx = self.ctx(store);
                 Usable::of_walk(usable::spell_usable(
                     id,
                     d,
@@ -591,7 +619,7 @@ impl Reads<'_, '_, '_> {
                         .and_then(|o| o.object_entry())
                         == Some(id)
                 });
-                let ctx = self.ctx(store, false);
+                let ctx = self.ctx(store);
                 Usable::of_walk(usable::item_usable(
                     id,
                     use_spell.as_ref(),
@@ -607,22 +635,26 @@ impl Reads<'_, '_, '_> {
         }
     }
 
-    /// The pet as caster, its own cooldowns (`0x5a8e40`), against the current target or, with
-    /// `no_target`, none; no pet, unusable.
-    fn pet_spell(&self, spell: u32, d: &benilla_formats::SpellDisplay, no_target: bool) -> Usable {
+    /// The pet as caster, its own cooldowns (`0x5a8e40`), against the locked target; no pet,
+    /// unusable.
+    fn pet_spell(&self, spell: u32, d: &benilla_formats::SpellDisplay) -> Usable {
         let Some(bar) = self.pet_bar else {
             return Usable::default();
         };
-        let Some(pet) = self
+        let Some((pet_entity, pet)) = self
             .objects
             .entity(bar.spells.pet_guid)
-            .and_then(|e| self.stores.get(e).ok())
+            .and_then(|e| Some((e, self.stores.get(e).ok()?)))
         else {
             return Usable::default();
         };
-        let target = self.target.filter(|_| !no_target);
+        let target = self.target;
         let ctx = usable::UsableCtx {
-            self_auras: None,
+            auto_self_cast: self.auto_self_cast,
+            active_player: self.active_player(),
+            names: self.names,
+            unit_store: Some(self),
+            self_auras: self.auras.get(pet_entity).ok(),
             target_auras: target.and_then(|(e, _)| self.auras.get(e).ok()),
             store: pet,
             target_store: target.map(|(_, s)| s),
