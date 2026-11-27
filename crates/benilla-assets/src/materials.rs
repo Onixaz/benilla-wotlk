@@ -705,4 +705,19 @@ mod tests {
         // The tail and the shortfall are deep-end only.
         assert_eq!(at(0), shallow, "row 0 is the shallow endpoint verbatim");
     }
+
+    /// A unified TRANS batch's two passes keep their own fogs (`0x7a9380`): the lit pass the scene
+    /// fog (`0x7a9656`), the ambient pass the group's (`0x7a96ea`), never black (`0x7a9877` is the
+    /// fixed-function fallback). Fogging the sum toward `MOCV.a × fog` sank a dark-MOCV surface to
+    /// black with distance.
+    #[test]
+    fn a_unified_trans_batch_fogs_each_pass_with_its_own_fog() {
+        let src = include_str!("shaders/wow_model.wgsl");
+        assert!(
+            !src.contains("fog_weight"),
+            "the fog is weighted by MOCV.a again"
+        );
+        assert!(src.contains("mix(fog_rgb, pass_amb * shade_k, factor)"));
+        assert!(src.contains("mix(wow_light.fog_color.xyz, pass_lit * shade_k, lit_factor)"));
+    }
 }

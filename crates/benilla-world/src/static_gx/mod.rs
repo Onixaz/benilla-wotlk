@@ -1097,4 +1097,17 @@ mod tests {
         gx.clear();
         assert!(gx.cells.is_empty() && gx.world.cells.is_empty());
     }
+
+    /// The static lane's unified TRANS item fogs its two passes as `wow_model.wgsl` does
+    /// (`benilla_assets`' `a_unified_trans_batch_fogs_each_pass_with_its_own_fog`).
+    #[test]
+    fn a_unified_trans_item_fogs_each_pass_with_its_own_fog() {
+        let src = include_str!("../shaders/static_gx.wgsl");
+        assert!(
+            !src.contains("fog_weight"),
+            "the fog is weighted by MOCV.a again"
+        );
+        assert!(src.contains("mix(fog_color.xyz, pass_amb * shade_k, factor)"));
+        assert!(src.contains("mix(wow_light.fog_color.xyz, pass_lit * shade_k, lit_factor)"));
+    }
 }
