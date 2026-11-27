@@ -65,12 +65,36 @@ pub(crate) fn arms_for_sound(anims: &ModelAnimations) -> bool {
 }
 
 /// Whether a batch reads the armed sequence's clock: a colour-alpha or transparency loop, or a UV
-/// or tint loop whose sequence slots disagree (`Apothecary_FX.m2`'s lightning, whose five Stand
-/// variations move no bone).
+/// (either stage) or tint loop whose sequence slots disagree (`Apothecary_FX.m2`'s lightning, whose
+/// five Stand variations move no bone).
 pub(crate) fn arms_for_material(m: &M2Model) -> bool {
-    m.submeshes
+    m.submeshes.iter().any(|s| {
+        s.alpha_anim.is_some()
+            || s.uv_seq.is_some()
+            || s.rgb_seq.is_some()
+            || UvLoops::stage1_of(&s.geometry).is_some_and(|s1| s1.seqs.is_some())
+    })
+}
+
+/// Whether a bind-posed model still needs the idle chain armed for its sequence clock: a batch reads
+/// the sequence, or an emitter or ribbon does and there is more than one Stand variation to roll
+/// (`Borean_Geyser_02.M2` erupts only in its 7 % variation). With one Stand, the spawn clock
+/// already loops the loader-idle slot an emitter reads.
+pub(crate) fn arms_for_clock(m: &M2Model) -> bool {
+    let Some(idle) = m
+        .animations
+        .as_ref()
+        .and_then(|a| a.idle_clip().map(|c| (a, c)))
+    else {
+        return false;
+    };
+    let (anims, idle) = idle;
+    let variations = anims
+        .clips
         .iter()
-        .any(|s| s.alpha_anim.is_some() || s.uv_seq.is_some() || s.rgb_seq.is_some())
+        .filter(|c| c.anim_id == idle.anim_id)
+        .count();
+    arms_for_material(m) || (variations > 1 && (!m.emitters.is_empty() || !m.ribbons.is_empty()))
 }
 
 /// Classify a placed model; a boneless one is `Static`, with no joints for a skin to index.
@@ -140,11 +164,12 @@ pub fn wants_rig(m: &M2Model) -> bool {
         )
 }
 
-/// Whether [`spawn_anim_host`] would host this model: [`wants_rig`] or a bind-posed sound arm.
+/// Whether [`spawn_anim_host`] would host this model: [`wants_rig`], a bind-posed sound arm, or a
+/// bind-posed model whose batches or emitters read the sequence ([`arms_for_clock`]).
 pub(crate) fn wants_host(m: &M2Model) -> bool {
     wants_rig(m)
         || (!crate::dev_state::deterministic_run()
-            && m.animations.as_ref().is_some_and(arms_for_sound))
+            && (m.animations.as_ref().is_some_and(arms_for_sound) || arms_for_clock(m)))
 }
 
 /// Spawn the animation host for one placed M2 that animates: a root at the placement transform with
@@ -167,7 +192,7 @@ pub fn spawn_anim_host(
     let anims = m
         .animations
         .as_ref()
-        .expect("animated tier or sound arm ⇒ animations");
+        .expect("animated tier, sound arm or clock arm ⇒ animations");
     let root = commands
         .spawn((transform, Visibility::default()))
         .vis_chain_only()
@@ -178,11 +203,11 @@ pub fn spawn_anim_host(
     let mut clip_info = None;
     let mut armed_seq = None;
     let mut arm_id = None;
-    // A bind-posed rig still arms when a batch reads the sequence: colours and transparency sample
-    // bone 0's armed sequence every frame (`0x82f0f0`), whether or not a bone moves.
+    // A bind-posed model still arms when a batch or emitter reads the sequence: the animate samples
+    // colours, transparency and emitters on bone 0's armed sequence (`0x82f0f0`), bones or not.
     let armed = match tier {
         DoodadAnimTier::FirstSeq(head) => Some(head),
-        DoodadAnimTier::GlobalSeqOnly if arms_for_material(m) => anims.idle_clip(),
+        _ if arms_for_clock(m) => anims.idle_clip(),
         _ => None,
     };
     if let Some(head) = armed {
