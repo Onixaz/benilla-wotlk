@@ -51,6 +51,7 @@ mod char_select;
 mod chat_bubble;
 mod chr_classes;
 mod cinematic;
+mod client_logs;
 mod combat_log;
 mod combat_text;
 mod console;
@@ -322,9 +323,10 @@ fn launch(build: BuildId, extend: Option<Extension<'_>>) -> AppExit {
     benilla_ui::locale::set(locale.index, &locale.existing);
     locale_names::boot(locale);
 
-    // From here a panic leaves `benilla-config/Diagnostics/crash-<unix>.txt`; armed before the
+    // From here a panic leaves `Errors\<YYYY-MM-DD HH.MM.SS> Crash.txt`; armed before the
     // `App` exists, so a panic while plugins build is reported too.
     crash::install(build);
+    client_logs::write_cpu_log();
 
     let mut app = App::new();
     // The panel footer and the build banner read the stamp back.

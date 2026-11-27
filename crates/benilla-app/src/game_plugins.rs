@@ -169,6 +169,7 @@ impl PluginGroup for GamePlugins {
             .add(crate::video::VideoPlugin)
             // A CVar knob too, so before CvarPlugin for the same reason.
             .add(crate::realmlist::RealmlistPlugin)
+            .add(crate::client_logs::ClientLogsPlugin)
             .add(crate::fps_limit::FpsLimitPlugin)
             .add(crate::cvars::CvarPlugin)
             .add(crate::console::ConsolePlugin)

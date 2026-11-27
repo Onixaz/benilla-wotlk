@@ -161,19 +161,86 @@ pub(crate) fn lockdown_allows(lua: &Lua) -> bool {
     allowed
 }
 
+/// One taint event kind (`0x518920`): 1=Global, 2=Execution, 3=Blocked, 4=BlockedInCombat.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TaintLogKind {
+    Global,
+    Execution,
+    Blocked,
+    BlockedInCombat,
+}
+
+/// One taint log entry for `Logs\taint.log` (`0x518920`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TaintLogEvent {
+    pub kind: TaintLogKind,
+    pub target: String,
+    pub taint: String,
+    pub stack: Vec<String>,
+}
+
+/// Capture Lua call stack contexts for `Logs\taint.log` (`0x518920`).
+fn capture_stack(lua: &Lua, head: &str) -> Vec<String> {
+    let mut stack = vec![head.to_owned()];
+    for level in 1..16 {
+        let frame = lua.inspect_stack(level, |d| {
+            let src = d.source();
+            let what = src.short_src.map(|s| s.into_owned()).unwrap_or_default();
+            let line = d.current_line().unwrap_or(0);
+            let name = d.names().name.map(|s| format!("{s}()")).unwrap_or_default();
+            if what.is_empty() && name.is_empty() {
+                String::new()
+            } else if line > 0 && !name.is_empty() {
+                format!("{what}:{line} {name}")
+            } else if line > 0 {
+                format!("{what}:{line}")
+            } else if !name.is_empty() {
+                name
+            } else {
+                what
+            }
+        });
+        match frame {
+            Some(s) if !s.is_empty() => stack.push(s),
+            Some(_) => {}
+            None => break,
+        }
+    }
+    stack
+}
+
 /// The feedback for the running function, `this` its receiver when it is a method: the `_FORBIDDEN`
 /// pair for type 0, the `_BLOCKED` pair otherwise.
 fn feedback(lua: &Lua, this: Option<&Table>, forbidden: bool) {
     let tag = running();
-    let taint = {
+    let (taint, in_combat) = {
         let mut model = super::model_mut_of(lua);
         if model.blocked_feedback_showing {
             return;
         }
         model.blocked_feedback_showing = true;
-        name_of(&model, tag).unwrap_or_default()
+        (
+            name_of(&model, tag).unwrap_or_default(),
+            !model.protected_actions_allowed,
+        )
     };
     let function = format!("{}()", current_function(lua, this));
+    let log_taint = if taint.is_empty() {
+        "UNKNOWN".to_owned()
+    } else {
+        taint.clone()
+    };
+    let stack = capture_stack(lua, &function);
+    super::model_mut_of(lua).taint_log.push(TaintLogEvent {
+        kind: if in_combat && !forbidden {
+            TaintLogKind::BlockedInCombat
+        } else {
+            TaintLogKind::Blocked
+        },
+        target: function.clone(),
+        taint: log_taint,
+        stack,
+    });
     if taint == MACRO_TAINT {
         let event = match forbidden {
             true => "MACRO_ACTION_FORBIDDEN",

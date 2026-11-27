@@ -505,6 +505,7 @@ pub use spellbook::{
 pub use stable::{
     StableCallback, StableFamily, StableIntent, StableList, StableRow, NUM_STABLE_SLOTS,
 };
+pub use taint::{TaintLogEvent, TaintLogKind};
 pub use talent::{TalentPrereqView, TalentRankView, TalentTabView, TalentView};
 pub use talent_info::{
     GroupTab, PreviewLearn, TalentGroup, TalentInfo, TalentItem, TalentPacket, TalentPacketGroup,

@@ -693,6 +693,9 @@ fn tick_lent(
             benilla_ui::script::VmKind::InGame => super::load_log::write(writes),
             benilla_ui::script::VmKind::Glue => super::load_log::write_glue(writes),
         }
+        for ev in script.take_taint_log_events() {
+            crate::client_logs::log_taint_event(&ev);
+        }
         // ── The handover ────────────────────────────────────────────────────────────────────
         let pass = super::UiPassState {
             live: true,

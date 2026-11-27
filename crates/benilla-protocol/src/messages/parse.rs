@@ -335,30 +335,59 @@ const fn is_movement_relay(o: u16) -> bool {
 /// a `u32` revision (`0x5f7a02`-`0x5f7a2d`), then a `u8` URL flag and with it a cstring URL
 /// (`0x5f7a60`); then a `u32` banned count and its entries (`0x5f7b95`). A record cut short ends the
 /// walk with the statuses so far and no banned list.
-fn read_addon_info(r: &mut &[u8], listed: usize) -> (Vec<u8>, Vec<super::BannedAddon>) {
+fn read_addon_info(
+    r: &mut &[u8],
+    listed: usize,
+) -> (
+    Vec<u8>,
+    Vec<super::AddonInfoRecord>,
+    Vec<super::BannedAddon>,
+) {
     let mut statuses = Vec::new();
+    let mut records = Vec::new();
     for _ in 0..listed {
-        let Some(status) = read_addon_record(r) else {
-            return (statuses, Vec::new());
+        let Some(rec) = read_addon_record(r) else {
+            return (statuses, records, Vec::new());
         };
-        statuses.push(status);
+        statuses.push(rec.status);
+        records.push(rec);
     }
     let banned = read_banned_addons(r).unwrap_or_default();
-    (statuses, banned)
+    (statuses, records, banned)
 }
 
-fn read_addon_record(r: &mut &[u8]) -> Option<u8> {
+fn read_addon_record(r: &mut &[u8]) -> Option<super::AddonInfoRecord> {
     let status = read_u8(r).ok()?;
-    if read_u8(r).ok()? != 0 {
-        if read_u8(r).ok()? != 0 {
-            skip(r, 256)?;
-        }
-        read_u32_le(r).ok()?;
-    }
-    if read_u8(r).ok()? != 0 {
-        read_cstring(r).ok()?;
-    }
-    Some(status)
+    let info_provided = read_u8(r).ok()?;
+    let (public_key, revision) = if info_provided != 0 {
+        let key = if read_u8(r).ok()? != 0 {
+            if r.len() < 256 {
+                return None;
+            }
+            let mut buf = [0u8; 256];
+            buf.copy_from_slice(&r[..256]);
+            *r = &r[256..];
+            Some(buf)
+        } else {
+            None
+        };
+        let rev = read_u32_le(r).ok()?;
+        (key, Some(rev))
+    } else {
+        (None, None)
+    };
+    let url = if read_u8(r).ok()? != 0 {
+        Some(read_cstring(r).ok()?)
+    } else {
+        None
+    };
+    Some(super::AddonInfoRecord {
+        status,
+        info_provided,
+        public_key,
+        revision,
+        url,
+    })
 }
 
 /// The banned list: per entry a `u32` id, two 16-byte hashes, a `u32` timestamp and a `u32`
@@ -2636,9 +2665,13 @@ fn parse_server_body(
             }
         }
         opcode::SMSG_ADDON_INFO => {
-            let (statuses, banned) =
+            let (statuses, records, banned) =
                 read_addon_info(&mut r, super::STOCK_SECURE_ADDONS_WOTLK.len());
-            ServerPacket::AddonInfo { statuses, banned }
+            ServerPacket::AddonInfo {
+                statuses,
+                records,
+                banned,
+            }
         }
         other => ServerPacket::Other { opcode: other },
     };

@@ -1818,6 +1818,8 @@ pub enum ServerPacket {
     AddonInfo {
         /// One status per record, in arrival order.
         statuses: Vec<u8>,
+        /// Full parsed per-addon records (status, optional 256-byte `.pub` key, optional `.url`).
+        records: Vec<crate::messages::AddonInfoRecord>,
         /// The trailing banned list, read whole; nothing applies it.
         banned: Vec<crate::messages::BannedAddon>,
     },

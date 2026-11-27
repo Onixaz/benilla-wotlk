@@ -373,8 +373,41 @@ struct Operation {
     awaiting_list: bool,
 }
 
+impl OpKind {
+    fn log_name(self) -> &'static str {
+        match self {
+            OpKind::Connect => "COP_CONNECT",
+            OpKind::Auth => "COP_AUTHENTICATE",
+            OpKind::GetRealms => "COP_GET_REALMS",
+            OpKind::CharList => "COP_GET_CHARACTERS",
+        }
+    }
+}
+
+fn log_status_code(status: u8) -> std::borrow::Cow<'static, str> {
+    STATUS_KEYS
+        .get(usize::from(status))
+        .copied()
+        .map(std::borrow::Cow::Borrowed)
+        .unwrap_or_else(|| std::borrow::Cow::Owned(status.to_string()))
+}
+
+fn log_grunt_state(state: i32, result: i32) {
+    let state_key = usize::try_from(state)
+        .ok()
+        .and_then(|i| LOGIN_STATE_KEYS.get(i).copied())
+        .unwrap_or("UNKNOWN");
+    let result_key = usize::try_from(result)
+        .ok()
+        .and_then(|i| LOGIN_RESULT_KEYS.get(i).copied())
+        .unwrap_or("UNKNOWN");
+    crate::client_logs::log_grunt(state_key, result_key, "");
+}
+
 impl Operation {
     fn begin(kind: OpKind, status: u8) -> Self {
+        let code = log_status_code(status);
+        crate::client_logs::log_client_connection("Initiating", kind.log_name(), &code, "");
         Operation {
             kind,
             status,
@@ -387,6 +420,13 @@ impl Operation {
         self.status = status;
         self.ok = ok;
         self.done = true;
+        let code = log_status_code(status);
+        crate::client_logs::log_client_connection(
+            "Completed",
+            self.kind.log_name(),
+            &code,
+            if ok { "result=TRUE" } else { "result=FALSE" },
+        );
     }
 
     /// The status's text: its key once completed, none while it runs.
@@ -1143,6 +1183,7 @@ impl GlueMgr {
                 if self.state == ScreenState::Logon {
                     self.cells.state = LOGIN_CONNECTING;
                     self.cells.result = 0;
+                    log_grunt_state(self.cells.state, self.cells.result);
                 }
             }
             // The SRP exchange is inside the native logon's one blocking call.
@@ -1164,6 +1205,7 @@ impl GlueMgr {
             self.cells.state = LOGIN_AUTHENTICATED;
             self.cells.result = 0;
             self.auth_final = true;
+            log_grunt_state(self.cells.state, self.cells.result);
         }
     }
 
@@ -1187,6 +1229,7 @@ impl GlueMgr {
                 if let Some((state, result)) = cells {
                     self.cells.state = state;
                     self.cells.result = result;
+                    log_grunt_state(state, result);
                 }
             }
             // The character list query's reply never came: a Warden exchange benilla cannot answer
@@ -1610,8 +1653,8 @@ fn move_character_state(realm: Option<&RealmInfo>, old: &str, new: &str) {
             crate::local_state::character_dir(&account, &realm.name, new),
         ),
         (
-            crate::local_state::account_dir(&account).map(|d| d.join(old)),
-            crate::local_state::account_dir(&account).map(|d| d.join(new)),
+            crate::local_state::character_legacy_dir(&account, old),
+            crate::local_state::character_legacy_dir(&account, new),
         ),
     ];
     for (from, to) in moves {

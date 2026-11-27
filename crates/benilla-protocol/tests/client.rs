@@ -711,7 +711,10 @@ fn the_addon_info_reply_pairs_its_statuses_back_against_what_we_sent() {
     let (packet, tail) =
         messages::parse_server_with_tail(messages::opcode::SMSG_ADDON_INFO, &capture).unwrap();
     assert_eq!(tail, 0, "the banned count is read, not taken for a record");
-    let ServerPacket::AddonInfo { statuses, banned } = packet else {
+    let ServerPacket::AddonInfo {
+        statuses, banned, ..
+    } = packet
+    else {
         panic!("expected AddonInfo");
     };
     assert_eq!(statuses, vec![2u8; listed]);
@@ -749,7 +752,10 @@ fn the_addon_info_url_is_a_cstring_and_the_banned_list_follows() {
     let (packet, tail) =
         messages::parse_server_with_tail(messages::opcode::SMSG_ADDON_INFO, &body).unwrap();
     assert_eq!(tail, 0);
-    let ServerPacket::AddonInfo { statuses, banned } = packet else {
+    let ServerPacket::AddonInfo {
+        statuses, banned, ..
+    } = packet
+    else {
         panic!("expected AddonInfo");
     };
     assert_eq!(statuses.len(), listed);

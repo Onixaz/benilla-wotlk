@@ -87,8 +87,8 @@ pub use action_bar::{
     ACTION_KIND_ITEM, ACTION_KIND_MACRO, ACTION_KIND_SPELL,
 };
 pub use addons::{
-    hidden_from_reply, BannedAddon, SecureAddon, STANDARD_MODULUS_CRC, STOCK_SECURE_ADDONS,
-    STOCK_SECURE_ADDONS_WOTLK,
+    hidden_from_reply, AddonInfoRecord, BannedAddon, SecureAddon, STANDARD_MODULUS_CRC,
+    STOCK_SECURE_ADDONS, STOCK_SECURE_ADDONS_WOTLK,
 };
 pub use area_trigger::area_trigger;
 pub use arena_team::{

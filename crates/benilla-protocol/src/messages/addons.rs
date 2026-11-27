@@ -99,6 +99,16 @@ pub const STOCK_SECURE_ADDONS_WOTLK: [SecureAddon<'static>; 23] = [
     SecureAddon::stock("Blizzard_TrainerUI"),
 ];
 
+/// One `SMSG_ADDON_INFO` per-addon reply record (`0x5f79d1`-`0x5f7aa0`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AddonInfoRecord {
+    pub status: u8,
+    pub info_provided: u8,
+    pub public_key: Option<[u8; 256]>,
+    pub revision: Option<u32>,
+    pub url: Option<String>,
+}
+
 /// One `SMSG_ADDON_INFO` banned-addon entry (`0x5f7bb1`-`0x5f7bea`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BannedAddon {

@@ -411,6 +411,8 @@ pub(crate) struct Model {
     pub(crate) protected_actions_allowed: bool,
     /// The blocked-action feedback is running (`[0xbd0c68]`), so a nested refusal is silent.
     pub(crate) blocked_feedback_showing: bool,
+    /// Taint events queued for `Logs\taint.log` (`0x518920`).
+    pub(crate) taint_log: Vec<super::taint::TaintLogEvent>,
     /// The taint each tainted handler was set under, by frame id and script kind.
     pub(crate) script_taint: HashMap<u32, Vec<(&'static str, u8)>>,
     /// Frames whose attributes stay open to any code until the next layer update (`0x48ecf0`).
@@ -1560,6 +1562,7 @@ impl Model {
             addon_owner: 0,
             protected_actions_allowed: true,
             blocked_feedback_showing: false,
+            taint_log: Vec::new(),
             script_taint: HashMap::new(),
             attribute_changes_allowed: HashSet::new(),
             joystick_enabled: HashSet::new(),
