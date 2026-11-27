@@ -519,9 +519,15 @@ pub(crate) struct AutoChecks<'w> {
     player: Option<Res<'w, crate::player::Player>>,
     dismount: Option<Res<'w, AutoDismount>>,
     posture: Option<Res<'w, AutoPosture>>,
+    self_cast: Option<Res<'w, AutoSelfCast>>,
 }
 
 impl AutoChecks<'_> {
+    /// `autoSelfCast`, on when the CVar has not loaded.
+    pub(crate) fn self_cast(&self) -> bool {
+        self.self_cast.as_deref().is_none_or(|a| a.0)
+    }
+
     /// The auto-stand check (`0x71b090`).
     pub(crate) fn stand(&self) -> bool {
         self.posture.as_deref().copied().unwrap_or_default().stand

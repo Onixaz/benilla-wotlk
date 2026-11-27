@@ -4,8 +4,8 @@
 //!
 //! Built: the TRADE_SKILL early-out, dead (leg 1), reagents and totems (3), the equipped item (4),
 //! combo points (5), shapeshift form (6), only-stealthed (7), not-in-combat (8), CasterAuraState
-//! (9), TargetAuraState and its attack-or-assist fork (10/10b, the only legs that read the current
-//! target), the bit-25 cooldown fold (11), the place legs (indoors or outdoors only, then the
+//! (9), the target legs (10: the four target aura fields on the current target or, under
+//! `autoSelfCast`, the active player, then the attack, assist and party checks), the bit-25 cooldown fold (11), the place legs (indoors or outdoors only, then the
 //! flyable zone) and power (12), which the caller runs after the walk (`0x5a8e40`'s
 //! power check).
 //!
@@ -13,7 +13,8 @@
 //! sub-conditions, and the legs of `0x80b5d0` between the cooldown fold and the place legs (the
 //! pet-actions check, the aura-interrupt pair on client flag `0x200000`) and after them (the
 //! battleground-only `AttributesExC & 0x800` and not-in-raid `AttributesExF & 0x800` map tests).
-//! The assist check in leg 10b is a reaction-rank test (friendly or better), not the reference's.
+//! Nor are `ExcludeCasterAuraState` or the caster's aura-state exemption (aura 262), which every
+//! aura leg of `0x80b5d0` asks.
 
 use benilla_protocol::messages::ItemUseSpell;
 
@@ -26,7 +27,7 @@ use crate::items::Items;
 use crate::net::{NetCommands, ObjectStore, Objects, Reputations};
 use crate::spell::Cooldowns;
 use crate::spell::{SpellModifiers, OP_COST};
-use crate::target::{can_attack, ring_reaction, Factions};
+use crate::target::{can_assist, can_attack, Factions};
 
 use crate::ui_action::Spells;
 
@@ -104,10 +105,27 @@ impl UsablePlaceFeed<'_> {
     }
 }
 
-/// The implicit targets leg 10b forks on: 6, single enemy, asks the attack check; 21, single
-/// friend, asks the assist check.
+/// The implicit targets (`EffectImplicitTargetA[0]`) leg 10's relation checks read (`0x80b5d0`):
+/// 6 asks the attack check; 21 the assist check; 35, 57 and 61 the assist check and a party test.
+/// The four friendly ones also send an unassistable target to the active player under
+/// `autoSelfCast`.
 const IMPLICIT_TARGET_ENEMY: u32 = 6;
 const IMPLICIT_TARGET_FRIEND: u32 = 21;
+const IMPLICIT_TARGET_PARTY_OR_RAID: u32 = 35;
+const IMPLICIT_TARGET_PARTY: u32 = 57;
+const IMPLICIT_TARGET_PARTY_CLASS: u32 = 61;
+
+/// `UNIT_FLAG` bit 3, which both sides of the party test need (`0x718d70`).
+const UNIT_FLAG_PVP_ATTACKABLE: u32 = 0x8;
+/// The creature type flag the party test passes outright (`0x718d70`).
+const CREATURE_TYPE_FLAG_PARTY_UNIT: u32 = 0x0400_0000;
+
+/// The active player as leg 10 reads it: `autoSelfCast`'s fallback unit, whoever casts.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct ActivePlayer<'a> {
+    pub(crate) store: Option<&'a ObjectStore>,
+    pub(crate) auras: Option<&'a crate::unit_auras::UnitAuras>,
+}
 
 /// Everything the walk reads besides the spell. `target_store` is the current target's (not an
 /// explicit cast target).
@@ -137,6 +155,124 @@ pub(crate) struct UsableCtx<'a> {
     pub(crate) target_auras: Option<&'a crate::unit_auras::UnitAuras>,
     /// Where the caster stands, for the place legs.
     pub(crate) place: UsablePlace,
+    /// `autoSelfCast`, which sends leg 10 to [`Self::active_player`].
+    pub(crate) auto_self_cast: bool,
+    /// The active player, the caster too unless the pet casts.
+    pub(crate) active_player: ActivePlayer<'a>,
+    /// The creature cache, for the template flags the assist check and the party test read.
+    pub(crate) names: Option<&'a crate::names::NameCache>,
+}
+
+/// Leg 10 of `0x80b5d0`, entered when the spell names any of `TargetAuraState`,
+/// `ExcludeTargetAuraState`, `TargetAuraSpell` or `ExcludeTargetAuraSpell`: the unit is the
+/// current target; under `autoSelfCast` it becomes the active player when there is none, or when a
+/// friendly implicit target (21, 35, 57, 61) cannot be assisted. On a unit, the four aura tests,
+/// then the relation checks; with none, only a required state or aura fails.
+fn target_legs_met(d: &SpellDisplay, spells: &Spells, ctx: &UsableCtx) -> bool {
+    let wants_aura = spells.for_difficulty(d.target_aura_spell);
+    let bars_aura = spells.for_difficulty(d.exclude_target_aura_spell);
+    if d.target_aura_state == 0
+        && d.exclude_target_aura_state == 0
+        && wants_aura == 0
+        && bars_aura == 0
+    {
+        return true;
+    }
+    let assists = |unit: &ObjectStore| {
+        can_assist(
+            Some(unit),
+            ctx.factions,
+            ctx.reputations,
+            ctx.party,
+            Some(ctx.store),
+            ctx.names,
+        )
+    };
+    let friendly_implicit = matches!(
+        d.implicit_target_a1,
+        IMPLICIT_TARGET_FRIEND
+            | IMPLICIT_TARGET_PARTY_OR_RAID
+            | IMPLICIT_TARGET_PARTY
+            | IMPLICIT_TARGET_PARTY_CLASS
+    );
+    let mut unit = ctx.target_store.map(|s| (s, ctx.target_auras));
+    if ctx.auto_self_cast && unit.is_none_or(|(t, _)| friendly_implicit && !assists(t)) {
+        unit = ctx
+            .active_player
+            .store
+            .map(|s| (s, ctx.active_player.auras));
+    }
+    let Some((unit, auras)) = unit else {
+        return d.target_aura_state == 0 && wants_aura == 0;
+    };
+    let state = unit.0.unit_aura_state();
+    let holds = |s: u32| state & (1 << (s - 1)) != 0;
+    if d.target_aura_state != 0 && !holds(d.target_aura_state) {
+        return false;
+    }
+    if d.exclude_target_aura_state != 0 && holds(d.exclude_target_aura_state) {
+        return false;
+    }
+    if !target_aura_spells_met(d, spells, auras) {
+        return false;
+    }
+    match d.implicit_target_a1 {
+        IMPLICIT_TARGET_ENEMY => can_attack(
+            Some(unit),
+            ctx.factions,
+            ctx.reputations,
+            ctx.party,
+            Some(ctx.store),
+        ),
+        IMPLICIT_TARGET_FRIEND => assists(unit),
+        // 35's own party-or-raid test (`0x718ca0`) is not ported: no 12340 row with a target aura
+        // field names 35, so it takes 57's test.
+        IMPLICIT_TARGET_PARTY_OR_RAID | IMPLICIT_TARGET_PARTY | IMPLICIT_TARGET_PARTY_CLASS => {
+            in_my_party(ctx, unit) && assists(unit)
+        }
+        _ => true,
+    }
+}
+
+/// The party test (`0x718d70`) from the caster toward `unit`: the same unit, or a creature with
+/// the party-unit type flag, else both carry `UNIT_FLAG` `0x8` and one side's controlling player
+/// (`0x718b70`) is the active player with the other's in the group, party or raid (`0x512a00`).
+fn in_my_party(ctx: &UsableCtx, unit: &ObjectStore) -> bool {
+    let (me, them) = (ctx.store.0.object_guid(), unit.0.object_guid());
+    if me.is_some() && me == them {
+        return true;
+    }
+    let type_flags = unit
+        .0
+        .object_entry()
+        .filter(|_| unit.0.object_type() != Some(benilla_protocol::messages::ObjectType::Player))
+        .and_then(|e| ctx.names?.creature_record(e))
+        .map_or(0, |r| r.type_flags);
+    if type_flags & CREATURE_TYPE_FLAG_PARTY_UNIT != 0 {
+        return true;
+    }
+    if ctx.store.0.unit_flags() & UNIT_FLAG_PVP_ATTACKABLE == 0
+        || unit.0.unit_flags() & UNIT_FLAG_PVP_ATTACKABLE == 0
+    {
+        return false;
+    }
+    let (Some(mine), Some(theirs)) = (controller(ctx.store), controller(unit)) else {
+        return false;
+    };
+    let active = ctx.active_player.store.and_then(|p| p.0.object_guid());
+    (Some(mine) == active && ctx.party.is_member(theirs))
+        || (Some(theirs) == active && ctx.party.is_member(mine))
+}
+
+/// The controlling player's guid (`0x718b70`): the charmer or creator, else the unit itself. The
+/// reference then requires a player and takes a non-player's own charmer or creator; benilla holds
+/// no store for the controller, so it is taken as the player.
+fn controller(unit: &ObjectStore) -> Option<u64> {
+    let f = &unit.0;
+    f.unit_charmed_by()
+        .filter(|&g| g != 0)
+        .or_else(|| f.unit_created_by().filter(|&g| g != 0))
+        .or_else(|| f.object_guid().filter(|&g| g != 0))
 }
 
 /// Whether an aura table holds `id` (`0x7282a0`'s walk).
@@ -616,50 +752,8 @@ pub(crate) fn spell_usable(
     if !caster_aura_spells_met(d, spells, ctx.self_auras) {
         return (false, false);
     }
-    // Legs 10/10b: no current target is unusable while a state or an aura is required; then the
-    // aura-state bit and the aura spells; then the relation fork.
-    let wants_target_aura = spells.for_difficulty(d.target_aura_spell) != 0;
-    let bars_target_aura = spells.for_difficulty(d.exclude_target_aura_spell) != 0;
-    let target_legs = d.target_aura_state != 0 || wants_target_aura || bars_target_aura;
-    if ctx.target_store.is_none() && (d.target_aura_state != 0 || wants_target_aura) {
+    if !target_legs_met(d, spells, ctx) {
         return (false, false);
-    }
-    if let Some(target) = ctx.target_store.filter(|_| target_legs) {
-        if d.target_aura_state != 0
-            && target.0.unit_aura_state() & (1 << (d.target_aura_state - 1)) == 0
-        {
-            return (false, false);
-        }
-        if !target_aura_spells_met(d, spells, ctx.target_auras) {
-            return (false, false);
-        }
-        match d.implicit_target_a1 {
-            // The attack check.
-            IMPLICIT_TARGET_ENEMY
-                if !can_attack(
-                    Some(target),
-                    ctx.factions,
-                    ctx.reputations,
-                    ctx.party,
-                    Some(ctx.store),
-                ) =>
-            {
-                return (false, false);
-            }
-            // Reaction friendly or better, standing in for the assist check.
-            IMPLICIT_TARGET_FRIEND
-                if ring_reaction(
-                    ctx.factions,
-                    ctx.reputations,
-                    ctx.party,
-                    Some(target),
-                    Some(ctx.store),
-                ) < 4 =>
-            {
-                return (false, false);
-            }
-            _ => {}
-        }
     }
     // Leg 11: only a cooldown-on-event spell greys, while its record is on hold; a running cooldown
     // never greys here.
@@ -1142,6 +1236,12 @@ mod tests {
             runes: None,
             combo_points: 0,
             auto_unshift: false,
+            auto_self_cast: true,
+            active_player: ActivePlayer {
+                store: Some(store),
+                auras: None,
+            },
+            names: None,
         }
     }
 
@@ -2077,11 +2177,153 @@ mod tests {
                 runes: None,
                 combo_points: 0,
                 auto_unshift: false,
+                auto_self_cast: true,
+                active_player: ActivePlayer {
+                    store: Some(&me),
+                    auras: None,
+                },
+                names: None,
             };
             assert_eq!(
                 spell_usable(5308, &execute, &spells, &ctx, &objects, &items, &commands),
                 (expect, false)
             );
         }
+    }
+
+    /// A player of `guid` on faction template `template` (1 human, 2 orc in
+    /// [`crate::spell::targeting::corpse_fixture`]), carrying `UNIT_FLAG` `0x8`.
+    fn player_of(guid: u64, template: u32) -> ObjectStore {
+        ObjectStore(ObjectFields::from_pairs(&[
+            (0, guid as u32),
+            (1, (guid >> 32) as u32),
+            (2, 0x19),
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+            (
+                benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE,
+                template,
+            ),
+            (
+                benilla_protocol::field::FIELD_UNIT_FLAGS,
+                UNIT_FLAG_PVP_ATTACKABLE,
+            ),
+        ]))
+    }
+
+    /// A group of one other guid.
+    struct GroupOf(u64);
+
+    impl crate::target::GroupMembers for GroupOf {
+        fn is_member(&self, guid: u64) -> bool {
+            guid == self.0
+        }
+    }
+
+    /// Leg 10 as `0x80b5d0` walks it, on Power Word: Shield's shape (ExcludeTargetAuraSpell
+    /// Weakened Soul 6788, implicit target 21) and Hand of Protection's (ExcludeTargetAuraSpell
+    /// Forbearance 61988, implicit target 57).
+    #[test]
+    fn the_target_leg_reads_the_target_or_the_player_under_auto_self_cast() {
+        const SHIELD: u32 = 17;
+        let me = player_of(0x10, 1);
+        let ally = player_of(0x20, 1);
+        let enemy = player_of(0x30, 2);
+        let factions = crate::spell::targeting::corpse_fixture::factions();
+        let cooldowns = Cooldowns::default();
+        let reputations = Reputations(Vec::new(), Vec::new());
+        let spells = Spells::empty_for_tests();
+        let items = Items::default();
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let commands = NetCommands(tx);
+        let mut objs = crate::ui_items::TestObjects::new();
+        let objects = objs.get();
+        let carried = crate::ui_items::carried_counts(&me.0, &objects);
+        let spell_mods = SpellModifiers::default();
+        let (_, soul) = crate::unit_auras::aura_unit_for_test(&[6788]);
+        let shield = SpellDisplay {
+            exclude_target_aura_spell: 6788,
+            implicit_target_a1: IMPLICIT_TARGET_FRIEND,
+            ..Default::default()
+        };
+        let base = || UsableCtx {
+            factions: Some(&factions),
+            ..ctx(&me, &cooldowns, &reputations, &carried, &spell_mods)
+        };
+        let walk = |d: &SpellDisplay, c: &UsableCtx| {
+            spell_usable(SHIELD, d, &spells, c, &objects, &items, &commands).0
+        };
+        macro_rules! with {
+            ($target:expr, $auto:expr) => {
+                UsableCtx {
+                    target_store: $target,
+                    auto_self_cast: $auto,
+                    ..base()
+                }
+            };
+        }
+
+        // autoSelfCast on: an enemy target moves the leg to us, so the shield is lit; off, the
+        // enemy stays the unit and the assist check greys it.
+        assert!(walk(&shield, &with!(Some(&enemy), true)));
+        assert!(!walk(&shield, &with!(Some(&enemy), false)));
+        assert!(walk(&shield, &with!(Some(&ally), false)));
+
+        // Our own Weakened Soul greys it with no target and with the enemy, under autoSelfCast.
+        for target in [None, Some(&enemy)] {
+            let c = UsableCtx {
+                active_player: ActivePlayer {
+                    store: Some(&me),
+                    auras: Some(&soul),
+                },
+                ..with!(target, true)
+            };
+            assert!(!walk(&shield, &c), "target {}", target.is_some());
+        }
+        // The enemy's own Weakened Soul does not: the leg reads us.
+        let c = UsableCtx {
+            target_auras: Some(&soul),
+            ..with!(Some(&enemy), true)
+        };
+        assert!(walk(&shield, &c));
+        // An assistable target is read itself: the ally's Weakened Soul greys it.
+        let c = UsableCtx {
+            target_auras: Some(&soul),
+            ..with!(Some(&ally), true)
+        };
+        assert!(!walk(&shield, &c));
+        // No target and autoSelfCast off: no unit, and an excluded aura alone passes.
+        assert!(walk(&shield, &with!(None, false)));
+
+        // Implicit 57 adds the party test: an ally outside the group greys, one inside is lit, and
+        // ourselves always pass.
+        let hand = SpellDisplay {
+            exclude_target_aura_spell: 61988,
+            implicit_target_a1: IMPLICIT_TARGET_PARTY,
+            ..Default::default()
+        };
+        assert!(!walk(&hand, &with!(Some(&ally), true)));
+        let grouped = GroupOf(0x20);
+        let c = UsableCtx {
+            party: &grouped,
+            ..with!(Some(&ally), true)
+        };
+        assert!(walk(&hand, &c));
+        assert!(walk(&hand, &with!(Some(&me), true)));
+        assert!(
+            walk(&hand, &with!(Some(&enemy), true)),
+            "the enemy sends it to us"
+        );
+
+        // ExcludeTargetAuraState opens the leg on its own and fails on a unit holding the state.
+        let excluded = SpellDisplay {
+            exclude_target_aura_state: 2,
+            ..Default::default()
+        };
+        let wounded = ObjectStore(ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 10),
+            (benilla_protocol::field::FIELD_UNIT_AURASTATE, 0x2),
+        ]));
+        assert!(!walk(&excluded, &with!(Some(&wounded), true)));
+        assert!(walk(&excluded, &with!(Some(&ally), true)));
     }
 }
