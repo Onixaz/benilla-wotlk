@@ -605,10 +605,9 @@ pub(super) fn drive_blip_tooltip(
     }
 }
 
-/// The colour an other-floor object's entry draws in: the reference wraps it in `|cffb0b0b0`, which
-/// its tooltip line multiplies with the gold; benilla's markup replaces the colour instead, so the
-/// entry carries that product, gold × 0xb0.
-const OTHER_FLOOR_COLOR: &str = "|cffb09000";
+/// The colour an other-floor object's entry draws in: `0x57c720` wraps it in `|cffb0b0b0...|r`,
+/// which replaces the line colour (`0x6c6cd0`) so the entry draws grey.
+const OTHER_FLOOR_COLOR: &str = "|cffb0b0b0";
 
 /// The minimap tooltip's one text (`0x57c720`), a line per entry: the landmark rim arrows, the
 /// party's and the raid's rim arrows, the landmark icons, then the object blips. An object adds
@@ -904,7 +903,7 @@ mod tests {
 
     /// One text for everything hovered, in the reference's order (`0x57c720`): the landmark rim
     /// arrows, the party's, the raid's, the landmark icons, then the objects; an other-floor
-    /// object's whole entry in the faint colour, an unknown flight master named in colour-blind
+    /// object's whole entry in grey (`|cffb0b0b0`), an unknown flight master named in colour-blind
     /// mode, a tracked trainer's title, and an object whose name is unknown left out.
     #[test]
     fn the_tooltip_lists_every_hovered_blip_in_the_reference_order() {
@@ -939,11 +938,11 @@ mod tests {
         assert_eq!(
             text,
             "Stormwind\nAnna\nBert\nCrown Guard Tower\nWoo Ping\n <Weapon Master>\n\
-             |cffb09000Thor\n <Flight Master>|r"
+             |cffb0b0b0Thor\n <Flight Master>|r"
         );
         let plain = hover_tooltip_text(&hover, None, resolve).unwrap();
         assert!(
-            plain.ends_with("|cffb09000Thor|r"),
+            plain.ends_with("|cffb0b0b0Thor|r"),
             "no colour-blind line: {plain:?}"
         );
         let unknown = MinimapBlipHover {
