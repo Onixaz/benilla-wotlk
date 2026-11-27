@@ -2339,6 +2339,7 @@ fn persist_addon_info_under(
         let dir = addons_root.join(addon.name);
         if let Some(key) = &rec.public_key {
             let mut bytes = Vec::with_capacity(257);
+            // `0x5f4f10` writes the info byte, not the key flag that gated this key.
             bytes.push(rec.info_provided);
             bytes.extend_from_slice(key);
             let path = dir.join(format!("{}.pub", addon.name));

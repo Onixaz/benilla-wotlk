@@ -143,6 +143,12 @@ impl super::UiScript {
         drain_field!(self, load_log.writes)
     }
 
+    /// Queue taint events for `Logs\taint.log` only while `taintLog` >= 1 (`0x52a930` sets or
+    /// clears the callback), so a refusal with the log off captures no stack.
+    pub fn set_taint_log(&mut self, on: bool) {
+        self.model_mut().taint_log_on = on;
+    }
+
     /// Taint events recorded since the last call, for `Logs\taint.log` (`0x518920`).
     pub fn take_taint_log_events(&mut self) -> Vec<super::taint::TaintLogEvent> {
         if self.model_ref().taint_log.is_empty() {

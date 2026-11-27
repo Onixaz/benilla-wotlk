@@ -696,6 +696,7 @@ fn tick_lent(
         for ev in script.take_taint_log_events() {
             crate::client_logs::log_taint_event(&ev);
         }
+        script.set_taint_log(crate::client_logs::taint_log_enabled());
         // ── The handover ────────────────────────────────────────────────────────────────────
         let pass = super::UiPassState {
             live: true,

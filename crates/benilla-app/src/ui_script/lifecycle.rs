@@ -124,12 +124,13 @@ fn install_glue_vm(world: &mut World, screen: super::glue::GlueScreen) -> bool {
 
 /// At every glue resume (`0x4da5f0` -> `0x5f4d90`, `0x5f4d00`), move any loose
 /// `Interface\GlueXML`, `Interface\FrameXML`, and `Interface\AddOns\Blizzard*` (with a matching
-/// `<name>.toc`) folders to `<path>.old`, replacing any existing `.old` folder first.
+/// `<name>.toc`) folders to `<path>.old`, replacing any existing `.old` folder. Only a drop-in
+/// does this, in the install 12340 owns; a dev or player build leaves its `benilla-config/` alone.
 fn relocate_loose_blizzard_interface() {
-    let Some(interface) = crate::local_state::interface_dir() else {
+    let Some(install) = crate::local_state::drop_in_install() else {
         return;
     };
-    relocate_loose_blizzard_interface_under(&interface);
+    relocate_loose_blizzard_interface_under(&install.join("Interface"));
 }
 
 fn relocate_loose_blizzard_interface_under(interface: &std::path::Path) {
@@ -160,17 +161,32 @@ fn relocate_loose_blizzard_interface_under(interface: &std::path::Path) {
     }
 }
 
+/// Move `dir` to `<dir>.old`. The folder is first renamed aside, so a rename that fails (a file
+/// held open) leaves the earlier `.old` in place rather than deleting it for nothing.
 fn move_dir_to_old(dir: &std::path::Path) {
-    let mut old = dir.as_os_str().to_owned();
-    old.push(".old");
-    let old = std::path::PathBuf::from(old);
-    if old.exists() {
-        let _ = std::fs::remove_dir_all(&old);
+    let with_suffix = |suffix: &str| {
+        let mut path = dir.as_os_str().to_owned();
+        path.push(suffix);
+        std::path::PathBuf::from(path)
+    };
+    let old = with_suffix(".old");
+    let aside = with_suffix(".old-new");
+    if aside.exists() {
+        let _ = std::fs::remove_dir_all(&aside);
     }
-    if let Err(e) = std::fs::rename(dir, &old) {
+    if let Err(e) = std::fs::rename(dir, &aside) {
+        warn!("ui_script: moving {} aside: {e}", dir.display());
+        return;
+    }
+    if old.exists() {
+        if let Err(e) = std::fs::remove_dir_all(&old) {
+            warn!("ui_script: removing {}: {e}", old.display());
+        }
+    }
+    if let Err(e) = std::fs::rename(&aside, &old) {
         warn!(
             "ui_script: moving {} to {}: {e}",
-            dir.display(),
+            aside.display(),
             old.display()
         );
     }
@@ -1767,6 +1783,37 @@ mod tests {
         assert!(addons.join("Blizzard_Test.old/Blizzard_Test.toc").is_file());
         assert!(addons.join("Blizzard_NoToc").is_dir());
         assert!(addons.join("ThirdParty/ThirdParty.toc").is_file());
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Only a drop-in moves the loose folders: a dev or player build's `benilla-config/Interface`
+    /// keeps whatever a developer extracted there.
+    #[test]
+    fn only_a_drop_in_moves_loose_blizzard_interface_folders() {
+        use crate::local_state::test_env::{EnvGuard, ENV_LOCK};
+        let _l = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let tmp = std::env::temp_dir().join(format!("benilla-old-gate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let home = tmp.join("benilla-config");
+        let install = tmp.join("install");
+        std::fs::create_dir_all(home.join("Interface/FrameXML")).unwrap();
+        std::fs::create_dir_all(install.join("Interface/FrameXML")).unwrap();
+        let _c = EnvGuard::unset("WOW_CAPTURE");
+        let _h = EnvGuard::set("BENILLA_HOME", home.to_str().unwrap());
+
+        let _d = EnvGuard::unset("BENILLA_TEST_DROP_IN");
+        super::relocate_loose_blizzard_interface();
+        assert!(home.join("Interface/FrameXML").is_dir());
+        assert!(!home.join("Interface/FrameXML.old").exists());
+
+        let _d = EnvGuard::set("BENILLA_TEST_DROP_IN", install.to_str().unwrap());
+        super::relocate_loose_blizzard_interface();
+        assert!(install.join("Interface/FrameXML.old").is_dir());
+        assert!(!install.join("Interface/FrameXML").exists());
+        assert!(home.join("Interface/FrameXML").is_dir());
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

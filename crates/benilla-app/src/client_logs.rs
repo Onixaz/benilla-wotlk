@@ -62,6 +62,7 @@ impl SessionLog {
         match written {
             Ok(()) => {
                 self.opened_path = Some(path);
+                // `0x684ba0` adds the message's own length, not the stamp's or the line end's.
                 self.written_bytes = self.written_bytes.saturating_add(text.len());
             }
             Err(e) => warn!("logs: cannot write {}: {e}", path.display()),
@@ -77,11 +78,11 @@ static TAINT_LOG: Mutex<SessionLog> = Mutex::new(SessionLog::new("taint.log", No
 /// Whether `taintLog` >= 1 (`0x52a930`).
 static TAINT_LOG_ENABLED: AtomicBool = AtomicBool::new(false);
 
-/// Log directory for session logs. Under `cfg(test)`, unrelated parallel tests (such as
-/// `glue_mgr` unit tests) must not scribble into another test's `$BENILLA_HOME`, so writing
-/// through `logs_dir()` is gated on `$BENILLA_TEST_CLIENT_LOGS` in unit tests.
+/// Log directory for session logs; `None` in a unit test, which writes through the `_under`
+/// forms with a folder of its own, so a parallel test's login never lands in another's
+/// `$BENILLA_HOME`.
 fn session_logs_dir() -> Option<PathBuf> {
-    if cfg!(test) && std::env::var_os("BENILLA_TEST_CLIENT_LOGS").is_none() {
+    if cfg!(test) {
         return None;
     }
     crate::local_state::logs_dir()
@@ -96,10 +97,11 @@ pub(crate) fn log_grunt(state: &str, result: &str, detail: &str) {
     let mut log = CONNECTION_LOG
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    log.write_line(
-        &dir,
-        &format!("GRUNT: state: {state} result: {result} {detail}"),
-    );
+    log.write_line(&dir, &grunt_line(state, result, detail));
+}
+
+fn grunt_line(state: &str, result: &str, detail: &str) -> String {
+    format!("GRUNT: state: {state} result: {result} {detail}")
 }
 
 /// Write one `ClientConnection %s: %s code=%s %s` line to `Logs\connection.log` (`0x6b06e3`,
@@ -111,10 +113,11 @@ pub(crate) fn log_client_connection(phase: &str, op: &str, code: &str, result: &
     let mut log = CONNECTION_LOG
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    log.write_line(
-        &dir,
-        &format!("ClientConnection {phase}: {op} code={code} {result}"),
-    );
+    log.write_line(&dir, &connection_line(phase, op, code, result));
+}
+
+fn connection_line(phase: &str, op: &str, code: &str, result: &str) -> String {
+    format!("ClientConnection {phase}: {op} code={code} {result}")
 }
 
 /// Write `Logs\cpu.log` once at startup (`0x86b0d0`).
@@ -317,10 +320,13 @@ pub(crate) fn log_taint_event(ev: &benilla_ui::script::TaintLogEvent) {
     let Some(dir) = session_logs_dir() else {
         return;
     };
-    log_taint_event_under(&dir, ev);
+    let mut log = TAINT_LOG
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    log_taint_event_under(&dir, &mut log, ev);
 }
 
-fn log_taint_event_under(dir: &Path, ev: &benilla_ui::script::TaintLogEvent) {
+fn log_taint_event_under(dir: &Path, log: &mut SessionLog, ev: &benilla_ui::script::TaintLogEvent) {
     let ctx = ev.stack.first().map_or("UNKNOWN", String::as_str);
     let head = match ev.kind {
         benilla_ui::script::TaintLogKind::Global => {
@@ -348,9 +354,6 @@ fn log_taint_event_under(dir: &Path, ev: &benilla_ui::script::TaintLogEvent) {
             )
         }
     };
-    let mut log = TAINT_LOG
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     log.write_line(dir, &head);
     for frame in ev.stack.iter().skip(1) {
         if !frame.is_empty() {
@@ -386,7 +389,7 @@ fn on_taint_log_cvar(ev: On<crate::cvars::CvarChanged>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::local_state::test_env::{EnvGuard, ENV_LOCK};
+    use crate::local_state::test_env::ENV_LOCK;
 
     #[test]
     fn cpu_and_sound_logs_write_stamped_crlf_lines_and_sound_deletes_legacy_file() {
@@ -423,18 +426,17 @@ mod tests {
 
     #[test]
     fn connection_and_taint_logs_follow_12340_format() {
-        let _l = ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let tmp = std::env::temp_dir().join(format!("benilla-clogs2-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
-        let _c = EnvGuard::unset("WOW_CAPTURE");
-        let _h = EnvGuard::set("BENILLA_HOME", tmp.to_str().unwrap());
-        let _e = EnvGuard::set("BENILLA_TEST_CLIENT_LOGS", "1");
+        let logs = tmp.join("Logs");
 
-        log_grunt("LOGIN_STATE_CONNECTING", "LOGIN_OK", "");
-        log_client_connection("Initiating", "COP_CONNECT", "CSTATUS_CONNECTING", "");
-        let conn = std::fs::read_to_string(tmp.join("Logs/connection.log")).unwrap();
+        let mut conn_log = SessionLog::new("connection.log", None);
+        conn_log.write_line(&logs, &grunt_line("LOGIN_STATE_CONNECTING", "LOGIN_OK", ""));
+        conn_log.write_line(
+            &logs,
+            &connection_line("Initiating", "COP_CONNECT", "CSTATUS_CONNECTING", ""),
+        );
+        let conn = std::fs::read_to_string(logs.join("connection.log")).unwrap();
         assert!(
             conn.contains("  GRUNT: state: LOGIN_STATE_CONNECTING result: LOGIN_OK \r\n"),
             "{conn}"
@@ -452,13 +454,9 @@ mod tests {
             taint: "BadAddon".to_owned(),
             stack: vec!["CastSpellByName()".to_owned(), "BadAddon.lua:12".to_owned()],
         };
-        set_taint_log("0");
-        log_taint_event(&ev);
-        assert!(!tmp.join("Logs/taint.log").exists());
-
-        set_taint_log("1");
-        log_taint_event(&ev);
-        let taint = std::fs::read_to_string(tmp.join("Logs/taint.log")).unwrap();
+        let mut taint_log = SessionLog::new("taint.log", None);
+        log_taint_event_under(&logs, &mut taint_log, &ev);
+        let taint = std::fs::read_to_string(logs.join("taint.log")).unwrap();
         assert!(
             taint.contains(
                 "  An action was blocked in combat because of taint from BadAddon - CastSpellByName()\r\n"
@@ -466,7 +464,6 @@ mod tests {
             "{taint}"
         );
         assert!(taint.contains("      BadAddon.lua:12\r\n"), "{taint}");
-        set_taint_log("0");
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

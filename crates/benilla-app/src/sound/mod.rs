@@ -408,7 +408,9 @@ impl Plugin for SoundPlugin {
                         .map_or_else(|| "unknown".to_owned(), |r| format!("{r} Hz"));
                     crate::client_logs::log_sound_init(&format!(
                         "Output initialized (driver={}, rate={rate})",
-                        drivers.name(settings.driver).unwrap_or("System Default")
+                        drivers
+                            .name(settings.driver)
+                            .unwrap_or(engine::SYSTEM_DEFAULT)
                     ));
                     Some(m)
                 }
