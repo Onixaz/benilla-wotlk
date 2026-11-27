@@ -15,7 +15,7 @@ use bevy::prelude::*;
 use crate::model_render::{model_material, MaterialCache, ShadeSel};
 use benilla_assets::materials::WowModelMaterial;
 
-use super::{ChildDraw, ParticleEmitter};
+use super::{ChildDraw, GeometryEmitter, ParticleEmitter};
 
 /// Cap on one emitter's instances (the corpus stays under ~25/s × 3 s); the rest don't draw.
 const MAX_INSTANCES: usize = 128;
@@ -35,7 +35,7 @@ pub(super) fn update_model_particles(
     mut mesh_assets: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<WowModelMaterial>>,
     light: Res<crate::lighting::SharedLightBuffer>,
-    mut emitters: Query<&mut ParticleEmitter>,
+    mut emitters: Query<&mut ParticleEmitter, With<GeometryEmitter>>,
     mut draws: Query<
         (
             &mut Transform,
@@ -155,11 +155,12 @@ pub(super) fn update_model_particles(
             let (mut rgba, size) = (ol.color, ol.size[0] * p.size_mul[0]);
             // The owning model's render alpha, into the instance's `MeshTag` alpha.
             rgba[3] *= emitter.render_alpha();
+            let quat = emitter.tumble.get(i).map_or(Quat::IDENTITY, |tb| tb.quat);
             let tf = if anchored {
                 Transform {
                     // World mode: through the ride frame (identity off a transport).
                     translation: emitter.ride.to_world(p.pos),
-                    rotation: emitter.ride.rotation() * p.quat,
+                    rotation: emitter.ride.rotation() * quat,
                     scale: Vec3::splat(size * inst_scale),
                 }
             } else {
@@ -167,7 +168,7 @@ pub(super) fn update_model_particles(
                     translation: emitter
                         .placement
                         .transform_point(wow_to_bevy(p.pos.to_array())),
-                    rotation: emitter.placement.rotation * p.quat,
+                    rotation: emitter.placement.rotation * quat,
                     scale: Vec3::splat(size * inst_scale),
                 }
             };

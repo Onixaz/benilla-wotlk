@@ -86,8 +86,12 @@ struct Particle {
     phase: u32,
     /// `particle+0xd` bit 1: the first integrate skips the follow-delta add.
     fresh: bool,
-    /// Geometry particles only: stored-frame orientation and body-frame angular velocity; a quad
-    /// particle carries identity and zero.
+}
+
+/// Geometry-particle tumble state, kept parallel to [`ParticleEmitter::particles`] only when
+/// [`ParticleEmitter::geometry`] is authored so quad particles stay within one 64-byte cache line.
+#[derive(Clone, Copy)]
+struct ModelTumble {
     quat: Quat,
     angvel: Vec3,
 }
@@ -147,8 +151,6 @@ impl BirthRolls {
         vel: Vec3,
         age: f32,
         phase: u32,
-        quat: Quat,
-        angvel: Vec3,
     ) -> Particle {
         Particle {
             pos,
@@ -162,8 +164,6 @@ impl BirthRolls {
             cell: self.cell,
             phase,
             fresh: true,
-            quat,
-            angvel,
         }
     }
 }
@@ -210,6 +210,11 @@ pub struct ParticleEmitter {
     /// The anchor's last known world translation, kept so a draining pool stays in place.
     anchor_pos: Vec3,
     particles: Vec<Particle>,
+    /// Per-particle orientation and angular velocity, populated only for geometry emitters.
+    tumble: Vec<ModelTumble>,
+    /// Cached `(eye_submerged, far_side)` verdict for static doodads (`owner` and `anchor` both
+    /// `None`), invalidated whenever `WaterIndex` changes or the eye crosses the water surface.
+    water_cache: Option<(bool, bool)>,
     accumulator: f32,
     /// The emitter origin's world position last frame, the reference's `rt+0x248`: the delta behind
     /// follow-delta and velocity inherit.
@@ -634,6 +639,8 @@ pub fn spawn_emitter(
             light_node: frames.light_node,
             anchor_pos: placement.translation,
             particles: Vec::new(),
+            tumble: Vec::new(),
+            water_cache: None,
             accumulator: 0.0,
             emitter_prev: None,
             inherit_accum: 0.0,
@@ -660,11 +667,19 @@ pub fn spawn_emitter(
     if emitter.recursion.is_some() {
         spawned.insert(PendingChildren);
     }
+    if emitter.geometry.is_some() {
+        spawned.insert(GeometryEmitter);
+    }
     if let Some(node) = lit_node {
         spawned.insert(crate::interior::EmitterLitBy(node));
     }
     Some(spawned.id())
 }
+
+/// An emitter that draws geometry-model instances ([`model::update_model_particles`]), so the
+/// instance pass skips every quad-only emitter.
+#[derive(Component)]
+pub(crate) struct GeometryEmitter;
 
 /// The depth bias that draws a model's effects after its own transparent batches, as the reference
 /// brackets a model's emitters after its batches. Sort keys are view z plus bias, ascending
@@ -871,6 +886,42 @@ pub(crate) mod tests {
             Some(2)
         );
         assert_eq!(seeded_slot(model_emitter(0), EmitClock::Pinned), Some(0));
+    }
+
+    /// `GeometryEmitter` marks only emitters with a geometry model, so `update_model_particles`
+    /// skips quad-only emitters without touching them.
+    #[test]
+    fn geometry_emitter_marker_tracks_geometry_model() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut app = App::new();
+        let quad = model_emitter(0);
+        let mut geom = model_emitter(0);
+        geom.geometry = Some(Handle::default());
+        let (e_quad, e_geom) = app
+            .world_mut()
+            .run_system_once(move |mut c: Commands| {
+                (
+                    spawn_emitter(
+                        &mut c,
+                        &quad,
+                        Transform::IDENTITY,
+                        default(),
+                        EmitClock::Pinned,
+                    )
+                    .unwrap(),
+                    spawn_emitter(
+                        &mut c,
+                        &geom,
+                        Transform::IDENTITY,
+                        default(),
+                        EmitClock::Pinned,
+                    )
+                    .unwrap(),
+                )
+            })
+            .unwrap();
+        assert!(!app.world().entity(e_quad).contains::<GeometryEmitter>());
+        assert!(app.world().entity(e_geom).contains::<GeometryEmitter>());
     }
 
     /// An attached instance spawns `Free`, so a model dtor takes its pool; an ending effect flips

@@ -44,34 +44,16 @@ use bevy::shader::Shader;
 use crate::lighting::SharedLightBuffer;
 
 use super::buffer::{
-    EffectBlend, EffectFog, EffectQuads, EffectTopology, EffectVertex, GpuParticle, GpuPool,
+    EffectBlend, EffectDraw, EffectQuads, EffectTopology, EffectVertex, GpuParticle, GpuPool,
 };
 
-/// One extracted draw: the render-world copy of a [`super::buffer::EffectDraw`].
-struct ExtractedDraw {
-    cam: Entity,
-    main_entity: Entity,
-    texture: AssetId<Image>,
-    blend: EffectBlend,
-    topology: EffectTopology,
-    fog: EffectFog,
-    lit: bool,
-    anchor: Vec3,
-    bias: f32,
-    raster_bias: i32,
-    raster_slope: f32,
-    cam_relative: bool,
-    no_depth_test: bool,
-    range: Range<u32>,
-    /// A booth's light buffer; `None` is the world's.
-    light: Option<Buffer>,
-    clip: Option<Vec4>,
-}
-
-/// One GPU draw after the merge walk: an index range and the bind-group identity its items share.
+/// One GPU draw after the merge walk: an index (or particle-instance) range and the bind-group
+/// identity its items share.
 struct MergedDraw {
     index_range: Range<u32>,
-    /// A GPU-expanded particle run: no vertex buffer, the particle storage group bound.
+    /// Per-instance vertex-id range (`0..6`, `6..12`, or `0..12`) when [`Self::particles`] is set.
+    vert_range: Range<u32>,
+    /// A GPU-expanded particle run: no vertex/index buffer, the particle storage group bound.
     particles: bool,
     texture: AssetId<Image>,
     light: Option<Buffer>,
@@ -83,13 +65,15 @@ struct MergedDraw {
 #[derive(Resource)]
 pub struct EffectMeta {
     vertices: RawBufferVec<EffectVertex>,
-    /// The GPU expansion's pools and particles, and the twinkle table, as storage.
+    /// The GPU expansion's pools, particles, sorted instance-order table and twinkle table.
     pools: RawBufferVec<GpuPool>,
     particles: RawBufferVec<GpuParticle>,
+    particle_order: RawBufferVec<u32>,
     twinkle: RawBufferVec<[f32; 4]>,
     particle_bind_group: Option<BindGroup>,
+    particle_bind_group_ids: Option<(BufferId, BufferId, BufferId, BufferId)>,
     indices: RawBufferVec<u32>,
-    draws: Vec<ExtractedDraw>,
+    draws: Vec<EffectDraw>,
     merged: Vec<MergedDraw>,
     view_bind_group: Option<BindGroup>,
     params: DynamicUniformBuffer<EffectParams>,
@@ -97,6 +81,8 @@ pub struct EffectMeta {
     params_offsets: [u32; 6],
     /// The params buffer last written; a new one invalidates the bind-group cache.
     params_buffer: Option<BufferId>,
+    /// Whether the currently uploaded `params` buffer carries any per-draw clip rows.
+    params_has_clips: bool,
 }
 
 /// One per-draw uniform row: the fog policy and the target-pixel clip (`clip.z <= clip.x`: none).
@@ -112,8 +98,10 @@ impl Default for EffectMeta {
             vertices: RawBufferVec::new(BufferUsages::VERTEX),
             pools: RawBufferVec::new(BufferUsages::STORAGE),
             particles: RawBufferVec::new(BufferUsages::STORAGE),
+            particle_order: RawBufferVec::new(BufferUsages::STORAGE),
             twinkle: RawBufferVec::new(BufferUsages::STORAGE),
             particle_bind_group: None,
+            particle_bind_group_ids: None,
             indices: RawBufferVec::new(BufferUsages::INDEX),
             draws: Vec::new(),
             merged: Vec::new(),
@@ -121,6 +109,7 @@ impl Default for EffectMeta {
             params: DynamicUniformBuffer::default(),
             params_offsets: [0; 6],
             params_buffer: None,
+            params_has_clips: false,
         }
     }
 }
@@ -137,6 +126,10 @@ impl EffectMeta {
         device: &RenderDevice,
         queue: &RenderQueue,
     ) -> HashMap<(u32, [u32; 4]), u32> {
+        let any_clip = self.draws.iter().any(|d| d.clip.is_some());
+        if !any_clip && !self.params_has_clips && self.params_buffer.is_some() {
+            return HashMap::default();
+        }
         const NO_CLIP: Vec4 = Vec4::ZERO;
         let fog_rows = [
             Vec4::new(0.0, 0.0, 0.0, 0.0),
@@ -161,20 +154,23 @@ impl EffectMeta {
         }
         self.params_offsets = offsets;
         let mut clip_rows: HashMap<(u32, [u32; 4]), u32> = HashMap::default();
-        for i in 0..self.draws.len() {
-            let (Some(clip), slot) = (self.draws[i].clip, self.draws[i].fog.slot()) else {
-                continue;
-            };
-            let key = (slot, clip.to_array().map(f32::to_bits));
-            if clip_rows.contains_key(&key) || clip_rows.len() >= MAX_CLIP_ROWS {
-                continue;
+        if any_clip {
+            for i in 0..self.draws.len() {
+                let (Some(clip), slot) = (self.draws[i].clip, self.draws[i].fog.slot()) else {
+                    continue;
+                };
+                let key = (slot, clip.to_array().map(f32::to_bits));
+                if clip_rows.contains_key(&key) || clip_rows.len() >= MAX_CLIP_ROWS {
+                    continue;
+                }
+                let off = self.params.push(&EffectParams {
+                    fog: fog_rows[slot as usize],
+                    clip,
+                });
+                clip_rows.insert(key, off);
             }
-            let off = self.params.push(&EffectParams {
-                fog: fog_rows[slot as usize],
-                clip,
-            });
-            clip_rows.insert(key, off);
         }
+        self.params_has_clips = !clip_rows.is_empty();
         self.params.write_buffer(device, queue);
         self.params_buffer = self.params.buffer().map(|b| b.id());
         clip_rows
@@ -227,6 +223,7 @@ pub fn init_effect_pipeline(mut commands: Commands, asset_server: Res<AssetServe
         &BindGroupLayoutEntries::sequential(
             ShaderStages::VERTEX,
             (
+                storage_buffer_read_only_sized(false, None),
                 storage_buffer_read_only_sized(false, None),
                 storage_buffer_read_only_sized(false, None),
                 storage_buffer_read_only_sized(false, None),
@@ -413,11 +410,9 @@ impl SpecializedRenderPipeline for EffectPipeline {
     }
 }
 
-/// Copy the frame's stream in, and drop the cached bind groups of images that changed.
+/// Drop the cached bind groups of images that changed this frame.
 fn extract_effects(
-    mut meta: ResMut<EffectMeta>,
     mut bind_groups: ResMut<EffectBindGroups>,
-    quads: Extract<Res<EffectQuads>>,
     mut image_events: Extract<MessageReader<AssetEvent<Image>>>,
 ) {
     for event in image_events.read() {
@@ -431,30 +426,11 @@ fn extract_effects(
             AssetEvent::LoadedWithDependencies { .. } => {}
         }
     }
-    meta.draws.clear();
-    meta.draws.extend(quads.draws.iter().map(|d| ExtractedDraw {
-        cam: d.cam,
-        main_entity: d.main_entity,
-        texture: d.texture,
-        blend: d.blend,
-        topology: d.topology,
-        fog: d.fog,
-        lit: d.lit,
-        anchor: d.anchor,
-        bias: d.bias,
-        raster_bias: d.raster_bias,
-        raster_slope: d.raster_slope,
-        cam_relative: d.cam_relative,
-        no_depth_test: d.no_depth_test,
-        range: d.range.clone(),
-        light: d.light.clone(),
-        clip: d.clip,
-    }));
 }
 
-/// Take the frame's vertices, pools and particles from the main world by swap, not copy: the main
-/// world's `begin_effect_frame` clears what it gets back, so the render world's spent buffers return
-/// as its next frame's capacity.
+/// Take the frame's draws, vertices, pools and particles from the main world by swap, not copy:
+/// the main world's `begin_effect_frame` clears what it gets back, so the render world's spent
+/// buffers return as its next frame's capacity.
 fn swap_effect_streams(
     mut meta: ResMut<EffectMeta>,
     mut main_world: ResMut<bevy::render::MainWorld>,
@@ -463,6 +439,8 @@ fn swap_effect_streams(
         return;
     };
     let quads = quads.bypass_change_detection();
+    meta.draws.clear();
+    std::mem::swap(&mut meta.draws, &mut quads.draws);
     meta.vertices.clear();
     std::mem::swap(meta.vertices.values_mut(), &mut quads.verts);
     meta.pools.clear();
@@ -506,24 +484,32 @@ fn queue_effects(
             continue;
         };
         let rangefinder = view.rangefinder3d();
+        let mut last_pipe: Option<(
+            EffectPipelineKey,
+            bevy::render::render_resource::CachedRenderPipelineId,
+        )> = None;
         for (i, draw) in meta.draws.iter().enumerate() {
             if view.retained_view_entity.main_entity != MainEntity::from(draw.cam) {
                 continue;
             }
-            let pipeline = pipelines.specialize(
-                &pipeline_cache,
-                &effect_pipeline,
-                EffectPipelineKey {
-                    samples: msaa.samples(),
-                    hdr: view.hdr,
-                    blend: draw.blend,
-                    raster_bias: draw.raster_bias,
-                    raster_slope_bits: draw.raster_slope.to_bits(),
-                    lit: draw.lit,
-                    no_depth_test: draw.no_depth_test,
-                    particles: draw.topology == EffectTopology::Particles,
-                },
-            );
+            let key = EffectPipelineKey {
+                samples: msaa.samples(),
+                hdr: view.hdr,
+                blend: draw.blend,
+                raster_bias: draw.raster_bias,
+                raster_slope_bits: draw.raster_slope.to_bits(),
+                lit: draw.lit,
+                no_depth_test: draw.no_depth_test,
+                particles: draw.topology == EffectTopology::Particles,
+            };
+            let pipeline = match last_pipe {
+                Some((k, id)) if k == key => id,
+                _ => {
+                    let id = pipelines.specialize(&pipeline_cache, &effect_pipeline, key);
+                    last_pipe = Some((key, id));
+                    id
+                }
+            };
             phase.add(Transparent3d {
                 // The material path's metric: the sort point's view z plus the rung.
                 distance: rangefinder.distance(&draw.anchor) + draw.bias,
@@ -539,12 +525,14 @@ fn queue_effects(
     }
 }
 
-/// What adjacent items must share to merge: pipeline, texture, light buffer and params row.
+/// What adjacent items must share to merge: pipeline, texture, light buffer, params row and
+/// (for GPU-expanded particles) the per-instance vertex-id span (`0..6`, `6..12`, or `0..12`).
 type RunKey = (
     bevy::render::render_resource::CachedRenderPipelineId,
     AssetId<Image>,
     Option<BufferId>,
     u32,
+    (u32, u32),
 );
 
 /// The last frame's `[effect items, merged draws]`, which `FPS_PROBE` prints as `fx=`.
@@ -594,12 +582,16 @@ fn prepare_effects(
             v.pos[2] -= offset[2];
         }
     }
-    meta.vertices.write_buffer(&device, &queue);
+    if !meta.vertices.is_empty() {
+        meta.vertices.write_buffer(&device, &queue);
+    }
     // Storage bindings take no empty buffer: an idle frame binds one zeroed row.
-    if meta.pools.is_empty() {
+    let had_pools = !meta.pools.is_empty();
+    let had_particles = !meta.particles.is_empty();
+    if !had_pools {
         meta.pools.push(GpuPool::default());
     }
-    if meta.particles.is_empty() {
+    if !had_particles {
         meta.particles.push(GpuParticle::default());
     }
     if meta.twinkle.is_empty() {
@@ -608,8 +600,12 @@ fn prepare_effects(
         }
         meta.twinkle.write_buffer(&device, &queue);
     }
-    meta.pools.write_buffer(&device, &queue);
-    meta.particles.write_buffer(&device, &queue);
+    if had_pools || meta.pools.buffer().is_none() {
+        meta.pools.write_buffer(&device, &queue);
+    }
+    if had_particles || meta.particles.buffer().is_none() {
+        meta.particles.write_buffer(&device, &queue);
+    }
 
     // The merge walk, over each live view's sorted items, never the raw phase map (an unswept
     // entry carries a dead frame's indices): a run of items sharing a [`RunKey`] becomes one
@@ -619,9 +615,10 @@ fn prepare_effects(
     // range, then the frame's totals.
     let trace = effect_trace();
     let mut trace_lines: Vec<String> = Vec::new();
-    // Rebuilt every frame: the clip set is per-frame, and the runs key on the row offsets.
+    // Rebuilt when any clipped draw is present (or clearing last frame's clips).
     let clip_rows = meta.build_params(&device, &queue);
     meta.indices.clear();
+    meta.particle_order.clear();
     meta.merged.clear();
     let mut n_items = 0u32;
     let mut walked: Vec<bevy::render::view::RetainedViewEntity> = Vec::new();
@@ -658,29 +655,37 @@ fn prepare_effects(
                 continue;
             };
             n_items += 1;
-            let index_start = meta.indices.len() as u32;
-            match draw.topology {
+            let (run_start, run_end) = match draw.topology {
                 EffectTopology::Quads => {
+                    let start = meta.indices.len() as u32;
+                    let idx_vec = meta.indices.values_mut();
+                    let quad_count = (draw.range.end - draw.range.start) as usize / 4;
+                    idx_vec.reserve(quad_count * 6);
                     let mut b = draw.range.start;
                     while b < draw.range.end {
-                        for k in [b, b + 1, b + 2, b, b + 2, b + 3] {
-                            meta.indices.push(k);
-                        }
+                        idx_vec.extend_from_slice(&[b, b + 1, b + 2, b, b + 2, b + 3]);
                         b += 4;
                     }
+                    (start, idx_vec.len() as u32)
                 }
-                // A particle's 12 vertex ids, its head then its tail quad: the shader's corners.
-                EffectTopology::Tris | EffectTopology::Particles => {
-                    for k in draw.range.clone() {
-                        meta.indices.push(k);
-                    }
+                EffectTopology::Tris => {
+                    let start = meta.indices.len() as u32;
+                    let idx_vec = meta.indices.values_mut();
+                    idx_vec.extend(draw.range.clone());
+                    (start, idx_vec.len() as u32)
                 }
-            }
-            let index_end = meta.indices.len() as u32;
+                // One u32 per particle in sorted draw order, drawn instanced without an index buffer.
+                EffectTopology::Particles => {
+                    let start = meta.particle_order.len() as u32;
+                    let order_vec = meta.particle_order.values_mut();
+                    order_vec.extend(draw.range.clone());
+                    (start, order_vec.len() as u32)
+                }
+            };
             if let (true, Some(lane)) = (trace, decal_lane(draw.bias)) {
                 trace_lines.push(format!(
                     "  item {i}: {lane} anchor {:.1?}, dist {:.1}, verts {}, indices \
-                     {index_start}..{index_end}, tex {:?}",
+                     {run_start}..{run_end}, tex {:?}",
                     draw.anchor,
                     item.distance,
                     draw.range.len(),
@@ -699,6 +704,7 @@ fn prepare_effects(
                 draw.texture,
                 draw.light.as_ref().map(|b| b.id()),
                 params_offset,
+                (draw.particle_verts.start, draw.particle_verts.end),
             );
             match &mut open {
                 Some((_, run_len, open_key)) if *open_key == key => {
@@ -706,13 +712,14 @@ fn prepare_effects(
                         .last_mut()
                         .expect("open run has a merged record")
                         .index_range
-                        .end = index_end;
+                        .end = run_end;
                     *run_len += 1;
                 }
                 _ => {
                     close(&mut phase.items, &mut open, meta.merged.len());
                     meta.merged.push(MergedDraw {
-                        index_range: index_start..index_end,
+                        index_range: run_start..run_end,
+                        vert_range: draw.particle_verts.clone(),
                         particles: draw.topology == EffectTopology::Particles,
                         texture: draw.texture,
                         light: draw.light.clone(),
@@ -731,15 +738,23 @@ fn prepare_effects(
     );
     if trace {
         info!(
-            "effect trace: {} draws, {} merged, {} indices; shadow items:\n{}",
+            "effect trace: {} draws, {} merged, {} indices, {} particle instances; shadow items:\n{}",
             meta.draws.len(),
             meta.merged.len(),
             meta.indices.len(),
+            meta.particle_order.len(),
             trace_lines.join("\n")
         );
     }
     if !meta.indices.is_empty() {
         meta.indices.write_buffer(&device, &queue);
+    }
+    let had_order = !meta.particle_order.is_empty();
+    if !had_order {
+        meta.particle_order.push(0);
+    }
+    if had_order || meta.particle_order.buffer().is_none() {
+        meta.particle_order.write_buffer(&device, &queue);
     }
 }
 
@@ -762,21 +777,27 @@ fn prepare_effect_bind_groups(
         &pipeline_cache.get_bind_group_layout(&pipeline.view_layout),
         &BindGroupEntries::single(view_binding),
     ));
-    if let (Some(pools), Some(particles), Some(twinkle)) = (
+    if let (Some(pools), Some(particles), Some(twinkle), Some(order)) = (
         meta.pools.buffer(),
         meta.particles.buffer(),
         meta.twinkle.buffer(),
+        meta.particle_order.buffer(),
     ) {
-        let group = device.create_bind_group(
-            "effect_particle_bind_group",
-            &pipeline_cache.get_bind_group_layout(&pipeline.particle_layout),
-            &BindGroupEntries::sequential((
-                pools.as_entire_binding(),
-                particles.as_entire_binding(),
-                twinkle.as_entire_binding(),
-            )),
-        );
-        meta.particle_bind_group = Some(group);
+        let ids = (pools.id(), particles.id(), twinkle.id(), order.id());
+        if meta.particle_bind_group_ids != Some(ids) {
+            let group = device.create_bind_group(
+                "effect_particle_bind_group",
+                &pipeline_cache.get_bind_group_layout(&pipeline.particle_layout),
+                &BindGroupEntries::sequential((
+                    pools.as_entire_binding(),
+                    particles.as_entire_binding(),
+                    twinkle.as_entire_binding(),
+                    order.as_entire_binding(),
+                )),
+            );
+            meta.particle_bind_group = Some(group);
+            meta.particle_bind_group_ids = Some(ids);
+        }
     }
     let Some(light) = light else { return };
     let Some(params_binding) = meta.params.binding() else {
@@ -866,22 +887,34 @@ impl<P: PhaseItem> RenderCommand<P> for DrawEffectBatch {
         let Some(image_bind_group) = bind_groups.into_inner().images.get(&key) else {
             return RenderCommandResult::Skip;
         };
-        let Some(indices) = meta.indices.buffer() else {
-            return RenderCommandResult::Failure("effect lane buffers not available");
-        };
         pass.set_bind_group(1, image_bind_group, &[draw.params_offset]);
         if draw.particles {
-            // GPU-expanded: corners from the storage group, no vertex stream (it may be empty).
+            // GPU-expanded: corners from the storage group, instanced over sorted particle ids.
             let Some(group) = meta.particle_bind_group.as_ref() else {
                 return RenderCommandResult::Skip;
             };
+            if draw.vert_range.is_empty() || draw.index_range.is_empty() {
+                return RenderCommandResult::Success;
+            }
             pass.set_bind_group(2, group, &[]);
-        } else {
-            let Some(vertices) = meta.vertices.buffer() else {
-                return RenderCommandResult::Failure("effect lane buffers not available");
-            };
-            pass.set_vertex_buffer(0, vertices.slice(..));
+            if effect_trace() {
+                info!(
+                    "effect draw: merged {} particles verts {:?} instances {:?}",
+                    item.batch_range().start,
+                    draw.vert_range,
+                    draw.index_range
+                );
+            }
+            pass.draw(draw.vert_range.clone(), draw.index_range.clone());
+            return RenderCommandResult::Success;
         }
+        let Some(indices) = meta.indices.buffer() else {
+            return RenderCommandResult::Failure("effect lane buffers not available");
+        };
+        let Some(vertices) = meta.vertices.buffer() else {
+            return RenderCommandResult::Failure("effect lane buffers not available");
+        };
+        pass.set_vertex_buffer(0, vertices.slice(..));
         pass.set_index_buffer(indices.slice(..), IndexFormat::Uint32);
         // `$WOW_EFFECT_TRACE`: what `draw_indexed` actually ran.
         if effect_trace() {

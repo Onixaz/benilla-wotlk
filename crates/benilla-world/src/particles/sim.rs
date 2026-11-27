@@ -13,21 +13,58 @@ use super::buffer::{
 use super::quads::{expand_quads, CamBasis, DrawFrame};
 use super::{
     accumulate_emission, emit_local, life_of, next_u32, rand01, rand_s11, BirthRolls, ChildDraw,
-    ChildEmitter, EmitterFade, OwnerLoss, Particle, ParticleEmitter, ParticleTuning, MAX_PARTICLES,
+    ChildEmitter, EmitterFade, ModelTumble, OwnerLoss, Particle, ParticleEmitter, ParticleTuning,
+    MAX_PARTICLES,
 };
 
 /// The emitter-constant inputs of one integrator step ([`integrate_particle`]).
 struct StepEnv {
     dt: f32,
-    gravity: f32,
-    drag: f32,
+    half_g_dt2: f32,
+    g_dt: f32,
+    drag_f: f32,
     anchored: bool,
+    has_follow: bool,
     kill_origin: Option<Vec3>,
     /// The frame's shared follow-delta vector, stored frame (zero when unauthored).
     follow: Vec3,
+    /// Precomputed life when `lifespan_vary == 0.0`, else `None` to vary per particle.
+    const_life: Option<f32>,
     /// The emitter's live lifespan and its variance, which every live particle's life follows.
     lifespan: f32,
     lifespan_vary: f32,
+}
+
+impl StepEnv {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        dt: f32,
+        gravity: f32,
+        drag: f32,
+        anchored: bool,
+        kill_origin: Option<Vec3>,
+        follow: Vec3,
+        lifespan: f32,
+        lifespan_vary: f32,
+    ) -> Self {
+        Self {
+            dt,
+            half_g_dt2: 0.5 * gravity * dt * dt,
+            g_dt: gravity * dt,
+            drag_f: if drag != 0.0 {
+                (dt * drag).min(1.0)
+            } else {
+                0.0
+            },
+            anchored,
+            has_follow: follow != Vec3::ZERO,
+            kill_origin,
+            follow,
+            const_life: (lifespan_vary == 0.0).then(|| lifespan.max(0.001)),
+            lifespan,
+            lifespan_vary,
+        }
+    }
 }
 
 /// One step of the reference integrator: age and kill; the follow-delta add, skipped on a fresh
@@ -35,37 +72,35 @@ struct StepEnv {
 /// `v.up −= g·dt`); drag `v −= min(dt·drag, 1)·v`. A kill-outbound emitter (`rt 0x800`) kills once
 /// `dot(stepVelocity, pos − origin) > 0`, with the pre-gravity velocity and the emitter origin in
 /// the stored frame. False is dead.
+#[inline]
 fn integrate_particle(p: &mut Particle, env: &StepEnv) -> bool {
-    let (dt, g) = (env.dt, env.gravity);
+    let dt = env.dt;
     p.age += dt;
     // The life follows the emitter's live lifespan, varied by the particle's own seed (`0x97de97`).
-    p.life = life_of(env.lifespan, p.life_seed, env.lifespan_vary);
+    p.life = match env.const_life {
+        Some(life) => life,
+        None => life_of(env.lifespan, p.life_seed, env.lifespan_vary),
+    };
     if p.age >= p.life {
         return false;
     }
     // Follow-delta (file 0x4000), skipped on the first integrate (particle+0xd).
     if p.fresh {
         p.fresh = false;
-    } else {
+    } else if env.has_follow {
         p.pos += env.follow;
-    }
-    // Model-particle tumble: a body-frame Rodrigues step, skipped under 1e-4.
-    let theta = p.angvel.length();
-    if theta > 1e-4 {
-        p.quat = (p.quat * Quat::from_axis_angle(p.angvel / theta, theta * dt)).normalize();
     }
     let step_vel = p.vel;
     p.pos += p.vel * dt;
     if env.anchored {
-        p.pos.y -= 0.5 * g * dt * dt;
-        p.vel.y -= g * dt;
+        p.pos.y -= env.half_g_dt2;
+        p.vel.y -= env.g_dt;
     } else {
-        p.pos.z -= 0.5 * g * dt * dt;
-        p.vel.z -= g * dt;
+        p.pos.z -= env.half_g_dt2;
+        p.vel.z -= env.g_dt;
     }
-    if env.drag != 0.0 {
-        let f = (dt * env.drag).min(1.0);
-        p.vel -= f * p.vel;
+    if env.drag_f != 0.0 {
+        p.vel -= env.drag_f * p.vel;
     }
     if let Some(origin) = env.kill_origin {
         if step_vel.dot(p.pos - origin) > 0.0 {
@@ -73,6 +108,69 @@ fn integrate_particle(p: &mut Particle, env: &StepEnv) -> bool {
         }
     }
     true
+}
+
+/// Minimum live particles in one emitter before its walk integration fans out across the compute
+/// pool in [`WALK_SPLIT_CHUNK`]-particle slices.
+const WALK_SPLIT_MIN: usize = 256;
+const WALK_SPLIT_CHUNK: usize = 128;
+
+/// Integrate every particle in `particles` and drop dead ones; large pools split across the
+/// compute pool so one giant emitter does not stall the walk on a single thread.
+fn integrate_pool(particles: &mut Vec<Particle>, env: &StepEnv) {
+    if particles.len() >= WALK_SPLIT_MIN {
+        if let Some(pool) = bevy::tasks::ComputeTaskPool::try_get() {
+            pool.scope(|scope| {
+                for chunk in particles.chunks_mut(WALK_SPLIT_CHUNK) {
+                    scope.spawn(async move {
+                        for p in chunk {
+                            if !integrate_particle(p, env) {
+                                p.age = f32::INFINITY;
+                            }
+                        }
+                    });
+                }
+            });
+            particles.retain(|p| p.age.is_finite());
+            return;
+        }
+    }
+    particles.retain_mut(|p| integrate_particle(p, env));
+}
+
+/// Integrate `particles` and, for geometry emitters, advance and compact their parallel `tumble`
+/// array in lockstep. Quad emitters leave `tumble` empty and take [`integrate_pool`] directly.
+fn integrate_pool_with_tumble(
+    particles: &mut Vec<Particle>,
+    tumble: &mut Vec<ModelTumble>,
+    env: &StepEnv,
+) {
+    if tumble.is_empty() {
+        integrate_pool(particles, env);
+        return;
+    }
+    let dt = env.dt;
+    let mut write = 0usize;
+    let len = particles.len().min(tumble.len());
+    for read in 0..len {
+        let alive = integrate_particle(&mut particles[read], env);
+        if !alive {
+            continue;
+        }
+        let mut tb = tumble[read];
+        // Model-particle tumble: a body-frame Rodrigues step, skipped under 1e-4.
+        let theta = tb.angvel.length();
+        if theta > 1e-4 {
+            tb.quat = (tb.quat * Quat::from_axis_angle(tb.angvel / theta, theta * dt)).normalize();
+        }
+        if write != read {
+            particles.swap(write, read);
+        }
+        tumble[write] = tb;
+        write += 1;
+    }
+    particles.truncate(write);
+    tumble.truncate(write);
 }
 
 /// The follow-delta fraction (file flag `0x4000`, rt `0x40000`): the share of the emitter's
@@ -156,8 +254,6 @@ fn drive_child(
                 vel,
                 age,
                 phase,
-                Quat::IDENTITY,
-                Vec3::ZERO,
             ));
         }
     }
@@ -449,6 +545,8 @@ pub(super) fn simulate_particles(
     let cam_fwd = Vec3::from(cam_tf.forward());
     // Built once per walk, the same values the model visibility gate uses.
     let (farclip, exterior_gate, camera_instance) = gates.scene(Some((cam_tf, projection)));
+    let eye_submerged = interleave.eye_submerged();
+    let water_dirty = interleave.surfaces_changed();
     let dump_frame = dumps.depth_frame(time.elapsed_secs());
     let emit_dump = dumps.emit.due(time.elapsed_secs());
 
@@ -457,74 +555,33 @@ pub(super) fn simulate_particles(
     // collected per thread and applied after, the pools in entity order so the stream is stable.
     let scratch = &mut *scratch;
     let dumps_cell = std::sync::Mutex::new(&mut dumps);
-    emitters.par_iter_mut().for_each(
-        |(
-            entity,
-            mut emitter,
-            mut entity_tf,
-            mut entity_global,
-            fade,
-            layers,
-            light_override,
-            lit_by,
-        )| {
-            // The camera the quads face, the LOD measures from and the draw targets: a booth-layered
-            // emitter's booth camera, else the world camera.
-            let booth = layers
-                .filter(|l| !l.intersects(&RenderLayers::default()))
-                .and_then(|l| booth_cams.iter().find(|(_, _, cl, ..)| cl.intersects(l)));
-            let is_booth = booth.is_some();
-            // A frozen scene holds pool and age, pushes no quads, and hides model instances once.
-            if scene_frozen(
-                booth.map(|(_, _, _, c, throttled)| (c.is_active, throttled)),
-                emitter.frozen,
-                emitter.draining,
-            ) {
-                if !emitter.gated {
-                    emitter.gated = true;
-                    for slot in &emitter.model_instances {
-                        for (e, _) in &slot.meshes {
-                            scratch.hides.borrow_local_mut().push(*e);
-                        }
-                    }
-                }
-                return;
-            }
-            if is_booth {
-                emitter.gated = false;
-            }
-            let (draw_cam, e_cam_pos, e_right, e_up) = match booth {
-                Some((cam_entity, tf, ..)) => {
-                    let (_, rot, _) = tf.to_scale_rotation_translation();
-                    (cam_entity, tf.translation(), rot * Vec3::X, rot * Vec3::Y)
-                }
-                None => (world_cam, cam_pos, cam_right, cam_up),
-            };
-            // The draw-set gate: the reference ticks an emitter only while its owner doodad is in
-            // the frame's worklist, by frustum sphere and distance-fade cutoff (the sphere is
-            // `[rec+0x68]`). Outside it pool and age freeze (`[obj+0x88]` accumulates nothing) and
-            // resume with one frame's dt. The far-clip term is needed: our projection's far plane
-            // is past `farclip`, and a level-4 owner fades only past 1200 yd.
-            if let Some(f) = fade.as_ref() {
-                let in_set = f.in_draw_set(
-                    cam_pos,
-                    cam_fwd,
-                    farclip,
-                    // Lateral planes only: the depth bound is the farclip term.
-                    frustum.intersects_sphere(
-                        &CullSphere {
-                            center: f.center.into(),
-                            radius: f.radius,
-                        },
-                        false,
-                    ),
-                    // From inside a WMO, a doodad outside is not in the worklist.
-                    f.exterior_admitted(&exterior_gate, camera_instance),
-                    // The window admits a whole building, not the sealed room the prop stands in.
-                    gates.room_admits(f),
-                );
-                if !in_set {
-                    // Frozen: nothing pushed is nothing drawn; model instances hide once.
+    // Fine-grained batches balance active emitters of varying sizes against culled/dormant ones.
+    emitters
+        .par_iter_mut()
+        .batching_strategy(bevy::ecs::batching::BatchingStrategy::fixed(8))
+        .for_each(
+            |(
+                entity,
+                mut emitter,
+                mut entity_tf,
+                mut entity_global,
+                fade,
+                layers,
+                light_override,
+                lit_by,
+            )| {
+                // The camera the quads face, the LOD measures from and the draw targets: a booth-layered
+                // emitter's booth camera, else the world camera.
+                let booth = layers
+                    .filter(|l| !l.intersects(&RenderLayers::default()))
+                    .and_then(|l| booth_cams.iter().find(|(_, _, cl, ..)| cl.intersects(l)));
+                let is_booth = booth.is_some();
+                // A frozen scene holds pool and age, pushes no quads, and hides model instances once.
+                if scene_frozen(
+                    booth.map(|(_, _, _, c, throttled)| (c.is_active, throttled)),
+                    emitter.frozen,
+                    emitter.draining,
+                ) {
                     if !emitter.gated {
                         emitter.gated = true;
                         for slot in &emitter.model_instances {
@@ -535,24 +592,41 @@ pub(super) fn simulate_particles(
                     }
                     return;
                 }
-                emitter.gated = false;
-            } else if !is_booth && !emitter.draining {
-                // Entity-owned emitters carry no `EmitterFade`, and vmangos streams transports
-                // map-wide, so the far-clip wall applies to them too: the reference ticks particles
-                // only in the animate step of a model the frame draws. Exempt: booth emitters (their
-                // own camera), draining ones (a frozen pool never empties), a vanished owner (it
-                // drains). The subject is the owner's live position.
-                let subject = match emitter.owner {
-                    Some(o) => owners.at(o),
-                    None => Some(emitter.anchor_pos),
+                if is_booth {
+                    emitter.gated = false;
+                }
+                let (draw_cam, e_cam_pos, e_right, e_up) = match booth {
+                    Some((cam_entity, tf, ..)) => {
+                        let (_, rot, _) = tf.to_scale_rotation_translation();
+                        (cam_entity, tf.translation(), rot * Vec3::X, rot * Vec3::Y)
+                    }
+                    None => (world_cam, cam_pos, cam_right, cam_up),
                 };
-                // And the owner's own draw verdict: an emitter is a world root, so a hide on its
-                // model's hierarchy never reaches it.
-                let owner_hidden = emitter.owner.is_some_and(|o| owners.hidden(o));
-                if let Some(at) = subject {
-                    if owner_hidden
-                        || !crate::view::within_farclip(farclip, cam_pos, cam_fwd, at, 0.0)
-                    {
+                // The draw-set gate: the reference ticks an emitter only while its owner doodad is in
+                // the frame's worklist, by frustum sphere and distance-fade cutoff (the sphere is
+                // `[rec+0x68]`). Outside it pool and age freeze (`[obj+0x88]` accumulates nothing) and
+                // resume with one frame's dt. The far-clip term is needed: our projection's far plane
+                // is past `farclip`, and a level-4 owner fades only past 1200 yd.
+                if let Some(f) = fade.as_ref() {
+                    let in_set = f.in_draw_set(
+                        cam_pos,
+                        cam_fwd,
+                        farclip,
+                        // Lateral planes only: the depth bound is the farclip term.
+                        frustum.intersects_sphere(
+                            &CullSphere {
+                                center: f.center.into(),
+                                radius: f.radius,
+                            },
+                            false,
+                        ),
+                        // From inside a WMO, a doodad outside is not in the worklist.
+                        f.exterior_admitted(&exterior_gate, camera_instance),
+                        // The window admits a whole building, not the sealed room the prop stands in.
+                        gates.room_admits(f),
+                    );
+                    if !in_set {
+                        // Frozen: nothing pushed is nothing drawn; model instances hide once.
                         if !emitter.gated {
                             emitter.gated = true;
                             for slot in &emitter.model_instances {
@@ -564,91 +638,121 @@ pub(super) fn simulate_particles(
                         return;
                     }
                     emitter.gated = false;
-                }
-            }
-            let ParticleEmitter {
-                def,
-                ride,
-                placement,
-                owner,
-                on_owner_loss,
-                draining,
-                alpha_src,
-                alpha,
-                anchor,
-                anchor_pos,
-                particles,
-                accumulator,
-                emitter_prev,
-                inherit_accum,
-                inherit_vel,
-                gate_prev,
-                age,
-                host,
-                seq,
-                rng,
-                owner_reach,
-                size_scale,
-                water_bound,
-                texture,
-                recursion: _,
-                light_node: _,
-                children,
-                geometry: _,
-                model_instances,
-                gated: _,
-                frozen: _,
-                clip,
-                gpu_template,
-            } = &mut *emitter;
-            // The water test's model frame, before `anchor` is shadowed: the instance root. A joint
-            // owner only seeds the room walk, as a joint's transform is not the instance matrix.
-            let water_model = (*anchor).or(*owner);
-            let water_gt = (*anchor).and_then(|e| owners.transforms.get(e).ok().copied());
-            let water_bound = *water_bound;
-            *age += dt;
-            let (clock_seq, elapsed_s) = match *host {
-                Some(h) => match hosts
-                    .get(h)
-                    .ok()
-                    .and_then(|(p, a)| crate::doodad_anim::playing_seq(p, a))
-                {
-                    Some((s, t)) => {
-                        *seq = Some(s);
-                        (Some(s), t)
-                    }
-                    None => (*seq, 0.0),
-                },
-                None => (*seq, *age),
-            };
-            // The global-sequence cursor: the spawn age is `sceneNow − attach`.
-            let gseq_now = f64::from(*age);
-            // `anchored` is world mode (file flag `0x10` clear); see [`Particle`].
-            let anchored = !def.model_space();
-
-            // 0. Track a streamed owner's transform; once it is gone, free or drain per
-            //    `on_owner_loss`.
-            if let Some(o) = *owner {
-                match owners.transforms.get(o) {
-                    Ok(gt) => *placement = gt.compute_transform(),
-                    Err(_) => {
-                        *owner = None;
-                        match *on_owner_loss {
-                            // The reference frees a model's emitters in its destructor: nothing drains.
-                            OwnerLoss::Free => {
-                                for slot in model_instances.iter() {
+                } else if !is_booth && !emitter.draining {
+                    // Entity-owned emitters carry no `EmitterFade`, and vmangos streams transports
+                    // map-wide, so the far-clip wall applies to them too: the reference ticks particles
+                    // only in the animate step of a model the frame draws. Exempt: booth emitters (their
+                    // own camera), draining ones (a frozen pool never empties), a vanished owner (it
+                    // drains). The subject is the owner's live position.
+                    let subject = match emitter.owner {
+                        Some(o) => owners.at(o),
+                        None => Some(emitter.anchor_pos),
+                    };
+                    // And the owner's own draw verdict: an emitter is a world root, so a hide on its
+                    // model's hierarchy never reaches it.
+                    let owner_hidden = emitter.owner.is_some_and(|o| owners.hidden(o));
+                    if let Some(at) = subject {
+                        if owner_hidden
+                            || !crate::view::within_farclip(farclip, cam_pos, cam_fwd, at, 0.0)
+                        {
+                            if !emitter.gated {
+                                emitter.gated = true;
+                                for slot in &emitter.model_instances {
                                     for (e, _) in &slot.meshes {
-                                        scratch.despawns.borrow_local_mut().push(*e);
+                                        scratch.hides.borrow_local_mut().push(*e);
                                     }
                                 }
-                                scratch.despawns.borrow_local_mut().push(entity);
-                                return;
                             }
-                            OwnerLoss::Drain => {
-                                *draining = true;
-                                // The pool lives out its lifespans in place, like a missile's impact.
-                                if !particles.is_empty() {
-                                    debug!(
+                            return;
+                        }
+                        emitter.gated = false;
+                    }
+                }
+                let ParticleEmitter {
+                    def,
+                    ride,
+                    placement,
+                    owner,
+                    on_owner_loss,
+                    draining,
+                    alpha_src,
+                    alpha,
+                    anchor,
+                    anchor_pos,
+                    particles,
+                    tumble,
+                    water_cache,
+                    accumulator,
+                    emitter_prev,
+                    inherit_accum,
+                    inherit_vel,
+                    gate_prev,
+                    age,
+                    host,
+                    seq,
+                    rng,
+                    owner_reach,
+                    size_scale,
+                    water_bound,
+                    texture,
+                    recursion: _,
+                    light_node: _,
+                    children,
+                    geometry: _,
+                    model_instances,
+                    gated: _,
+                    frozen: _,
+                    clip,
+                    gpu_template,
+                } = &mut *emitter;
+                // The water test's model frame, before `anchor` is shadowed: the instance root. A joint
+                // owner only seeds the room walk, as a joint's transform is not the instance matrix.
+                let water_model = (*anchor).or(*owner);
+                let water_gt = (*anchor).and_then(|e| owners.transforms.get(e).ok().copied());
+                let water_bound = *water_bound;
+                *age += dt;
+                let (clock_seq, elapsed_s) = match *host {
+                    Some(h) => match hosts
+                        .get(h)
+                        .ok()
+                        .and_then(|(p, a)| crate::doodad_anim::playing_seq(p, a))
+                    {
+                        Some((s, t)) => {
+                            *seq = Some(s);
+                            (Some(s), t)
+                        }
+                        None => (*seq, 0.0),
+                    },
+                    None => (*seq, *age),
+                };
+                // The global-sequence cursor: the spawn age is `sceneNow − attach`.
+                let gseq_now = f64::from(*age);
+                // `anchored` is world mode (file flag `0x10` clear); see [`Particle`].
+                let anchored = !def.model_space();
+
+                // 0. Track a streamed owner's transform; once it is gone, free or drain per
+                //    `on_owner_loss`.
+                if let Some(o) = *owner {
+                    match owners.transforms.get(o) {
+                        Ok(gt) => *placement = gt.compute_transform(),
+                        Err(_) => {
+                            *owner = None;
+                            match *on_owner_loss {
+                                // The reference frees a model's emitters in its destructor: nothing drains.
+                                OwnerLoss::Free => {
+                                    for slot in model_instances.iter() {
+                                        for (e, _) in &slot.meshes {
+                                            scratch.despawns.borrow_local_mut().push(*e);
+                                        }
+                                    }
+                                    scratch.despawns.borrow_local_mut().push(entity);
+                                    return;
+                                }
+                                OwnerLoss::Drain => {
+                                    *draining = true;
+                                    // The pool lives out its lifespans in place, like a missile's impact.
+                                    if !particles.is_empty() {
+                                        debug!(
                                         "fx orphan: emitter {entity} ({}) lost its owner with {} \
                                      live particles frozen at {:?}",
                                         texture
@@ -657,418 +761,408 @@ pub(super) fn simulate_particles(
                                         particles.len(),
                                         *anchor_pos
                                     );
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
-            if *draining && particles.is_empty() && children.iter().all(|c| c.particles.is_empty())
-            {
-                for slot in model_instances.iter() {
-                    for (e, _) in &slot.meshes {
-                        scratch.despawns.borrow_local_mut().push(*e);
-                    }
-                }
-                scratch.despawns.borrow_local_mut().push(entity);
-                return;
-            }
-            // Dormant: nothing live, nothing draining, not emitting at this clock. Judged after the
-            // owner-loss and drain blocks and the clock, which must run every frame.
-            if particles.is_empty()
-                && !*draining
-                && children.iter().all(|c| c.particles.is_empty())
-                && !def.timing.emitting(clock_seq, elapsed_s, gseq_now)
-            {
-                return;
-            }
-            // The model's render alpha (`emitter+0x1a8 = Model+0x19c`): an entity cloud's composed
-            // model alpha, or a placed doodad's distance fade.
-            *alpha = alpha_src.map_or(1.0, |e| owner_mul.alpha(e))
-                * fade.as_ref().map_or(1.0, |f| f.distance_alpha(cam_pos));
-            // The model's live translation, or the last known while the pool drains.
-            match *anchor {
-                Some(a) => {
-                    if let Ok(gt) = owners.transforms.get(a) {
-                        *anchor_pos = gt.translation();
-                    }
-                }
-                None if owner.is_none() => *anchor_pos = placement.translation,
-                None => {} // joint-owned, unanchored (placed doodads): the spawn placement stands
-            }
-            // `$WOW_EMIT_DUMP`'s model, taken before `anchor` is shadowed below.
-            let dump_owner = (*host).or(*anchor);
-
-            // 0a. The ride frame (model `[+0x17c]`): the transport the model stands on, inherited
-            //     down the `ParentModel` chain; one that streamed out reads as none.
-            let deck = anchor
-                .or(*owner)
-                .and_then(|model| owners.rides.source(model))
-                .and_then(|t| {
-                    owners
-                        .transforms
-                        .get(t)
-                        .ok()
-                        .map(|gt| (t, crate::ride_frame::ride_matrix(gt)))
-                })
-                // Model mode ignores the ride frame: it rides its host.
-                .filter(|_| anchored);
-            // Boarding and leaving re-express every live particle; a moving deck folds nothing, the
-            // draw's live `A` carries it.
-            if let Some(fold) = ride.retarget(deck) {
-                let rot = Quat::from_mat3a(&fold.matrix3);
-                for p in particles
-                    .iter_mut()
-                    .chain(children.iter_mut().flat_map(|c| &mut c.particles))
+                if *draining
+                    && particles.is_empty()
+                    && children.iter().all(|c| c.particles.is_empty())
                 {
-                    p.pos = fold.transform_point3(p.pos);
-                    p.vel = rot * p.vel;
-                }
-                // The emitter-motion state crosses too, or the frame change reads as motion;
-                // whether the reference re-expresses `rt+0x248` is untraced.
-                *emitter_prev = emitter_prev.map(|prev| fold.transform_point3(prev));
-                *inherit_vel = rot * *inherit_vel;
-            }
-            // Births bake through `rt+0x1fc = srcMx · A⁻¹`, so the stored-frame terms below are
-            // deck-relative; `placement` stays world for the LOD, water side and model draw.
-            let emit_place = match ride.matrix() {
-                Some(a) => {
-                    let inv = a.inverse();
-                    Transform {
-                        translation: inv.transform_point3(placement.translation),
-                        rotation: Quat::from_mat3a(&inv.matrix3) * placement.rotation,
-                        scale: placement.scale,
-                    }
-                }
-                None => *placement,
-            };
-
-            // 0b. The emitter-motion terms feed off the origin's one-frame Δ in the stored frame
-            //     (`rt+0x22c`, the translation row of `rt+0x1fc`), refreshed every frame
-            //     (`rt+0x248`). Deviation: in model mode the reference adds the raw world vector to
-            //     local coordinates; we fold it into the local frame, because our world axes are
-            //     Bevy's, not WoW's.
-            let emitter_world = emit_place.transform_point(wow_to_bevy(def.position));
-            let emitter_delta = emitter_prev.map_or(Vec3::ZERO, |prev| emitter_world - prev);
-            *emitter_prev = Some(emitter_world);
-            // R(+Z, 90°) is applied at emission, so stored vectors are post-R and these folds R-free;
-            // the reference folds it in its draw matrix, an equivalent composition.
-            // World to the stored frame: the identity in world mode.
-            let to_stored = |world: Vec3, placement: &Transform| {
-                if anchored {
-                    world
-                } else {
-                    Vec3::from(bevy_to_wow(
-                        (placement.rotation.inverse() * world)
-                            / placement.scale.max(Vec3::splat(1e-6)),
-                    ))
-                }
-            };
-            let fraction = follow_fraction(def, emitter_delta.length() / dt);
-            let follow = if fraction == 0.0 || emitter_delta == Vec3::ZERO {
-                Vec3::ZERO
-            } else {
-                to_stored(fraction * emitter_delta, &emit_place)
-            };
-            // Velocity inherit (file 0x40): the 30 Hz trigger, zeroed with nothing live (rt+0x64).
-            if def.inherits_emitter_motion() {
-                inherit_trigger(
-                    inherit_accum,
-                    inherit_vel,
-                    dt,
-                    emitter_delta,
-                    !particles.is_empty(),
-                    def.inherit_scale,
-                );
-            }
-
-            // Every track samples per frame on the current sequence's clock: a hosted emitter's
-            // host's playing sequence and clip time, else its slot on the spawn-age clock. Births
-            // read the frame's values (Frost Nova's radius grows with its ring).
-            let now = def.params.sample(clock_seq, elapsed_s, gseq_now);
-
-            // 1. Integrate the live pool ([`integrate_particle`]): up is WoW +Z in model mode and Bevy
-            //    +Y in world mode; gravity is read live each frame, as the reference does.
-            let g = now.gravity;
-            let drag = def.drag;
-            // Kill-outbound: the emitter's live origin in the stored frame, composed like a birth.
-            let kill_origin = def.kill_outbound().then(|| {
-                if anchored {
-                    emitter_world
-                } else {
-                    Vec3::from(def.position)
-                }
-            });
-            let env = StepEnv {
-                dt,
-                gravity: g,
-                drag,
-                anchored,
-                kill_origin,
-                follow,
-                lifespan: now.lifespan,
-                lifespan_vary: def.lifespan_vary,
-            };
-            particles.retain_mut(|p| integrate_particle(p, &env));
-
-            // 2. Emit: [`accumulate_emission`] owes births from a continuous pour or a burst's
-            //    rising edge, at the rate track step-sampled on the clip clock; the enabled track
-            //    (file +0x1dc) gates new births only. The reference's one particle distance
-            //    mechanism is this emission LOD: × clamp(1 − (camDist − 50)·0.02, 0.25, 1), then ×
-            //    `particleDensity`.
-            let emitting = !*draining && def.timing.emitting(clock_seq, elapsed_s, gseq_now);
-            let rate = vary_rate(def, def.timing.rate(clock_seq, elapsed_s, gseq_now), rng);
-            let dist_lod =
-                (1.0 - (placement.translation.distance(e_cam_pos) - 50.0) * 0.02).clamp(0.25, 1.0);
-            let burst = accumulate_emission(
-                def.burst(),
-                rate,
-                emitting,
-                density * dist_lod,
-                dt,
-                accumulator,
-                gate_prev,
-            );
-            if burst > 0.0 && benilla_assets::trace::enabled() {
-                benilla_assets::trace::line("fx", &format!("burst n={burst} t={elapsed_s:.2}s"));
-            }
-            while *accumulator >= 1.0 && particles.len() < MAX_PARTICLES {
-                *accumulator -= 1.0;
-                let rolls = BirthRolls::roll(def, rng);
-                let (base, dir) = emit_local(def, &now, rng);
-                let speed =
-                    now.emission_speed * (1.0 + now.speed_variation * (rand01(rng) * 2.0 - 1.0));
-                // World mode (`0x10` clear) bakes a birth into world through the live emitter
-                // matrix; model mode stores it local and the draw re-applies the matrix.
-                let (mut pos, vel) = if anchored {
-                    (
-                        emit_place.transform_point(wow_to_bevy(base.to_array())),
-                        emit_place.rotation
-                            * (emit_place.scale * wow_to_bevy((dir * speed).to_array())),
-                    )
-                } else {
-                    (base, dir * speed)
-                };
-                // Ground snap (file 0x2000): at birth, in world mode, a 20 yd probe down against
-                // the walking collision sets a hit particle on the surface, lifted by its birth
-                // size.
-                if anchored && def.ground_snap() {
-                    // Probed at the world point and stored back; a yaw-only `A` keeps world down.
-                    let world = ride.to_world(pos);
-                    if let Some(hit) =
-                        spatial.cast_ray(world, Dir3::NEG_Y, 20.0, true, &snap_filter)
-                    {
-                        let lift = def.over_life.sample(0.0).size[1] * rolls.size_mul[1];
-                        pos = ride.to_stored(world.with_y(world.y - hit.distance + lift));
-                    }
-                }
-                // Inherit (the kernels' closing block): `vel += (1 + S11·speedVariation) · inherit`.
-                let vel = if def.inherits_emitter_motion() && *inherit_vel != Vec3::ZERO {
-                    vel + (1.0 + now.speed_variation * rand_s11(rng))
-                        * to_stored(*inherit_vel, &emit_place)
-                } else {
-                    vel
-                };
-                // Model particles: orientation from the birth basis; the tumble's X is
-                // `min + u·range`, but Y and Z are a [1, 2) mantissa times the range, their min
-                // unused, as the reference rolls them.
-                let (quat, angvel) = if def.geometry_model.is_some() {
-                    let amin = def.angular_velocity_min;
-                    let amax = def.angular_velocity_max;
-                    let mut w = [
-                        amin[0] + rand01(rng) * (amax[0] - amin[0]),
-                        (1.0 + rand01(rng)) * (amax[1] - amin[1]),
-                        (1.0 + rand01(rng)) * (amax[2] - amin[2]),
-                    ];
-                    if def.random_spin_sign() {
-                        for a in &mut w {
-                            if next_u32(rng) & 1 == 0 {
-                                *a = -*a;
-                            }
+                    for slot in model_instances.iter() {
+                        for (e, _) in &slot.meshes {
+                            scratch.despawns.borrow_local_mut().push(*e);
                         }
                     }
-                    // R(+Z, 90°) is a +90° turn about Bevy +Y, appended to the frame rotation.
-                    let r90 = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
-                    let quat = if anchored {
-                        emit_place.rotation * r90
-                    } else {
-                        r90
-                    };
-                    (quat, wow_to_bevy(w))
-                } else {
-                    (Quat::IDENTITY, Vec3::ZERO)
-                };
-                let phase = next_u32(rng);
-                let age = birth_age(def.burst(), dt, rng);
-                particles.push(rolls.particle(
-                    def,
-                    now.lifespan,
-                    pos,
-                    vel,
-                    age,
-                    phase,
-                    quat,
-                    angvel,
-                ));
-            }
+                    scratch.despawns.borrow_local_mut().push(entity);
+                    return;
+                }
+                // Dormant: nothing live, nothing draining, not emitting at this clock. Judged after the
+                // owner-loss and drain blocks and the clock, which must run every frame.
+                if particles.is_empty()
+                    && !*draining
+                    && children.iter().all(|c| c.particles.is_empty())
+                    && !def.timing.emitting(clock_seq, elapsed_s, gseq_now)
+                {
+                    return;
+                }
+                // The model's render alpha (`emitter+0x1a8 = Model+0x19c`): an entity cloud's composed
+                // model alpha, or a placed doodad's distance fade.
+                *alpha = alpha_src.map_or(1.0, |e| owner_mul.alpha(e))
+                    * fade.as_ref().map_or(1.0, |f| f.distance_alpha(cam_pos));
+                // The model's live translation, or the last known while the pool drains.
+                match *anchor {
+                    Some(a) => {
+                        if let Ok(gt) = owners.transforms.get(a) {
+                            *anchor_pos = gt.translation();
+                        }
+                    }
+                    None if owner.is_none() => *anchor_pos = placement.translation,
+                    None => {} // joint-owned, unanchored (placed doodads): the spawn placement stands
+                }
+                // `$WOW_EMIT_DUMP`'s model, taken before `anchor` is shadowed below.
+                let dump_owner = (*host).or(*anchor);
 
-            // 2b. Children drive off the post-birth pool on their own tracks, slot 0 on
-            //     the parent's age; a draining parent stops driving them.
-            for child in children.iter_mut() {
-                // A child cloud is its own fresh instance: its gseq cursor is its own age.
-                let c_emitting =
-                    !*draining && child.def.timing.emitting(None, *age, f64::from(*age));
-                let c_rate = vary_rate(
-                    &child.def,
-                    child.def.timing.rate(None, *age, f64::from(*age)),
-                    &mut child.rng,
+                // 0a. The ride frame (model `[+0x17c]`): the transport the model stands on, inherited
+                //     down the `ParentModel` chain; one that streamed out reads as none.
+                let deck = anchor
+                    .or(*owner)
+                    .and_then(|model| owners.rides.source(model))
+                    .and_then(|t| {
+                        owners
+                            .transforms
+                            .get(t)
+                            .ok()
+                            .map(|gt| (t, crate::ride_frame::ride_matrix(gt)))
+                    })
+                    // Model mode ignores the ride frame: it rides its host.
+                    .filter(|_| anchored);
+                // Boarding and leaving re-express every live particle; a moving deck folds nothing, the
+                // draw's live `A` carries it.
+                if let Some(fold) = ride.retarget(deck) {
+                    let rot = Quat::from_mat3a(&fold.matrix3);
+                    for p in particles
+                        .iter_mut()
+                        .chain(children.iter_mut().flat_map(|c| &mut c.particles))
+                    {
+                        p.pos = fold.transform_point3(p.pos);
+                        p.vel = rot * p.vel;
+                    }
+                    // The emitter-motion state crosses too, or the frame change reads as motion;
+                    // whether the reference re-expresses `rt+0x248` is untraced.
+                    *emitter_prev = emitter_prev.map(|prev| fold.transform_point3(prev));
+                    *inherit_vel = rot * *inherit_vel;
+                }
+                // Births bake through `rt+0x1fc = srcMx · A⁻¹`, so the stored-frame terms below are
+                // deck-relative; `placement` stays world for the LOD, water side and model draw.
+                let emit_place = match ride.matrix() {
+                    Some(a) => {
+                        let inv = a.inverse();
+                        Transform {
+                            translation: inv.transform_point3(placement.translation),
+                            rotation: Quat::from_mat3a(&inv.matrix3) * placement.rotation,
+                            scale: placement.scale,
+                        }
+                    }
+                    None => *placement,
+                };
+
+                // 0b. The emitter-motion terms feed off the origin's one-frame Δ in the stored frame
+                //     (`rt+0x22c`, the translation row of `rt+0x1fc`), refreshed every frame
+                //     (`rt+0x248`). Deviation: in model mode the reference adds the raw world vector to
+                //     local coordinates; we fold it into the local frame, because our world axes are
+                //     Bevy's, not WoW's.
+                let emitter_world = emit_place.transform_point(wow_to_bevy(def.position));
+                let emitter_delta = emitter_prev.map_or(Vec3::ZERO, |prev| emitter_world - prev);
+                *emitter_prev = Some(emitter_world);
+                // R(+Z, 90°) is applied at emission, so stored vectors are post-R and these folds R-free;
+                // the reference folds it in its draw matrix, an equivalent composition.
+                // World to the stored frame: the identity in world mode.
+                let to_stored = |world: Vec3, placement: &Transform| {
+                    if anchored {
+                        world
+                    } else {
+                        Vec3::from(bevy_to_wow(
+                            (placement.rotation.inverse() * world)
+                                / placement.scale.max(Vec3::splat(1e-6)),
+                        ))
+                    }
+                };
+                let fraction = follow_fraction(def, emitter_delta.length() / dt);
+                let follow = if fraction == 0.0 || emitter_delta == Vec3::ZERO {
+                    Vec3::ZERO
+                } else {
+                    to_stored(fraction * emitter_delta, &emit_place)
+                };
+                // Velocity inherit (file 0x40): the 30 Hz trigger, zeroed with nothing live (rt+0x64).
+                if def.inherits_emitter_motion() {
+                    inherit_trigger(
+                        inherit_accum,
+                        inherit_vel,
+                        dt,
+                        emitter_delta,
+                        !particles.is_empty(),
+                        def.inherit_scale,
+                    );
+                }
+
+                // Every track samples per frame on the current sequence's clock: a hosted emitter's
+                // host's playing sequence and clip time, else its slot on the spawn-age clock. Births
+                // read the frame's values (Frost Nova's radius grows with its ring).
+                let now = def.params.sample(clock_seq, elapsed_s, gseq_now);
+
+                // 1. Integrate the live pool ([`integrate_particle`]): up is WoW +Z in model mode and Bevy
+                //    +Y in world mode; gravity is read live each frame, as the reference does.
+                let g = now.gravity;
+                let drag = def.drag;
+                // Kill-outbound: the emitter's live origin in the stored frame, composed like a birth.
+                let kill_origin = def.kill_outbound().then(|| {
+                    if anchored {
+                        emitter_world
+                    } else {
+                        Vec3::from(def.position)
+                    }
+                });
+                let env = StepEnv::new(
+                    dt,
+                    g,
+                    drag,
+                    anchored,
+                    kill_origin,
+                    follow,
+                    now.lifespan,
+                    def.lifespan_vary,
                 );
-                let c_now = child.def.params.sample(None, *age, f64::from(*age));
-                drive_child(
-                    child,
-                    &c_now,
-                    particles,
-                    c_rate,
-                    c_emitting,
+                integrate_pool_with_tumble(particles, tumble, &env);
+
+                // 2. Emit: [`accumulate_emission`] owes births from a continuous pour or a burst's
+                //    rising edge, at the rate track step-sampled on the clip clock; the enabled track
+                //    (file +0x1dc) gates new births only. The reference's one particle distance
+                //    mechanism is this emission LOD: × clamp(1 − (camDist − 50)·0.02, 0.25, 1), then ×
+                //    `particleDensity`.
+                let emitting = !*draining && def.timing.emitting(clock_seq, elapsed_s, gseq_now);
+                let rate = vary_rate(def, def.timing.rate(clock_seq, elapsed_s, gseq_now), rng);
+                let dist_lod = (1.0 - (placement.translation.distance(e_cam_pos) - 50.0) * 0.02)
+                    .clamp(0.25, 1.0);
+                let burst = accumulate_emission(
+                    def.burst(),
+                    rate,
+                    emitting,
                     density * dist_lod,
                     dt,
-                    anchored,
-                    &emit_place,
+                    accumulator,
+                    gate_prev,
                 );
-                let c_env = StepEnv {
-                    dt,
-                    gravity: c_now.gravity,
-                    drag: child.def.drag,
-                    anchored,
-                    kill_origin: None,
-                    follow: Vec3::ZERO,
-                    lifespan: c_now.lifespan,
-                    lifespan_vary: child.def.lifespan_vary,
-                };
-                child
-                    .particles
-                    .retain_mut(|p| integrate_particle(p, &c_env));
-            }
-
-            // 3. Expand each pool once its texture is resident, never the fallback. The anchor is
-            //    the draw's sort point, also published on the entity for the instruments.
-            let anchor = if anchored {
-                *anchor_pos
-            } else {
-                placement.translation
-            };
-            // Written directly for same-frame readers: we run after propagation, at the world root.
-            // The local takes no change mark, so next frame's propagation does not re-walk a leaf
-            // whose global this write already holds.
-            if entity_tf.translation != anchor {
-                entity_tf.bypass_change_detection().translation = anchor;
-            }
-            entity_global.set_if_neq(GlobalTransform::from(*entity_tf));
-            let frame = DrawFrame {
-                anchored,
-                alpha: *alpha,
-                ride: *ride,
-                size_scale: *size_scale,
-            };
-            let cam = CamBasis {
-                right: e_right,
-                up: e_up,
-            };
-            // A geometry emitter draws instances ([`super::model`]), never quads.
-            let want_quads = def.geometry_model.is_none() && images.contains(&*texture);
-            // One rung for every effect of a model, plus the water interleave: a cloud on the eye's
-            // far side sorts under the water pass, classified once per model.
-            let far = !is_booth
-                && model_far_side(
-                    &interleave,
-                    water_model,
-                    water_gt.as_ref(),
-                    water_bound,
-                    placement.translation,
-                );
-            // Trace tag `fx`: which clouds sorted under the water pass this frame.
-            if far && !particles.is_empty() && benilla_assets::trace::enabled() {
-                benilla_assets::trace::line(
-                    "fx",
-                    &format!(
-                        "far-side cloud at=[{:.1},{:.1},{:.1}] n={}",
-                        placement.translation.x,
-                        placement.translation.y,
-                        placement.translation.z,
-                        particles.len()
-                    ),
-                );
-            }
-            let bias = super::owner_last_bias(*owner_reach)
-                + if far {
-                    crate::sky_order::FAR_SIDE_BIAS
-                } else {
-                    0.0
-                };
-            // `$WOW_EMIT_DUMP`, here so `live` counts this frame's births.
-            if emit_dump {
-                dumps_cell
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .emit
-                    .dump(
-                        dump_owner,
-                        &super::emitdump::Decision {
-                            def,
-                            seq: clock_seq,
-                            elapsed: elapsed_s,
-                            rate,
-                            emitting,
-                            live: particles.len(),
-                            now: &now,
-                            at: emitter_world,
-                        },
+                if burst > 0.0 && benilla_assets::trace::enabled() {
+                    benilla_assets::trace::line(
+                        "fx",
+                        &format!("burst n={burst} t={elapsed_s:.2}s"),
                     );
-            }
-            // `$WOW_PARTICLE_DEPTHDUMP` over this pool's quads; booths draw to their own target.
-            let dump_at = dump_frame
-                .filter(|_| {
-                    !is_booth
-                        && def.geometry_model.is_none()
-                        && !particles.is_empty()
-                        && super::depthdump::bone_selected(u32::from(def.bone))
-                })
-                // The world point: `emitter_world` is in the stored frame.
-                .map(|fidx| (fidx, ride.to_world(emitter_world)));
-            // The model's committed light, shared by its child draws: one light node per model.
-            let committed = owner_mul.committed_light(lit_by);
-            let spec = EffectDrawSpec {
-                cam: draw_cam,
-                texture: texture.id(),
-                blend: def.blend.into(),
-                fog: EffectFog::for_blend(def.flags, def.blend),
-                // Set from the expansion's light fold.
-                lighting: EffectLighting::None,
-                anchor,
-                bias,
-                raster_bias: 0,
-                raster_slope: 0.0,
-                cam_relative: false,
-                no_depth_test: false,
-                main_entity: entity,
-                light: light_override.map(|l| l.0.clone()),
-                // A UI model tile's pane cell (`set_clip`); `None` in the world.
-                clip: *clip,
-            };
-            // Child pools: their own texture, blend and fog, the parent's anchor and rung.
-            let mut kids = Vec::new();
-            let mut kid_specs = Vec::new();
-            for (i, child) in children.iter().enumerate() {
-                if child.particles.is_empty() || !images.contains(&child.texture) {
-                    continue;
                 }
-                kids.push(i);
-                kid_specs.push(EffectDrawSpec {
+                while *accumulator >= 1.0 && particles.len() < MAX_PARTICLES {
+                    *accumulator -= 1.0;
+                    let rolls = BirthRolls::roll(def, rng);
+                    let (base, dir) = emit_local(def, &now, rng);
+                    let speed = now.emission_speed
+                        * (1.0 + now.speed_variation * (rand01(rng) * 2.0 - 1.0));
+                    // World mode (`0x10` clear) bakes a birth into world through the live emitter
+                    // matrix; model mode stores it local and the draw re-applies the matrix.
+                    let (mut pos, vel) = if anchored {
+                        (
+                            emit_place.transform_point(wow_to_bevy(base.to_array())),
+                            emit_place.rotation
+                                * (emit_place.scale * wow_to_bevy((dir * speed).to_array())),
+                        )
+                    } else {
+                        (base, dir * speed)
+                    };
+                    // Ground snap (file 0x2000): at birth, in world mode, a 20 yd probe down against
+                    // the walking collision sets a hit particle on the surface, lifted by its birth
+                    // size.
+                    if anchored && def.ground_snap() {
+                        // Probed at the world point and stored back; a yaw-only `A` keeps world down.
+                        let world = ride.to_world(pos);
+                        if let Some(hit) =
+                            spatial.cast_ray(world, Dir3::NEG_Y, 20.0, true, &snap_filter)
+                        {
+                            let lift = def.over_life.sample(0.0).size[1] * rolls.size_mul[1];
+                            pos = ride.to_stored(world.with_y(world.y - hit.distance + lift));
+                        }
+                    }
+                    // Inherit (the kernels' closing block): `vel += (1 + S11·speedVariation) · inherit`.
+                    let vel = if def.inherits_emitter_motion() && *inherit_vel != Vec3::ZERO {
+                        vel + (1.0 + now.speed_variation * rand_s11(rng))
+                            * to_stored(*inherit_vel, &emit_place)
+                    } else {
+                        vel
+                    };
+                    // Model particles: orientation from the birth basis; the tumble's X is
+                    // `min + u·range`, but Y and Z are a [1, 2) mantissa times the range, their min
+                    // unused, as the reference rolls them.
+                    if def.geometry_model.is_some() {
+                        let amin = def.angular_velocity_min;
+                        let amax = def.angular_velocity_max;
+                        let mut w = [
+                            amin[0] + rand01(rng) * (amax[0] - amin[0]),
+                            (1.0 + rand01(rng)) * (amax[1] - amin[1]),
+                            (1.0 + rand01(rng)) * (amax[2] - amin[2]),
+                        ];
+                        if def.random_spin_sign() {
+                            for a in &mut w {
+                                if next_u32(rng) & 1 == 0 {
+                                    *a = -*a;
+                                }
+                            }
+                        }
+                        // R(+Z, 90°) is a +90° turn about Bevy +Y, appended to the frame rotation.
+                        let r90 = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+                        let quat = if anchored {
+                            emit_place.rotation * r90
+                        } else {
+                            r90
+                        };
+                        tumble.push(ModelTumble {
+                            quat,
+                            angvel: wow_to_bevy(w),
+                        });
+                    }
+                    let phase = next_u32(rng);
+                    let age = birth_age(def.burst(), dt, rng);
+                    particles.push(rolls.particle(def, now.lifespan, pos, vel, age, phase));
+                }
+
+                // 2b. Children drive off the post-birth pool on their own tracks, slot 0 on
+                //     the parent's age; a draining parent stops driving them.
+                for child in children.iter_mut() {
+                    // A child cloud is its own fresh instance: its gseq cursor is its own age.
+                    let c_emitting =
+                        !*draining && child.def.timing.emitting(None, *age, f64::from(*age));
+                    let c_rate = vary_rate(
+                        &child.def,
+                        child.def.timing.rate(None, *age, f64::from(*age)),
+                        &mut child.rng,
+                    );
+                    let c_now = child.def.params.sample(None, *age, f64::from(*age));
+                    drive_child(
+                        child,
+                        &c_now,
+                        particles,
+                        c_rate,
+                        c_emitting,
+                        density * dist_lod,
+                        dt,
+                        anchored,
+                        &emit_place,
+                    );
+                    let c_env = StepEnv::new(
+                        dt,
+                        c_now.gravity,
+                        child.def.drag,
+                        anchored,
+                        None,
+                        Vec3::ZERO,
+                        c_now.lifespan,
+                        child.def.lifespan_vary,
+                    );
+                    integrate_pool(&mut child.particles, &c_env);
+                }
+
+                // 3. Expand each pool once its texture is resident, never the fallback. The anchor is
+                //    the draw's sort point, also published on the entity for the instruments.
+                let anchor = if anchored {
+                    *anchor_pos
+                } else {
+                    placement.translation
+                };
+                // Written directly for same-frame readers: we run after propagation, at the world root.
+                // The local takes no change mark, so next frame's propagation does not re-walk a leaf
+                // whose global this write already holds.
+                if entity_tf.translation != anchor {
+                    entity_tf.bypass_change_detection().translation = anchor;
+                }
+                entity_global.set_if_neq(GlobalTransform::from(*entity_tf));
+                let frame = DrawFrame {
+                    anchored,
+                    alpha: *alpha,
+                    ride: *ride,
+                    size_scale: *size_scale,
+                };
+                let cam = CamBasis {
+                    right: e_right,
+                    up: e_up,
+                };
+                // A geometry emitter draws instances ([`super::model`]), never quads.
+                let textured = images.contains(&*texture);
+                let want_quads = def.geometry_model.is_none() && textured;
+                // One rung for every effect of a model, plus the water interleave: a cloud on the eye's
+                // far side sorts under the water pass, classified once per model. Static doodads never
+                // move, so cache their verdict until water surfaces change or the eye crosses water.
+                let far = if is_booth {
+                    false
+                } else if water_model.is_none() {
+                    if !water_dirty
+                        && matches!(*water_cache, Some((sub, _)) if sub == eye_submerged)
+                    {
+                        water_cache.unwrap().1
+                    } else {
+                        let f = model_far_side(
+                            &interleave,
+                            water_model,
+                            water_gt.as_ref(),
+                            water_bound,
+                            placement.translation,
+                        );
+                        *water_cache = Some((eye_submerged, f));
+                        f
+                    }
+                } else {
+                    model_far_side(
+                        &interleave,
+                        water_model,
+                        water_gt.as_ref(),
+                        water_bound,
+                        placement.translation,
+                    )
+                };
+                // Trace tag `fx`: which clouds sorted under the water pass this frame.
+                if far && !particles.is_empty() && benilla_assets::trace::enabled() {
+                    benilla_assets::trace::line(
+                        "fx",
+                        &format!(
+                            "far-side cloud at=[{:.1},{:.1},{:.1}] n={}",
+                            placement.translation.x,
+                            placement.translation.y,
+                            placement.translation.z,
+                            particles.len()
+                        ),
+                    );
+                }
+                let bias = super::owner_last_bias(*owner_reach)
+                    + if far {
+                        crate::sky_order::FAR_SIDE_BIAS
+                    } else {
+                        0.0
+                    };
+                // `$WOW_EMIT_DUMP`, here so `live` counts this frame's births.
+                if emit_dump {
+                    dumps_cell
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .emit
+                        .dump(
+                            dump_owner,
+                            &super::emitdump::Decision {
+                                def,
+                                seq: clock_seq,
+                                elapsed: elapsed_s,
+                                rate,
+                                emitting,
+                                live: particles.len(),
+                                now: &now,
+                                at: emitter_world,
+                            },
+                        );
+                }
+                // `$WOW_PARTICLE_DEPTHDUMP` over this pool's quads; booths draw to their own target.
+                let dump_at = dump_frame
+                    .filter(|_| {
+                        !is_booth
+                            && def.geometry_model.is_none()
+                            && !particles.is_empty()
+                            && super::depthdump::bone_selected(u32::from(def.bone))
+                    })
+                    // The world point: `emitter_world` is in the stored frame.
+                    .map(|fidx| (fidx, ride.to_world(emitter_world)));
+                // The model's committed light, shared by its child draws: one light node per model.
+                let committed = owner_mul.committed_light(lit_by);
+                let spec = EffectDrawSpec {
                     cam: draw_cam,
-                    texture: child.texture.id(),
-                    blend: child.def.blend.into(),
-                    fog: EffectFog::for_blend(child.def.flags, child.def.blend),
-                    // Its own record's lighting verdict, under the parent's light node.
+                    texture: texture.id(),
+                    blend: def.blend.into(),
+                    fog: EffectFog::for_blend(def.flags, def.blend),
+                    // Set from the expansion's light fold.
                     lighting: EffectLighting::None,
                     anchor,
                     bias,
@@ -1078,17 +1172,43 @@ pub(super) fn simulate_particles(
                     no_depth_test: false,
                     main_entity: entity,
                     light: light_override.map(|l| l.0.clone()),
-                    // The parent's cell and clip.
+                    // A UI model tile's pane cell (`set_clip`); `None` in the world.
                     clip: *clip,
-                });
-            }
-            scratch.walked.borrow_local_mut().push((
-                {
-                    let quads = want_quads && !particles.is_empty();
-                    // The GPU expansion takes every pool it can, unless the depth dump reads this
-                    // pool's quads or `$WOW_FX_CPU` pins the CPU writer.
-                    let gpu_ok = dump_at.is_none() && !fx_cpu();
-                    let record =
+                };
+                // Child pools: their own texture, blend and fog, the parent's anchor and rung.
+                let mut kids = Vec::new();
+                let mut kid_specs = Vec::new();
+                for (i, child) in children.iter().enumerate() {
+                    if child.particles.is_empty() || !images.contains(&child.texture) {
+                        continue;
+                    }
+                    kids.push(i);
+                    kid_specs.push(EffectDrawSpec {
+                        cam: draw_cam,
+                        texture: child.texture.id(),
+                        blend: child.def.blend.into(),
+                        fog: EffectFog::for_blend(child.def.flags, child.def.blend),
+                        // Its own record's lighting verdict, under the parent's light node.
+                        lighting: EffectLighting::None,
+                        anchor,
+                        bias,
+                        raster_bias: 0,
+                        raster_slope: 0.0,
+                        cam_relative: false,
+                        no_depth_test: false,
+                        main_entity: entity,
+                        light: light_override.map(|l| l.0.clone()),
+                        // The parent's cell and clip.
+                        clip: *clip,
+                    });
+                }
+                scratch.walked.borrow_local_mut().push((
+                    {
+                        let quads = want_quads && !particles.is_empty();
+                        // The GPU expansion takes every pool it can, unless the depth dump reads this
+                        // pool's quads or `$WOW_FX_CPU` pins the CPU writer.
+                        let gpu_ok = dump_at.is_none() && !fx_cpu();
+                        let record =
                         |template: &mut Option<Option<Box<super::buffer::GpuPool>>>,
                          def: &benilla_formats::ParticleEmitterDef| {
                             template
@@ -1102,39 +1222,45 @@ pub(super) fn simulate_particles(
                                     )
                                 })
                         };
-                    let gpu = (quads && gpu_ok)
-                        .then(|| record(gpu_template, def))
-                        .flatten();
-                    let kid_gpu = kids
-                        .iter()
-                        .map(|&i| {
-                            let child = &mut children[i];
-                            gpu_ok
-                                .then(|| record(&mut child.gpu_template, &child.def))
-                                .flatten()
-                        })
-                        .collect();
-                    ExpandJob {
-                        entity,
-                        frame,
-                        placement: *placement,
-                        cam,
-                        quads,
-                        committed,
-                        kids,
-                        gpu,
-                        kid_gpu,
-                    }
-                },
-                CommitJob {
-                    spec,
-                    kid_specs,
-                    dump_at,
-                    textured: images.contains(&*texture),
-                },
-            ));
-        },
-    );
+                        let gpu = (quads && gpu_ok)
+                            .then(|| record(gpu_template, def))
+                            .flatten();
+                        let mut gpu_count = if gpu.is_some() { particles.len() } else { 0 };
+                        let kid_gpu: Vec<_> = kids
+                            .iter()
+                            .map(|&i| {
+                                let child = &mut children[i];
+                                let rec = gpu_ok
+                                    .then(|| record(&mut child.gpu_template, &child.def))
+                                    .flatten();
+                                if rec.is_some() {
+                                    gpu_count += child.particles.len();
+                                }
+                                rec
+                            })
+                            .collect();
+                        ExpandJob {
+                            entity,
+                            frame,
+                            placement: *placement,
+                            cam,
+                            quads,
+                            committed,
+                            kids,
+                            gpu,
+                            kid_gpu,
+                            gpu_count,
+                        }
+                    },
+                    CommitJob {
+                        spec: Some(spec),
+                        kid_specs,
+                        dump_at,
+                        textured,
+                    },
+                ));
+            },
+        );
     for e in scratch.hides.drain() {
         if let Ok((_, _, mut cv)) = child_draws.get_mut(e) {
             *cv = Visibility::Hidden;
@@ -1143,165 +1269,287 @@ pub(super) fn simulate_particles(
     for e in scratch.despawns.drain() {
         commands.entity(e).despawn();
     }
-    // The drawn pools in entity order, by reference: the jobs stay in the per-thread buffers,
-    // which keep their allocations for the next frame.
-    let mut walked: Vec<&(ExpandJob, CommitJob)> = scratch
-        .walked
-        .iter_mut()
-        .flat_map(|jobs| jobs.iter())
-        .collect();
-    walked.sort_unstable_by_key(|(job, _)| job.entity);
+    // Index every walked job by `(entity, thread_slot, item_idx)` and sort the 16-byte keys
+    // instead of moving 600-byte job structs; the per-thread Vecs keep their allocations.
+    scratch.order.clear();
+    let mut gpu_total: usize = 0;
+    for (ti, jobs) in scratch.walked.iter_mut().enumerate() {
+        for (ii, (job, _)) in jobs.iter().enumerate() {
+            scratch.order.push((job.entity, ti as u32, ii as u32));
+            gpu_total += job.gpu_count;
+        }
+    }
+    scratch.order.sort_unstable_by_key(|&(e, _, _)| e);
 
-    // Expand every walked pool on the compute pool, the walk's per-particle half: a job reads
-    // only its own emitter, so the chunks are independent. A GPU pool's particles are packed
-    // here too, so the commit below only appends.
+    // Plan + pack pass: reserve GPU pools/draws directly in `quads`. Below `GPU_PACK_PARALLEL_MIN`
+    // particles we pack inline in the same entity lookup (avoiding both zero-fill and thread-pool
+    // wake overhead); above it we split large pools' particle ranges across `ComputeTaskPool`.
     let ro = emitters.as_readonly();
-    let expand_one = |job: &ExpandJob, out: &mut Expanded| {
-        let Ok((_, em, ..)) = ro.get(job.entity) else {
-            out.segs.extend(std::iter::repeat_n(
-                (0, 0, EffectLighting::None),
-                1 + job.kids.len(),
-            ));
-            return;
-        };
-        let (s, g) = (out.verts.len(), out.gpu.len());
-        if job.quads && job.gpu.is_none() {
-            expand_quads(
-                &em.def,
-                &em.particles,
-                &job.frame,
-                &job.placement,
-                &job.cam,
-                &mut out.verts,
-            );
-        }
-        if job.gpu.is_some() {
-            out.gpu
-                .extend(em.particles.iter().map(super::quads::gpu_particle));
-        }
-        let lighting = fold_committed_light(&mut out.verts[s..], em.def.lit, job.committed);
-        out.segs.push((
-            (out.verts.len() - s) as u32,
-            (out.gpu.len() - g) as u32,
-            lighting,
-        ));
-        for (&i, gpu) in job.kids.iter().zip(&job.kid_gpu) {
-            let child = &em.children[i];
-            let (s, g) = (out.verts.len(), out.gpu.len());
-            if gpu.is_none() {
-                expand_quads(
-                    &child.def,
-                    &child.particles,
-                    &job.frame,
-                    &job.placement,
-                    &job.cam,
-                    &mut out.verts,
-                );
-            } else {
-                out.gpu
-                    .extend(child.particles.iter().map(super::quads::gpu_particle));
-            }
-            let lighting = fold_committed_light(&mut out.verts[s..], child.def.lit, job.committed);
-            out.segs.push((
-                (out.verts.len() - s) as u32,
-                (out.gpu.len() - g) as u32,
-                lighting,
-            ));
-        }
-    };
-    let expanded: Vec<Expanded> = if walked.len() <= EXPAND_CHUNK_MIN {
-        let mut out = Expanded::default();
-        for (job, _) in walked.iter().copied() {
-            expand_one(job, &mut out);
-        }
-        vec![out]
-    } else {
-        let pool = bevy::tasks::ComputeTaskPool::get();
-        let chunk = walked
-            .len()
-            .div_ceil(pool.thread_num().max(1) * 4)
-            .max(EXPAND_CHUNK_MIN);
-        let expand_one = &expand_one;
-        pool.scope(|scope| {
-            for part in walked.chunks(chunk) {
-                scope.spawn(async move {
-                    let mut out = Expanded::default();
-                    for (job, _) in part.iter().copied() {
-                        expand_one(job, &mut out);
-                    }
-                    out
-                });
-            }
-        })
-    };
+    scratch.gpu_slices.clear();
+    scratch.cpu_draws.clear();
+    scratch.cpu_slices.clear();
+    let parallel_gpu = gpu_total >= GPU_PACK_PARALLEL_MIN;
+    let gpu_base = quads.particles.len();
+    let mut gpu_written: usize = 0;
+    if !parallel_gpu && gpu_total > 0 {
+        quads.particles.reserve(gpu_total);
+    }
 
-    // Commit in walk order, so the stream and its draws are the serial walk's.
-    let mut pieces = expanded.iter().flat_map(|out| {
-        let (mut v, mut g) = (0usize, 0usize);
-        out.segs.iter().map(move |&(nv, ng, lighting)| {
-            let piece = (
-                &out.verts[v..v + nv as usize],
-                &out.gpu[g..g + ng as usize],
-                lighting,
-            );
-            v += nv as usize;
-            g += ng as usize;
-            piece
-        })
-    });
-    for (job, commit) in walked.iter().copied() {
-        let Some((verts, gpu_particles, lighting)) = pieces.next() else {
-            break;
+    let walked_vecs: Vec<&mut Vec<(ExpandJob, CommitJob)>> = scratch.walked.iter_mut().collect();
+    // SAFETY-free indexed take: `scratch.order` visits each `(ti, ii)` at most once.
+    let mut walked_vecs = walked_vecs;
+    for &(_, ti, ii) in &scratch.order {
+        let (job, commit) = &mut walked_vecs[ti as usize][ii as usize];
+        let Ok((_, em, ..)) = ro.get(job.entity) else {
+            continue;
         };
-        let start = quads.begin();
-        quads.verts.extend_from_slice(verts);
-        if let Some((fidx, world)) = commit.dump_at {
-            if let Ok((_, em, ..)) = ro.get(job.entity) {
-                super::depthdump::dump_emitter(
-                    fidx,
-                    &em.def,
-                    &em.particles,
-                    &job.frame,
-                    &job.placement,
-                    world,
-                    &job.cam,
-                    cam_tf,
-                    camera,
-                    projection,
-                    commit.textured,
-                    &quads.verts[start as usize..],
+        let parent_len = em.particles.len();
+        if let Some(pool) = job.gpu.take() {
+            if parent_len > 0 {
+                let lighting = effect_lighting(em.def.lit, job.committed);
+                let mut spec = commit.spec.take().expect("parent spec");
+                spec.lighting = lighting;
+                let dst_start = (gpu_base + gpu_written) as u32;
+                let pool_idx =
+                    quads.reserve_particle_draw(pool, parent_len as u32, dst_start, spec);
+                if parallel_gpu {
+                    push_gpu_slices(
+                        &mut scratch.gpu_slices,
+                        job.entity,
+                        None,
+                        pool_idx,
+                        gpu_written,
+                        parent_len,
+                    );
+                } else {
+                    quads.particles.extend(
+                        em.particles
+                            .iter()
+                            .map(|p| super::quads::gpu_particle(p, pool_idx)),
+                    );
+                }
+                gpu_written += parent_len;
+            }
+        } else if (job.quads && parent_len > 0) || commit.dump_at.is_some() {
+            let lighting = effect_lighting(em.def.lit, job.committed);
+            let mut spec = commit.spec.take().expect("parent spec");
+            spec.lighting = lighting;
+            // Reserve a slot in `quads.draws` so CPU draws keep exact walk order with GPU draws.
+            let draw_idx = quads.draws.len();
+            quads.reserve_placeholder_draw(spec);
+            let slice_start = scratch.cpu_slices.len();
+            if job.quads && parent_len > 0 {
+                push_cpu_slices(
+                    &mut scratch.cpu_slices,
+                    job.entity,
+                    None,
+                    job.frame,
+                    job.placement,
+                    job.cam,
+                    em.def.lit,
+                    job.committed,
+                    parent_len,
                 );
             }
+            let slice_end = scratch.cpu_slices.len();
+            scratch.cpu_draws.push(CpuDraw {
+                draw_idx,
+                entity: job.entity,
+                frame: job.frame,
+                placement: job.placement,
+                cam: job.cam,
+                dump_at: commit.dump_at,
+                textured: commit.textured,
+                slices: slice_start..slice_end,
+            });
         }
-        let spec = EffectDrawSpec {
-            lighting,
-            ..commit.spec.clone()
-        };
-        match job.gpu {
-            Some(pool) => quads.commit_particles(pool, gpu_particles, spec),
-            None => quads.commit_quads(start, spec),
-        }
-        for (spec, gpu) in commit.kid_specs.iter().zip(&job.kid_gpu) {
-            let Some((verts, gpu_particles, lighting)) = pieces.next() else {
-                break;
-            };
+
+        for ((&child_idx, gpu), kid_spec) in job
+            .kids
+            .iter()
+            .zip(job.kid_gpu.drain(..))
+            .zip(commit.kid_specs.drain(..))
+        {
+            let child = &em.children[child_idx];
+            let child_len = child.particles.len();
+            if child_len == 0 {
+                continue;
+            }
+            let lighting = effect_lighting(child.def.lit, job.committed);
             let spec = EffectDrawSpec {
                 lighting,
-                ..spec.clone()
+                ..kid_spec
             };
-            match gpu {
-                Some(pool) => quads.commit_particles(*pool, gpu_particles, spec),
-                None => {
-                    let start = quads.begin();
-                    quads.verts.extend_from_slice(verts);
-                    quads.commit_quads(start, spec);
+            if let Some(pool) = gpu {
+                let dst_start = (gpu_base + gpu_written) as u32;
+                let pool_idx = quads.reserve_particle_draw(pool, child_len as u32, dst_start, spec);
+                if parallel_gpu {
+                    push_gpu_slices(
+                        &mut scratch.gpu_slices,
+                        job.entity,
+                        Some(child_idx),
+                        pool_idx,
+                        gpu_written,
+                        child_len,
+                    );
+                } else {
+                    quads.particles.extend(
+                        child
+                            .particles
+                            .iter()
+                            .map(|p| super::quads::gpu_particle(p, pool_idx)),
+                    );
                 }
+                gpu_written += child_len;
+            } else {
+                let draw_idx = quads.draws.len();
+                quads.reserve_placeholder_draw(spec);
+                let slice_start = scratch.cpu_slices.len();
+                push_cpu_slices(
+                    &mut scratch.cpu_slices,
+                    job.entity,
+                    Some(child_idx),
+                    job.frame,
+                    job.placement,
+                    job.cam,
+                    child.def.lit,
+                    job.committed,
+                    child_len,
+                );
+                let slice_end = scratch.cpu_slices.len();
+                scratch.cpu_draws.push(CpuDraw {
+                    draw_idx,
+                    entity: job.entity,
+                    frame: job.frame,
+                    placement: job.placement,
+                    cam: job.cam,
+                    dump_at: None,
+                    textured: true,
+                    slices: slice_start..slice_end,
+                });
             }
         }
     }
-    drop(walked);
-    for jobs in scratch.walked.iter_mut() {
+    for jobs in walked_vecs {
         jobs.clear();
+    }
+
+    // Pass 2 (large frames only): pack GPU particles directly into `quads.particles` across the
+    // compute pool, splitting giant emitters' particle ranges across threads.
+    if parallel_gpu && gpu_written > 0 {
+        quads.particles.resize(
+            gpu_base + gpu_written,
+            super::buffer::GpuParticle::default(),
+        );
+        let dst = &mut quads.particles[gpu_base..];
+        let slices = &scratch.gpu_slices;
+        let pack_slice = |s: &GpuPackSlice, out: &mut [super::buffer::GpuParticle]| {
+            let Ok((_, em, ..)) = ro.get(s.entity) else {
+                return;
+            };
+            let src = match s.child_idx {
+                Some(i) => &em.children[i].particles[s.src_start..s.src_start + s.len],
+                None => &em.particles[s.src_start..s.src_start + s.len],
+            };
+            for (d, p) in out.iter_mut().zip(src) {
+                *d = super::quads::gpu_particle(p, s.pool_idx);
+            }
+        };
+        let pool = bevy::tasks::ComputeTaskPool::get();
+        let batch_target = gpu_written
+            .div_ceil(pool.thread_num().max(1) * 4)
+            .max(GPU_PACK_CHUNK);
+        let pack_slice = &pack_slice;
+        pool.scope(|scope| {
+            let mut rest = dst;
+            let mut base_off = 0usize;
+            let mut i = 0usize;
+            while i < slices.len() {
+                let start = i;
+                let mut count = 0usize;
+                while i < slices.len() && (count == 0 || count + slices[i].len <= batch_target) {
+                    count += slices[i].len;
+                    i += 1;
+                }
+                let (chunk_dst, tail) = rest.split_at_mut(count);
+                rest = tail;
+                let batch = &slices[start..i];
+                let off = base_off;
+                base_off += count;
+                scope.spawn(async move {
+                    for s in batch {
+                        let local = s.dst_offset - off;
+                        pack_slice(s, &mut chunk_dst[local..local + s.len]);
+                    }
+                });
+            }
+        });
+    }
+
+    // Pass 3: expand any CPU-writer pools (split by particle range across the compute pool) and
+    // commit their vertex ranges into the reserved draw slots.
+    if !scratch.cpu_draws.is_empty() {
+        let expand_slice = |s: &CpuExpandSlice| -> Vec<EffectVertex> {
+            let Ok((_, em, ..)) = ro.get(s.entity) else {
+                return Vec::new();
+            };
+            let (def, src) = match s.child_idx {
+                Some(i) => {
+                    let c = &em.children[i];
+                    (&c.def, &c.particles[s.src_start..s.src_start + s.len])
+                }
+                None => (&em.def, &em.particles[s.src_start..s.src_start + s.len]),
+            };
+            let mut verts = Vec::with_capacity(src.len() * 4);
+            expand_quads(def, src, &s.frame, &s.placement, &s.cam, &mut verts);
+            fold_committed_light(&mut verts, s.lit, s.committed);
+            verts
+        };
+        let cpu_slices = &scratch.cpu_slices;
+        let expanded: Vec<Vec<EffectVertex>> = if cpu_slices.len() <= 2 {
+            cpu_slices.iter().map(expand_slice).collect()
+        } else {
+            let pool = bevy::tasks::ComputeTaskPool::get();
+            let expand_slice = &expand_slice;
+            pool.scope(|scope| {
+                for s in cpu_slices {
+                    scope.spawn(async move { expand_slice(s) });
+                }
+            })
+        };
+        let mut had_empty = false;
+        for draw in &scratch.cpu_draws {
+            let start = quads.begin();
+            for verts in &expanded[draw.slices.clone()] {
+                quads.verts.extend_from_slice(verts);
+            }
+            if let Some((fidx, world)) = draw.dump_at {
+                if let Ok((_, em, ..)) = ro.get(draw.entity) {
+                    super::depthdump::dump_emitter(
+                        fidx,
+                        &em.def,
+                        &em.particles,
+                        &draw.frame,
+                        &draw.placement,
+                        world,
+                        &draw.cam,
+                        cam_tf,
+                        camera,
+                        projection,
+                        draw.textured,
+                        &quads.verts[start as usize..],
+                    );
+                }
+            }
+            let end = quads.verts.len() as u32;
+            quads.draws[draw.draw_idx].range = start..end;
+            if end == start {
+                had_empty = true;
+            }
+        }
+        if had_empty {
+            quads.draws.retain(|d| !d.range.is_empty());
+        }
     }
 }
 
@@ -1314,21 +1562,114 @@ pub(super) struct WalkScratch {
     despawns: bevy::utils::Parallel<Vec<Entity>>,
     /// The drawn pools, with their draws.
     walked: bevy::utils::Parallel<Vec<(ExpandJob, CommitJob)>>,
+    /// Reusable entity-sorted `(entity, thread_idx, item_idx)` keys indexing [`Self::walked`].
+    order: Vec<(Entity, u32, u32)>,
+    /// Per-range GPU particle pack tasks, split so large emitters fan out across threads.
+    gpu_slices: Vec<GpuPackSlice>,
+    /// CPU-expanded draws waiting on Pass 3.
+    cpu_draws: Vec<CpuDraw>,
+    /// Per-range CPU quad expansion tasks.
+    cpu_slices: Vec<CpuExpandSlice>,
 }
 
-/// Below this many walked pools the expansion runs inline; it is also the smallest chunk.
-const EXPAND_CHUNK_MIN: usize = 8;
+/// Below this many GPU particles the direct pack runs inline (faster than waking the compute pool).
+const GPU_PACK_PARALLEL_MIN: usize = 6144;
+/// Maximum particles in one GPU pack slice (and target batch floor): splits giant emitters.
+const GPU_PACK_CHUNK: usize = 512;
+/// Maximum particles in one CPU quad expansion slice: splits giant emitters.
+const CPU_EXPAND_CHUNK: usize = 128;
 
-/// One expanded draw's CPU vertex count, its GPU particle count and its light fold.
-type Seg = (u32, u32, EffectLighting);
+struct GpuPackSlice {
+    entity: Entity,
+    child_idx: Option<usize>,
+    pool_idx: u32,
+    src_start: usize,
+    dst_offset: usize,
+    len: usize,
+}
 
-/// One expansion chunk's output: the CPU writer's vertices, the GPU pools' packed particles and
-/// a [`Seg`] per draw, in job order.
-#[derive(Default)]
-struct Expanded {
-    verts: Vec<EffectVertex>,
-    gpu: Vec<super::buffer::GpuParticle>,
-    segs: Vec<Seg>,
+struct CpuDraw {
+    draw_idx: usize,
+    entity: Entity,
+    frame: DrawFrame,
+    placement: Transform,
+    cam: CamBasis,
+    dump_at: Option<(u32, Vec3)>,
+    textured: bool,
+    slices: std::ops::Range<usize>,
+}
+
+struct CpuExpandSlice {
+    entity: Entity,
+    child_idx: Option<usize>,
+    frame: DrawFrame,
+    placement: Transform,
+    cam: CamBasis,
+    lit: bool,
+    committed: Option<[f32; 3]>,
+    src_start: usize,
+    len: usize,
+}
+
+fn push_gpu_slices(
+    out: &mut Vec<GpuPackSlice>,
+    entity: Entity,
+    child_idx: Option<usize>,
+    pool_idx: u32,
+    dst_base: usize,
+    total_len: usize,
+) {
+    let mut src_start = 0;
+    while src_start < total_len {
+        let len = (total_len - src_start).min(GPU_PACK_CHUNK);
+        out.push(GpuPackSlice {
+            entity,
+            child_idx,
+            pool_idx,
+            src_start,
+            dst_offset: dst_base + src_start,
+            len,
+        });
+        src_start += len;
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_cpu_slices(
+    out: &mut Vec<CpuExpandSlice>,
+    entity: Entity,
+    child_idx: Option<usize>,
+    frame: DrawFrame,
+    placement: Transform,
+    cam: CamBasis,
+    lit: bool,
+    committed: Option<[f32; 3]>,
+    total_len: usize,
+) {
+    let mut src_start = 0;
+    while src_start < total_len {
+        let len = (total_len - src_start).min(CPU_EXPAND_CHUNK);
+        out.push(CpuExpandSlice {
+            entity,
+            child_idx,
+            frame,
+            placement,
+            cam,
+            lit,
+            committed,
+            src_start,
+            len,
+        });
+        src_start += len;
+    }
+}
+
+fn effect_lighting(lit: bool, committed: Option<[f32; 3]>) -> EffectLighting {
+    match (lit, committed) {
+        (false, _) => EffectLighting::None,
+        (true, None) => EffectLighting::Scene,
+        (true, Some(_)) => EffectLighting::Committed,
+    }
 }
 
 /// What the expansion pass needs of one walked emitter: its frame, placement and camera basis.
@@ -1345,6 +1686,8 @@ struct ExpandJob {
     /// The parent pool's GPU expansion record, `None` for the CPU writer; per child likewise.
     gpu: Option<super::buffer::GpuPool>,
     kid_gpu: Vec<Option<super::buffer::GpuPool>>,
+    /// Total GPU-packed particles owned by this emitter and its children.
+    gpu_count: usize,
 }
 
 /// `$WOW_FX_CPU=1`: every pool takes the CPU writer, the GPU expansion's A/B and reference.
@@ -1355,7 +1698,7 @@ fn fx_cpu() -> bool {
 
 /// The draws one walked emitter commits after the expansion, parent first.
 struct CommitJob {
-    spec: EffectDrawSpec,
+    spec: Option<EffectDrawSpec>,
     kid_specs: Vec<EffectDrawSpec>,
     /// The depth dump's frame and the emitter's world point, when this pool is dumped.
     dump_at: Option<(u32, Vec3)>,
@@ -1554,22 +1897,21 @@ mod tests {
             cell: 0,
             phase: 0,
             fresh: false,
-            quat: Quat::IDENTITY,
-            angvel: Vec3::ZERO,
         }
     }
 
     fn env(kill_origin: Option<Vec3>, follow: Vec3) -> StepEnv {
-        StepEnv {
-            dt: 0.1,
-            gravity: 0.0,
-            drag: 0.0,
-            anchored: true,
-            kill_origin,
-            follow,
-            lifespan: 10.0,
-            lifespan_vary: 0.0,
-        }
+        StepEnv::new(0.1, 0.0, 0.0, true, kill_origin, follow, 10.0, 0.0)
+    }
+
+    /// Splitting `ModelTumble` out keeps every quad particle inside a single 64-byte cache line.
+    #[test]
+    fn particle_fits_in_one_cache_line() {
+        assert!(
+            std::mem::size_of::<Particle>() <= 64,
+            "Particle grew to {} bytes",
+            std::mem::size_of::<Particle>()
+        );
     }
 
     /// The pre-drag step velocity against the updated position.
@@ -1594,6 +1936,116 @@ mod tests {
         // An outbound particle dies on its first step; no authored emitter does this.
         let mut out = particle(origin + Vec3::X * 0.5, Vec3::X);
         assert!(!integrate_particle(&mut out, &kill));
+    }
+
+    /// Large-pool integration splits across `ComputeTaskPool` and must match serial `retain_mut`.
+    #[test]
+    fn parallel_integrate_pool_matches_serial() {
+        use super::{integrate_pool, WALK_SPLIT_MIN};
+        let _ = bevy::tasks::ComputeTaskPool::get_or_init(bevy::tasks::TaskPool::new);
+        let origin = Vec3::new(0.0, 0.0, 0.0);
+        let step_env = StepEnv::new(
+            0.05,
+            9.8,
+            0.25,
+            true,
+            Some(origin),
+            Vec3::new(0.1, 0.0, -0.2),
+            1.0,
+            0.2,
+        );
+        let mut serial: Vec<Particle> = (0..WALK_SPLIT_MIN + 200)
+            .map(|i| {
+                let mut p = particle(
+                    Vec3::new((i as f32) * 0.01 - 2.0, 1.0, 0.0),
+                    Vec3::new(if i % 3 == 0 { 1.0 } else { -1.0 }, 0.5, 0.0),
+                );
+                p.age = if i % 5 == 0 { 0.99 } else { 0.2 };
+                p.life_seed = ((i % 7) as f32 - 3.0) * 0.2;
+                p.fresh = i % 4 == 0;
+                p
+            })
+            .collect();
+        let mut parallel: Vec<Particle> = serial
+            .iter()
+            .map(|p| Particle {
+                pos: p.pos,
+                vel: p.vel,
+                age: p.age,
+                life: p.life,
+                life_seed: p.life_seed,
+                size_mul: p.size_mul,
+                base_spin: p.base_spin,
+                spin: p.spin,
+                cell: p.cell,
+                phase: p.phase,
+                fresh: p.fresh,
+            })
+            .collect();
+        serial.retain_mut(|p| integrate_particle(p, &step_env));
+        integrate_pool(&mut parallel, &step_env);
+        assert_eq!(parallel.len(), serial.len());
+        assert!(!parallel.is_empty());
+        for (a, b) in parallel.iter().zip(&serial) {
+            assert_eq!(a.pos, b.pos);
+            assert_eq!(a.vel, b.vel);
+            assert_eq!(a.age, b.age);
+            assert_eq!(a.life, b.life);
+            assert_eq!(a.fresh, b.fresh);
+        }
+    }
+
+    /// Splitting a giant emitter's particle range produces contiguous slices bounded by the chunk.
+    #[test]
+    fn gpu_and_cpu_slices_cover_large_pool_contiguously() {
+        use super::{
+            push_cpu_slices, push_gpu_slices, CamBasis, DrawFrame, CPU_EXPAND_CHUNK, GPU_PACK_CHUNK,
+        };
+        let entity = bevy::prelude::Entity::PLACEHOLDER;
+        let mut gpu = Vec::new();
+        push_gpu_slices(&mut gpu, entity, None, 3, 100, 1000);
+        assert!(gpu.len() > 1);
+        let mut cursor = 0usize;
+        for s in &gpu {
+            assert!(s.len > 0 && s.len <= GPU_PACK_CHUNK);
+            assert_eq!(s.src_start, cursor);
+            assert_eq!(s.dst_offset, 100 + cursor);
+            assert_eq!(s.pool_idx, 3);
+            cursor += s.len;
+        }
+        assert_eq!(cursor, 1000);
+
+        let mut cpu = Vec::new();
+        let frame = DrawFrame {
+            anchored: true,
+            ride: crate::ride_frame::StoredFrame::default(),
+            alpha: 1.0,
+            size_scale: 1.0,
+        };
+        let cam = CamBasis {
+            right: Vec3::X,
+            up: Vec3::Y,
+        };
+        push_cpu_slices(
+            &mut cpu,
+            entity,
+            Some(1),
+            frame,
+            Transform::IDENTITY,
+            cam,
+            false,
+            None,
+            500,
+        );
+        assert!(cpu.len() > 1);
+        let mut cursor = 0usize;
+        for s in &cpu {
+            assert!(s.len > 0 && s.len <= CPU_EXPAND_CHUNK);
+            assert_eq!(s.src_start, cursor);
+            assert_eq!(s.child_idx, Some(1));
+            cursor += s.len;
+        }
+        assert_eq!(cursor, 500);
     }
 
     /// Flag `0x10` sets the ride-vs-trail baseline; `0x4000` adds the response.

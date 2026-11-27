@@ -101,9 +101,22 @@ pub enum EffectTopology {
     Quads,
     /// A plain triangle list: identity indices (the decal projector's fans, rain's streaks).
     Tris,
-    /// Particles expanded on the GPU: the range counts vertex ids, 12 per [`GpuParticle`] (its
-    /// head quad, then its tail quad), which the shader turns into corners.
+    /// Particles expanded on the GPU: the range counts [`GpuParticle`] instances in
+    /// [`EffectQuads::particles`], drawn instanced over [`EffectDraw::particle_verts`].
     Particles,
+}
+
+/// Which vertex-id range (`0..6` head, `6..12` tail, `0..12` both) a GPU-expanded particle draw
+/// invokes per instance; head-only and tail-only pools skip the unused quad on the GPU.
+pub(crate) fn particle_vert_range(flags: u32) -> Range<u32> {
+    let head = flags & GPU_DRAWS_HEAD != 0;
+    let tail = flags & GPU_DRAWS_TAIL != 0;
+    match (head, tail) {
+        (true, false) => 0..6,
+        (false, true) => 6..12,
+        (true, true) => 0..12,
+        (false, false) => 0..0,
+    }
 }
 
 /// One live particle as the GPU expansion reads it: what `expand_quads` reads of a
@@ -132,11 +145,9 @@ pub struct GpuPool {
     /// Rows of the affine `stored → world` map: the ride frame in world mode, the placement times
     /// the WoW-to-Bevy axes in model mode; its linear part carries a tail's velocity.
     pub mat: [[f32; 4]; 3],
-    /// The head quad's bases (the XY plane's, or the camera's) and the camera's own.
+    /// The head quad's bases (the XY plane's, or the camera's); camera right/up come from `View`.
     pub base_r: [f32; 4],
     pub base_u: [f32; 4],
-    pub cam_r: [f32; 4],
-    pub cam_u: [f32; 4],
     pub color_t: [f32; 4],
     /// RGB, authored 0..255.
     pub color_v: [[f32; 4]; 4],
@@ -262,8 +273,11 @@ pub struct EffectDraw {
     pub(crate) raster_slope: f32,
     pub(crate) cam_relative: bool,
     pub(crate) no_depth_test: bool,
-    /// Vertex range in [`EffectQuads::verts`] (a multiple of 4 for quads, 3 for tris).
+    /// Vertex range in [`EffectQuads::verts`] (a multiple of 4 for quads, 3 for tris), or
+    /// particle range in [`EffectQuads::particles`] for [`EffectTopology::Particles`].
     pub range: Range<u32>,
+    /// Per-instance vertex-id range (`0..6`, `6..12`, or `0..12`) for [`EffectTopology::Particles`].
+    pub(crate) particle_verts: Range<u32>,
     /// The producing entity, the item's identity in the phase (`item.entity.1`).
     pub main_entity: Entity,
     /// [`EffectLightOverride`]'s buffer; `None` is the world's.
@@ -359,15 +373,52 @@ impl EffectQuads {
         particles: &[GpuParticle],
         spec: EffectDrawSpec,
     ) {
+        if particles.is_empty() {
+            return;
+        }
         let index = self.pools.len() as u32;
-        let first = self.particles.len();
+        let first = self.particles.len() as u32;
         self.particles
             .extend(particles.iter().map(|p| GpuParticle { pool: index, ..*p }));
-        let (start, end) = (first as u32 * 12, self.particles.len() as u32 * 12);
-        if end > start {
-            self.pools.push(pool);
-            self.push_draw(start..end, EffectTopology::Particles, spec);
-        }
+        let end = self.particles.len() as u32;
+        let vert_range = particle_vert_range(pool.counts2[1]);
+        self.pools.push(pool);
+        self.push_draw(first..end, vert_range, EffectTopology::Particles, spec);
+    }
+
+    /// Reserve one GPU-expanded pool and its draw record ahead of a parallel pack into
+    /// [`Self::particles`]; returns `(pool_index, first_particle)` for the pack pass.
+    pub(crate) fn reserve_particle_draw(
+        &mut self,
+        pool: GpuPool,
+        count: u32,
+        first_particle: u32,
+        spec: EffectDrawSpec,
+    ) -> u32 {
+        debug_assert!(
+            self.cleared_this_frame,
+            "effect-stream write before `begin_effect_frame`: this draw is about to be erased."
+        );
+        let index = self.pools.len() as u32;
+        let vert_range = particle_vert_range(pool.counts2[1]);
+        self.pools.push(pool);
+        self.push_draw(
+            first_particle..first_particle + count,
+            vert_range,
+            EffectTopology::Particles,
+            spec,
+        );
+        index
+    }
+
+    /// Reserve an empty quad draw slot so a CPU-expanded pool keeps its walk-order position beside
+    /// GPU-expanded pools; the caller fills in `range` once expanded.
+    pub(crate) fn reserve_placeholder_draw(&mut self, spec: EffectDrawSpec) {
+        debug_assert!(
+            self.cleared_this_frame,
+            "effect-stream write before `begin_effect_frame`: this draw is about to be erased."
+        );
+        self.push_draw(0..0, 0..0, EffectTopology::Quads, spec);
     }
 
     fn commit(&mut self, start: u32, topology: EffectTopology, spec: EffectDrawSpec) {
@@ -379,11 +430,17 @@ impl EffectQuads {
         );
         let end = self.verts.len() as u32;
         if end > start {
-            self.push_draw(start..end, topology, spec);
+            self.push_draw(start..end, 0..0, topology, spec);
         }
     }
 
-    fn push_draw(&mut self, range: Range<u32>, topology: EffectTopology, spec: EffectDrawSpec) {
+    fn push_draw(
+        &mut self,
+        range: Range<u32>,
+        particle_verts: Range<u32>,
+        topology: EffectTopology,
+        spec: EffectDrawSpec,
+    ) {
         self.draws.push(EffectDraw {
             cam: spec.cam,
             texture: spec.texture,
@@ -398,6 +455,7 @@ impl EffectQuads {
             cam_relative: spec.cam_relative,
             no_depth_test: spec.no_depth_test,
             range,
+            particle_verts,
             main_entity: spec.main_entity,
             light: spec.light,
             clip: spec.clip,
@@ -431,6 +489,15 @@ mod tests {
         assert_eq!(EffectBlend::from_gx(4), EffectBlend::Multiply);
         assert_eq!(EffectBlend::from_gx(5), EffectBlend::Mod2x);
         assert_eq!(EffectBlend::from_gx(6), EffectBlend::ModAdd);
+    }
+
+    /// Instanced GPU particle draws invoke only the active head/tail vertex span per particle.
+    #[test]
+    fn particle_vert_range_picks_only_the_active_quads() {
+        assert_eq!(particle_vert_range(GPU_DRAWS_HEAD), 0..6);
+        assert_eq!(particle_vert_range(GPU_DRAWS_TAIL), 6..12);
+        assert_eq!(particle_vert_range(GPU_DRAWS_HEAD | GPU_DRAWS_TAIL), 0..12);
+        assert_eq!(particle_vert_range(0), 0..0);
     }
 
     /// M2 modes 2 to 4 fold into `ModelBlend::Blend`; flat `Spells\` ground quads are mode 4.

@@ -75,8 +75,6 @@ struct GpuPool {
     mat: array<vec4<f32>, 3>,
     base_r: vec4<f32>,
     base_u: vec4<f32>,
-    cam_r: vec4<f32>,
-    cam_u: vec4<f32>,
     color_t: vec4<f32>,
     color_v: array<vec4<f32>, 4>,
     alpha_t: vec4<f32>,
@@ -111,6 +109,7 @@ struct GpuParticle {
 @group(2) @binding(0) var<storage, read> pools: array<GpuPool>;
 @group(2) @binding(1) var<storage, read> particles: array<GpuParticle>;
 @group(2) @binding(2) var<storage, read> twinkle: array<vec4<f32>, 32>;
+@group(2) @binding(3) var<storage, read> particle_order: array<u32>;
 
 const DRAWS_HEAD: u32 = 1u;
 const DRAWS_TAIL: u32 = 2u;
@@ -184,12 +183,14 @@ fn dead() -> VertexOutput {
 }
 
 @vertex
-fn vertex(@builtin(vertex_index) vi: u32) -> VertexOutput {
-    let p = particles[vi / 12u];
+fn vertex(
+    @builtin(vertex_index) local: u32,
+    @builtin(instance_index) instance: u32,
+) -> VertexOutput {
+    let p = particles[particle_order[instance]];
     let pool = pools[p.pool];
-    let local = vi % 12u;
     let is_tail = local >= 6u;
-    let k = local % 6u;
+    let k = select(local, local - 6u, is_tail);
     var corner = k;
     if (k == 3u) { corner = 0u; } else if (k == 4u) { corner = 2u; } else if (k == 5u) { corner = 3u; }
     let flags = pool.counts2.y;
@@ -293,8 +294,17 @@ fn vertex(@builtin(vertex_index) vi: u32) -> VertexOutput {
         var t_eff = pool.params2.z;
         if ((flags & TAIL_CLAMPS) != 0u) { t_eff = min(t_eff, p.age); }
         let tail = -vel_world * t_eff;
-        let cam_r = pool.cam_r.xyz;
-        let cam_u = pool.cam_u.xyz;
+        // Camera right and up are rows 0 and 1 of view_from_world's orthonormal rotation block.
+        let cam_r = vec3<f32>(
+            view.view_from_world[0].x,
+            view.view_from_world[1].x,
+            view.view_from_world[2].x,
+        );
+        let cam_u = vec3<f32>(
+            view.view_from_world[0].y,
+            view.view_from_world[1].y,
+            view.view_from_world[2].y,
+        );
         let tr = dot(tail, cam_r);
         let tu = dot(tail, cam_u);
         let l2 = tr * tr + tu * tu;
