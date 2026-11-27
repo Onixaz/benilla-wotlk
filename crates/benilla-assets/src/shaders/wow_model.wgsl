@@ -735,8 +735,14 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
     let faded_alpha = select(base_color.a * obj_fade, base_color.a, alpha_has_fade);
     let base = alpha_discard(pbr_input.material, base_color);
 
-    // The fog colour's weight in the result: 1, but MOCV.a on a unified TRANS batch (below).
-    var fog_weight = 1.0;
+    // A unified TRANS batch's two passes (below), kept apart so each takes its own fog: the lit
+    // pass and the MOHD-ambient pass, weighted by MOCV.a (`trans_w`) and 1 − MOCV.a.
+    var two_pass = false;
+    var pass_lit = vec3<f32>(0.0);
+    var pass_amb = vec3<f32>(0.0);
+    var trans_w = 1.0;
+    // The shadow-map scale the receive applied to `rgb`, re-applied to each pass.
+    var shade_k = 1.0;
     let highlight = select(vec3<f32>(0.0), wow_light.light_ambient.rgb, highlighted);
     let anim_tint = m.tint.rgb + wow_light.matanim[u32(m.anim_slots.y)].xyz;
 #ifdef WOW_UNLIT_M2
@@ -953,8 +959,9 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
     // doubles it: out = 2·tex·V. The light by section (`0x7a8b10` modes, `0x7a9a66`): an exterior
     // group's batch the Direct/Ambient N·L, an UNLIT one the bare V = M; an interior group's the
     // MOHD ambient alone, a WINDOW batch the midpoint light. A TRANS batch of any group draws twice:
-    // the lit pass (SrcAlphaOpaque) weighted by MOCV.a, the MOHD-ambient pass (InvSrcAlphaAdd,
-    // black fog) by 1 − a.
+    // the lit pass (SrcAlphaOpaque, the scene fog, `0x7a9656`) weighted by MOCV.a, the MOHD-ambient
+    // pass (InvSrcAlphaAdd, the group's fog, `0x7a96ea`) by 1 − a. Black fog is the fixed-function
+    // fallback's alone (`0x7a9877`).
     if (is_wmo && m.wmo_unified.w > 0.5) {
         // No MOCV adds no light: the unified vertex default is black (`0x7c86f7`).
         var mocv = vec4<f32>(0.0, 0.0, 0.0, 1.0);
@@ -980,16 +987,25 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
         let v_unlit = clamp(mocv.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
         let v_amb = clamp(m.wmo_unified.rgb * k + mocv.rgb + e, vec3<f32>(0.0), vec3<f32>(1.0));
         let v_lit = clamp(lit_a * k + mocv.rgb + e, vec3<f32>(0.0), vec3<f32>(1.0));
-        var v: vec3<f32>;
         if (m.tint.w > 1.5) {
-            v = mix(v_amb, select(v_lit, v_unlit, is_emissive), mocv.a);
-            fog_weight = mocv.a;
-        } else if (is_interior) {
-            v = select(v_amb, v_lit, m.sidn.w > 0.5);
+            // Each pass writes its own clamped colour; the blend sums them.
+            two_pass = true;
+            trans_w = mocv.a;
+            pass_lit = clamp(
+                2.0 * tex_u * select(v_lit, v_unlit, is_emissive),
+                vec3<f32>(0.0),
+                vec3<f32>(1.0),
+            );
+            pass_amb = clamp(2.0 * tex_u * v_amb, vec3<f32>(0.0), vec3<f32>(1.0));
+            rgb = mix(pass_amb, pass_lit, trans_w);
         } else {
-            v = select(v_lit, v_unlit, is_emissive);
+            let v = select(
+                select(v_lit, v_unlit, is_emissive),
+                select(v_amb, v_lit, m.sidn.w > 0.5),
+                is_interior,
+            );
+            rgb = clamp(2.0 * tex_u * v, vec3<f32>(0.0), vec3<f32>(1.0));
         }
-        rgb = clamp(2.0 * tex_u * v, vec3<f32>(0.0), vec3<f32>(1.0));
     }
     // The shadow maps on a lit, non-additive batch (the model and map-object pixel programs): the
     // diffuse colour scaled by 0.7 + 0.3·shadow, the shadow eased off edge-on to the sun. The
@@ -1005,7 +1021,8 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
             select(wow_light.fog_params.z, 1e9, m.clutter_fade.w > 0.5),
         );
         if (shadow < 1.0) {
-            rgb = rgb * wow_shadow::shadow_scale(wow_shadow::grazing_fade(shadow, n_lit));
+            shade_k = wow_shadow::shadow_scale(wow_shadow::grazing_fade(shadow, n_lit));
+            rgb = rgb * shade_k;
         }
     }
 #endif
@@ -1045,7 +1062,16 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
         if (fog_policy == 1u) { fog_rgb = vec3<f32>(0.0); }
         else if (fog_policy == 2u) { fog_rgb = vec3<f32>(1.0); }
         else if (fog_policy == 3u) { fog_rgb = vec3<f32>(0.50196078); }
-        rgb = mix(fog_rgb * fog_weight, rgb, factor);
+        rgb = mix(fog_rgb, rgb, factor);
+        if (two_pass) {
+            // The lit pass always takes the scene fog (mode 2), the ambient pass the group's.
+            let lit_factor = fog_curve(wow_light.fog_params.xy, wow_light.point_count.z, eye_z);
+            rgb = mix(
+                mix(fog_rgb, pass_amb * shade_k, factor),
+                mix(wow_light.fog_color.xyz, pass_lit * shade_k, lit_factor),
+                trans_w,
+            );
+        }
     }
 
 

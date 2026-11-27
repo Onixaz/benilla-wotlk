@@ -368,7 +368,12 @@ fn fragment(in: GxVsOut) -> @location(0) vec4<f32> {
     }
     // A unified WMO item (MOHD 0x2): wow_model.wgsl's unified branch, which documents the law.
     // `base` is the bare texel here; no MOCV adds no light.
-    var fog_weight = 1.0;
+    // A TRANS item's two passes, kept apart for their own fogs (wow_model.wgsl's `two_pass`).
+    var two_pass = false;
+    var pass_lit = vec3<f32>(0.0);
+    var pass_amb = vec3<f32>(0.0);
+    var trans_w = 1.0;
+    var shade_k = 1.0;
     let unified = recs[in.word & 0xffffu].y;
     if ((in.word & WORD_WMO) != 0u && (unified & 16777216u) != 0u) {
         let mocv = select(vec4<f32>(0.0, 0.0, 0.0, 1.0), in.color, has_vc);
@@ -398,16 +403,24 @@ fn fragment(in: GxVsOut) -> @location(0) vec4<f32> {
         let v_unlit = clamp(mocv.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
         let v_amb = clamp(amb * k + mocv.rgb + e, vec3<f32>(0.0), vec3<f32>(1.0));
         let v_lit = clamp(lit_a * k + mocv.rgb + e, vec3<f32>(0.0), vec3<f32>(1.0));
-        var v: vec3<f32>;
         if ((in.word & WORD_CLASS_TRANS) != 0u) {
-            v = mix(v_amb, select(v_lit, v_unlit, unlit), mocv.a);
-            fog_weight = mocv.a;
-        } else if ((in.word & WORD_INTERIOR) != 0u) {
-            v = select(v_amb, v_lit, window);
+            two_pass = true;
+            trans_w = mocv.a;
+            pass_lit = clamp(
+                2.0 * base.rgb * select(v_lit, v_unlit, unlit),
+                vec3<f32>(0.0),
+                vec3<f32>(1.0),
+            );
+            pass_amb = clamp(2.0 * base.rgb * v_amb, vec3<f32>(0.0), vec3<f32>(1.0));
+            rgb = mix(pass_amb, pass_lit, trans_w);
         } else {
-            v = select(v_lit, v_unlit, unlit);
+            let v = select(
+                select(v_lit, v_unlit, unlit),
+                select(v_amb, v_lit, window),
+                (in.word & WORD_INTERIOR) != 0u,
+            );
+            rgb = clamp(2.0 * base.rgb * v, vec3<f32>(0.0), vec3<f32>(1.0));
         }
-        rgb = clamp(2.0 * base.rgb * v, vec3<f32>(0.0), vec3<f32>(1.0));
     }
     // The shadow maps on a lit item, wow_model.wgsl's receive (`benilla_world::ext_shadow`).
     if ((in.word & WORD_UNLIT) == 0u) {
@@ -418,7 +431,8 @@ fn fragment(in: GxVsOut) -> @location(0) vec4<f32> {
             wow_light.fog_params.z,
         );
         if (shadow < 1.0) {
-            rgb = rgb * wow_shadow::shadow_scale(wow_shadow::grazing_fade(shadow, n_lit));
+            shade_k = wow_shadow::shadow_scale(wow_shadow::grazing_fade(shadow, n_lit));
+            rgb = rgb * shade_k;
         }
     }
     // Planar eye-Z fog; other fog modes belong to blends never admitted here. The interior triple
@@ -434,7 +448,16 @@ fn fragment(in: GxVsOut) -> @location(0) vec4<f32> {
     }
     if (fog_color.w > 0.5 && (in.word & WORD_FOG_OFF) == 0u) {
         let factor = fog_curve(fog_span, fog_rate, eye_z);
-        rgb = mix(fog_color.xyz * fog_weight, rgb, factor);
+        rgb = mix(fog_color.xyz, rgb, factor);
+        if (two_pass) {
+            // The lit pass always takes the scene fog (mode 2), the ambient pass the item's.
+            let lit_factor = fog_curve(wow_light.fog_params.xy, wow_light.point_count.z, eye_z);
+            rgb = mix(
+                mix(fog_color.xyz, pass_amb * shade_k, factor),
+                mix(wow_light.fog_color.xyz, pass_lit * shade_k, lit_factor),
+                trans_w,
+            );
+        }
     }
     // Gamma-space output; alpha pinned 1.0, every draw here is opaque.
     return vec4<f32>(rgb, 1.0);
