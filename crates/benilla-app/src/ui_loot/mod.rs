@@ -90,9 +90,9 @@ pub(crate) struct LootState {
     /// The open's wire `loot_type` (`[0xbfa68c]`), which `IsFishingLoot` and the close's sweep
     /// read; a close leaves it.
     loot_type: u8,
-    /// The master-loot candidates (`0xca0550`), in wire order: the last `SMSG_LOOT_MASTER_LIST`'s,
-    /// which only the next list rewrites (`0x6fa690`); no window's open or close touches them.
-    master_candidates: Vec<u64>,
+    /// The master-loot candidates (`0xca0550`), placed at `SMSG_LOOT_MASTER_LIST` receipt
+    /// (`0x6fa690`); only the next list rewrites them, and no window's open or close touches them.
+    master_candidates: Vec<Option<u64>>,
     /// The display row a `LOOT_BIND_CONFIRM` is open for: set by `LootSlot`, cleared by the
     /// confirmed send and with each window. The reference keeps the item index at `[0xacee24]`
     /// (`0x589140`), and `ConfirmLootSlot` turns its slot into the item index the same way
@@ -121,6 +121,8 @@ pub(crate) struct LootStep<'a> {
     pub(crate) waits: &'a mut RecordWaits,
     pub(crate) net: &'a NetCommands,
     pub(crate) latch: &'a mut LootLatch,
+    /// Whether the looted object is still held in the object manager (`0x588eb0`, `0x6d58d0`).
+    pub(crate) held: bool,
     pub(crate) sink: &'a mut dyn SignalSink,
 }
 
@@ -145,6 +147,8 @@ pub(crate) struct CloseFlags {
     pub(crate) release: bool,
     pub(crate) keep_item: bool,
     pub(crate) no_ui: bool,
+    /// The looted object is no longer held in the object manager (`0x588eb0`).
+    pub(crate) source_missing: bool,
 }
 
 /// The loot window's rows (`0x589a30` scans 18).
@@ -211,8 +215,15 @@ impl LootState {
         self.source = Some(source);
         self.gold = gold;
         self.coin_slot = gold > 0; // fixed for the window's lifetime
-        self.items = items;
-        self.items.truncate(LOOT_WINDOW_ROWS);
+                                   // Index incoming rows by wire slot (`0x6d53b0` -> `0x5896b0`), skipping item 0.
+        let mut by_slot: [Option<LootItem>; LOOT_WINDOW_ROWS] = std::array::from_fn(|_| None);
+        for it in items {
+            let idx = usize::from(it.slot);
+            if idx < LOOT_WINDOW_ROWS && it.item_id != 0 {
+                by_slot[idx] = Some(it);
+            }
+        }
+        self.items = by_slot.into_iter().flatten().collect();
         self.pending_bind_confirm = None; // the set resets the stash (`0x589805`)
         self.loot_type = loot_type;
         self.pending = 0;
@@ -246,7 +257,14 @@ impl LootState {
     fn opened(&mut self, step: &mut LootStep) -> Option<u64> {
         self.judge_binds(step.items);
         if self.auto_loot {
-            return self.auto_loot_sweep(true, step.latch, step.net, step.sink);
+            return self.auto_loot_sweep(
+                true,
+                step.held,
+                Some(step.items),
+                step.latch,
+                step.net,
+                step.sink,
+            );
         }
         step.sink.fire("LOOT_OPENED", vec![ScriptValue::Int(0)]);
         None
@@ -309,7 +327,7 @@ impl LootState {
         p: &benilla_protocol::messages::LootSlotChanged,
         step: &mut LootStep,
     ) {
-        if self.source != Some(p.looted_target) {
+        if step.latch.0 != Some(p.looted_target) || !step.held {
             return;
         }
         let row = self
@@ -357,9 +375,47 @@ impl LootState {
         }
     }
 
-    /// `SMSG_LOOT_MASTER_LIST` (`0x6fa690`): the list replaced whole, window or none.
-    pub(crate) fn set_master_candidates(&mut self, candidates: Vec<u64>) {
-        self.master_candidates = candidates;
+    /// `SMSG_LOOT_MASTER_LIST` (`0x6fa690`): the list replaced and placed at receipt, window or
+    /// none. In a raid, each guid is placed in its subgroup's 5-slot block and unknown non-roster
+    /// guids are skipped.
+    pub(crate) fn set_master_candidates(
+        &mut self,
+        candidates: Vec<u64>,
+        group: &GroupState,
+        self_guid: Option<u64>,
+    ) {
+        if group.group_type != GROUPTYPE_RAID {
+            self.master_candidates = candidates
+                .into_iter()
+                .take(MASTER_LOOT_CANDIDATE_SLOTS)
+                .map(Some)
+                .collect();
+            return;
+        }
+        let mut slots: Vec<Option<u64>> = vec![None; MASTER_LOOT_CANDIDATE_SLOTS];
+        for guid in candidates {
+            let flags = if self_guid == Some(guid) {
+                group.own_flags
+            } else if let Some(m) = group.members.iter().find(|m| m.guid == guid) {
+                m.flags
+            } else {
+                continue;
+            };
+            let base = usize::from(flags & GROUP_MEMBER_SUBGROUP) * MEMBERS_PER_RAID_GROUP;
+            let end = (base + MEMBERS_PER_RAID_GROUP).min(MASTER_LOOT_CANDIDATE_SLOTS);
+            if let Some(free) = (base..end).find(|&i| slots[i].is_none()) {
+                slots[free] = Some(guid);
+            }
+        }
+        while slots.last().is_some_and(Option::is_none) {
+            slots.pop();
+        }
+        self.master_candidates = slots;
+    }
+
+    /// Record `index` as the pending bind-confirm slot after `LOOT_BIND_CONFIRM` runs (`0x588f90`).
+    pub(crate) fn stash_bind_confirm(&mut self, index: u32) {
+        self.pending_bind_confirm = Some(index);
     }
 
     /// `SMSG_LOOT_REMOVED` (`0x589920`): the row holding the wire slot is zeroed (`0x589980`-`0x5899aa`), its
@@ -454,7 +510,7 @@ impl LootState {
     ) -> Option<u64> {
         self.auto_loot = on;
         if on && latch.0.is_some() {
-            return self.auto_loot_sweep(true, latch, net, sink);
+            return self.auto_loot_sweep(true, true, None, latch, net, sink);
         }
         None
     }
@@ -466,6 +522,8 @@ impl LootState {
     fn auto_loot_sweep(
         &mut self,
         signal: bool,
+        held: bool,
+        items: Option<&Items>,
         latch: &mut LootLatch,
         net: &NetCommands,
         sink: &mut dyn SignalSink,
@@ -473,10 +531,11 @@ impl LootState {
         if self.pending != 0 {
             return None;
         }
-        self.sweep(latch, net, sink);
-        if self.is_empty() {
+        self.sweep(items, latch, net, sink);
+        if !self.has_loot(held) {
             let flags = CloseFlags {
                 release: true,
+                source_missing: !held,
                 ..default()
             };
             return close(self, latch, net, flags, sink);
@@ -489,7 +548,13 @@ impl LootState {
 
     /// The sweep's takes (`0x588fd5`-`0x5890a7`): its sends do not move the window, whose rows go
     /// as the server's removals land.
-    fn sweep(&mut self, latch: &LootLatch, net: &NetCommands, sink: &mut dyn SignalSink) {
+    fn sweep(
+        &mut self,
+        items: Option<&Items>,
+        latch: &LootLatch,
+        net: &NetCommands,
+        sink: &mut dyn SignalSink,
+    ) {
         // Any nonzero coins, taken (-1) included (`0x588fcb`).
         if self.coin_slot && latch.0.is_some() {
             let _ = net.0.send(ClientCommand::LootMoney);
@@ -500,6 +565,7 @@ impl LootState {
             let Some(LootAction::Item {
                 wire_slot,
                 display_id,
+                item_id,
                 slot_type,
                 ..
             }) = self.action_at(index)
@@ -512,18 +578,24 @@ impl LootState {
             if slot_type == slot_type::ALLOW_LOOT && self.binds.contains(&wire_slot) {
                 if !confirmed {
                     confirmed = true;
-                    self.pending_bind_confirm = Some(index);
+                    // Stash after `LOOT_BIND_CONFIRM` returns (`0x588f90`), as `LootSlot` does.
                     sink.fire(
                         "LOOT_BIND_CONFIRM",
                         vec![ScriptValue::Int(i64::from(index))],
                     );
+                    if !sink.post_bind_confirm(index) {
+                        self.pending_bind_confirm = Some(index);
+                    }
                 }
                 continue;
             }
             let _ = net
                 .0
                 .send(ClientCommand::AutostoreLootItem { slot: wire_slot });
-            self.pickups.push(display_id);
+            let sound_display = items
+                .and_then(|i| i.template_cached(item_id))
+                .map_or(display_id, |r| r.display_info_id);
+            self.pickups.push(sound_display);
         }
         self.auto_loot = false;
     }
@@ -559,7 +631,9 @@ impl LootState {
         match self.action_at(index) {
             Some(LootAction::Money) => {
                 debug!("ui_loot: loot coin (row {index})");
-                let _ = step.net.0.send(ClientCommand::LootMoney);
+                if step.latch.0.is_some() {
+                    let _ = step.net.0.send(ClientCommand::LootMoney);
+                }
                 if self.clear_money(held, step.sink) {
                     return Took::CloseOwed;
                 }
@@ -575,10 +649,10 @@ impl LootState {
             }
             Some(LootAction::Item {
                 wire_slot,
-                display_id,
                 item_id,
                 count,
                 slot_type,
+                ..
             }) => {
                 let Some(record) = step.items.template_cached(item_id) else {
                     debug!("ui_loot: row {index} has no cached record, no take");
@@ -597,7 +671,7 @@ impl LootState {
                     return Took::BindConfirm;
                 }
                 debug!("ui_loot: autostore row {index} (wire slot {wire_slot})");
-                self.pickups.push(display_id);
+                self.pickups.push(record.display_info_id);
                 let _ = step
                     .net
                     .0
@@ -611,20 +685,20 @@ impl LootState {
     /// `ConfirmLootSlot` (`0x589300`): only the stashed row takes, its pickup sound then its send,
     /// and the stash clears on the send (`0x589383`), so a doubled accept cannot loot twice; a row
     /// gone under the dialog sends nothing and keeps the stash (`0x58934e`).
-    fn confirm(&mut self, index: u32, net: &NetCommands) {
+    fn confirm(&mut self, index: u32, items: &Items, net: &NetCommands) {
         if self.pending_bind_confirm != Some(index) {
             return;
         }
         let Some(LootAction::Item {
-            wire_slot,
-            display_id,
-            ..
+            wire_slot, item_id, ..
         }) = self.action_at(index)
         else {
             return;
         };
         debug!("ui_loot: bind-confirmed row {index} (wire slot {wire_slot})");
-        self.pickups.push(display_id);
+        if let Some(record) = items.template_cached(item_id) {
+            self.pickups.push(record.display_info_id);
+        }
         let _ = net
             .0
             .send(ClientCommand::AutostoreLootItem { slot: wire_slot });
@@ -702,6 +776,7 @@ impl LootState {
             waits: &mut RecordWaits::default(),
             net: &NetCommands(tx),
             latch: &mut LootLatch::default(),
+            held: true,
             sink: &mut Vec::new(),
         };
         self.open(source, loot_type, gold, rows, &mut step);
@@ -776,38 +851,10 @@ impl LootState {
         })
     }
 
-    /// The candidate slots as the reference lays them out: wire order in a party; in a raid, each
-    /// guid in the first free slot of its subgroup's block of five, holes kept for
-    /// `GroupLootDropDown_Initialize`'s "Group N" submenus (`LootFrame.lua:197-213`). The feed and
-    /// the drain share it, so an index means one candidate.
-    fn placed_candidates(&self, group: &GroupState) -> Vec<Option<u64>> {
-        if group.group_type != GROUPTYPE_RAID {
-            return self.master_candidates.iter().copied().map(Some).collect();
-        }
-        let mut slots: Vec<Option<u64>> = vec![None; MASTER_LOOT_CANDIDATE_SLOTS];
-        for &guid in &self.master_candidates {
-            // A guid missing from the roster is ours: `SMSG_GROUP_LIST` lists only the others,
-            // and `Group::MasterLoot` includes us.
-            let flags = group
-                .members
-                .iter()
-                .find(|m| m.guid == guid)
-                .map_or(group.own_flags, |m| m.flags);
-            let base = usize::from(flags & GROUP_MEMBER_SUBGROUP) * MEMBERS_PER_RAID_GROUP;
-            let end = (base + MEMBERS_PER_RAID_GROUP).min(MASTER_LOOT_CANDIDATE_SLOTS);
-            if let Some(free) = (base..end).find(|&i| slots[i].is_none()) {
-                slots[free] = Some(guid);
-            }
-        }
-        while slots.last().is_some_and(Option::is_none) {
-            slots.pop(); // trailing empties read as nil either way
-        }
-        slots
-    }
-
-    /// The candidate at a 1-based menu index, through [`LootState::placed_candidates`].
-    fn master_candidate(&self, index_1based: u32, group: &GroupState) -> Option<u64> {
-        self.placed_candidates(group)
+    /// The candidate at a 1-based menu index, placed at `SMSG_LOOT_MASTER_LIST` receipt
+    /// (`0x6fa770`).
+    fn master_candidate(&self, index_1based: u32) -> Option<u64> {
+        self.master_candidates
             .get(index_1based.checked_sub(1)? as usize)
             .copied()
             .flatten()
@@ -1058,7 +1105,6 @@ pub(crate) struct LootLive<'w, 's> {
     icons: Option<Res<'w, ItemDisplays>>,
     props: Option<Res<'w, crate::items::RandomProperties>>,
     enchants: Option<Res<'w, crate::items::Enchants>>,
-    group: Res<'w, GroupState>,
     names: Res<'w, NameCache>,
     commands: Res<'w, NetCommands>,
     objects: LootSourceObjects<'w, 's>,
@@ -1096,7 +1142,7 @@ impl LootLive<'_, '_> {
     /// The candidate at 0-based `index` named off the name cache; a miss asks the name and leaves
     /// the list's callback (`0x58899d`).
     pub(crate) fn master_candidate(&mut self, index: u32) -> Option<String> {
-        let guid = self.loot.master_candidate(index + 1, &self.group)?;
+        let guid = self.loot.master_candidate(index + 1)?;
         if let Some(name) = self.names.peek(guid).filter(|n| !n.is_empty()) {
             return Some(name.to_string());
         }
@@ -1116,6 +1162,7 @@ pub(super) fn with_window(
     if !world.contains_resource::<Items>() || !world.contains_resource::<NetCommands>() {
         return;
     }
+    let held = source_held(world);
     let Some(mut loot) = world.remove_resource::<LootState>() else {
         return;
     };
@@ -1135,6 +1182,7 @@ pub(super) fn with_window(
             waits: &mut waits,
             net: world.resource::<NetCommands>(),
             latch: &mut latch,
+            held,
             sink: &mut ui,
         },
     );
@@ -1196,15 +1244,14 @@ pub(crate) fn run_verb(world: &mut World, verb: LootVerb) {
             }
         }
         LootVerb::Confirm(index) => with_window(world, |loot, step| {
-            loot.confirm(index, step.net);
+            loot.confirm(index, step.items, step.net);
             None
         }),
         LootVerb::MasterGive { slot, candidate } => {
             // The binding resolves the candidate first; none sends nothing (`0x589676`, `0x589680`).
             let target = world
                 .get_resource::<LootState>()
-                .zip(world.get_resource::<GroupState>())
-                .and_then(|(loot, group)| loot.master_candidate(candidate, group));
+                .and_then(|loot| loot.master_candidate(candidate));
             let (Some(target), Some(loot), Some(net)) = (
                 target,
                 world.get_resource::<LootState>(),
@@ -1223,6 +1270,7 @@ pub(crate) fn run_verb(world: &mut World, verb: LootVerb) {
                 release: true,
                 keep_item: false,
                 no_ui,
+                source_missing: !step.held,
             };
             close(loot, step.latch, step.net, flags, step.sink)
         }),
@@ -1351,11 +1399,11 @@ pub(crate) fn close(
     let source = loot.source?;
     // The sweep returns at once while a record is pending (`0x588f99`).
     if SWEPT_ON_CLOSE.contains(&loot.loot_type)
-        && !loot.is_empty()
+        && loot.has_loot(!flags.source_missing)
         && !flags.keep_item
         && loot.pending == 0
     {
-        loot.sweep(latch, commands, sink);
+        loot.sweep(None, latch, commands, sink);
     }
     if flags.no_ui {
         sink.line(UiError::key("ERR_LOOT_NO_UI"));
@@ -1383,48 +1431,9 @@ pub(crate) fn dead_unit_source(objects: &crate::net::Objects, guid: u64) -> bool
     })
 }
 
-/// The interaction close's last step: a closed source that is a unit, a player included, with
-/// `UNIT_FIELD_HEALTH` at or below 0 is deselected if it is still the selection (`(guid, 1)`). It
-/// reads the health, never the loot type, so a skinned corpse loses the selection and a live
-/// pickpocket target keeps it; an unstreamed source is left alone.
-#[derive(bevy::ecs::system::SystemParam)]
-pub(crate) struct DeadUnitDeselect<'w, 's> {
-    index: Res<'w, crate::net::GuidIndex>,
-    objects: Query<
-        'w,
-        's,
-        (
-            &'static crate::net::NetEntity,
-            &'static crate::net::ObjectStore,
-        ),
-    >,
-    asks: MessageWriter<'w, crate::target::DeselectGuid>,
-}
-
-impl DeadUnitDeselect<'_, '_> {
-    pub(crate) fn after_close(&mut self, closed: Option<u64>) {
-        let Some(source) = closed else {
-            return;
-        };
-        let dead_unit = self
-            .index
-            .0
-            .get(&source)
-            .and_then(|&e| self.objects.get(e).ok())
-            .is_some_and(|(net_entity, store)| {
-                matches!(
-                    net_entity.kind,
-                    benilla_protocol::EntityKind::Unit | benilla_protocol::EntityKind::Player
-                ) && (store.0.unit_health().unwrap_or(0) as i32) <= 0 // signed, `jg`
-            });
-        if dead_unit {
-            self.asks.write(crate::target::DeselectGuid(source));
-        }
-    }
-}
-
-/// The close's dead-unit deselect (`0x52378c`) in `ui`'s turn, for a closer that holds no
-/// [`DeadUnitDeselect`].
+/// The close's dead-unit deselect (`0x52378c`) in `ui`'s turn: a closed source that is a unit, a
+/// player included, with `UNIT_FIELD_HEALTH` at or below 0 is deselected if it is still the
+/// selection (`(guid, 1)`).
 pub(crate) fn deselect_dead_in_turn(
     ui: &mut crate::ui_script::live::UiEvents,
     closed: Option<u64>,
@@ -1535,6 +1544,7 @@ pub(crate) fn close_on_move_start(
         release: true,
         keep_item: true,
         no_ui: false,
+        ..default()
     };
     close(loot, latch, commands, flags, sink)
 }
@@ -1626,6 +1636,7 @@ mod tests {
                 waits: &mut self.waits,
                 net: &self.net,
                 latch: &mut self.latch,
+                held: true,
                 sink: &mut self.fired,
             }
         }
@@ -1825,6 +1836,7 @@ mod tests {
             .resource_mut::<crate::net::GuidIndex>()
             .0
             .insert(0x42, held);
+        app.world_mut().resource_mut::<LootLatch>().0 = Some(0x42);
         open_window(app.world_mut(), 0x42, loot_type::CORPSE, gold, rows);
 
         let script = UiScript::new().unwrap();
@@ -1956,6 +1968,7 @@ mod tests {
             }
         };
 
+        b.latch.0 = Some(0x42);
         loot.slot_changed(&msg(0x99, 1, TOUGH_JERKY, 5), &mut b.step());
         assert!(b.fired().is_empty(), "another object's change is dropped");
         loot.slot_changed(&msg(0x42, 1, TOUGH_JERKY, 5), &mut b.step());
@@ -2085,6 +2098,53 @@ mod tests {
             .map(|l| l.key)
             .collect();
         assert_eq!(lines, ["ERR_ITEM_MAX_COUNT"], "shown in the take's call");
+    }
+
+    /// Auto-loot sweep (`0x588f90`) writes the bind-confirm stash after `LOOT_BIND_CONFIRM`
+    /// returns (`0x589062`, `0x58906a`), so a listener's `ConfirmLootSlot` sends nothing while a
+    /// later `ConfirmLootSlot` takes the row.
+    #[test]
+    fn auto_loot_sweep_stashes_bind_confirm_after_signal() {
+        let (mut app, rx) = drain_with(0, Vec::new(), &[], "");
+        {
+            let script = app.world_mut().non_send_resource_mut::<UiScript>();
+            script
+                .run(
+                    "local f = CreateFrame(\"Frame\")\n\
+                     f:RegisterEvent(\"LOOT_BIND_CONFIRM\")\n\
+                     f:SetScript(\"OnEvent\", function(self, event, slot) ConfirmLootSlot(slot) end)",
+                )
+                .unwrap();
+        }
+        {
+            let world = app.world_mut();
+            world.resource_mut::<LootState>().auto_loot = true;
+            open_window(
+                world,
+                0x42,
+                loot_type::CORPSE,
+                0,
+                vec![item(5, FELSTRIKER, 1)],
+            );
+            crate::ui_script::live::fire_handler_events(world);
+        }
+        assert!(
+            sent(&rx).is_empty(),
+            "ConfirmLootSlot inside LOOT_BIND_CONFIRM meets an empty stash"
+        );
+        assert_eq!(
+            pending_confirm(&app),
+            Some(1),
+            "stash written after LOOT_BIND_CONFIRM returns"
+        );
+        run_lua(app.world_mut(), "ConfirmLootSlot(1)");
+        assert!(
+            matches!(
+                sent(&rx)[..],
+                [ClientCommand::AutostoreLootItem { slot: 5 }]
+            ),
+            "a later ConfirmLootSlot takes the stashed row"
+        );
     }
 
     /// `ConfirmLootSlot` (`0x589300`).
@@ -2351,12 +2411,8 @@ mod tests {
         // A default GroupState is a party (`group_type` 0): the flat placement path.
         let party = GroupState::default();
 
-        loot.set_master_candidates(vec![0xA, 0xB, 0xC]);
-        assert_eq!(
-            loot.master_candidate(1, &party),
-            Some(0xA),
-            "no window needed"
-        );
+        loot.set_master_candidates(vec![0xA, 0xB, 0xC], &party, Some(0xA));
+        assert_eq!(loot.master_candidate(1), Some(0xA), "no window needed");
 
         open_bare(
             &mut loot,
@@ -2365,40 +2421,29 @@ mod tests {
             0,
             vec![master_item(0, 117, 1)],
         );
-        assert_eq!(
-            loot.master_candidate(1, &party),
-            Some(0xA),
-            "the set keeps it"
-        );
-        assert_eq!(loot.master_candidate(3, &party), Some(0xC));
-        assert_eq!(loot.master_candidate(4, &party), None, "past the end");
-        assert_eq!(
-            loot.master_candidate(0, &party),
-            None,
-            "0 is not a Lua index"
-        );
+        assert_eq!(loot.master_candidate(1), Some(0xA), "the set keeps it");
+        assert_eq!(loot.master_candidate(3), Some(0xC));
+        assert_eq!(loot.master_candidate(4), None, "past the end");
+        assert_eq!(loot.master_candidate(0), None, "0 is not a Lua index");
 
         // A new list replaces it in place.
-        loot.set_master_candidates(vec![0xA, 0xB]);
-        assert_eq!(loot.master_candidate(2, &party), Some(0xB));
-        assert_eq!(loot.master_candidate(3, &party), None, "the list shrank");
+        loot.set_master_candidates(vec![0xA, 0xB], &party, Some(0xA));
+        assert_eq!(loot.master_candidate(2), Some(0xB));
+        assert_eq!(loot.master_candidate(3), None, "the list shrank");
 
         loot.close_table(&mut Fired::default());
         open_bare(&mut loot, 0x43, loot_type::CORPSE, 0, vec![item(0, 117, 1)]);
         assert_eq!(
-            loot.master_candidate(2, &party),
+            loot.master_candidate(2),
             Some(0xB),
             "a close and a new window leave it"
         );
         loot.clear_session();
-        assert_eq!(
-            loot.master_candidate(1, &party),
-            None,
-            "a disconnect drops it"
-        );
+        assert_eq!(loot.master_candidate(1), None, "a disconnect drops it");
     }
 
-    /// The reference's raid placement: each guid in the first free slot of its subgroup's block.
+    /// The reference's raid placement: each guid in the first free slot of its subgroup's block,
+    /// placed at receipt, skipping non-roster guids (`0x6fa690`).
     #[test]
     fn raid_candidates_file_into_their_own_subgroup_block() {
         let member = |guid: u64, name: &str, subgroup: u8| GroupMemberEntry {
@@ -2420,8 +2465,8 @@ mod tests {
         ];
 
         let mut loot = LootState::default();
-        // The wire order interleaves the subgroups; placement ignores it.
-        loot.set_master_candidates(vec![0xC, 0xA, 0xD, 0xB]);
+        // The wire order interleaves the subgroups; unknown 0xFF is skipped in a raid.
+        loot.set_master_candidates(vec![0xC, 0xFF, 0xA, 0xD, 0xB], &raid, Some(0xA));
         open_bare(
             &mut loot,
             0x42,
@@ -2432,35 +2477,28 @@ mod tests {
 
         // Subgroup 0 fills slots 1-2 (us at 0xA, then Cairne); subgroup 2 fills 11-12, in the
         // order the wire listed them.
-        assert_eq!(loot.master_candidate(1, &raid), Some(0xA), "us, group 1");
-        assert_eq!(
-            loot.master_candidate(2, &raid),
-            Some(0xB),
-            "Cairne, group 1"
-        );
+        assert_eq!(loot.master_candidate(1), Some(0xA), "us, group 1");
+        assert_eq!(loot.master_candidate(2), Some(0xB), "Cairne, group 1");
         for empty in [3, 4, 5, 6, 7, 8, 9, 10] {
             assert_eq!(
-                loot.master_candidate(empty, &raid),
+                loot.master_candidate(empty),
                 None,
                 "slot {empty} belongs to an empty group"
             );
         }
-        assert_eq!(loot.master_candidate(11, &raid), Some(0xC), "Vol, group 3");
-        assert_eq!(
-            loot.master_candidate(12, &raid),
-            Some(0xD),
-            "Sylvanas, group 3"
-        );
-        assert_eq!(loot.master_candidate(13, &raid), None);
+        assert_eq!(loot.master_candidate(11), Some(0xC), "Vol, group 3");
+        assert_eq!(loot.master_candidate(12), Some(0xD), "Sylvanas, group 3");
+        assert_eq!(loot.master_candidate(13), None);
 
         // In a party the same list is flat, in wire order.
         let party = GroupState {
             members: raid.members.clone(),
             ..GroupState::default()
         };
-        assert_eq!(loot.master_candidate(1, &party), Some(0xC));
-        assert_eq!(loot.master_candidate(4, &party), Some(0xB));
-        assert_eq!(loot.master_candidate(5, &party), None);
+        loot.set_master_candidates(vec![0xC, 0xA, 0xD, 0xB], &party, Some(0xA));
+        assert_eq!(loot.master_candidate(1), Some(0xC));
+        assert_eq!(loot.master_candidate(4), Some(0xB));
+        assert_eq!(loot.master_candidate(5), None);
     }
 
     #[test]
@@ -2699,6 +2737,7 @@ mod tests {
             random_property_id: 0,
             count: 3,
         };
+        b.latch.0 = Some(0x42);
         loot.slot_changed(&msg, &mut b.step());
         assert_eq!(b.fired(), ["LOOT_SLOT_CHANGED 1"], "the first gap, row 1");
         assert!(matches!(
@@ -3063,8 +3102,20 @@ mod tests {
             .collect()
     }
 
-    /// Opens a window as an admitted response does: the rows and the latch.
+    /// Opens a window as an admitted response does: the rows, held object, and the latch.
     fn open_loot(app: &mut App, guid: u64, kind: u8, gold: u32, rows: Vec<LootItem>) {
+        if !app
+            .world()
+            .resource::<crate::net::GuidIndex>()
+            .0
+            .contains_key(&guid)
+        {
+            let e = app.world_mut().spawn_empty().id();
+            app.world_mut()
+                .resource_mut::<crate::net::GuidIndex>()
+                .0
+                .insert(guid, e);
+        }
         open_window(app.world_mut(), guid, kind, gold, rows);
         app.world_mut().resource_mut::<LootLatch>().0 = Some(guid);
     }

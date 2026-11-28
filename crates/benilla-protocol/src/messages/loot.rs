@@ -387,15 +387,14 @@ pub(super) fn read_loot_money_notify(r: &mut &[u8]) -> io::Result<(u32, bool)> {
     Ok((read_u32_le(r)?, read_u8(r)? != 0))
 }
 
-/// `SMSG_ITEM_PUSH_RESULT` (vmangos `Server/Packets/Item.cpp:211-224`, both post-1.10.2 fields
-/// present at 5875): the "You receive …" chat line. `item_slot` is `0xFFFF_FFFF` when it stacked.
+/// `SMSG_ITEM_PUSH_RESULT` (`0x6e2faa` case `0x166`, handled at `0x523900`): the item push
+/// notification. `item_slot` is `0xFFFF_FFFF` when it stacked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ItemPushResult {
     pub player_guid: u64,
     /// `false` = looted, `true` = received from an NPC (vendor purchase, quest reward).
     pub from_npc: bool,
-    /// Crafted or conjured, giving the "You create: …" line; not a stack-merge flag (vmangos
-    /// `SendNewItem`: "0=received, 1=created").
+    /// Crafted or conjured, giving the "You create: …" line (`0x523a83`).
     pub created: bool,
     pub show_in_chat: bool,
     /// The bag it went to, numbered as [`super::items::BAG_PLAYER_INVENTORY`] and

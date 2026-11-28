@@ -134,7 +134,7 @@ const AURA_INITIALIZE_IMAGES: u32 = 279;
 
 /// The casters `0x72d4f0`'s head walks, in aura-slot order: each aura with an applied effect
 /// that applies aura 279. The first one in view is the line source; one not found walks on.
-fn image_casters(
+pub(crate) fn image_casters(
     auras: &crate::unit_auras::UnitAuras,
     effect_auras: impl Fn(u32) -> Option<[u32; 3]>,
 ) -> Vec<u64> {
@@ -147,6 +147,31 @@ fn image_casters(
         })
         .map(|a| a.caster)
         .collect()
+}
+
+/// Unit name (`0x72a000`): with `follow` on and an applied aura-279 effect, names the unit by the
+/// first aura's caster (as a unit in view with `follow` off, else by guid); otherwise resolves
+/// `guid` off the name cache.
+pub(crate) fn resolve_unit_name<'a>(
+    guid: u64,
+    follow: bool,
+    unit_store: impl Fn(u64) -> Option<&'a crate::net::ObjectStore>,
+    unit_auras: impl Fn(u64) -> Option<&'a crate::unit_auras::UnitAuras>,
+    effect_auras: impl Fn(u32) -> Option<[u32; 3]>,
+    names: &'a crate::names::NameCache,
+    net: &crate::net::NetCommands,
+) -> Option<&'a str> {
+    if follow {
+        if let Some(caster) =
+            unit_auras(guid).and_then(|a| image_casters(a, effect_auras).into_iter().next())
+        {
+            if let Some(store) = unit_store(caster).filter(|s| s.is_unit()) {
+                return names.resolve_unit(caster, Some(store), net);
+            }
+            return names.resolve(caster, net);
+        }
+    }
+    names.resolve_unit(guid, unit_store(guid), net)
 }
 
 /// Each named unit's [`image_casters`], re-walked only when its aura packets or the spell table
@@ -1160,6 +1185,69 @@ mod tests {
         assert_eq!(image_casters(&ordered, effects), vec![0x20, 0x50]);
         let unknown_spell = UnitAuras::of(9, &[(0, 300, 0x7)]);
         assert!(image_casters(&unknown_spell, effects).is_empty());
+    }
+
+    /// `0x72a000`: follow on names an image-aura holder by its caster (in view or out of view);
+    /// follow off names the unit itself.
+    #[test]
+    fn resolve_unit_name_follows_aura_279_when_asked() {
+        use crate::names::NameCache;
+        use crate::net::{NetCommands, ObjectStore};
+        use crate::unit_auras::UnitAuras;
+        use benilla_protocol::field::FIELD_OBJECT_TYPE;
+        use benilla_protocol::ObjectFields;
+
+        const IMAGE: u64 = 0x10;
+        const CASTER_IN_VIEW: u64 = 0x20;
+        const CASTER_AWAY: u64 = 0x30;
+        const MIRROR_SPELL: u32 = 58836;
+
+        let mut names = NameCache::default();
+        names.insert_player(IMAGE, "Mirror Image".into(), None);
+        names.insert_player(CASTER_IN_VIEW, "Jaina".into(), None);
+        names.insert_player(CASTER_AWAY, "Khadgar".into(), None);
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let net = NetCommands(tx);
+
+        let unit_fields = ObjectStore(ObjectFields::from_pairs(&[(FIELD_OBJECT_TYPE, 0x19)]));
+        let auras_in_view = UnitAuras::of(CASTER_IN_VIEW, &[(0, MIRROR_SPELL, 0x1)]);
+        let auras_away = UnitAuras::of(CASTER_AWAY, &[(0, MIRROR_SPELL, 0x1)]);
+        let effects = |id: u32| (id == MIRROR_SPELL).then_some([AURA_INITIALIZE_IMAGES, 0, 0]);
+
+        let store_in_view = |g: u64| matches!(g, IMAGE | CASTER_IN_VIEW).then_some(&unit_fields);
+        let aura_in_view = |g: u64| (g == IMAGE).then_some(&auras_in_view);
+        assert_eq!(
+            resolve_unit_name(
+                IMAGE,
+                true,
+                store_in_view,
+                aura_in_view,
+                effects,
+                &names,
+                &net
+            ),
+            Some("Jaina"),
+            "follow on with caster in view"
+        );
+        assert_eq!(
+            resolve_unit_name(
+                IMAGE,
+                false,
+                store_in_view,
+                aura_in_view,
+                effects,
+                &names,
+                &net
+            ),
+            Some("Mirror Image"),
+            "follow off keeps own name"
+        );
+        let aura_away = |g: u64| (g == IMAGE).then_some(&auras_away);
+        assert_eq!(
+            resolve_unit_name(IMAGE, true, store_in_view, aura_away, effects, &names, &net),
+            Some("Khadgar"),
+            "follow on with caster out of view resolves by guid"
+        );
     }
 
     /// The strings a VM defining `pairs` hands over, as the honor feed sets them, and two rows.

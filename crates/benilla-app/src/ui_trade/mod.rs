@@ -395,16 +395,82 @@ pub(crate) fn enter_world(world: &mut World) {
     }
 }
 
-/// A line whose `%s` is a unit's name as its live object reads it (`0x72a000`): the name cache's
-/// entry, asked on a miss, and `UNKNOWNOBJECT` meanwhile (`0x72a271`), so the line shows at its step.
+/// Stack-count watch trade-window refresh (`0x7077f6` -> `0x586950`): if `item_guid` is offered in
+/// one of our seven trade slots, fires `TRADE_PLAYER_ITEM_CHANGED` with that 1-based slot.
+pub(crate) fn update_player_item(world: &mut World, item_guid: u64) {
+    if item_guid == 0 {
+        return;
+    }
+    let slot = bevy::ecs::system::RunSystemOnce::run_system_once_with(
+        &mut *world,
+        |In(item_guid): In<u64>,
+         trade: Option<Res<TradeSession>>,
+         me: Query<&ObjectStore, With<crate::net::SelfPlayer>>,
+         objects: crate::net::Objects| {
+            let trade = trade?;
+            let me = me.single().ok()?;
+            let (bag, slot, _) =
+                crate::ui_items::find_carried_at(&me.0, &objects, |g| g == item_guid)?;
+            trade
+                .our_sources
+                .iter()
+                .position(|&s| s == Some((bag, slot)))
+                .map(|i| i as i64 + 1)
+        },
+        item_guid,
+    )
+    .ok()
+    .flatten();
+    if let (Some(slot), Some(mut ui)) = (
+        slot,
+        world.get_resource_mut::<crate::ui_script::live::UiEvents>(),
+    ) {
+        ui.fire(
+            "TRADE_PLAYER_ITEM_CHANGED",
+            vec![benilla_ui::script::ScriptValue::Int(slot)],
+        );
+    }
+}
+
+/// A line whose `%s` is a unit's name as its live object reads it (`0x72a000`, follow on): walks
+/// aura 279 to the creator, else reads the name cache (asked on a miss) and `UNKNOWNOBJECT`
+/// meanwhile (`0x72a271`), so the line shows at its step.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn unit_name_line(
     key: &'static str,
     who: u64,
+    index: Option<&GuidIndex>,
+    stores: &Query<&ObjectStore>,
+    auras: &Query<&crate::unit_auras::UnitAuras>,
+    spells: Option<&crate::ui_action::Spells>,
     names: Option<&NameCache>,
     commands: &NetCommands,
 ) -> crate::ui_action::UiError {
     use crate::ui_action::{FillArg, UiError};
-    match names.and_then(|n| n.resolve(who, commands)) {
+    let name = names.and_then(|n| {
+        crate::nameplates::resolve_unit_name(
+            who,
+            true,
+            |g| {
+                index
+                    .and_then(|i| i.0.get(&g))
+                    .and_then(|&e| stores.get(e).ok())
+            },
+            |g| {
+                index
+                    .and_then(|i| i.0.get(&g))
+                    .and_then(|&e| auras.get(e).ok())
+            },
+            |id| {
+                spells
+                    .and_then(|s| s.catalog.get(id))
+                    .map(|d| d.effect_apply_aura)
+            },
+            n,
+            commands,
+        )
+    });
+    match name {
         Some(name) => UiError::s(key, name.to_string()),
         None => UiError::args(key, vec![FillArg::Global("UNKNOWNOBJECT".into())]),
     }
@@ -562,6 +628,8 @@ fn answer_trade_request(
     block_trades: Res<BlockTrades>,
     index: Res<GuidIndex>,
     stores: Query<&ObjectStore>,
+    auras: Query<&crate::unit_auras::UnitAuras>,
+    spells: Option<Res<crate::ui_action::Spells>>,
 ) {
     let Some(initiator) = trade.pending_request() else {
         return;
@@ -617,6 +685,10 @@ fn answer_trade_request(
         signals.line(unit_name_line(
             "ERR_TRADE_BLOCKED_S",
             initiator,
+            Some(&index),
+            &stores,
+            &auras,
+            spells.as_deref(),
             Some(&names),
             &commands,
         ));

@@ -31,6 +31,13 @@ pub(crate) trait SignalSink {
 
     /// Show `line` here: its sound, then its event or its chat line.
     fn line(&mut self, line: UiError);
+
+    /// Queue the bind-confirm stash after `LOOT_BIND_CONFIRM` runs (`0x588f90`); returns `true`
+    /// when deferred onto an async event queue so the caller skips an immediate write.
+    fn post_bind_confirm(&mut self, index: u32) -> bool {
+        let _ = index;
+        false
+    }
 }
 
 impl SignalSink for UiEvents {
@@ -48,6 +55,15 @@ impl SignalSink for UiEvents {
 
     fn line(&mut self, line: UiError) {
         super::show_in_turn(self, "ui_lines", line);
+    }
+
+    fn post_bind_confirm(&mut self, index: u32) -> bool {
+        self.world(move |world| {
+            if let Some(mut loot) = world.get_resource_mut::<crate::ui_loot::LootState>() {
+                loot.stash_bind_confirm(index);
+            }
+        });
+        true
     }
 }
 
@@ -103,6 +119,12 @@ impl SignalSink for QueuedSignals<'_> {
         if let Some(ui) = self.ui.as_mut() {
             SignalSink::unlock_item(&mut **ui, guid);
         }
+    }
+
+    fn post_bind_confirm(&mut self, index: u32) -> bool {
+        self.ui
+            .as_mut()
+            .is_some_and(|ui| SignalSink::post_bind_confirm(&mut **ui, index))
     }
 
     fn line(&mut self, line: UiError) {

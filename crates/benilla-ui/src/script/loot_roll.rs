@@ -37,7 +37,7 @@ pub struct LootRollEntry {
     pub reasons: [u8; 3],
     /// `RequiredDisenchantSkill`, -1 when the item cannot be disenchanted.
     pub disenchant_skill: i32,
-    /// Milliseconds left, from `SMSG_LOOT_START_ROLL`'s countdown; saturates at 0.
+    /// Milliseconds left, from `SMSG_LOOT_START_ROLL`'s countdown; wraps as `u32` (`0x588d29`).
     pub time_left_ms: u32,
     /// The item id, the key of the hover's item lookup.
     pub item_id: u32,
@@ -175,17 +175,21 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `nil` for an unknown id or while the item template is in flight.
+    // `0x588c00`: nothing for an unknown id or while the item template is in flight.
     g.set(
         "GetLootRollItemLink",
-        lua.create_function(|lua, roll_id: i64| {
+        lua.create_function(|lua, roll_id: Value| {
+            let roll_id =
+                super::binding_abi::number_arg(lua, roll_id, "Usage: GetLootRollItemLink(id)")?;
             let link = {
                 let model = crate::script::model_mut_of(lua);
-                find(&model, roll_id).and_then(|r| r.link)
+                find(&model, i64::from(roll_id)).and_then(|r| r.link)
             };
             match link {
-                Some(link) => Ok(Value::String(lua.create_string(&link)?)),
-                None => Ok(Value::Nil),
+                Some(link) => Ok(mlua::MultiValue::from_vec(vec![Value::String(
+                    lua.create_string(&link)?,
+                )])),
+                None => Ok(mlua::MultiValue::new()),
             }
         })?,
     )?;
@@ -194,9 +198,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // near 2^32 (`0x588d33`); 0 for an unknown id.
     g.set(
         "GetLootRollTimeLeft",
-        lua.create_function(|lua, roll_id: i64| {
+        lua.create_function(|lua, roll_id: Value| {
+            let roll_id =
+                super::binding_abi::number_arg(lua, roll_id, "Usage: GetLootRollTimeLeft(id)")?;
             let model = crate::script::model_mut_of(lua);
-            Ok(find(&model, roll_id).map_or(0, |r| r.time_left_ms))
+            Ok(find(&model, i64::from(roll_id)).map_or(0, |r| r.time_left_ms))
         })?,
     )?;
 
@@ -388,6 +394,9 @@ mod tests {
         s.set_loot_rolls(rolls());
         s.set_loot_rolls(LootRollsState::default());
         assert_eq!(s.arity("GetLootRollItemInfo(7)").unwrap(), 0);
+        assert_eq!(s.arity("GetLootRollItemLink(7)").unwrap(), 0);
         assert_eq!(s.eval::<i64>("return GetLootRollTimeLeft(7)").unwrap(), 0);
+        assert!(s.run("GetLootRollItemLink('x')").is_err());
+        assert!(s.run("GetLootRollTimeLeft('x')").is_err());
     }
 }

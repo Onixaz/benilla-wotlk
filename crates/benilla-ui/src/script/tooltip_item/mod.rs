@@ -1186,12 +1186,18 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
     // is the 1-based row; coin and cleared rows have no tooltip.
     m.set(
         "SetLootItem",
-        lua.create_function(|lua, (this, slot): (Table, usize)| {
+        lua.create_function(|lua, (this, slot): (Table, Value)| {
             let h = frame_handle_of(lua, &this)?;
+            let slot = crate::script::binding_abi::number_arg(
+                lua,
+                slot,
+                "Invalid loot slot in SetInventoryItem",
+            )?;
             let found = {
                 let model = crate::script::model_mut_of(lua);
                 crate::script::loot::window(&model).and_then(|l| {
-                    let row = slot.checked_sub(1).and_then(|n| l.rows.get(n))?.clone()?;
+                    let idx = usize::try_from(slot - 1).ok()?;
+                    let row = l.rows.get(idx)?.clone()?;
                     (!row.is_coin && row.item_id != 0).then_some((row, l.source_level))
                 })
             };
@@ -1290,8 +1296,15 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
     // slot zero and no item object, so the suffix-row copy is the only enchant source.
     m.set(
         "SetLootRollItem",
-        lua.create_function(|lua, (this, roll_id): (Table, u32)| {
+        lua.create_function(|lua, (this, roll_id): (Table, Value)| {
             let h = frame_handle_of(lua, &this)?;
+            let Some(roll_id) = lua.coerce_number(roll_id)? else {
+                return Err(mlua::Error::runtime(format!(
+                    "Usage: {}:SetLootRollItem(id)",
+                    frame_name(lua, h)
+                )));
+            };
+            let roll_id = roll_id as i64 as i32;
             let entry = {
                 let model = crate::script::model_mut_of(lua);
                 crate::script::loot_roll::find(&model, i64::from(roll_id))

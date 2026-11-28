@@ -179,17 +179,37 @@ fn pusher(world: &World, guid: u64) -> Option<Pusher> {
     })
 }
 
-/// The pushing player's name as their object reads it (`0x72a000`): the name cache's, asked on a
-/// miss, and `UNKNOWNOBJECT` meanwhile.
+/// The pushing player's name as their object reads it (`0x72a000`, follow on): walks aura 279 to
+/// the creator, else reads the name cache (asking on a miss) with `UNKNOWNOBJECT` meanwhile.
 fn pusher_name(world: &World, guid: u64) -> String {
-    let store = world
-        .get_resource::<GuidIndex>()
-        .and_then(|i| i.0.get(&guid))
-        .and_then(|&e| world.get::<ObjectStore>(e));
+    let index = world.get_resource::<GuidIndex>();
+    let spells = world.get_resource::<crate::ui_action::Spells>();
     world
         .get_resource::<NameCache>()
         .zip(world.get_resource::<NetCommands>())
-        .and_then(|(names, net)| names.resolve_unit(guid, store, net))
+        .and_then(|(names, net)| {
+            crate::nameplates::resolve_unit_name(
+                guid,
+                true,
+                |g| {
+                    index
+                        .and_then(|i| i.0.get(&g))
+                        .and_then(|&e| world.get::<ObjectStore>(e))
+                },
+                |g| {
+                    index
+                        .and_then(|i| i.0.get(&g))
+                        .and_then(|&e| world.get::<crate::unit_auras::UnitAuras>(e))
+                },
+                |id| {
+                    spells
+                        .and_then(|s| s.catalog.get(id))
+                        .map(|d| d.effect_apply_aura)
+                },
+                names,
+                net,
+            )
+        })
         .map(str::to_string)
         .unwrap_or_else(|| global_text(world, "UNKNOWNOBJECT"))
 }

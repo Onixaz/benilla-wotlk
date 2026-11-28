@@ -213,12 +213,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // every record has landed (`0x5896b0`, `0x589460`).
     g.set(
         "GetLootSlotInfo",
-        lua.create_function(|lua, slot: usize| {
+        lua.create_function(|lua, slot: Value| {
+            let slot = super::binding_abi::number_arg(lua, slot, "Usage: GetLootSlotInfo(slot)")?;
             let window = {
                 let model = crate::script::model_mut_of(lua);
                 window(&model)
             };
-            let state = slot_of(window.as_ref(), slot);
+            let state = one_based(slot).and_then(|s| slot_of(window.as_ref(), s as usize));
             let Some(Some(row)) = state else {
                 let coins_taken = slot == 1 && window.as_ref().is_some_and(|l| l.coin_slot);
                 let quality = if state.is_some() && !coins_taken {
@@ -239,7 +240,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             // The coin row's text: each denomination through its global string, newline-joined
             // (`0x588430` -> `0x7e7d80`).
             let item = if row.is_coin {
-                super::cursor::money::currency_text(lua, row.coins, "\n")
+                super::cursor::money::currency_text(lua, row.coins as i32, "\n")
             } else {
                 row.name.clone().unwrap_or_else(|| CACHE_MISS_NAME.into())
             };
@@ -265,11 +266,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // take a nil.
     g.set(
         "GetLootSlotLink",
-        lua.create_function(|lua, slot: usize| {
+        lua.create_function(|lua, slot: Value| {
+            let slot = super::binding_abi::number_arg(lua, slot, "Usage: GetLootSlotLink(slot)")?;
             let link = {
                 let model = crate::script::model_mut_of(lua);
                 let window = window(&model);
-                slot_of(window.as_ref(), slot)
+                one_based(slot)
+                    .and_then(|s| slot_of(window.as_ref(), s as usize))
                     .flatten()
                     .and_then(|r| r.link.clone())
             };
@@ -283,11 +286,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // LootSlotIsItem(slot) (`0x588750`): a table row holding an item.
     g.set(
         "LootSlotIsItem",
-        lua.create_function(|lua, slot: usize| {
+        lua.create_function(|lua, slot: Value| {
+            let slot = super::binding_abi::number_arg(lua, slot, "Usage: LootSlotIsItem(slot)")?;
             let model = crate::script::model_mut_of(lua);
             let window = window(&model);
             Ok(flag(
-                slot_of(window.as_ref(), slot)
+                one_based(slot)
+                    .and_then(|s| slot_of(window.as_ref(), s as usize))
                     .flatten()
                     .is_some_and(|r| !r.is_coin),
             ))
@@ -297,11 +302,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // LootSlotIsCoin(slot) (`0x588810`): slot 1 while the coins are there.
     g.set(
         "LootSlotIsCoin",
-        lua.create_function(|lua, slot: usize| {
+        lua.create_function(|lua, slot: Value| {
+            let slot = super::binding_abi::number_arg(lua, slot, "Usage: LootSlotIsCoin(slot)")?;
             let model = crate::script::model_mut_of(lua);
             let window = window(&model);
             Ok(flag(
-                slot_of(window.as_ref(), slot)
+                one_based(slot)
+                    .and_then(|s| slot_of(window.as_ref(), s as usize))
                     .flatten()
                     .is_some_and(|r| r.is_coin),
             ))
@@ -367,8 +374,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // as nobody (`LootFrame.lua:168-232`).
     g.set(
         "GetMasterLootCandidate",
-        lua.create_function(|lua, index: u32| {
-            let Some(index) = index.checked_sub(1) else {
+        lua.create_function(|lua, index: Value| {
+            let index =
+                super::binding_abi::number_arg(lua, index, "Usage: GetMasterLootCandidate(index)")?;
+            let Some(index) = one_based(index).map(|i| i - 1) else {
                 return Ok(None);
             };
             if let Some(Some(name)) = super::write_live(|l| l.master_loot_candidate(index)) {
