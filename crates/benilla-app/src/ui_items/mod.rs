@@ -222,6 +222,8 @@ pub(crate) struct InventoryScope {
     bank: bool,
     /// `0x40`: the keyring band.
     keyring: bool,
+    /// `0x80`: include broken non-wrapped items and items flagged `0x10` (`0x754792`).
+    include_broken: bool,
 }
 
 impl InventoryScope {
@@ -233,6 +235,7 @@ impl InventoryScope {
         backpack: true,
         bank: false,
         keyring: true,
+        include_broken: false,
     };
     /// `0x01`: the equip-vs-use fork's first stage, "is a copy already worn?".
     pub(crate) const EQUIPMENT_ONLY: Self = Self {
@@ -241,6 +244,7 @@ impl InventoryScope {
         backpack: false,
         bank: false,
         keyring: false,
+        include_broken: false,
     };
     /// `0x4F`: [`Self::DEFAULT`] plus the bank, what mask `8` becomes. The quest surfaces pass it:
     /// `GetQuestLogLeaderBoard`, the ADD_ITEM toast, the turn-in predicate and
@@ -256,6 +260,7 @@ impl InventoryScope {
         backpack: true,
         bank: true,
         keyring: false,
+        include_broken: false,
     };
     /// Bags and backpack only, narrower than any reference mask: the action-bar and reagent counts
     /// use it, where the reference's `0x47` also counts worn gear and the keyring.
@@ -265,7 +270,15 @@ impl InventoryScope {
         backpack: true,
         bank: false,
         keyring: false,
+        include_broken: false,
     };
+
+    /// Mask bit `0x80` (`0x754792`): include broken items and items flagged `0x10`.
+    #[cfg(test)]
+    pub(crate) const fn with_broken(mut self) -> Self {
+        self.include_broken = true;
+        self
+    }
 }
 
 /// The first carried item (the backpack and the bags' contents) `pick` accepts, with the item's
@@ -302,10 +315,14 @@ fn walk_inventory<T, O: ObjectLookup + ?Sized>(
     scope: InventoryScope,
     mut visit: impl FnMut(u8, u8, u64) -> Option<T>,
 ) -> Option<T> {
-    // A container's contents, addressed by its player-array slot as the wire bag byte.
+    // A container's contents, addressed by its player-array slot as the wire bag byte. Without
+    // mask `0x80`, the walker checks the bag's own item-state filter before recursing (`0x7546f0`).
     let contents =
         |bag_slot: u8, bag_guid: u64, visit: &mut dyn FnMut(u8, u8, u64) -> Option<T>| {
             let bag_fields = objects.object(bag_guid)?;
+            if !scope.include_broken && !walk_takes(bag_fields) {
+                return None;
+            }
             let num_slots = bag_fields.container_num_slots().unwrap_or(0).min(36) as u8;
             (0..num_slots).find_map(|j| {
                 let guid = bag_fields.container_slot(j).unwrap_or(0);
@@ -386,19 +403,19 @@ fn walk_inventory<T, O: ObjectLookup + ?Sized>(
 }
 
 /// How many of `entry` the player holds within `scope`, summing each copy's
-/// `ITEM_FIELD_STACK_COUNT`: the reference's `(itemId, mask)`, whose per-item predicate tests
-/// `OBJECT_FIELD_ENTRY` and adds `[+0x20]`. A quest objective counts banked copies
-/// ([`InventoryScope::QUEST_ITEMS`]); an action-button or reagent count does not.
+/// `ITEM_FIELD_STACK_COUNT` (`0x754d00` -> `0x7546f0`): without `scope.include_broken` (`0x80`),
+/// broken non-wrapped items and items flagged `0x10` are skipped (`0x754792`-`0x7547c7`).
 pub(crate) fn count_of(
     store: &ObjectFields,
-    objects: &Objects,
+    objects: &(impl ObjectLookup + ?Sized),
     entry: u32,
     scope: InventoryScope,
 ) -> u32 {
     let mut total = 0u32;
     walk_inventory::<(), _>(store, objects, scope, |_, _, guid| {
         if let Some(fields) = objects.object(guid) {
-            if fields.object_entry() == Some(entry) {
+            if (scope.include_broken || walk_takes(fields)) && fields.object_entry() == Some(entry)
+            {
                 total += fields.item_stack_count().unwrap_or(1);
             }
         }
@@ -2081,6 +2098,66 @@ mod count_of_tests {
             count_of(&store, &objs.get(), AMMO, InventoryScope::QUEST_ITEMS),
             2,
             "last backpack slot + last bank bag, with buyback between them untouched"
+        );
+    }
+
+    /// `0x754d00` -> `0x754792`: without mask `0x80`, broken non-wrapped items and items flagged
+    /// `0x10` are skipped; with `0x80` they are counted; a wrapped broken item always counts.
+    #[test]
+    fn broken_and_skipped_items_respect_mask_0x80() {
+        use benilla_protocol::field::{
+            FIELD_ITEM_DURABILITY, FIELD_ITEM_FLAGS, FIELD_ITEM_MAXDURABILITY,
+            FIELD_ITEM_STACK_COUNT, FIELD_OBJECT_ENTRY,
+        };
+        let store = player(&[(23, 0xA1), (24, 0xA2), (25, 0xA3), (26, 0xA4)]);
+        let mut objs = TestObjects::new();
+        // Plain unbroken copy.
+        stack(&mut objs, 0xA1, AMMO, 1);
+        // Broken (max > 0, durability 0), not wrapped.
+        objs.spawn(
+            0xA2,
+            ObjectFields::from_pairs(&[
+                (FIELD_OBJECT_ENTRY, AMMO),
+                (FIELD_ITEM_STACK_COUNT, 1),
+                (FIELD_ITEM_MAXDURABILITY, 50),
+                (FIELD_ITEM_DURABILITY, 0),
+            ]),
+        );
+        // Broken but wrapped (flag 0x8): always counted.
+        objs.spawn(
+            0xA3,
+            ObjectFields::from_pairs(&[
+                (FIELD_OBJECT_ENTRY, AMMO),
+                (FIELD_ITEM_STACK_COUNT, 1),
+                (FIELD_ITEM_MAXDURABILITY, 50),
+                (FIELD_ITEM_DURABILITY, 0),
+                (FIELD_ITEM_FLAGS, 0x8),
+            ]),
+        );
+        // Flagged 0x10: skipped without 0x80.
+        objs.spawn(
+            0xA4,
+            ObjectFields::from_pairs(&[
+                (FIELD_OBJECT_ENTRY, AMMO),
+                (FIELD_ITEM_STACK_COUNT, 1),
+                (FIELD_ITEM_FLAGS, 0x10),
+            ]),
+        );
+
+        assert_eq!(
+            count_of(&store, &objs.get(), AMMO, InventoryScope::DEFAULT),
+            2,
+            "plain + wrapped broken only"
+        );
+        assert_eq!(
+            count_of(
+                &store,
+                &objs.get(),
+                AMMO,
+                InventoryScope::DEFAULT.with_broken()
+            ),
+            4,
+            "mask 0x80 includes broken and 0x10"
         );
     }
 }

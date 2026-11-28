@@ -35,6 +35,8 @@ struct StatusReads<'w, 's> {
     names: Option<Res<'w, NameCache>>,
     index: Option<Res<'w, GuidIndex>>,
     stores: Query<'w, 's, &'static ObjectStore>,
+    auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
+    spells: Option<Res<'w, crate::ui_action::Spells>>,
 }
 
 fn on_trade_status(
@@ -153,6 +155,10 @@ fn on_trade_status(
                         ui.line(super::unit_name_line(
                             key,
                             who,
+                            reads.index.as_deref(),
+                            &reads.stores,
+                            &reads.auras,
+                            reads.spells.as_deref(),
                             reads.names.as_deref(),
                             &reads.commands,
                         ));

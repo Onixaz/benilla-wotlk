@@ -681,6 +681,7 @@ pub(crate) fn stack_changed(world: &mut World, item: u64) {
     step(world, crate::ui_tradeskill::refresh_in_place);
     step(world, move |world| {
         crate::ui_action::slots::update_item(world, entry);
+        crate::ui_trade::update_player_item(world, item);
         item_updated(world, item);
         character_item_updated(world, item);
     });

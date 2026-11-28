@@ -356,16 +356,84 @@ fn revive(
     delta: Option<ObjectFields>,
     pose: Option<Transform>,
 ) -> Option<Entity> {
+    revive_with_merged(sc, guid, delta, pose).map(|(e, _)| e)
+}
+
+/// Revive a parked object and collect its item/container field-watch summary (`0x4d6c00` -> `0x4d64be` -> `0x4d5550`).
+fn revive_with_merged(
+    sc: &mut Scene,
+    guid: u64,
+    delta: Option<ObjectFields>,
+    pose: Option<Transform>,
+) -> Option<(Entity, Merged)> {
     let parked = sc.parked.take(guid)?;
     let mut store = parked.store().clone();
     let e = parked::respawn(guid, parked, pose, &mut sc.commands, &mut sc.index);
+    let mut merged = Merged::default();
     if let Some(delta) = delta {
         merge_store_fields(&mut store, delta, e, guid, |edge| {
+            collect_item_watch(&mut merged, &edge);
             sc.field_changes.write(edge);
         });
     }
+    if store.object_type() == Some(benilla_protocol::messages::ObjectType::Container) {
+        fill_container_recreate_slots(&mut merged, &store);
+    }
     sc.commands.entity(e).insert(ObjectStore(store));
-    Some(e)
+    Some((e, merged))
+}
+
+/// Collect item and container field watches for one merged field edge (`0x707720`-`0x708bd0`, `0x5d9600`).
+fn collect_item_watch(merged: &mut Merged, e: &FieldChanged) {
+    if !matches!(
+        e.kind,
+        benilla_protocol::messages::ObjectType::Item
+            | benilla_protocol::messages::ObjectType::Container
+    ) {
+        return;
+    }
+    use benilla_protocol::field::{FIELD_CONTAINER_SLOT_1, FIELD_ITEM_ENCHANTMENT_1_1};
+    merged.item_stack |= e.index == benilla_protocol::field::FIELD_ITEM_STACK_COUNT;
+    if e.index == benilla_protocol::field::FIELD_ITEM_FLAGS {
+        merged.item_flags = Some((e.old, e.new));
+    }
+    merged.item_durability |= e.index == benilla_protocol::field::FIELD_ITEM_DURABILITY;
+    merged.item_charges |= (benilla_protocol::field::FIELD_ITEM_SPELL_CHARGES
+        ..benilla_protocol::field::FIELD_ITEM_SPELL_CHARGES + 5)
+        .contains(&e.index);
+    if e.index == benilla_protocol::field::FIELD_OBJECT_ENTRY {
+        merged.item_entry = Some(e.old);
+    }
+    merged.item_enchants |=
+        (FIELD_ITEM_ENCHANTMENT_1_1..FIELD_ITEM_ENCHANTMENT_1_1 + 36).contains(&e.index);
+    if e.kind == benilla_protocol::messages::ObjectType::Container
+        && (FIELD_CONTAINER_SLOT_1..FIELD_CONTAINER_SLOT_1 + 72).contains(&e.index)
+    {
+        let j = ((e.index - FIELD_CONTAINER_SLOT_1) / 2) as u8;
+        let high = (e.index - FIELD_CONTAINER_SLOT_1) % 2 == 1;
+        if merged.bag_slots.last().map(|&(k, _)| k) != Some(j) {
+            merged.bag_slots.push((j, (None, None)));
+        }
+        if let Some((_, (lo, hi))) = merged.bag_slots.last_mut() {
+            if high {
+                *hi = Some(e.old);
+            } else {
+                *lo = Some(e.old);
+            }
+        }
+    }
+}
+
+/// Container slot watches register with `alwaysFire = 1` (`0x5d9af8`), so a container re-create
+/// fires `0x5d9600` for every slot `0..num_slots` even when unchanged (`0x4d5550` -> `0x4d5150`).
+fn fill_container_recreate_slots(merged: &mut Merged, store: &ObjectFields) {
+    let num_slots = store.container_num_slots().unwrap_or(0).min(36) as u8;
+    for j in 0..num_slots {
+        if !merged.bag_slots.iter().any(|&(k, _)| k == j) {
+            merged.bag_slots.push((j, (None, None)));
+        }
+    }
+    merged.bag_slots.sort_by_key(|&(k, _)| k);
 }
 
 /// `UPDATEFLAG_HAS_TARGET`'s guid is the unit's attack target from init (`0x98e560`), the state
@@ -486,7 +554,9 @@ fn on_item(In(ev): In<SessionEvent>, mut sc: Scene) {
             let fresh = !sc.index.0.contains_key(&guid);
             let post_init = (fields.object_entry().unwrap_or(0), fields.item_owner());
             if fresh && sc.parked.contains(guid) {
-                revive(&mut sc, guid, Some(fields), None);
+                if let Some((_, merged)) = revive_with_merged(&mut sc, guid, Some(fields), None) {
+                    own_flags_watch(&mut sc, guid, merged);
+                }
                 item_post_init(&mut sc, guid, post_init);
                 return;
             }
@@ -1225,9 +1295,13 @@ fn item_create(
 ) -> Option<Merged> {
     debug!("net: item create {guid:#x} (container: {container})");
     if let Some(&e) = index.0.get(&guid) {
-        return Some(merge_fields(
-            commands, stores, edges, e, guid, fields, false, None,
-        ));
+        let mut merged = merge_fields(commands, stores, edges, e, guid, fields, false, None);
+        if container {
+            if let Ok(s) = stores.get(e) {
+                fill_container_recreate_slots(&mut merged, &s.0);
+            }
+        }
+        return Some(merged);
     }
     let e = crate::items::spawn_item(commands, index, guid, fields, container);
     // Replay the enchant times queued while it was not held, as of now.
@@ -2784,43 +2858,7 @@ fn merge_fields(
             if own && e.is_unit() && QUEST_LOG_FIELDS.contains(&e.index) {
                 merged.quest_slots.push((e.index, e.old, e.new));
             }
-            if matches!(
-                e.kind,
-                benilla_protocol::messages::ObjectType::Item
-                    | benilla_protocol::messages::ObjectType::Container
-            ) {
-                use benilla_protocol::field::{FIELD_CONTAINER_SLOT_1, FIELD_ITEM_ENCHANTMENT_1_1};
-                merged.item_stack |= e.index == benilla_protocol::field::FIELD_ITEM_STACK_COUNT;
-                if e.index == benilla_protocol::field::FIELD_ITEM_FLAGS {
-                    merged.item_flags = Some((e.old, e.new));
-                }
-                merged.item_durability |= e.index == benilla_protocol::field::FIELD_ITEM_DURABILITY;
-                merged.item_charges |= (benilla_protocol::field::FIELD_ITEM_SPELL_CHARGES
-                    ..benilla_protocol::field::FIELD_ITEM_SPELL_CHARGES + 5)
-                    .contains(&e.index);
-                if e.index == benilla_protocol::field::FIELD_OBJECT_ENTRY {
-                    merged.item_entry = Some(e.old);
-                }
-                merged.item_enchants |= (FIELD_ITEM_ENCHANTMENT_1_1
-                    ..FIELD_ITEM_ENCHANTMENT_1_1 + 36)
-                    .contains(&e.index);
-                if e.kind == benilla_protocol::messages::ObjectType::Container
-                    && (FIELD_CONTAINER_SLOT_1..FIELD_CONTAINER_SLOT_1 + 72).contains(&e.index)
-                {
-                    let j = ((e.index - FIELD_CONTAINER_SLOT_1) / 2) as u8;
-                    let high = (e.index - FIELD_CONTAINER_SLOT_1) % 2 == 1;
-                    if merged.bag_slots.last().map(|&(k, _)| k) != Some(j) {
-                        merged.bag_slots.push((j, (None, None)));
-                    }
-                    if let Some((_, (lo, hi))) = merged.bag_slots.last_mut() {
-                        if high {
-                            *hi = Some(e.old);
-                        } else {
-                            *lo = Some(e.old);
-                        }
-                    }
-                }
-            }
+            collect_item_watch(&mut merged, &e);
             merged.unit_entry |=
                 e.is_unit() && e.index == benilla_protocol::field::FIELD_OBJECT_ENTRY;
             if own && e.unit_field(FIELD_PLAYER_FLAGS) {
@@ -3055,6 +3093,10 @@ fn item_quest_watch(sc: &mut Scene, guid: u64) {
     let Some(item) = sc.index.0.get(&guid).and_then(|&e| sc.stores.get(e).ok()) else {
         return;
     };
+    // The stack-count watch runs only on an item we own (`0x707757`).
+    if sc.self_guid.0.is_none() || item.0.item_owner() != sc.self_guid.0 {
+        return;
+    }
     let me = sc
         .self_guid
         .0

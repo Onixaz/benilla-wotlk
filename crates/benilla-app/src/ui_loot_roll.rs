@@ -179,20 +179,23 @@ impl LootRolls {
         self.show_pending(sink);
     }
 
-    /// Our vote on `roll_id` (`0x6fbc70`), the confirm and the vote mask already judged by the
-    /// verb: the roll's wire identity once it went out; the frame closes, the roll finishes and a
-    /// waiting roll may show. `None` for a roll not listed or already finished.
-    fn vote(&mut self, roll_id: u32, sink: &mut dyn SignalSink) -> Option<(u64, u32)> {
-        let r = self.roll_mut(roll_id).filter(|r| !r.finished)?;
+    /// Wire identity of an open, unfinished roll (`0x6fbcab`).
+    fn vote_wire(&self, roll_id: u32) -> Option<(u64, u32)> {
+        self.rolls
+            .iter()
+            .find(|r| r.roll_id == roll_id && !r.finished)
+            .map(|r| (r.looted_target, r.item_slot))
+    }
+
+    /// Finish a roll after `CANCEL_LOOT_ROLL` returns (`0x6fbdc2`-`0x6fbdd5`): mark finished, free
+    /// its frame and show a waiting roll.
+    fn finish_vote(&mut self, roll_id: u32, sink: &mut dyn SignalSink) {
+        let Some(r) = self.roll_mut(roll_id).filter(|r| !r.finished) else {
+            return;
+        };
         r.finished = true;
-        let wire = (r.looted_target, r.item_slot);
-        sink.fire(
-            "CANCEL_LOOT_ROLL",
-            vec![ScriptValue::Int(i64::from(roll_id))],
-        );
         self.shown = self.shown.saturating_sub(1);
         self.show_pending(sink);
-        Some(wire)
     }
 
     /// A line node for `line`, closing `closes` once composed; its id.
@@ -372,7 +375,6 @@ mod net {
     pub(super) fn on_line(
         In(ev): In<SessionEvent>,
         mut rolls: ResMut<LootRolls>,
-        mut loot: ResMut<crate::ui_loot::LootState>,
         mut ui: ResMut<UiEvents>,
     ) {
         let (line, slot) = match ev {
@@ -388,12 +390,10 @@ mod net {
                     "net: loot roll won by {:#x} with {} (type {})",
                     p.winner, p.roll_number, p.roll_type
                 );
-                loot.clear_slot_type(p.looted_target, p.item_slot);
                 (RollLine::Won(p), Some((p.looted_target, p.item_slot)))
             }
             SessionEvent::LootAllPassed(p) => {
                 debug!("net: loot roll — everyone passed on item {}", p.item_id);
-                loot.clear_slot_type(p.looted_target, p.item_slot);
                 (RollLine::AllPassed(p), Some((p.looted_target, p.item_slot)))
             }
             _ => return,
@@ -406,7 +406,17 @@ mod net {
                 .map(|r| r.roll_id)
         });
         let id = rolls.add_line(line, closes);
-        ui.world(move |world| super::advance_line(world, id));
+        // Clear the loot slot's locked state after the line's events (`0x6fbb10`, `0x6fb600`).
+        ui.world(move |world| {
+            super::advance_line(world, id);
+            if let Some((target, slot)) = slot {
+                crate::ui_script::live::in_turn(world, move |world| {
+                    if let Some(mut loot) = world.get_resource_mut::<crate::ui_loot::LootState>() {
+                        loot.clear_slot_type(target, slot);
+                    }
+                });
+            }
+        });
     }
 
     /// A player name answered: each line waiting on it composes on a found name, a placeholder
@@ -836,25 +846,36 @@ pub(crate) fn vote_in_call(world: &mut World, roll_id: u32, roll_type: u8) {
     if !world.contains_resource::<NetCommands>() {
         return;
     }
-    let Some(mut rolls) = world.remove_resource::<LootRolls>() else {
+    let wire = world
+        .get_resource::<LootRolls>()
+        .and_then(|rolls| rolls.vote_wire(roll_id));
+    let Some((looted_target, item_slot)) = wire else {
+        debug!("ui_loot_roll: vote on roll {roll_id} — no open roll, ignored");
         return;
     };
+    debug!("ui_loot_roll: vote {roll_type} on roll {roll_id}");
+    let _ = world
+        .resource::<NetCommands>()
+        .0
+        .send(ClientCommand::LootRoll {
+            looted_target,
+            item_slot,
+            roll_type,
+        });
     let mut ui = world.remove_resource::<UiEvents>().unwrap_or_default();
-    match rolls.vote(roll_id, &mut ui) {
-        Some((looted_target, item_slot)) => {
-            debug!("ui_loot_roll: vote {roll_type} on roll {roll_id}");
-            let _ = world
-                .resource::<NetCommands>()
-                .0
-                .send(ClientCommand::LootRoll {
-                    looted_target,
-                    item_slot,
-                    roll_type,
-                });
+    ui.fire(
+        "CANCEL_LOOT_ROLL",
+        vec![ScriptValue::Int(i64::from(roll_id))],
+    );
+    // Finish and promote a waiting roll after `CANCEL_LOOT_ROLL` returns (`0x6fbdc2`-`0x6fbdd5`).
+    ui.world(move |world| {
+        if !world.contains_resource::<UiEvents>() {
+            return;
         }
-        None => debug!("ui_loot_roll: vote on roll {roll_id} — no open roll, ignored"),
-    }
-    world.insert_resource(rolls);
+        world.resource_scope(|world, mut rolls: Mut<LootRolls>| {
+            rolls.finish_vote(roll_id, &mut *world.resource_mut::<UiEvents>());
+        });
+    });
     world.insert_resource(ui);
 }
 

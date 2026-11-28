@@ -28,6 +28,7 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::ItemPushResult, on_item_push_result)
         .net_handler(K::PlayerName, on_name_answer)
         .net_handler(K::PlayerNameMiss, on_name_answer)
+        .net_handler(K::Worldport, on_leave_world)
         .net_handler(K::Disconnected, on_session_end);
 }
 
@@ -193,12 +194,11 @@ fn on_release_response(
     mut loot: ResMut<LootState>,
     mut latch: ResMut<LootLatch>,
     mut ui: ResMut<UiEvents>,
-    mut dead: super::DeadUnitDeselect,
     net: Res<NetCommands>,
 ) {
     if let SessionEvent::LootReleaseResponse { guid, result } = ev {
         let closed = loot_release_response(guid, result, &mut loot, &mut latch, &net, &mut *ui);
-        dead.after_close(closed);
+        super::deselect_dead_in_turn(&mut ui, closed);
     }
 }
 
@@ -222,9 +222,14 @@ impl ItemUnlock<'_> {
     }
 }
 
-fn on_master_list(In(ev): In<SessionEvent>, mut loot: ResMut<LootState>) {
+fn on_master_list(
+    In(ev): In<SessionEvent>,
+    mut loot: ResMut<LootState>,
+    group: Res<crate::ui_party::GroupState>,
+    self_guid: Res<crate::net::SelfGuid>,
+) {
     if let SessionEvent::LootMasterList { candidates } = ev {
-        loot_master_list(candidates, &mut loot);
+        loot_master_list(candidates, &mut loot, &group, self_guid.0);
     }
 }
 
@@ -264,6 +269,24 @@ fn on_name_answer(In(ev): In<SessionEvent>, mut loot: ResMut<LootState>, mut ui:
             ui.fire("UPDATE_MASTER_LOOT_LIST", Vec::new());
         }
     }
+}
+
+/// Leaving the world (`0x588180` -> `0x523640`): releases any open loot window and fires
+/// `LOOT_CLOSED`.
+fn on_leave_world(In(ev): In<SessionEvent>, mut ui: ResMut<UiEvents>) {
+    if !matches!(ev, SessionEvent::Worldport { .. }) {
+        return;
+    }
+    ui.world(|world| {
+        super::with_window(world, |loot, step| {
+            let flags = super::CloseFlags {
+                release: true,
+                source_missing: !step.held,
+                ..default()
+            };
+            super::close(loot, step.latch, step.net, flags, step.sink)
+        });
+    });
 }
 
 /// The open window and the latch die with the session, unconditionally.
@@ -430,10 +453,15 @@ fn loot_release_response(
     super::close_interaction(loot, latch, net, false, sink)
 }
 
-/// `SMSG_LOOT_MASTER_LIST` (`0x6fa690`): the list replaced, open window or none.
-fn loot_master_list(candidates: Vec<u64>, loot: &mut LootState) {
+/// `SMSG_LOOT_MASTER_LIST` (`0x6fa690`): the list replaced and placed at receipt, window or none.
+fn loot_master_list(
+    candidates: Vec<u64>,
+    loot: &mut LootState,
+    group: &crate::ui_party::GroupState,
+    self_guid: Option<u64>,
+) {
     debug!("net: master-loot candidates: {} eligible", candidates.len());
-    loot.set_master_candidates(candidates);
+    loot.set_master_candidates(candidates, group, self_guid);
 }
 
 #[cfg(test)]
@@ -869,11 +897,6 @@ mod tests {
             .resource_mut::<LootState>()
             .open_for_test(LOCKBOX, 1, 0, Vec::new());
         release(&mut world, LOCKBOX, 1);
-        assert_eq!(
-            world.resource::<UiEvents>().names(),
-            ["<world>", "LOOT_CLOSED"],
-            "the close's unlock in the handler's turn ahead of the window's let-go (`0x5236fc`, `0x52374c`)"
-        );
         crate::ui_script::live::fire_handler_events(&mut world);
         assert!(
             !world.resource::<PendingItemOps>().is_locked(LOCKBOX),
@@ -888,6 +911,7 @@ mod tests {
             .resource_mut::<LootState>()
             .open_for_test(LOCKBOX, 1, 0, Vec::new());
         release(&mut world, CORPSE, 1);
+        crate::ui_script::live::fire_handler_events(&mut world);
         assert!(world.resource::<PendingItemOps>().is_locked(LOCKBOX));
         assert!(world.resource::<UiEvents>().is_empty());
     }
@@ -926,6 +950,7 @@ mod tests {
         assert_eq!(world.resource::<LootState>().source(), None);
         assert_eq!(world.resource::<LootLatch>().0, None);
         assert!(rx.try_recv().is_err(), "the server's release is not echoed");
+        crate::ui_script::live::fire_handler_events(&mut world);
         let asked: Vec<u64> = world
             .resource_mut::<bevy::ecs::message::Messages<crate::target::DeselectGuid>>()
             .drain()
@@ -935,6 +960,7 @@ mod tests {
 
         // A second release finds nothing open and asks nothing.
         release(&mut world, CORPSE, 1);
+        crate::ui_script::live::fire_handler_events(&mut world);
         assert!(world
             .resource_mut::<bevy::ecs::message::Messages<crate::target::DeselectGuid>>()
             .drain()
@@ -1641,7 +1667,8 @@ mod tests {
         world.insert_resource(net);
         {
             let mut loot = world.resource_mut::<LootState>();
-            loot.set_master_candidates(vec![BOB]);
+            let group = crate::ui_party::GroupState::default();
+            loot.set_master_candidates(vec![BOB], &group, None);
             loot.open_for_test(CORPSE, 1, 0, Vec::new());
         }
         let ask = |world: &mut World| {

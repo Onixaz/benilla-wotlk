@@ -13,7 +13,6 @@ const RAISES_BEFORE_A_WRITE: &[(&str, &str, u16)] = &[
     ("spell/net.rs", "on_spell_removed", 1414),
     ("spell/net.rs", "on_spell_superceded", 1414),
     ("ui_loot/net.rs", "on_error", 1280),
-    ("ui_loot/net.rs", "on_release_response", 1280),
     ("ui_loot/net.rs", "on_response", 1280),
     // Raised in turn since #1354: the disband's line ahead of its clear-all (0x6cbe4b before 0x6cbe55), and the list's lines among its writes (0x6d8870).
     ("ui_party/net.rs", "on_destroyed", 1284),

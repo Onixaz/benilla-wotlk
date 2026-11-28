@@ -134,6 +134,7 @@ fn contents(model: &Model, bag: i64, out: &mut Vec<Held>) {
         let Some(s) = c.slots.get(&slot).filter(|s| s.item_id != 0) else {
             continue;
         };
+        let wrapped = s.flags & 8 != 0;
         out.push(Held {
             bag,
             slot,
@@ -142,7 +143,8 @@ fn contents(model: &Model, bag: i64, out: &mut Vec<Held>) {
             link: s.link.clone(),
             count: s.count.max(1),
             locked: s.locked,
-            broken: s.durability.is_some_and(|(now, _)| now == 0),
+            broken: s.flags & 0x10 != 0
+                || (!wrapped && s.durability.is_some_and(|(now, _)| now == 0)),
         });
     }
 }

@@ -91,20 +91,35 @@ pub(crate) fn pickup_trade_money(model: &mut crate::script::ModelGuard<'_>, amou
     true
 }
 
+/// Signed currency breakdown (`0x7e7c70`): gold, silver, copper; negative amounts stay in copper.
+fn currency_parts(amount: i32) -> [i32; 3] {
+    let (gold, rem) = if amount >= 10_000 {
+        (amount / 10_000, amount % 10_000)
+    } else {
+        (0, amount)
+    };
+    let (silver, copper) = if rem >= 100 {
+        (rem / 100, rem % 100)
+    } else {
+        (0, rem)
+    };
+    [gold, silver, copper]
+}
+
 /// The coin text (`0x7e7d80`): each denomination present through `GOLD_AMOUNT`, `SILVER_AMOUNT`
 /// or `COPPER_AMOUNT`, gold first, joined by `separator`; "" for no coin.
-pub(crate) fn currency_text(lua: &Lua, copper: u32, separator: &str) -> String {
+pub(crate) fn currency_text(lua: &Lua, copper: i32, separator: &str) -> String {
+    let [gold, silver, copper] = currency_parts(copper);
     [
-        (copper / 10_000, "GOLD_AMOUNT"),
-        (copper / 100 % 100, "SILVER_AMOUNT"),
-        (copper % 100, "COPPER_AMOUNT"),
+        (gold, "GOLD_AMOUNT"),
+        (silver, "SILVER_AMOUNT"),
+        (copper, "COPPER_AMOUNT"),
     ]
     .into_iter()
     .filter(|&(v, _)| v != 0)
     .map(|(v, key)| {
-        crate::strings::global(lua, key)
-            .unwrap_or_default()
-            .replacen("%d", &v.to_string(), 1)
+        let tmpl = crate::strings::global(lua, key).unwrap_or_default();
+        crate::strings::fill(&tmpl, &[crate::strings::Arg::D(v.into())])
     })
     .collect::<Vec<_>>()
     .join(separator)
@@ -170,7 +185,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetCoinText",
         lua.create_function(|lua, (amount, separator): (Value, Option<mlua::String>)| {
-            let n = number_arg(lua, amount, "Usage: GetCoinText(amount [,separator])")? as u32;
+            let n = number_arg(lua, amount, "Usage: GetCoinText(amount [,separator])")?;
             let separator = separator.map_or_else(|| ", ".to_string(), |s| s.to_string_lossy());
             Ok(currency_text(lua, n, &separator))
         })?,
@@ -185,12 +200,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, args: mlua::MultiValue| {
             let mut args = args.into_iter();
             let amount = args.next().unwrap_or(Value::Nil);
-            let n = number_arg(lua, amount, "Usage: GetCoinText(amount, fontHeight)")? as u32;
+            let n = number_arg(lua, amount, "Usage: GetCoinText(amount, fontHeight)")?;
             let height = match args.next() {
                 Some(v) => lua.coerce_number(v)?.map_or(14, |h| h as i64 as i32),
                 None => 14,
             };
-            let unit = |key: &str, v: u32| {
+            let unit = |key: &str, v: i32| {
                 let tmpl = crate::strings::global(lua, key).unwrap_or_default();
                 crate::strings::fill(
                     &tmpl,
@@ -204,10 +219,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if n == 0 {
                 return Ok(unit("COPPER_AMOUNT_TEXTURE", 0));
             }
+            let [gold, silver, copper] = currency_parts(n);
             let parts: Vec<String> = [
-                (n / 10_000, "GOLD_AMOUNT_TEXTURE"),
-                (n / 100 % 100, "SILVER_AMOUNT_TEXTURE"),
-                (n % 100, "COPPER_AMOUNT_TEXTURE"),
+                (gold, "GOLD_AMOUNT_TEXTURE"),
+                (silver, "SILVER_AMOUNT_TEXTURE"),
+                (copper, "COPPER_AMOUNT_TEXTURE"),
             ]
             .into_iter()
             .filter(|&(v, _)| v != 0)
@@ -387,5 +403,30 @@ mod tests {
 
     fn s_icon(n: i64) -> &'static str {
         coin_icon(n)
+    }
+
+    /// `0x7e7c70` breaks down signed `i32`, so negative amounts stay in copper.
+    #[test]
+    fn negative_amounts_stay_in_copper() {
+        let s = UiScript::new().unwrap();
+        s.run(
+            "GOLD_AMOUNT = '%d Gold'\n\
+             SILVER_AMOUNT = '%d Silver'\n\
+             COPPER_AMOUNT = '%d Copper'\n\
+             COPPER_AMOUNT_TEXTURE = '%d|TInterface\\\\MoneyFrame\\\\UI-CopperIcon:%d:%d:2:0|t'",
+        )
+        .unwrap();
+        assert_eq!(
+            s.eval::<String>("return GetCoinText(-5)").unwrap(),
+            "-5 Copper"
+        );
+        assert_eq!(
+            s.eval::<String>("return GetCoinText(-12345)").unwrap(),
+            "-12345 Copper"
+        );
+        assert_eq!(
+            s.eval::<String>("return GetCoinTextureString(-5)").unwrap(),
+            "-5|TInterface\\MoneyFrame\\UI-CopperIcon:14:14:2:0|t"
+        );
     }
 }
